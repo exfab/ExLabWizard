@@ -140,6 +140,8 @@ exlab_wizard/
   ui/
     design.py              # design tokens (color, typography, spacing, radius, shadows) mirroring DESIGN.md; see Frontend §2.1
     theme.py               # NiceGUI/Quasar theme registration that consumes design.py constants
+    notifications.py       # canonical notification helpers (notify_success, notify_field_error, show_banner, etc.); see Frontend §2.2
+    keyboard.py            # app-level keyboard-shortcut registry; see Frontend §3.7
     pages/
       main.py              # NiceGUI main window (left tree + right tabs + toolbar)
       wizard_project.py    # ui.stepper-based New Project flow
@@ -373,7 +375,8 @@ The HTTP API and WebSocket channels are the only contract between the frontend (
 | `POST` | `/api/v1/sessions` | Open a creation session (project or run). Body: resolved input bundle (template, equipment, variables, README fields, mode flag). Returns `{ session_id, state, next_action }`. |
 | `GET` | `/api/v1/sessions/{id}` | Snapshot of session state. |
 | `POST` | `/api/v1/sessions/{id}/resume` | Supply `extra_inputs` after `PluginInputRequired`. |
-| `POST` | `/api/v1/sessions/{id}/cancel` | Abort. Triggers cleanup of partially-created directory. |
+| `POST` | `/api/v1/sessions/{id}/cancel` | Abort. Triggers cleanup of partially-created directory; body carries `{ "discard_files": <bool> }` matching Frontend §9.4 (`true` deletes the partial directory, `false` preserves it as orphan). |
+| `GET` | `/api/v1/operations` | List all in-flight controller operations (running, suspended in `INPUT_REQUIRED`, completed-pending-cleanup). Used by the Frontend Operations panel (§9.5). Each entry: `{ id, state, started_at, equipment_id, project_short_id, run_label, plugin_name?, suspended_reason? }`. |
 | `GET` | `/api/v1/problems` | Validator findings (the §11.8 query). Query params: `scope`, `severity`, `class`. |
 | `POST` | `/api/v1/problems/{run_path}/override` | Append a `validation_overrides` entry. Body: `{ problem_class, reason }`. |
 | `POST` | `/api/v1/problems/{run_path}/override/revoke` | Append a tombstone (see §11.3 schema). |
