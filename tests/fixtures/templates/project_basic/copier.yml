@@ -1,0 +1,9 @@
+_min_copier_version: "9.0"
+_answers_file: ".exlab-answers.yml"
+_exlab_type: "project"
+_exlab_version: "0.1.0"
+_exlab_description: "Basic project template for tests"
+
+_exlab_proj:
+  type: str
+  default: "DefaultProj"

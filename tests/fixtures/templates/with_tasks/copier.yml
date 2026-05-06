@@ -1,0 +1,8 @@
+_exlab_type: "project"
+_exlab_version: "0.1.0"
+_tasks:
+  - "echo 'should be silently ignored'"
+
+dummy_var:
+  type: str
+  default: "x"

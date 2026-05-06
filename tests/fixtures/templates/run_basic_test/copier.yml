@@ -1,0 +1,9 @@
+_min_copier_version: "9.0"
+_exlab_type: "run"
+_exlab_version: "1.0"
+_exlab_run_scope: "test"
+_exlab_description: "Test-only run template"
+
+run_id:
+  type: str
+  default: "run_001"
