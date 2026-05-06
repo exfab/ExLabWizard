@@ -15,9 +15,10 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from exlab_wizard.constants import (
+    APP_NAME,
     CENTRAL_LOG_FILE,
     EQUIPMENT_ID_MAX_LENGTH,
     EQUIPMENT_ID_PATTERN,
@@ -30,7 +31,6 @@ from exlab_wizard.constants import (
     SetupState,
 )
 from exlab_wizard.errors import ConfigError
-from exlab_wizard.logging import get_logger
 
 if TYPE_CHECKING:
     from exlab_wizard.config.models import Config
@@ -52,15 +52,24 @@ __all__ = [
     "setup_state_next_action",
 ]
 
-_log = get_logger(__name__)
-
-# App identifier used in OS-appropriate paths (stable across platforms).
-_APP_NAME = "exlab-wizard"
-
 
 # ---------------------------------------------------------------------------
 # OS-aware path helpers (no side effects)
 # ---------------------------------------------------------------------------
+
+
+_Platform = Literal["macos", "windows", "linux"]
+
+
+def _platform() -> _Platform:
+    """Return a normalized platform tag for OS-conditional path dispatch."""
+    match sys.platform:
+        case "darwin":
+            return "macos"
+        case "win32":
+            return "windows"
+        case _:
+            return "linux"
 
 
 def _home() -> Path:
@@ -72,98 +81,69 @@ def _home() -> Path:
     return Path.home()
 
 
-def _is_macos() -> bool:
-    return sys.platform == "darwin"
-
-
-def _is_windows() -> bool:
-    return sys.platform == "win32"
+def _env_path(var: str, fallback: Path) -> Path:
+    """Return ``Path(os.environ[var])`` if the var is set and non-empty, else ``fallback``."""
+    value = os.environ.get(var)
+    return Path(value) if value else fallback
 
 
 def os_config_path() -> Path:
-    """Return the OS-appropriate path of ``config.yaml``. Backend Spec §9.
-
-    macOS:   ``~/Library/Application Support/exlab-wizard/config.yaml``
-    Windows: ``%APPDATA%/exlab-wizard/config.yaml``
-    Linux:   ``$XDG_CONFIG_HOME/exlab-wizard/config.yaml`` or
-             ``~/.config/exlab-wizard/config.yaml``
-    """
-    if _is_macos():
-        return _home() / "Library" / "Application Support" / _APP_NAME / "config.yaml"
-    if _is_windows():
-        appdata = os.environ.get("APPDATA")
-        base = Path(appdata) if appdata else _home() / "AppData" / "Roaming"
-        return base / _APP_NAME / "config.yaml"
-    # Linux / POSIX fallback.
-    xdg = os.environ.get("XDG_CONFIG_HOME")
-    base = Path(xdg) if xdg else _home() / ".config"
-    return base / _APP_NAME / "config.yaml"
+    """Return the OS-appropriate path of ``config.yaml``. Backend Spec §9."""
+    match _platform():
+        case "macos":
+            return _home() / "Library" / "Application Support" / APP_NAME / "config.yaml"
+        case "windows":
+            return _env_path("APPDATA", _home() / "AppData" / "Roaming") / APP_NAME / "config.yaml"
+        case "linux":
+            return _env_path("XDG_CONFIG_HOME", _home() / ".config") / APP_NAME / "config.yaml"
 
 
 def os_state_path() -> Path:
-    """Return the OS-appropriate state directory. Backend Spec §15.7.
-
-    macOS:   ``~/Library/Application Support/exlab-wizard/state``
-    Windows: ``%LOCALAPPDATA%/exlab-wizard/state``
-    Linux:   ``$XDG_STATE_HOME/exlab-wizard`` or ``~/.local/state/exlab-wizard``
-    """
-    if _is_macos():
-        return _home() / "Library" / "Application Support" / _APP_NAME / "state"
-    if _is_windows():
-        local = os.environ.get("LOCALAPPDATA")
-        base = Path(local) if local else _home() / "AppData" / "Local"
-        return base / _APP_NAME / "state"
-    xdg = os.environ.get("XDG_STATE_HOME")
-    base = Path(xdg) if xdg else _home() / ".local" / "state"
-    return base / _APP_NAME
+    """Return the OS-appropriate state directory. Backend Spec §15.7."""
+    match _platform():
+        case "macos":
+            return _home() / "Library" / "Application Support" / APP_NAME / "state"
+        case "windows":
+            return _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / APP_NAME / "state"
+        case "linux":
+            return _env_path("XDG_STATE_HOME", _home() / ".local" / "state") / APP_NAME
 
 
 def os_cache_path() -> Path:
-    """Return the OS-appropriate cache directory. Backend Spec §7.2.4.
-
-    macOS:   ``~/Library/Caches/exlab-wizard``
-    Windows: ``%LOCALAPPDATA%/exlab-wizard/Cache``
-    Linux:   ``$XDG_CACHE_HOME/exlab-wizard`` or ``~/.cache/exlab-wizard``
-    """
-    if _is_macos():
-        return _home() / "Library" / "Caches" / _APP_NAME
-    if _is_windows():
-        local = os.environ.get("LOCALAPPDATA")
-        base = Path(local) if local else _home() / "AppData" / "Local"
-        return base / _APP_NAME / "Cache"
-    xdg = os.environ.get("XDG_CACHE_HOME")
-    base = Path(xdg) if xdg else _home() / ".cache"
-    return base / _APP_NAME
+    """Return the OS-appropriate cache directory. Backend Spec §7.2.4."""
+    match _platform():
+        case "macos":
+            return _home() / "Library" / "Caches" / APP_NAME
+        case "windows":
+            return _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / APP_NAME / "Cache"
+        case "linux":
+            return _env_path("XDG_CACHE_HOME", _home() / ".cache") / APP_NAME
 
 
 def os_central_log_path() -> Path:
-    """Return the OS-appropriate central log file. Backend Spec §16.3.
-
-    macOS:   ``~/Library/Logs/exlab-wizard/app.log``
-    Windows: ``%LOCALAPPDATA%/exlab-wizard/Logs/app.log``
-    Linux:   ``${XDG_STATE_HOME:-~/.local/state}/exlab-wizard/app.log``
-    """
-    if _is_macos():
-        return _home() / "Library" / "Logs" / _APP_NAME / CENTRAL_LOG_FILE
-    if _is_windows():
-        local = os.environ.get("LOCALAPPDATA")
-        base = Path(local) if local else _home() / "AppData" / "Local"
-        return base / _APP_NAME / "Logs" / CENTRAL_LOG_FILE
-    xdg = os.environ.get("XDG_STATE_HOME")
-    base = Path(xdg) if xdg else _home() / ".local" / "state"
-    return base / _APP_NAME / CENTRAL_LOG_FILE
+    """Return the OS-appropriate central log file. Backend Spec §16.3."""
+    match _platform():
+        case "macos":
+            return _home() / "Library" / "Logs" / APP_NAME / CENTRAL_LOG_FILE
+        case "windows":
+            return (
+                _env_path("LOCALAPPDATA", _home() / "AppData" / "Local")
+                / APP_NAME
+                / "Logs"
+                / CENTRAL_LOG_FILE
+            )
+        case "linux":
+            return (
+                _env_path("XDG_STATE_HOME", _home() / ".local" / "state")
+                / APP_NAME
+                / CENTRAL_LOG_FILE
+            )
 
 
 def default_orchestrator_staging_root() -> Path:
-    """OS-conditional default for ``orchestrator.staging_root``. Backend Spec §9, §13.
-
-    macOS/Linux: ``/staging``
-    Windows:     ``%LOCALAPPDATA%/exlab-wizard/staging``
-    """
-    if _is_windows():
-        local = os.environ.get("LOCALAPPDATA")
-        base = Path(local) if local else _home() / "AppData" / "Local"
-        return base / _APP_NAME / "staging"
+    """OS-conditional default for ``orchestrator.staging_root``. Backend Spec §9, §13."""
+    if _platform() == "windows":
+        return _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / APP_NAME / "staging"
     return Path("/staging")
 
 
@@ -302,12 +282,9 @@ def _lims_slot_satisfied(
     (``offline_catalogue_path`` non-empty).
     """
     lims = config.lims
-    offline = (lims.offline_catalogue_path or "").strip()
-    if offline:
+    if lims.offline_catalogue_path:
         return True
-    endpoint = (lims.endpoint or "").strip()
-    email = (lims.email or "").strip()
-    return bool(endpoint and email and keyring_password_present)
+    return bool(lims.endpoint and lims.email and keyring_password_present)
 
 
 def _paths_complete(config: Config) -> bool:
@@ -317,10 +294,7 @@ def _paths_complete(config: Config) -> bool:
     accessibility is checked elsewhere in the §4.9.1 evaluation chain.
     """
     paths = config.paths
-    templates = (paths.templates_dir or "").strip()
-    plugin = (paths.plugin_dir or "").strip()
-    local_root = (paths.local_root or "").strip()
-    return bool(templates and plugin and local_root)
+    return bool(paths.templates_dir and paths.plugin_dir and paths.local_root)
 
 
 def evaluate_setup_state(
@@ -372,34 +346,44 @@ def setup_state_missing(state: SetupState, config: Config | None) -> list[dict[s
         return []
     if state is SetupState.INCOMPLETE_NO_CONFIG:
         return [{"field": "config.yaml", "reason": "missing"}]
-    missing: list[dict[str, str]] = []
-    if state is SetupState.INCOMPLETE_MISSING_PATHS:
-        if config is None:
-            return [
-                {"field": "paths.templates_dir", "reason": "unset"},
-                {"field": "paths.plugin_dir", "reason": "unset"},
-                {"field": "paths.local_root", "reason": "unset"},
-            ]
-        if not (config.paths.templates_dir or "").strip():
-            missing.append({"field": "paths.templates_dir", "reason": "unset"})
-        if not (config.paths.plugin_dir or "").strip():
-            missing.append({"field": "paths.plugin_dir", "reason": "unset"})
-        if not (config.paths.local_root or "").strip():
-            missing.append({"field": "paths.local_root", "reason": "unset"})
-        return missing
     if state is SetupState.INCOMPLETE_NO_EQUIPMENT:
         return [{"field": "equipment", "reason": "empty"}]
+    if state is SetupState.INCOMPLETE_MISSING_PATHS:
+        return _missing_paths_fields(config)
     if state is SetupState.INCOMPLETE_NO_LIMS:
-        # No usable LIMS source: neither (endpoint+email+keyring) nor offline catalogue.
-        if config is None:
-            return [{"field": "lims", "reason": "unset"}]
-        if not (config.lims.endpoint or "").strip():
-            missing.append({"field": "lims.endpoint", "reason": "unset"})
-        if not (config.lims.email or "").strip():
-            missing.append({"field": "lims.email", "reason": "unset"})
-        if not (config.lims.offline_catalogue_path or "").strip():
-            missing.append({"field": "lims.password", "reason": "missing_in_keyring"})
-        return missing
+        return _missing_lims_fields(config)
+    return []
+
+
+def _missing_paths_fields(config: Config | None) -> list[dict[str, str]]:
+    field_specs = (
+        ("paths.templates_dir", lambda c: c.paths.templates_dir),
+        ("paths.plugin_dir", lambda c: c.paths.plugin_dir),
+        ("paths.local_root", lambda c: c.paths.local_root),
+    )
+    if config is None:
+        return [{"field": name, "reason": "unset"} for name, _ in field_specs]
+    return [
+        {"field": name, "reason": "unset"} for name, accessor in field_specs if not accessor(config)
+    ]
+
+
+def _missing_lims_fields(config: Config | None) -> list[dict[str, str]]:
+    if config is None:
+        return [{"field": "lims", "reason": "unset"}]
+    missing: list[dict[str, str]] = []
+    has_endpoint = bool(config.lims.endpoint)
+    has_email = bool(config.lims.email)
+    if not has_endpoint:
+        missing.append({"field": "lims.endpoint", "reason": "unset"})
+    if not has_email:
+        missing.append({"field": "lims.email", "reason": "unset"})
+    # The keyring-password slot is only flagged when the live-LIMS branch is
+    # otherwise plausible (endpoint and email both filled in). Otherwise the
+    # operator hasn't started filling in LIMS yet, and prompting them about
+    # a missing keyring password is misleading.
+    if has_endpoint and has_email and not config.lims.offline_catalogue_path:
+        missing.append({"field": "lims.password", "reason": "missing_in_keyring"})
     return missing
 
 

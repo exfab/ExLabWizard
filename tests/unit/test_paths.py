@@ -356,6 +356,21 @@ def test_canonicalize_equipment_id_rejects_empty() -> None:
         canonicalize_equipment_id("")
 
 
+def test_canonicalize_equipment_id_rejects_none() -> None:
+    """Non-str input hits the isinstance guard, not the regex."""
+    with pytest.raises(ConfigError) as info:
+        canonicalize_equipment_id(None)  # type: ignore[arg-type]
+    assert "non-empty string" in str(info.value)
+
+
+def test_canonicalize_equipment_id_rejects_int() -> None:
+    """Non-str input hits the isinstance guard, not the length / regex check."""
+    with pytest.raises(ConfigError) as info:
+        canonicalize_equipment_id(42)  # type: ignore[arg-type]
+    assert "non-empty string" in str(info.value)
+    assert "42" in str(info.value)
+
+
 def test_canonicalize_equipment_id_does_not_mutate_input() -> None:
     """Spec contract: input must already be canonical; no silent uppercasing."""
     with pytest.raises(ConfigError):
@@ -457,6 +472,42 @@ def test_compose_project_path_rejects_invalid_short_id(tmp_path: Path) -> None:
             equipment_id="CONFOCAL_01",
             project_short_id="proj-0042",
         )
+
+
+def test_compose_run_path_rejects_non_str_project_short_id(tmp_path: Path) -> None:
+    """Non-str project_short_id hits the isinstance guard, not the regex."""
+    with pytest.raises(ConfigError) as info:
+        compose_run_path(
+            local_root=tmp_path,
+            equipment_id="CONFOCAL_01",
+            project_short_id=None,  # type: ignore[arg-type]
+            run_kind=RunKind.EXPERIMENTAL,
+            run_date=_RUN_DATE,
+        )
+    assert "non-empty string" in str(info.value)
+
+
+def test_compose_run_path_rejects_empty_project_short_id(tmp_path: Path) -> None:
+    """Empty string project_short_id also hits the same guard."""
+    with pytest.raises(ConfigError) as info:
+        compose_run_path(
+            local_root=tmp_path,
+            equipment_id="CONFOCAL_01",
+            project_short_id="",
+            run_kind=RunKind.EXPERIMENTAL,
+            run_date=_RUN_DATE,
+        )
+    assert "non-empty string" in str(info.value)
+
+
+def test_compose_project_path_rejects_non_str_short_id(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError) as info:
+        compose_project_path(
+            local_root=tmp_path,
+            equipment_id="CONFOCAL_01",
+            project_short_id=42,  # type: ignore[arg-type]
+        )
+    assert "non-empty string" in str(info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -639,3 +690,65 @@ def test_setup_state_missing_for_no_lims_lists_endpoint_email() -> None:
     fields = {entry["field"] for entry in result}
     assert "lims.endpoint" in fields
     assert "lims.email" in fields
+
+
+def test_setup_state_missing_for_missing_paths_with_none_config() -> None:
+    """When config is None but state is INCOMPLETE_MISSING_PATHS, every paths
+    field is reported as unset. This is a defensive branch for callers that
+    pass the state without the config object."""
+    result = setup_state_missing(SetupState.INCOMPLETE_MISSING_PATHS, None)
+    fields = {entry["field"] for entry in result}
+    assert fields == {"paths.templates_dir", "paths.plugin_dir", "paths.local_root"}
+    for entry in result:
+        assert entry["reason"] == "unset"
+
+
+def test_setup_state_missing_for_no_lims_with_none_config() -> None:
+    """When config is None but state is INCOMPLETE_NO_LIMS, the whole lims
+    block is reported as unset (we can't introspect individual subfields
+    without a config)."""
+    result = setup_state_missing(SetupState.INCOMPLETE_NO_LIMS, None)
+    assert result == [{"field": "lims", "reason": "unset"}]
+
+
+def test_setup_state_missing_for_no_lims_flags_keyring_when_endpoint_email_set() -> None:
+    """endpoint+email both filled in but no offline catalogue -> the
+    keyring-password slot is flagged as missing_in_keyring."""
+    config = Config(
+        paths=PathsConfig(
+            templates_dir="/srv/templates",
+            plugin_dir="/srv/plugins",
+            local_root="/data/lab",
+        ),
+        lims=LIMSConfig(
+            endpoint="https://lims.example/api/v1",
+            email="op@lab.example",
+            offline_catalogue_path="",
+        ),
+        equipment=[_make_equipment()],
+    )
+    result = setup_state_missing(SetupState.INCOMPLETE_NO_LIMS, config)
+    fields = {(entry["field"], entry["reason"]) for entry in result}
+    assert ("lims.password", "missing_in_keyring") in fields
+    # The endpoint/email pair is fully populated so neither is flagged.
+    flagged_field_names = {entry["field"] for entry in result}
+    assert "lims.endpoint" not in flagged_field_names
+    assert "lims.email" not in flagged_field_names
+
+
+def test_setup_state_missing_unrecognized_state_returns_empty() -> None:
+    """Defensive fallback: any value that isn't a recognized SetupState
+    returns an empty list rather than raising. Exercises the trailing
+    ``return []`` after the if-chain."""
+
+    class _BogusState:
+        # Compares unequal to every SetupState, so neither ``in`` nor ``is``
+        # checks in setup_state_missing match.
+        def __eq__(self, other: object) -> bool:
+            return False
+
+        def __hash__(self) -> int:
+            return 0
+
+    result = setup_state_missing(_BogusState(), None)  # type: ignore[arg-type]
+    assert result == []

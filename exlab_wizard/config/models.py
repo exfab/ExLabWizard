@@ -18,15 +18,12 @@ Style:
 
 from __future__ import annotations
 
+from datetime import time
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from exlab_wizard.constants import (
-    EQUIPMENT_ID_MAX_LENGTH,
-    EQUIPMENT_ID_PATTERN,
-    TEMPLATE_QUESTION_ID_PATTERN,
-)
+from exlab_wizard.constants import TEMPLATE_QUESTION_ID_PATTERN
 from exlab_wizard.errors import ConfigError
 
 __all__ = [
@@ -60,27 +57,23 @@ _ALLOWED_LOG_LEVELS: frozenset[str] = frozenset({"DEBUG", "INFO", "WARN", "ERROR
 _BandwidthDay = Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 
-def _parse_hhmm(value: str, field_name: str) -> int:
-    """Return minutes-since-midnight for an ``HH:MM`` string.
+def _parse_hhmm(value: str, field_name: str) -> time:
+    """Return ``datetime.time`` for a strict zero-padded ``HH:MM`` string.
 
-    Validation:
-    - Must be exactly 5 characters: ``HH:MM`` with a literal ``:``.
-    - Hours in ``[0, 23]``; minutes in ``[0, 59]``.
-    Raises ``ValueError`` so Pydantic surfaces a normal validation error.
+    The wizard's bandwidth schedule is YAML-edited by humans, so we accept
+    only the canonical 5-character ``HH:MM`` form (no seconds, no leading
+    plus, no missing leading zeros). ``datetime.time.fromisoformat`` happens
+    to accept ``HH:MM`` and ``HH:MM:SS`` and a few other variants, so we
+    pre-check the length / colon position before delegating.
     """
     if not isinstance(value, str) or len(value) != 5 or value[2] != ":":
         msg = f"{field_name} must be a zero-padded HH:MM string, got {value!r}"
         raise ValueError(msg)
     try:
-        hour = int(value[:2])
-        minute = int(value[3:])
+        return time.fromisoformat(value)
     except ValueError as exc:
-        msg = f"{field_name} must be a zero-padded HH:MM string, got {value!r}"
-        raise ValueError(msg) from exc
-    if not (0 <= hour <= 23 and 0 <= minute <= 59):
         msg = f"{field_name} must be a valid time in HH:MM, got {value!r}"
-        raise ValueError(msg)
-    return hour * 60 + minute
+        raise ValueError(msg) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -177,18 +170,11 @@ class BandwidthWindow(BaseModel):
     from_: str = Field(alias="from")
     to: str
 
-    @field_validator("from_", "to")
-    @classmethod
-    def _validate_hhmm_format(cls, value: str) -> str:
-        # Validate the HH:MM grammar; the from < to check happens after.
-        _parse_hhmm(value, "bandwidth window time")
-        return value
-
     @model_validator(mode="after")
     def _from_must_precede_to(self) -> BandwidthWindow:
-        from_minutes = _parse_hhmm(self.from_, "from")
-        to_minutes = _parse_hhmm(self.to, "to")
-        if not (from_minutes < to_minutes):
+        from_t = _parse_hhmm(self.from_, "from")
+        to_t = _parse_hhmm(self.to, "to")
+        if not (from_t < to_t):
             msg = f"bandwidth window 'from' ({self.from_}) must be strictly before 'to' ({self.to})"
             raise ValueError(msg)
         return self
@@ -297,16 +283,14 @@ class EquipmentConfig(BaseModel):
     @field_validator("id")
     @classmethod
     def _validate_equipment_id(cls, value: str) -> str:
-        if len(value) > EQUIPMENT_ID_MAX_LENGTH:
-            msg = (
-                f"equipment.id {value!r} exceeds max length "
-                f"{EQUIPMENT_ID_MAX_LENGTH} ({len(value)} chars)"
-            )
-            raise ValueError(msg)
-        if not EQUIPMENT_ID_PATTERN.fullmatch(value):
-            msg = f"equipment.id {value!r} does not match {EQUIPMENT_ID_PATTERN.pattern}"
-            raise ValueError(msg)
-        return value
+        # Delegate to the canonical helper in paths.py so equipment-id
+        # validation lives in exactly one place.
+        from exlab_wizard.paths import canonicalize_equipment_id
+
+        try:
+            return canonicalize_equipment_id(value)
+        except ConfigError as exc:
+            raise ValueError(str(exc)) from exc
 
     @model_validator(mode="after")
     def _completeness_signal_requires_matching_filename(self) -> EquipmentConfig:
@@ -426,7 +410,7 @@ class ValidatorConfig(BaseModel):
     @classmethod
     def _extensions_must_start_with_dot(cls, value: list[str]) -> list[str]:
         for ext in value:
-            if not isinstance(ext, str) or not ext.startswith("."):
+            if not ext.startswith("."):
                 msg = f"validator.content_scan_extensions entries must start with '.'; got {ext!r}"
                 raise ValueError(msg)
         return value
@@ -470,23 +454,9 @@ class OrchestratorStagingCleanup(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     mode: Literal["manual", "scheduled"] = "manual"
+    # ``ge=1`` enforces the §13.7 "retain_hours > 0 when mode == 'scheduled'"
+    # rule at the field level for both modes (manual ignores the value).
     retain_hours: int = Field(default=24, ge=1)
-
-    @model_validator(mode="after")
-    def _scheduled_requires_positive_retain_hours(self) -> OrchestratorStagingCleanup:
-        # ge=1 already enforces > 0; the explicit check makes the spec rule
-        # legible at the call site.
-        match self.mode:
-            case "scheduled":
-                if self.retain_hours <= 0:
-                    msg = (
-                        "orchestrator.staging_cleanup.retain_hours must be "
-                        "> 0 when mode == 'scheduled'"
-                    )
-                    raise ValueError(msg)
-            case _:
-                pass
-        return self
 
 
 class OrchestratorConfig(BaseModel):

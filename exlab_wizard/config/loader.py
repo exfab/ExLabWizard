@@ -43,10 +43,10 @@ def load_config(path: Path) -> Config:
     validation failure. The original ValidationError is chained as the
     cause so the caller can introspect per-field errors.
     """
-    if not path.exists():
-        raise ConfigError(f"config.yaml not found at {path}")
     try:
         text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise ConfigError(f"config.yaml not found at {path}") from exc
     except OSError as exc:
         raise ConfigError(f"could not read config.yaml at {path}: {exc}") from exc
     return load_config_from_text(text)
@@ -74,7 +74,7 @@ def save_config(path: Path, config: Config, *, original_text: str | None = None)
     If `original_text` is None, write a fresh document with no preserved
     formatting.
 
-    Atomicity: write to <path>.tmp, fsync, then os.replace to <path>.
+    Atomicity: write to ``<path>.tmp``, fsync, then ``Path.replace`` to ``<path>``.
     """
     yaml = _yaml()
     new_dict = config.model_dump(mode="python", exclude_none=False)
@@ -94,11 +94,7 @@ def save_config(path: Path, config: Config, *, original_text: str | None = None)
         fh.flush()
         os.fsync(fh.fileno())
     tmp.replace(path)
-    _log.info(
-        "saved config.yaml [path=%s] [keys=%d]",
-        str(path),
-        len(out) if hasattr(out, "__len__") else 0,
-    )
+    _log.info("saved config.yaml [path=%s] [keys=%d]", str(path), len(out))
 
 
 def _deep_merge(target: Any, source: dict[str, Any]) -> None:

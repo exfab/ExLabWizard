@@ -8,9 +8,11 @@ hold across releases and reinstalls.
 
 from __future__ import annotations
 
+from exlab_wizard.constants.app import APP_NAME
+
 # Service name used for every keyring entry the wizard creates.
 # Backend Spec §7.4.1.
-KEYRING_SERVICE: str = "exlab-wizard"
+KEYRING_SERVICE: str = APP_NAME
 
 # Username under which the LIMS credential is stored. Backend Spec §7.4.1.
 KEYRING_USERNAME_LIMS: str = "lims"

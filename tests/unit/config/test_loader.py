@@ -139,6 +139,23 @@ def test_load_config_from_text_empty_returns_empty_config() -> None:
     assert cfg.equipment == []
 
 
+def test_load_config_unreadable_path_raises_config_error(tmp_path: Path) -> None:
+    # Hitting the non-FileNotFoundError OSError branch in load_config:
+    # passing a directory (instead of a file) makes Path.read_text raise
+    # IsADirectoryError, which is an OSError but not FileNotFoundError. The
+    # loader must wrap this in ConfigError with the offending path mentioned.
+    target = tmp_path / "is-a-dir"
+    target.mkdir()
+    with pytest.raises(ConfigError) as info:
+        load_config(target)
+    assert str(target) in str(info.value)
+    # The error chain preserves the original OSError as __cause__ for
+    # callers that want to introspect.
+    assert isinstance(info.value.__cause__, OSError)
+    # The branch we hit must NOT be the FileNotFoundError branch.
+    assert not isinstance(info.value.__cause__, FileNotFoundError)
+
+
 # ---------------------------------------------------------------------------
 # save_config
 # ---------------------------------------------------------------------------

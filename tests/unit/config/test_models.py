@@ -633,6 +633,24 @@ def test_logging_level_strips_whitespace_and_normalizes() -> None:
     assert cfg.level == "INFO"
 
 
+def test_logging_level_rejects_non_string() -> None:
+    # The mode='before' validator rejects non-string inputs explicitly so
+    # the operator gets a typed error message rather than the generic
+    # "value is not a valid string" Pydantic emits for str fields.
+    with pytest.raises(ValidationError) as info:
+        Config.model_validate({"logging": {"level": 42}})
+    assert "logging.level must be a string" in str(info.value)
+    assert "int" in str(info.value)
+
+
+def test_logging_level_rejects_non_string_directly() -> None:
+    # Same branch reached via the LoggingConfig model directly so the test
+    # is independent of the Config wrapper.
+    with pytest.raises(ValidationError) as info:
+        LoggingConfig(level=42)  # type: ignore[arg-type]
+    assert "must be a string" in str(info.value)
+
+
 def test_logging_central_log_max_mb_at_least_one() -> None:
     with pytest.raises(ValidationError):
         LoggingConfig(central_log_max_mb=0)
@@ -784,11 +802,6 @@ def test_distinct_equipment_ids_accepted() -> None:
     }
     cfg = Config.model_validate(payload)
     assert [e.id for e in cfg.equipment] == ["CONFOCAL_01", "FLOW_01"]
-
-
-def test_orchestrator_enabled_requires_label_and_staging_root() -> None:
-    with pytest.raises(ValidationError):
-        Config.model_validate({"orchestrator": {"enabled": True, "label": "", "staging_root": ""}})
 
 
 def test_orchestrator_enabled_requires_label() -> None:

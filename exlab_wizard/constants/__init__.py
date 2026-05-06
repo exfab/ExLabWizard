@@ -9,6 +9,9 @@ section citations.
 
 from __future__ import annotations
 
+# ---- App-level identifiers ----
+from exlab_wizard.constants.app import APP_NAME
+
 # ---- Enums (Backend §4.7, §4.9.1, §5.2, §6.2.4, §7, §8.1, §11.3, §13.3) ----
 from exlab_wizard.constants.enums import (
     CompletenessSignal,
@@ -124,6 +127,8 @@ from exlab_wizard.constants.schema_versions import (
 __all__ = [
     # Filenames
     "ANSWERS_FILE_NAME",
+    # App identifiers
+    "APP_NAME",
     # Limits
     "AUDIT_REFRESH_SECONDS",
     "CACHE_DIR_NAME",
