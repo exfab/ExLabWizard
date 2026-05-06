@@ -99,6 +99,18 @@ Logs emitted inside the `with` block carry the `[host:]`, `[equip:]`, `[proj:]`,
 
 Project- and run-level scoping (writing to `<local_root>/<equipment>/<project>/.exlab-wizard/...` or its run subdirectory) follows the same pattern with the path resolved from `project_short_id` / `run_id` in the active context.
 
+### 16.2.5 Non-blocking emit via `QueueHandler` + `QueueListener`
+
+The `EquipmentScopedFileHandler` and the central `RotatingFileHandler` perform synchronous filesystem writes — calling them directly from an `async def` handler would block the event loop on every log call. To avoid this, the logger architecture wraps the actual handlers behind stdlib `logging.handlers.QueueHandler` + `logging.handlers.QueueListener`:
+
+- The configured `Logger` instance carries a single `QueueHandler` whose `queue` is an unbounded `queue.Queue`. Calls to `logger.info(...)` / `logger.warning(...)` enqueue and return immediately on the calling thread (which may be the asyncio event loop).
+- A dedicated background thread, started in `configure_logging`, runs `QueueListener` against that queue. The listener invokes the real handlers (`EquipmentScopedFileHandler`, the central `RotatingFileHandler`, the stderr `StreamHandler`) one record at a time on its own thread.
+- On graceful shutdown (Backend §4.3.2 `quit_coordinator`), the listener is told to drain the queue and the thread joins before the process exits, so no log records are lost on normal Quit. On force-quit, the queue is dropped — operators are told via the §3.4.6 banner that some entries may be lost.
+
+Why stdlib `QueueHandler` rather than `aiologger`: the stdlib pair is enough, doesn't introduce a parallel logger class, and stays compatible with every third-party library that does `logging.getLogger(__name__).info(...)` without us doing anything special. `aiologger` would require call-site changes for marginal benefit at lab cadence.
+
+This is the recommended adoption from the vectorization audit and matches the §4.5 concurrent-log-write rules: same-equipment concurrent emits land in the queue in arrival order, the listener thread serializes them onto the file handler, and `O_APPEND` semantics on the file handler itself make the actual write tear-free.
+
 ## 16.3 Log file layout (where-to-look quick reference)
 
 | If you want to debug... | Look at... |

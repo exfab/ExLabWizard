@@ -1,7 +1,94 @@
 [project]
 name = "exlabwizard"
 version = "0.1.0"
-description = "Add your description here"
+description = "Desktop tool for standardized lab run/project directory creation, NAS sync, and LIMS integration"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+
+# Runtime dependencies. Each entry cites the design-spec section that commits the dependency.
+# Cross-OS conditionals use sys_platform markers; transitive backends (Cocoa on macOS, etc.) are pulled in by their parent packages.
+dependencies = [
+    # ---- Web framework + ASGI server (Backend §4.1, §4.2, §4.6) ----
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "pydantic>=2.6",                       # API request/response models, config models
+    "httpx>=0.27",                         # LIMS REST client + integration test client (Backend §7.2.5, §4.10.2)
+
+    # ---- Native window + tray (Frontend §2; Backend §4.1, §4.3.2, §15) ----
+    "nicegui>=1.4",                        # UI component library; mounts on FastAPI
+    "pywebview>=5.0",                      # Native window for the NiceGUI surface
+    "pystray>=0.19",                       # System-tray icon
+    "plyer>=2.1",                          # Cross-platform OS notifications (§15.7.3)
+
+    # ---- Template engine (Backend §5) ----
+    "copier>=9.0",                         # _min_copier_version pinned by spec (§5.2)
+    "jinja2>=3.1",                         # Used by Copier for .jinja-suffixed files
+    "jinja2-ansible-filters>=1.3",         # Extra filters referenced in §5.6
+
+    # ---- Cache file I/O + schema validation (HIGH-LEVERAGE; vectorization audit recommendation #1) ----
+    "msgspec>=0.18",                       # Typed JSON Struct/encoder; replaces stdlib json on hot paths (§4.4.5, §11.3, §11.4); also handles plugin-host IPC envelopes (§6.3.2) and WebSocket frames (§4.6.2)
+
+    # ---- Atomic file locking (vectorization recommendation #2; §4.4.5) ----
+    "filelock>=3.13",                      # Cross-platform LOCK_EX/LOCK_SH; matches the spec's `with FileLock(...)` shape exactly
+
+    # ---- Async SQLite (vectorization recommendation #3; §7.1.1, §7.2.4) ----
+    "aiosqlite>=0.20",                     # Async-native access to lims_cache.db and sync_queue.db; removes the asyncio.to_thread roundtrip
+
+    # ---- YAML I/O (config.yaml round-trip + read-only manifest reads; §6.1.2, §9, §10.7.1) ----
+    "ruamel.yaml>=0.18",                   # Round-trip preserving comments + key order for config.yaml (Settings UI writes back via this)
+    "pyyaml>=6.0",                         # Read-only path for copier.yml, manifest.yml, README front matter — faster than ruamel for these
+
+    # ---- Credential storage (Backend §7.4) ----
+    "keyring>=24.0",                       # OS keyring (Keychain / Credential Manager / Secret Service)
+    "cryptography>=42.0",                  # Fernet for encrypted-at-rest fallback when no keyring is available (§7.4.4)
+    "argon2-cffi>=23.1",                   # Argon2id KDF for the master passphrase in the encrypted-at-rest fallback (§7.4.4)
+
+    # ---- Markdown rendering (README preview, log viewer; Frontend §3.6.3, §3.6.5) ----
+    "markdown-it-py>=3.0",                 # CommonMark-compliant; YAML-front-matter aware via the front_matter plugin
+
+    # ---- Windows-only: plugin Job Object resource limits (Backend §6.3.3) ----
+    "pywin32>=306; sys_platform == 'win32'",
+
+    # ---- Linux-only: keyring's Secret Service backend (Backend §7.4); fallback path triggers when this fails to import ----
+    "secretstorage>=3.3; sys_platform == 'linux'",
+]
+
+[project.optional-dependencies]
+# Plugin-author libraries used in worked examples (Backend §6.6, §6.7).
+# These are NOT bundled with the app; plugin authors install them in their plugin's own requirements.
+# Listed here so that running `uv pip install -e .[plugin-examples]` picks them up for local plugin development.
+plugin-examples = [
+    "openpyxl>=3.1",                       # xlsx_field_filler worked example (§6.6)
+    "python-docx>=1.1",                    # docx_variable_replacer illustrative plugin (§6.7)
+]
+
+# Testing (Backend §4.10).
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "playwright>=1.40",                    # E2E browser automation against http://127.0.0.1:<port> (Backend §4.10.3)
+    # httpx is already in core deps — used for AsyncClient(app=app) in integration tests too
+]
+
+# Build (Backend §15.1; PyInstaller --onedir with three entry points).
+build = [
+    "pyinstaller>=6.3",
+]
+
+# Dev convenience: install everything for local development with `uv pip install -e .[dev]`.
+dev = [
+    "exlabwizard[plugin-examples,test,build]",
+]
+
+[project.scripts]
+# Three console entry points per Backend §15.3:
+# - exlab-wizard       : CLI alias the operator double-clicks (Backend §15.3.3); spawns or focuses the tray.
+# - exlab-wizard-tray  : Long-lived tray + server process (Backend §15.3.1); registered for autostart.
+# - exlab-wizard-window: On-demand pywebview window subprocess (Backend §15.3.2); spawned by the tray.
+exlab-wizard = "exlab_wizard.__main__:main"
+exlab-wizard-tray = "exlab_wizard.tray.main:main"
+exlab-wizard-window = "exlab_wizard.window.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -69,6 +69,8 @@ The host scans the plugin root and treats each direct child directory as one plu
 
 ### 6.1.2 `manifest.yml` schema
 
+The plugin host parses `manifest.yml` with PyYAML (`yaml.safe_load`) — round-trip preservation is unnecessary because the host never writes back. PyYAML is committed in `pyproject.toml`.
+
 ```yaml
 # Required identity fields
 name: "xlsx_field_filler"
@@ -366,6 +368,8 @@ One worker subprocess per plugin per creation session. The worker is a fork of t
 The worker has the rendered destination directory as its CWD and inherits a sanitized environment: only `PATH`, `HOME`, `LANG`, and a small allowlist of `EXLAB_*` variables are passed through.
 
 ### 6.3.2 IPC envelope
+
+Both host and worker serialize / deserialize IPC frames via `msgspec.json` against `msgspec.Struct` envelope types defined in `exlab_wizard/plugins/_ipc.py`. The host imports the same Struct classes; the worker imports them too (the worker is a child of the same bundled CPython, sharing the package). Schema validation happens during decode in one pass, so a malformed envelope is caught at the boundary rather than mid-handler. `msgspec` is committed in `pyproject.toml`.
 
 Stdin (host → worker), one JSON object terminated by `\n`:
 

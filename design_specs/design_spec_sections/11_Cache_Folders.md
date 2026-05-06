@@ -81,6 +81,8 @@ All `.exlab-wizard` contents sync to NAS as part of the directory mirror with SH
 
 ## 11.3 `creation.json` Schema
 
+The schema is implemented as a `msgspec.Struct` class hierarchy in `exlab_wizard/api/schemas.py` (cross-referenced from `cache/creation_writer.py` and `controller/`). `msgspec.json.decode(blob, type=CreationJson)` validates and decodes in one pass; `msgspec.json.encode(obj)` emits the canonical JSON shape below. This is the only schema-validation surface for cache files; FastAPI body validation continues to use Pydantic for HTTP request shapes that aren't round-tripped through cache.
+
 ```json
 {
   "schema_version": "1.8",
@@ -228,6 +230,8 @@ Empty array (the default) means no overrides are active. Tombstones with no matc
 Readers expecting earlier versions ignore unknown fields; `run_kind` defaults to `"experimental"`, `validation_overrides` defaults to `[]`, `plugins_applied[].isolation` is treated as absent when missing, `lims_project` is treated as absent, and `lims_project.source` defaults to `"live"` with `cache_freshness_at_use` defaulting to `null` — matching historical behavior before each respective addition.
 
 ## 11.4 `readme_fields.json` Schema
+
+Like `creation.json` (§11.3), the schema is implemented as a `msgspec.Struct` class hierarchy in `exlab_wizard/api/schemas.py`; reads/writes go through `msgspec.json.decode` / `msgspec.json.encode` for typed validation in one pass.
 
 Schema version 1.1 separates the four field layers so downstream tools can reason about provenance: which fields came from backend core, template declaration, config extension, or ad-hoc user input.
 
@@ -386,6 +390,13 @@ The validator engine is the single component that implements the rules in [[08_E
 **Creation-time mode.** Inputs: a resolved destination path, a resolved variable map, a list of files about to be written (with their post-render content for text files). Output: `pass` or `fail` plus a list of findings. On `fail`, the controller raises a structured validation error and aborts before any filesystem writes ([[08_Error_Handling_Principles|§8]] bullet "Validation"). This mode does not touch the disk.
 
 **Audit mode.** Inputs: a directory subtree under the managed `local_root` (and, when orchestrator mode is on, the `staging_root`). Output: a list of findings, one per problem instance. This mode walks the disk; it reads `.exlab-wizard/creation.json` for each directory it visits but does not read large data files. Text-file content scanning (for [[08_Error_Handling_Principles#8.1.1 Unresolved-placeholder rule (hard tier)|§8.1.1]]'s leftover Jinja markers) is bounded by `config.yaml` `validator.content_scan_max_mib` and `validator.content_scan_extensions` (defaults defined in [[09_Configuration_File|§9]] — the canonical source); files outside those limits are skipped. Binary files are always skipped.
+
+**Implementation-side performance commitments** (see Backend §4.5):
+
+- The directory walk uses `os.scandir` (stdlib), not `pathlib.Path.rglob`. `DirEntry.is_dir()` / `is_file()` are cached from the iteration, so the walk avoids a per-entry `stat()` syscall.
+- `creation.json` is decoded with `msgspec.json.decode(..., type=CreationJson)`. The typed decode is order-of-magnitude faster than stdlib `json` and validates schema in one pass.
+- Regex patterns for §8.1.1 are pre-compiled once at module load (`constants/patterns.py`); per-file scans reuse the compiled `re.Pattern` objects.
+- Pattern matching uses stdlib `re`, NOT third-party `hyperscan` or subprocess `ripgrep`. The §11.8 determinism contract ("byte-identical finding lists across identical configs") binds the engine; swapping regex engines breaks reproducibility across hosts.
 
 **Finding shape.** Every finding emitted by either mode has the same JSON shape:
 

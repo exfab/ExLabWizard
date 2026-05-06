@@ -102,8 +102,8 @@ exlab_wizard/
       problems.py          # GET /problems, POST /problems/{run_path}/override
       config.py            # GET/PUT /config
       browse.py            # GET /tree, GET /run/{path}
-    schemas.py             # Pydantic request/response models
-    events.py              # WebSocket event envelope types
+    schemas.py             # API request/response models. Pydantic for the FastAPI body validation surface; msgspec.Struct for everything that round-trips through cache files (so the same Struct types are used by api/, controller/, and cache/).
+    events.py              # WebSocket event envelope types (msgspec.Struct, encoded via msgspec.json)
   controller/
     creation.py            # CreationController: create_*/resume/cancel/status
     state_machine.py       # SessionState enum + transition table
@@ -122,21 +122,21 @@ exlab_wizard/
     engine.py              # Validator class; creation-time + audit modes; query_problems()
     findings.py            # Finding dataclass; serialization to the §11.8 schema
   cache/
-    creation_writer.py     # creation.json atomic read/write/update
-    log_writer.py          # append to wizard.<hostname>.log
-    equipment.py           # equipment.json read/write
-    ingest_writer.py       # orchestrator-only: ingest.json
+    creation_writer.py     # creation.json atomic read/write/update via msgspec.json + filelock; see §4.4.5
+    log_writer.py          # append to wizard.<hostname>.log; non-blocking emit via QueueHandler/QueueListener (§16.2.4)
+    equipment.py           # equipment.json read/write (msgspec.json)
+    ingest_writer.py       # orchestrator-only: ingest.json (msgspec.json)
   readme/
     generator.py           # merge field layers, render YAML+Markdown, write README.md + readme_fields.json
   sync/
     nas_client.py          # NASSync interface (see §7.1)
   lims/
-    client.py              # LIMSClient (read-only in v1; see §7.2)
-    schemas.py             # LIMSProject, LIMSUser dataclasses
-    cache.py               # SQLite-backed project-list cache (TTL-driven; §7.2.4)
+    client.py              # LIMSClient (read-only in v1; see §7.2). Uses httpx for REST + cookie session.
+    schemas.py             # LIMSProject, LIMSUser as msgspec.Struct types
+    cache.py               # SQLite-backed project-list cache via aiosqlite (TTL-driven; §7.2.4). Indexed on (lims_endpoint, short_id, last_refreshed).
   config/
-    loader.py              # config.yaml -> typed model
-    models.py              # pydantic models matching §9
+    loader.py              # config.yaml -> typed model. Uses ruamel.yaml (round-trip preserving comments and key order; the Settings UI write path goes through this loader so saving config.yaml does not strip operator-readable comments). pyyaml is reserved for read-only files (copier.yml, manifest.yml, README front matter) where round-trip preservation isn't needed and pyyaml is faster.
+    models.py              # pydantic models matching §9 (used for FastAPI's PUT /config validation surface; round-trips through ruamel.yaml on save)
   ui/
     design.py              # design tokens (color, typography, spacing, radius, shadows) mirroring DESIGN.md; see Frontend §2.1
     theme.py               # NiceGUI/Quasar theme registration that consumes design.py constants
@@ -277,8 +277,9 @@ class Validator:
 
 All `.exlab-wizard/*` mutations go through `CacheWriter`. The class enforces:
 
+- **`msgspec` for typed JSON encode/decode** (`msgspec.json.encode` / `msgspec.json.decode` with `msgspec.Struct` schema classes mirroring §11.3 / §11.4). Replaces stdlib `json` on this hot path: schema validation happens during decode (no separate Pydantic round-trip), encode is order-of-magnitude faster than `json.dumps` on payloads of this shape, and the binary `bytes` output writes directly with no `.encode()` step.
 - Tempfile + `os.replace` for every JSON write (atomic on POSIX; atomic-on-same-volume on Windows).
-- Per-file advisory file lock on `creation.json` updates: `fcntl.flock(LOCK_EX)` on POSIX / `LockFileEx` (exclusive) on Windows. Three writers share `creation.json` (NAS sync module, Pre-Sync Gate, override action), and the lock makes their updates serializable.
+- **Per-file advisory file lock via `filelock` package.** The cross-platform `filelock.FileLock(path, mode="exclusive")` API matches the spec's pseudocode below exactly and absorbs the POSIX `fcntl.flock` vs Windows `LockFileEx` branch. Three writers share `creation.json` (NAS sync module, Pre-Sync Gate, override action), and the lock makes their updates serializable.
 - Append-only writes for `wizard.<hostname>.log`; one log file per `(hostname, equipment, project)` triple plus per-run logs (see §4.5 concurrency note).
 
 ```python
@@ -299,12 +300,15 @@ class CacheWriter:
 
 ```python
 # Inside CacheWriter.update_creation_atomic
-with FileLock(path, mode="exclusive"):
-    payload = json.loads(path.read_text())          # read inside the lock
-    new_payload = mutator(payload)                  # mutate inside the lock
+import msgspec
+from filelock import FileLock
+
+with FileLock(str(path) + ".lock", mode="exclusive"):
+    payload = msgspec.json.decode(path.read_bytes(), type=CreationJson)  # typed decode inside the lock
+    new_payload = mutator(payload)                                       # mutate inside the lock
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(new_payload))         # write inside the lock
-    os.replace(tmp, path)                           # atomic rename inside the lock
+    tmp.write_bytes(msgspec.json.encode(new_payload))                    # typed encode inside the lock
+    os.replace(tmp, path)                                                # atomic rename inside the lock
 ```
 
 `update_creation_atomic` is the **only** API that mutates an existing `creation.json`; direct `write_creation` is reserved for initial creation when no file exists yet (and is also wrapped in `LOCK_EX` defensively, so the second writer gets `FileExistsError` rather than racing). Callers that only need to read may use `read_creation_snapshot`, which acquires `LOCK_SH` (shared / read lock); concurrent readers don't block each other but a `LOCK_EX` writer waits for active readers to release.
@@ -359,7 +363,7 @@ In-memory `dict[str, Session]` for v1. Session count is bounded by concurrent in
 | Web tier (REST + WebSocket) | Native FastAPI `async def`. NiceGUI page handlers are `async`. |
 | Controller, PluginHost, CacheWriter | `async`. Plugin worker subprocesses managed via `asyncio.create_subprocess_exec`, awaited with timeouts (per-plugin `isolation.timeout_seconds`). |
 | Validator | Synchronous functions. Called from async code via `asyncio.to_thread()`. CPU-bound but fast (regex over strings, bounded text-file scans). |
-| Background audit refresh | An `asyncio` task started in the FastAPI lifespan; runs `Validator.audit("all")` every 30 s, publishes the diff to a pub-sub channel that the Problems-tab WebSocket reads. Manually re-triggerable via `POST /api/v1/problems/refresh`. |
+| Background audit refresh | An `asyncio` task started in the FastAPI lifespan; runs `Validator.audit("all")` every 30 s, publishes the diff to a pub-sub channel that the Problems-tab WebSocket reads. Manually re-triggerable via `POST /api/v1/problems/refresh`. The walk uses `os.scandir` (NOT `pathlib.Path.rglob`) for the directory traversal — `os.scandir` returns `DirEntry` objects whose `is_dir()`/`is_file()` are cached from the directory iteration, avoiding a per-entry `stat()` syscall. The audit reads `creation.json` files via `msgspec.json.decode` (typed); cache-database queries (`lims_cache.db`, `sync_queue.db`) go through `aiosqlite` rather than stdlib `sqlite3`-via-`asyncio.to_thread`. The end-to-end target documented in §11.8 ("cheap enough on a typical lab tree of tens of thousands of files") depends on these choices; profile changes here against the §11.8 determinism contract. |
 | NAS sync | `async`; retry handled inside `NASSyncClient`. |
 | LIMS reads | `async`; cache-aware via `lims/cache.py` (SQLite TTL cache). No LIMS writes in v1 (§7.2). |
 | Tray event loop (pystray) | Runs on the **main thread**; the FastAPI/uvicorn server runs on its own asyncio loop in a worker thread. The tray callbacks (Open / Quit) interact with the server via thread-safe wrappers (`asyncio.run_coroutine_threadsafe` for cross-thread coroutine invocation). The status submenu is refreshed by a synchronous 5-second timer in the tray thread that reads atomic snapshots from `SessionStore`, `NASSyncClient`, and `Validator`. |
@@ -401,7 +405,7 @@ All POSTs return either a `SessionHandle`-like envelope or a structured error bo
 
 ### 4.6.2 WebSocket events
 
-`WS /api/v1/sessions/{id}/events` — server → client, JSON-per-frame. The frame envelope is one of:
+`WS /api/v1/sessions/{id}/events` — server → client, JSON-per-frame. Frame envelope types are declared as `msgspec.Struct` classes in `api/events.py` (§4.3); serialization uses `msgspec.json.encode` for the same typed-and-fast reasons documented for cache files in §4.4.5. The frame envelope is one of:
 
 ```json
 { "kind": "phase",          "phase": "rendering_template",  "at": "2026-05-05T12:34:56Z" }

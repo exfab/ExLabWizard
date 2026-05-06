@@ -14,6 +14,8 @@ App-level config lives in a single `config.yaml` in the user's app data director
 
 `config.yaml` contains **no secrets**. Every credential the app needs is stored in the OS keyring (§7.4); `config.yaml` references credentials by their keyring service+username pair only.
 
+**YAML library.** `config.yaml` is read AND written by the app (the Settings UI's Save action; Frontend §7.3). To preserve operator-readable comments and key order across save/reload cycles, the loader uses [`ruamel.yaml`](https://yaml.dev/doc/ruamel.yaml/) (round-trip mode). Read-only YAML files elsewhere in the codebase (`copier.yml`, `manifest.yml`, README front matter) use PyYAML's `yaml.safe_load` because round-trip preservation isn't needed and PyYAML is faster. Both libraries are committed in `pyproject.toml`.
+
 ```yaml
 paths:
   templates_dir: "..."      # directory containing Copier template subdirectories (app files)

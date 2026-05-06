@@ -2,7 +2,9 @@
 
 Parent: [[ExLab-Wizard_Design_Spec]]
 
-Each project and run creation generates a `README.md` in the created directory root. The file is designed to be **both machine-queryable and human-readable**: structured fields live in a YAML front matter block at the top of the file, and human prose sections follow below. Any YAML parser (`yaml.safe_load` in Python, `js-yaml` in JavaScript, etc.) can extract all structured metadata without touching the prose body.
+Each project and run creation generates a `README.md` in the created directory root. The file is designed to be **both machine-queryable and human-readable**: structured fields live in a YAML front matter block at the top of the file, and human prose sections follow below. Any YAML parser (`pyyaml`'s `yaml.safe_load` in Python, `js-yaml` in JavaScript, etc.) can extract all structured metadata without touching the prose body.
+
+**Library choices for v1.** The Frontend detail-pane README preview (Frontend §3.6.3) and the read-only log viewer (Frontend §3.6.5) render Markdown via [`markdown-it-py`](https://markdown-it-py.readthedocs.io/) (CommonMark-compliant; the `front_matter` plugin extracts the YAML block separately from the prose). README front matter on the *write* path is emitted from a `msgspec.Struct` mirror of `readme_fields.json` (§11.4) using PyYAML for serialization (round-trip preservation isn't required when the writer is the app itself). Reading back uses PyYAML's `yaml.safe_load`. These commitments are pinned in `pyproject.toml`.
 
 ## 10.1 When It Runs
 
