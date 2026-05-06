@@ -1,1 +1,1 @@
-"""Plugins package. Backend Section 6."""
+"""Plugins package. Backend Spec §6."""

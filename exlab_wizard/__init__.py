@@ -1,1 +1,1 @@
-"""ExLab-Wizard package root. Backend Section 4."""
+"""ExLab-Wizard package root. Backend Spec §4."""

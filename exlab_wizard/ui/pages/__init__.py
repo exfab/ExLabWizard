@@ -1,1 +1,1 @@
-"""UI pages package. Backend Section 4."""
+"""UI pages package. Backend Spec §4."""

@@ -22,23 +22,17 @@ EQUIPMENT_ID_MAX_LENGTH: int = 32
 # Detects unresolved ``<placeholder>`` tokens left over after rendering.
 # Validator engine flags every match. Backend Spec §8.1.1.
 PLACEHOLDER_ANGLE_BRACKET_REGEX: str = r"<[A-Za-z_][A-Za-z0-9_]*>"
-PLACEHOLDER_ANGLE_BRACKET_PATTERN: re.Pattern[str] = re.compile(
-    PLACEHOLDER_ANGLE_BRACKET_REGEX
-)
+PLACEHOLDER_ANGLE_BRACKET_PATTERN: re.Pattern[str] = re.compile(PLACEHOLDER_ANGLE_BRACKET_REGEX)
 
 # Detects leftover Jinja variable markers (``{{ ... }}``) in rendered output.
 # Backend Spec §8.1.1.
 PLACEHOLDER_JINJA_VAR_REGEX: str = r"\{\{[^}]*\}\}"
-PLACEHOLDER_JINJA_VAR_PATTERN: re.Pattern[str] = re.compile(
-    PLACEHOLDER_JINJA_VAR_REGEX
-)
+PLACEHOLDER_JINJA_VAR_PATTERN: re.Pattern[str] = re.compile(PLACEHOLDER_JINJA_VAR_REGEX)
 
 # Detects leftover Jinja block markers (``{% ... %}``) in rendered output.
 # Backend Spec §8.1.1.
 PLACEHOLDER_JINJA_BLOCK_REGEX: str = r"\{%[^%]*%\}"
-PLACEHOLDER_JINJA_BLOCK_PATTERN: re.Pattern[str] = re.compile(
-    PLACEHOLDER_JINJA_BLOCK_REGEX
-)
+PLACEHOLDER_JINJA_BLOCK_PATTERN: re.Pattern[str] = re.compile(PLACEHOLDER_JINJA_BLOCK_REGEX)
 
 # Short-form LIMS project identifier used in run directory names.
 # Backend Spec §7.2.
@@ -48,9 +42,7 @@ PROJECT_SHORT_ID_PATTERN: re.Pattern[str] = re.compile(PROJECT_SHORT_ID_REGEX)
 # Allowed grammar for template question IDs declared in copier.yml.
 # Backend Spec §5.
 TEMPLATE_QUESTION_ID_REGEX: str = r"^[a-z][a-z0-9_]*$"
-TEMPLATE_QUESTION_ID_PATTERN: re.Pattern[str] = re.compile(
-    TEMPLATE_QUESTION_ID_REGEX
-)
+TEMPLATE_QUESTION_ID_PATTERN: re.Pattern[str] = re.compile(TEMPLATE_QUESTION_ID_REGEX)
 
 # Allowed grammar for plugin package names. Backend Spec §6.
 PLUGIN_NAME_REGEX: str = r"^[A-Za-z0-9_-]+$"

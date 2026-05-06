@@ -1,1 +1,1 @@
-"""UI components package. Backend Section 4."""
+"""UI components package. Backend Spec §4."""

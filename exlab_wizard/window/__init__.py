@@ -1,1 +1,1 @@
-"""Window application package. Backend Section 4."""
+"""Window application package. Backend Spec §4."""

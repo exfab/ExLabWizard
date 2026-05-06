@@ -1,1 +1,1 @@
-"""Sync transports package. Backend Section 7."""
+"""Sync transports package. Backend Spec §7."""

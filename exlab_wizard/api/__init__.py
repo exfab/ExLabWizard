@@ -1,1 +1,1 @@
-"""HTTP API package. Backend Section 4."""
+"""HTTP API package. Backend Spec §4."""

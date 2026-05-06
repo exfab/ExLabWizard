@@ -1,1 +1,1 @@
-"""LIMS integration package. Backend Section 4."""
+"""LIMS integration package. Backend Spec §4."""

@@ -1,1 +1,1 @@
-"""Config package. Backend Section 9."""
+"""Config package. Backend Spec §9."""

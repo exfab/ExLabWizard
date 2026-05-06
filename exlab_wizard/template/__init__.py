@@ -1,1 +1,1 @@
-"""Template (Copier) package. Backend Section 5."""
+"""Template (Copier) package. Backend Spec §5."""

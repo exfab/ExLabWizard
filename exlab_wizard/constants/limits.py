@@ -7,6 +7,12 @@ module so spec compliance can be audited at a single location.
 
 from __future__ import annotations
 
+from exlab_wizard.constants.filenames import (
+    ANSWERS_FILE_NAME,
+    CACHE_DIR_NAME,
+    README_FILE_NAME,
+)
+
 # Maximum wall-clock seconds a plugin may run before the host kills it.
 # Backend Spec §6.1.2.
 PLUGIN_TIMEOUT_MAX_SECONDS: int = 300
@@ -46,9 +52,9 @@ PLUGIN_SUPPORTED_API_VERSIONS: frozenset[str] = frozenset({"1"})
 # Path prefixes that plugins are forbidden to write inside a run/project
 # directory (the wizard owns these locations). Backend Spec §6.1.5.
 PLUGIN_FORBIDDEN_PATH_PREFIXES: tuple[str, ...] = (
-    "README.md",
-    ".exlab-wizard/",
-    ".exlab-answers.yml",
+    README_FILE_NAME,
+    f"{CACHE_DIR_NAME}/",
+    ANSWERS_FILE_NAME,
 )
 
 # Maximum length, in characters, of a user-entered field label. UI Spec §2.

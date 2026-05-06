@@ -1,1 +1,1 @@
-"""Tray application package. Backend Section 4."""
+"""Tray application package. Backend Spec §4."""

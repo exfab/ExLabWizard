@@ -53,7 +53,7 @@ def test_plugin_api_version() -> None:
 
 def test_plugin_supported_api_versions() -> None:
     # Backend Spec §6.1.2.
-    assert limits.PLUGIN_SUPPORTED_API_VERSIONS == frozenset({"1"})
+    assert frozenset({"1"}) == limits.PLUGIN_SUPPORTED_API_VERSIONS
     assert isinstance(limits.PLUGIN_SUPPORTED_API_VERSIONS, frozenset)
     # The current API version must always be in the supported set.
     assert limits.PLUGIN_API_VERSION in limits.PLUGIN_SUPPORTED_API_VERSIONS
@@ -148,7 +148,7 @@ def test_limits_re_exported_from_package() -> None:
     assert constants.PLUGIN_RLIMIT_NOFILE == 256
     assert constants.PLUGIN_IPC_FRAME_CAP_BYTES == 1024 * 1024
     assert constants.PLUGIN_API_VERSION == "1"
-    assert constants.PLUGIN_SUPPORTED_API_VERSIONS == frozenset({"1"})
+    assert frozenset({"1"}) == constants.PLUGIN_SUPPORTED_API_VERSIONS
     assert constants.PLUGIN_FORBIDDEN_PATH_PREFIXES == (
         "README.md",
         ".exlab-wizard/",

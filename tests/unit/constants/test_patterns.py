@@ -11,7 +11,6 @@ import re
 
 from exlab_wizard.constants import patterns
 
-
 # ---------------------------------------------------------------------------
 # Equipment ID -- Backend Spec §3.1
 # ---------------------------------------------------------------------------
@@ -41,14 +40,14 @@ def test_equipment_id_pattern_accepts_valid_ids() -> None:
 
 def test_equipment_id_pattern_rejects_invalid_ids() -> None:
     rejected = [
-        "",                # empty
-        "1FOO",            # starts with a digit
-        "_FOO",            # starts with underscore
-        "foo",             # lowercase
-        "FOO BAR",         # whitespace
-        "FOO-BAR",         # hyphen
-        "FOO.BAR",         # dot
-        "FOO/BAR",         # slash
+        "",  # empty
+        "1FOO",  # starts with a digit
+        "_FOO",  # starts with underscore
+        "foo",  # lowercase
+        "FOO BAR",  # whitespace
+        "FOO-BAR",  # hyphen
+        "FOO.BAR",  # dot
+        "FOO/BAR",  # slash
     ]
     for value in rejected:
         assert not patterns.EQUIPMENT_ID_PATTERN.match(value), value
@@ -213,7 +212,7 @@ def test_windows_reserved_names_membership() -> None:
         | {f"COM{i}" for i in range(1, 10)}
         | {f"LPT{i}" for i in range(1, 10)}
     )
-    assert patterns.WINDOWS_RESERVED_NAMES == expected
+    assert expected == patterns.WINDOWS_RESERVED_NAMES
 
 
 def test_windows_reserved_names_is_frozenset() -> None:

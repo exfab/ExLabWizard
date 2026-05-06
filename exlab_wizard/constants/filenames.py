@@ -39,7 +39,7 @@ README_FILE_NAME: str = "README.md"
 
 # Path (relative to the run/project root) of the integrity-checksum file
 # written by the wizard after a successful creation. Backend Spec §11.3.
-CHECKSUMS_RELATIVE: str = ".exlab-wizard/checksums.sha256"
+CHECKSUMS_RELATIVE: str = f"{CACHE_DIR_NAME}/checksums.sha256"
 
 # Manifest filename inside a Copier template root. Backend Spec §5.2.
 COPIER_MANIFEST_NAME: str = "copier.yml"
