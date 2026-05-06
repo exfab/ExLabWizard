@@ -1,0 +1,219 @@
+"""Public re-exports for the ``exlab_wizard.constants`` package.
+
+Callers should import constants from this top-level package
+(``from exlab_wizard.constants import EQUIPMENT_ID_REGEX, RunKind``) rather
+than reaching into the individual submodules. Every value re-exported here
+is committed by the design spec; see the individual submodules for the
+section citations.
+"""
+
+from __future__ import annotations
+
+# ---- Schema versions (Backend §11.3, §11.4, §13.4, §7.2.9, §10) -------------
+from exlab_wizard.constants.schema_versions import (
+    CREATION_JSON_VERSION,
+    EQUIPMENT_JSON_VERSION,
+    INGEST_JSON_VERSION,
+    OFFLINE_CATALOGUE_VERSION,
+    README_FIELDS_JSON_VERSION,
+    README_FRONT_MATTER_SCHEMA_VERSION,
+    TEST_RUNS_JSON_VERSION,
+)
+
+# ---- Filenames (Backend §11.3, §11.4, §13.4, §10, §5.2, §6.1.2, §7) --------
+from exlab_wizard.constants.filenames import (
+    ANSWERS_FILE_NAME,
+    CACHE_DIR_NAME,
+    CENTRAL_LOG_FILE,
+    CHECKSUMS_RELATIVE,
+    COPIER_MANIFEST_NAME,
+    CREATION_JSON_NAME,
+    EQUIPMENT_JSON_NAME,
+    INGEST_JSON_NAME,
+    LIMS_CACHE_DB_NAME,
+    LOG_FILE_TEMPLATE,
+    PLUGIN_MANIFEST_NAME,
+    README_FIELDS_JSON_NAME,
+    README_FILE_NAME,
+    SECRETS_FILE,
+    SERVER_STATE_FILE,
+    SYNC_QUEUE_DB_NAME,
+    TEST_RUNS_JSON_NAME,
+)
+
+# ---- Patterns (Backend §3.1, §5, §6, §7.2, §8.1.1, §8.1.2) -----------------
+from exlab_wizard.constants.patterns import (
+    EQUIPMENT_ID_MAX_LENGTH,
+    EQUIPMENT_ID_PATTERN,
+    EQUIPMENT_ID_REGEX,
+    PLACEHOLDER_ANGLE_BRACKET_PATTERN,
+    PLACEHOLDER_ANGLE_BRACKET_REGEX,
+    PLACEHOLDER_JINJA_BLOCK_PATTERN,
+    PLACEHOLDER_JINJA_BLOCK_REGEX,
+    PLACEHOLDER_JINJA_VAR_PATTERN,
+    PLACEHOLDER_JINJA_VAR_REGEX,
+    PLUGIN_NAME_PATTERN,
+    PLUGIN_NAME_REGEX,
+    PROJECT_SHORT_ID_PATTERN,
+    PROJECT_SHORT_ID_REGEX,
+    RUN_DATE_STRFTIME,
+    RUN_DIR_PREFIX,
+    TEMPLATE_QUESTION_ID_PATTERN,
+    TEMPLATE_QUESTION_ID_REGEX,
+    TEST_RUN_DIR_PREFIX,
+    TEST_RUNS_DIR_NAME,
+    WINDOWS_ILLEGAL_CHARS,
+    WINDOWS_RESERVED_NAMES,
+)
+
+# ---- Enums (Backend §4.7, §4.9.1, §5.2, §6.2.4, §7, §8.1, §11.3, §13.3) ----
+from exlab_wizard.constants.enums import (
+    CompletenessSignal,
+    FindingKind,
+    IngestState,
+    LIMSProjectSource,
+    LIMSProjectStatus,
+    PluginStatus,
+    ProblemClass,
+    RunKind,
+    RunScope,
+    SetupState,
+    StagingCleanupMode,
+    SyncStatus,
+    TemplateType,
+    Tier,
+    TransportType,
+)
+
+# ---- Keyring (Backend §7.4.1) ----------------------------------------------
+from exlab_wizard.constants.keyring import (
+    KEYRING_SERVICE,
+    KEYRING_USERNAME_LIMS,
+    KEYRING_USERNAME_NAS_TEMPLATE,
+    keyring_nas_username,
+)
+
+# ---- Limits (Backend §4, §6, §8.1.1, §15; Frontend §4.6) -------------------
+from exlab_wizard.constants.limits import (
+    AUDIT_REFRESH_SECONDS,
+    DISK_SPACE_PREFLIGHT_MIB,
+    LABEL_MAX_LENGTH,
+    LOG_LINE_MAX_BYTES,
+    NOTIFICATION_COALESCE_SECONDS,
+    OBJECTIVE_MAX_LENGTH,
+    PLUGIN_API_VERSION,
+    PLUGIN_FORBIDDEN_PATH_PREFIXES,
+    PLUGIN_IPC_FRAME_CAP_BYTES,
+    PLUGIN_MEMORY_MAX_MB,
+    PLUGIN_RLIMIT_NOFILE,
+    PLUGIN_SUPPORTED_API_VERSIONS,
+    PLUGIN_TIMEOUT_MAX_SECONDS,
+    PLUGIN_VALIDATION_CPU_SECONDS,
+    PLUGIN_VALIDATION_MEMORY_MB,
+    PLUGIN_VALIDATION_WALL_SECONDS,
+    QUIT_DRAIN_TIMEOUT_SECONDS,
+    SESSION_GC_AFTER_SECONDS,
+    SIGTERM_DRAIN_TIMEOUT_SECONDS,
+    TRAY_STATUS_REFRESH_SECONDS,
+    VALIDATOR_BINARY_DETECT_BYTES,
+    WINDOW_DEFAULT_HEIGHT,
+    WINDOW_DEFAULT_WIDTH,
+    WORKER_TIMEOUT_GRACE_SECONDS,
+)
+
+__all__ = [
+    # Schema versions
+    "CREATION_JSON_VERSION",
+    "EQUIPMENT_JSON_VERSION",
+    "INGEST_JSON_VERSION",
+    "OFFLINE_CATALOGUE_VERSION",
+    "README_FIELDS_JSON_VERSION",
+    "README_FRONT_MATTER_SCHEMA_VERSION",
+    "TEST_RUNS_JSON_VERSION",
+    # Filenames
+    "ANSWERS_FILE_NAME",
+    "CACHE_DIR_NAME",
+    "CENTRAL_LOG_FILE",
+    "CHECKSUMS_RELATIVE",
+    "COPIER_MANIFEST_NAME",
+    "CREATION_JSON_NAME",
+    "EQUIPMENT_JSON_NAME",
+    "INGEST_JSON_NAME",
+    "LIMS_CACHE_DB_NAME",
+    "LOG_FILE_TEMPLATE",
+    "PLUGIN_MANIFEST_NAME",
+    "README_FIELDS_JSON_NAME",
+    "README_FILE_NAME",
+    "SECRETS_FILE",
+    "SERVER_STATE_FILE",
+    "SYNC_QUEUE_DB_NAME",
+    "TEST_RUNS_JSON_NAME",
+    # Patterns (raw + compiled + filename rules)
+    "EQUIPMENT_ID_MAX_LENGTH",
+    "EQUIPMENT_ID_PATTERN",
+    "EQUIPMENT_ID_REGEX",
+    "PLACEHOLDER_ANGLE_BRACKET_PATTERN",
+    "PLACEHOLDER_ANGLE_BRACKET_REGEX",
+    "PLACEHOLDER_JINJA_BLOCK_PATTERN",
+    "PLACEHOLDER_JINJA_BLOCK_REGEX",
+    "PLACEHOLDER_JINJA_VAR_PATTERN",
+    "PLACEHOLDER_JINJA_VAR_REGEX",
+    "PLUGIN_NAME_PATTERN",
+    "PLUGIN_NAME_REGEX",
+    "PROJECT_SHORT_ID_PATTERN",
+    "PROJECT_SHORT_ID_REGEX",
+    "RUN_DATE_STRFTIME",
+    "RUN_DIR_PREFIX",
+    "TEMPLATE_QUESTION_ID_PATTERN",
+    "TEMPLATE_QUESTION_ID_REGEX",
+    "TEST_RUN_DIR_PREFIX",
+    "TEST_RUNS_DIR_NAME",
+    "WINDOWS_ILLEGAL_CHARS",
+    "WINDOWS_RESERVED_NAMES",
+    # Enum classes
+    "CompletenessSignal",
+    "FindingKind",
+    "IngestState",
+    "LIMSProjectSource",
+    "LIMSProjectStatus",
+    "PluginStatus",
+    "ProblemClass",
+    "RunKind",
+    "RunScope",
+    "SetupState",
+    "StagingCleanupMode",
+    "SyncStatus",
+    "TemplateType",
+    "Tier",
+    "TransportType",
+    # Keyring
+    "KEYRING_SERVICE",
+    "KEYRING_USERNAME_LIMS",
+    "KEYRING_USERNAME_NAS_TEMPLATE",
+    "keyring_nas_username",
+    # Limits
+    "AUDIT_REFRESH_SECONDS",
+    "DISK_SPACE_PREFLIGHT_MIB",
+    "LABEL_MAX_LENGTH",
+    "LOG_LINE_MAX_BYTES",
+    "NOTIFICATION_COALESCE_SECONDS",
+    "OBJECTIVE_MAX_LENGTH",
+    "PLUGIN_API_VERSION",
+    "PLUGIN_FORBIDDEN_PATH_PREFIXES",
+    "PLUGIN_IPC_FRAME_CAP_BYTES",
+    "PLUGIN_MEMORY_MAX_MB",
+    "PLUGIN_RLIMIT_NOFILE",
+    "PLUGIN_SUPPORTED_API_VERSIONS",
+    "PLUGIN_TIMEOUT_MAX_SECONDS",
+    "PLUGIN_VALIDATION_CPU_SECONDS",
+    "PLUGIN_VALIDATION_MEMORY_MB",
+    "PLUGIN_VALIDATION_WALL_SECONDS",
+    "QUIT_DRAIN_TIMEOUT_SECONDS",
+    "SESSION_GC_AFTER_SECONDS",
+    "SIGTERM_DRAIN_TIMEOUT_SECONDS",
+    "TRAY_STATUS_REFRESH_SECONDS",
+    "VALIDATOR_BINARY_DETECT_BYTES",
+    "WINDOW_DEFAULT_HEIGHT",
+    "WINDOW_DEFAULT_WIDTH",
+    "WORKER_TIMEOUT_GRACE_SECONDS",
+]
