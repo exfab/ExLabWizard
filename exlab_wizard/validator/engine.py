@@ -75,8 +75,8 @@ from exlab_wizard.constants import (
     RUN_DIR_PREFIX,
     TEST_RUN_DIR_PREFIX,
     TEST_RUNS_DIR_NAME,
-    TEST_RUNS_JSON_NAME,
     VALIDATOR_BINARY_DETECT_BYTES,
+    RunKind,
     SyncStatus,
     Tier,
 )
@@ -143,7 +143,7 @@ class CreationValidationInput:
     variables: Mapping[str, object] = field(default_factory=dict)
     file_names: tuple[str, ...] = ()
     file_contents: Mapping[str, str] = field(default_factory=dict)
-    run_kind: str = "experimental"
+    run_kind: str = RunKind.EXPERIMENTAL.value
     template_required_field_ids: tuple[str, ...] = ()
     config_required_field_ids: tuple[str, ...] = ()
     readme_fields: Mapping[str, object] = field(default_factory=dict)
@@ -172,9 +172,9 @@ def _split_path_segments(proposed_path: str) -> list[str]:
     # manually (rather than calling ``Path``) keeps the result identical
     # across hosts; ``pathlib`` would consult the local platform.
     if "\\" in proposed_path and "/" not in proposed_path:
-        parts = list(PureWindowsPath(proposed_path).parts)
+        parts = PureWindowsPath(proposed_path).parts
     else:
-        parts = list(PurePosixPath(proposed_path.replace("\\", "/")).parts)
+        parts = PurePosixPath(proposed_path.replace("\\", "/")).parts
     # ``parts`` for absolute POSIX paths starts with ``/``; we drop it so
     # downstream rules do not scan a single-character segment.
     return [p for p in parts if p and p not in ("/", "\\")]
@@ -585,7 +585,7 @@ class Validator:
           ``"other"`` (unmanaged sub-folder under a project / run)
         """
         try:
-            rel = Path(str(directory.resolve())).relative_to(equipment_root_abs)
+            rel = directory.resolve().relative_to(equipment_root_abs)
         except ValueError:
             return "other"
         parts = rel.parts
@@ -626,7 +626,7 @@ class Validator:
             return equipment_root_abs
         # ``other``: resolve up to the nearest run / project segment.
         try:
-            rel = Path(str(directory.resolve())).relative_to(equipment_root_abs)
+            rel = directory.resolve().relative_to(equipment_root_abs)
         except ValueError:
             return str(directory)
         parts = rel.parts
@@ -665,47 +665,44 @@ class Validator:
         violation in the run leaf is reported -- the parent's walk
         loop applies those rules to children but not to itself.
         """
-        active_overrides_classes, sync_status = self._extract_overrides_and_sync(creation_payload)
+        active_classes, sync_status = self._extract_overrides_and_sync(creation_payload)
+        current_str = str(current)
 
         target_orphan_level = _level_for_orphan(level)
         if target_orphan_level is not None:
-            for raw in rules.check_orphan(
-                level=target_orphan_level,
-                has_creation_json=creation_payload is not None,
-            ):
-                findings.append(
-                    self._materialise_audit(
-                        raw=raw,
-                        run_path_str=run_path_str,
-                        offending_path_override=str(current),
-                        active_classes=active_overrides_classes,
-                        sync_status=sync_status,
-                    )
-                )
+            self._extend_findings(
+                rules.check_orphan(
+                    level=target_orphan_level,
+                    has_creation_json=creation_payload is not None,
+                ),
+                findings=findings,
+                run_path_str=run_path_str,
+                offending_path_override=current_str,
+                active_classes=active_classes,
+                sync_status=sync_status,
+            )
 
         if level in {"run", "test_run"} and creation_payload is not None:
             parent_name = current.parent.name if current.parent != current else None
-            for raw in rules.check_mode_prefix_mismatch(
-                leaf_dir_name=current.name,
-                parent_dir_name=parent_name,
-                creation_run_kind=creation_payload.run_kind,
-            ):
-                findings.append(
-                    self._materialise_audit(
-                        raw=raw,
-                        run_path_str=run_path_str,
-                        offending_path_override=str(current),
-                        active_classes=active_overrides_classes,
-                        sync_status=sync_status,
-                    )
-                )
+            self._extend_findings(
+                rules.check_mode_prefix_mismatch(
+                    leaf_dir_name=current.name,
+                    parent_dir_name=parent_name,
+                    creation_run_kind=creation_payload.run_kind,
+                ),
+                findings=findings,
+                run_path_str=run_path_str,
+                offending_path_override=current_str,
+                active_classes=active_classes,
+                sync_status=sync_status,
+            )
 
         if level in {"run", "test_run", "project"}:
             self._apply_missing_required_field_rule(
                 current=current,
                 creation_raw=creation_raw,
                 run_path_str=run_path_str,
-                active_classes=active_overrides_classes,
+                active_classes=active_classes,
                 sync_status=sync_status,
                 findings=findings,
             )
@@ -718,6 +715,33 @@ class Validator:
             creation_payload=creation_payload,
             findings=findings,
         )
+
+    def _extend_findings(
+        self,
+        raw_findings: list[dict[str, Any]],
+        *,
+        findings: list[Finding],
+        run_path_str: str,
+        offending_path_override: str,
+        active_classes: set[str],
+        sync_status: str | None,
+    ) -> None:
+        """Materialise raw rule output into :class:`Finding` instances.
+
+        Reduces audit-mode call-site boilerplate: every rule helper
+        returns a ``list[dict]`` of the same shape, and every audit
+        finding needs the same five fields stamped on it.
+        """
+        for raw in raw_findings:
+            findings.append(
+                self._materialise_audit(
+                    raw=raw,
+                    run_path_str=run_path_str,
+                    offending_path_override=offending_path_override,
+                    active_classes=active_classes,
+                    sync_status=sync_status,
+                )
+            )
 
     def _apply_missing_required_field_rule(
         self,
@@ -755,19 +779,17 @@ class Validator:
             return
 
         readme_dict = msgspec.to_builtins(readme_payload)
-        for raw in rules.check_missing_required_field(
-            readme_fields=readme_dict,
-            required_field_ids=required_ids,
-        ):
-            findings.append(
-                self._materialise_audit(
-                    raw=raw,
-                    run_path_str=run_path_str,
-                    offending_path_override=str(readme_path),
-                    active_classes=active_classes,
-                    sync_status=sync_status,
-                )
-            )
+        self._extend_findings(
+            rules.check_missing_required_field(
+                readme_fields=readme_dict,
+                required_field_ids=required_ids,
+            ),
+            findings=findings,
+            run_path_str=run_path_str,
+            offending_path_override=str(readme_path),
+            active_classes=active_classes,
+            sync_status=sync_status,
+        )
 
     def _apply_directory_name_rules(
         self,
@@ -786,34 +808,31 @@ class Validator:
         illegal-character rules apply to every directory segment.
         """
         active_classes, sync_status = self._extract_overrides_and_sync(creation_payload)
+        dir_path_str = str(dir_path)
 
-        for raw in rules.check_unresolved_placeholder(
-            path_segments=[dir_name],
-            file_names=[],
-            file_contents={},
-        ):
-            findings.append(
-                self._materialise_audit(
-                    raw=raw,
-                    run_path_str=run_path_str,
-                    offending_path_override=str(dir_path),
-                    active_classes=active_classes,
-                    sync_status=sync_status,
-                )
-            )
-        for raw in rules.check_illegal_filesystem_character(
-            path_segments=[dir_name],
-            file_names=[],
-        ):
-            findings.append(
-                self._materialise_audit(
-                    raw=raw,
-                    run_path_str=run_path_str,
-                    offending_path_override=str(dir_path),
-                    active_classes=active_classes,
-                    sync_status=sync_status,
-                )
-            )
+        self._extend_findings(
+            rules.check_unresolved_placeholder(
+                path_segments=[dir_name],
+                file_names=[],
+                file_contents={},
+            ),
+            findings=findings,
+            run_path_str=run_path_str,
+            offending_path_override=dir_path_str,
+            active_classes=active_classes,
+            sync_status=sync_status,
+        )
+        self._extend_findings(
+            rules.check_illegal_filesystem_character(
+                path_segments=[dir_name],
+                file_names=[],
+            ),
+            findings=findings,
+            run_path_str=run_path_str,
+            offending_path_override=dir_path_str,
+            active_classes=active_classes,
+            sync_status=sync_status,
+        )
 
     def _apply_file_rules(
         self,
@@ -832,79 +851,71 @@ class Validator:
         8-KiB null-byte sniff for binary detection.
         """
         active_classes, sync_status = self._extract_overrides_and_sync(creation_payload)
+        file_path_str = str(file_entry_path)
 
         # Filename rules.
-        for raw in rules.check_unresolved_placeholder(
-            path_segments=[],
-            file_names=[file_name],
-            file_contents={},
-        ):
-            findings.append(
-                self._materialise_audit(
-                    raw=raw,
-                    run_path_str=run_path_str,
-                    offending_path_override=str(file_entry_path),
-                    active_classes=active_classes,
-                    sync_status=sync_status,
-                )
-            )
-        for raw in rules.check_illegal_filesystem_character(
-            path_segments=[],
-            file_names=[file_name],
-        ):
-            findings.append(
-                self._materialise_audit(
-                    raw=raw,
-                    run_path_str=run_path_str,
-                    offending_path_override=str(file_entry_path),
-                    active_classes=active_classes,
-                    sync_status=sync_status,
-                )
-            )
-        for raw in rules.check_reserved_filesystem_name(file_names=[file_name]):
-            findings.append(
-                self._materialise_audit(
-                    raw=raw,
-                    run_path_str=run_path_str,
-                    offending_path_override=str(file_entry_path),
-                    active_classes=active_classes,
-                    sync_status=sync_status,
-                )
-            )
+        self._extend_findings(
+            rules.check_unresolved_placeholder(
+                path_segments=[],
+                file_names=[file_name],
+                file_contents={},
+            ),
+            findings=findings,
+            run_path_str=run_path_str,
+            offending_path_override=file_path_str,
+            active_classes=active_classes,
+            sync_status=sync_status,
+        )
+        self._extend_findings(
+            rules.check_illegal_filesystem_character(
+                path_segments=[],
+                file_names=[file_name],
+            ),
+            findings=findings,
+            run_path_str=run_path_str,
+            offending_path_override=file_path_str,
+            active_classes=active_classes,
+            sync_status=sync_status,
+        )
+        self._extend_findings(
+            rules.check_reserved_filesystem_name(file_names=[file_name]),
+            findings=findings,
+            run_path_str=run_path_str,
+            offending_path_override=file_path_str,
+            active_classes=active_classes,
+            sync_status=sync_status,
+        )
 
         # Content scan.
-        if not self._content_scan_eligible(file_entry_path, file_name):
+        if not self._content_scan_eligible(file_entry_path):
             return
         content = self._read_text_for_scan(file_entry_path)
         if content is None:
             return
-        for raw in rules.check_unresolved_placeholder(
-            path_segments=[],
-            file_names=[],
-            file_contents={str(file_entry_path): content},
-        ):
-            findings.append(
-                self._materialise_audit(
-                    raw=raw,
-                    run_path_str=run_path_str,
-                    offending_path_override=str(file_entry_path),
-                    active_classes=active_classes,
-                    sync_status=sync_status,
-                )
-            )
+        self._extend_findings(
+            rules.check_unresolved_placeholder(
+                path_segments=[],
+                file_names=[],
+                file_contents={file_path_str: content},
+            ),
+            findings=findings,
+            run_path_str=run_path_str,
+            offending_path_override=file_path_str,
+            active_classes=active_classes,
+            sync_status=sync_status,
+        )
 
     # -- Audit: helpers ---------------------------------------------------
 
-    def _content_scan_eligible(self, file_path: Path, file_name: str) -> bool:
+    def _content_scan_eligible(self, file_path: Path) -> bool:
         """Return True iff the file passes the size + extension gates.
 
         Spec §8.1.1: files outside the configured extension list are
         skipped; files larger than the configured size cap are skipped.
-        The marker file ``test_runs.json`` is also skipped because it
-        is not a templated artefact (it lives in the cache subtree).
+        Cache files (under ``.exlab-wizard/``, e.g. ``test_runs.json``)
+        never reach this method because the parent's scandir loop skips
+        the cache directory.
         """
-        if file_name == TEST_RUNS_JSON_NAME:
-            return False
         ext = file_path.suffix.lower()
         if ext not in self._content_scan_extensions:
             return False

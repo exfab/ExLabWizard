@@ -34,9 +34,15 @@ from exlab_wizard.constants import (
     PLACEHOLDER_ANGLE_BRACKET_PATTERN,
     PLACEHOLDER_JINJA_BLOCK_PATTERN,
     PLACEHOLDER_JINJA_VAR_PATTERN,
+    RUN_DIR_PREFIX,
+    TEST_RUN_DIR_PREFIX,
     TEST_RUNS_DIR_NAME,
     WINDOWS_ILLEGAL_CHARS,
     WINDOWS_RESERVED_NAMES,
+    FindingKind,
+    ProblemClass,
+    RunKind,
+    Tier,
 )
 from exlab_wizard.logging import get_logger
 
@@ -89,10 +95,12 @@ def check_unresolved_placeholder(
     findings: list[dict[str, Any]] = []
 
     for segment in path_segments:
-        findings.extend(_scan_for_placeholders(segment, "directory_segment", segment))
+        findings.extend(
+            _scan_for_placeholders(segment, FindingKind.DIRECTORY_SEGMENT.value, segment)
+        )
 
     for name in file_names:
-        findings.extend(_scan_for_placeholders(name, "file_name", name))
+        findings.extend(_scan_for_placeholders(name, FindingKind.FILE_NAME.value, name))
 
     for filename, content in file_contents.items():
         if len(content.encode("utf-8", errors="replace")) > _CONTENT_SCAN_MAX_BYTES:
@@ -102,7 +110,7 @@ def check_unresolved_placeholder(
                 _CONTENT_SCAN_MAX_BYTES,
             )
             continue
-        findings.extend(_scan_for_placeholders(content, "file_content", filename))
+        findings.extend(_scan_for_placeholders(content, FindingKind.FILE_CONTENT.value, filename))
 
     return findings
 
@@ -119,8 +127,8 @@ def _scan_for_placeholders(
         token = match.group(0)
         findings.append(
             {
-                "rule": "unresolved_placeholder_token",
-                "tier": "hard",
+                "rule": ProblemClass.UNRESOLVED_PLACEHOLDER_TOKEN.value,
+                "tier": Tier.HARD.value,
                 "matched_token": token,
                 "rule_detail": (
                     f"Angle-bracket identifier token {token} was not resolved by the renderer."
@@ -134,8 +142,8 @@ def _scan_for_placeholders(
         token = match.group(0)
         findings.append(
             {
-                "rule": "leftover_jinja_marker",
-                "tier": "hard",
+                "rule": ProblemClass.LEFTOVER_JINJA_MARKER.value,
+                "tier": Tier.HARD.value,
                 "matched_token": token,
                 "rule_detail": (
                     f"Leftover Jinja variable marker {token} -- the "
@@ -150,8 +158,8 @@ def _scan_for_placeholders(
         token = match.group(0)
         findings.append(
             {
-                "rule": "leftover_jinja_marker",
-                "tier": "hard",
+                "rule": ProblemClass.LEFTOVER_JINJA_MARKER.value,
+                "tier": Tier.HARD.value,
                 "matched_token": token,
                 "rule_detail": (
                     f"Leftover Jinja block marker {token} -- the renderer "
@@ -187,10 +195,10 @@ def check_illegal_filesystem_character(
     findings: list[dict[str, Any]] = []
 
     for segment in path_segments:
-        findings.extend(_scan_for_illegal_chars(segment, "directory_segment"))
+        findings.extend(_scan_for_illegal_chars(segment, FindingKind.DIRECTORY_SEGMENT.value))
 
     for name in file_names:
-        findings.extend(_scan_for_illegal_chars(name, "file_name"))
+        findings.extend(_scan_for_illegal_chars(name, FindingKind.FILE_NAME.value))
 
     return findings
 
@@ -204,19 +212,14 @@ def _scan_for_illegal_chars(name: str, offending_kind: str) -> list[dict[str, An
     for ch in name:
         if ch in seen:
             continue
-        is_illegal_windows = ch in WINDOWS_ILLEGAL_CHARS
-        is_control = ord(ch) < 32 or ch == "\x00"
-        if is_illegal_windows or is_control:
+        if ch in WINDOWS_ILLEGAL_CHARS or ord(ch) < 32:
             seen.add(ch)
-            display = repr(ch)
             findings.append(
                 {
-                    "rule": "illegal_filesystem_character",
-                    "tier": "hard",
+                    "rule": ProblemClass.ILLEGAL_FILESYSTEM_CHARACTER.value,
+                    "tier": Tier.HARD.value,
                     "matched_token": ch,
-                    "rule_detail": (
-                        f"Name {name!r} contains illegal filesystem character {display}."
-                    ),
+                    "rule_detail": (f"Name {name!r} contains illegal filesystem character {ch!r}."),
                     "offending_kind": offending_kind,
                     "offending_path": name,
                 }
@@ -225,8 +228,8 @@ def _scan_for_illegal_chars(name: str, offending_kind: str) -> list[dict[str, An
     if name.endswith("."):
         findings.append(
             {
-                "rule": "illegal_filesystem_character",
-                "tier": "hard",
+                "rule": ProblemClass.ILLEGAL_FILESYSTEM_CHARACTER.value,
+                "tier": Tier.HARD.value,
                 "matched_token": ".",
                 "rule_detail": (
                     f"Name {name!r} ends with a trailing dot, which is illegal on Windows targets."
@@ -239,8 +242,8 @@ def _scan_for_illegal_chars(name: str, offending_kind: str) -> list[dict[str, An
     if name.endswith(" "):
         findings.append(
             {
-                "rule": "illegal_filesystem_character",
-                "tier": "hard",
+                "rule": ProblemClass.ILLEGAL_FILESYSTEM_CHARACTER.value,
+                "tier": Tier.HARD.value,
                 "matched_token": " ",
                 "rule_detail": (
                     f"Name {name!r} ends with a trailing space, which is "
@@ -273,15 +276,16 @@ def check_reserved_filesystem_name(*, file_names: list[str]) -> list[dict[str, A
         # Strip the extension (everything after the first dot is treated as
         # an extension here; Windows applies the reserved-name rule to the
         # base stem regardless of suffix).
-        stem = name.split(".", 1)[0] if "." in name else name
-        if stem.upper() in WINDOWS_RESERVED_NAMES:
+        stem = name.split(".", 1)[0]
+        upper_stem = stem.upper()
+        if upper_stem in WINDOWS_RESERVED_NAMES:
             findings.append(
                 {
-                    "rule": "reserved_filesystem_name",
-                    "tier": "hard",
-                    "matched_token": stem.upper(),
-                    "rule_detail": (f"Name {name!r} matches Windows reserved name {stem.upper()}."),
-                    "offending_kind": "file_name",
+                    "rule": ProblemClass.RESERVED_FILESYSTEM_NAME.value,
+                    "tier": Tier.HARD.value,
+                    "matched_token": upper_stem,
+                    "rule_detail": f"Name {name!r} matches Windows reserved name {upper_stem}.",
+                    "offending_kind": FindingKind.FILE_NAME.value,
                     "offending_path": name,
                 }
             )
@@ -317,71 +321,53 @@ def check_mode_prefix_mismatch(
     if creation_run_kind is None:
         return findings
 
-    leaf_says_test = leaf_dir_name.startswith("TestRun_")
-    leaf_says_experimental = leaf_dir_name.startswith("Run_") and not leaf_says_test
+    leaf_says_test = leaf_dir_name.startswith(TEST_RUN_DIR_PREFIX)
+    leaf_says_experimental = leaf_dir_name.startswith(RUN_DIR_PREFIX) and not leaf_says_test
     parent_is_test_runs = parent_dir_name == TEST_RUNS_DIR_NAME
 
-    if creation_run_kind == "experimental":
+    def _make_finding(matched_token: str, detail: str) -> dict[str, Any]:
+        return {
+            "rule": ProblemClass.MODE_PREFIX_MISMATCH.value,
+            "tier": Tier.HARD.value,
+            "matched_token": matched_token,
+            "rule_detail": detail,
+            "offending_kind": FindingKind.DIRECTORY_SEGMENT.value,
+            "offending_path": leaf_dir_name,
+        }
+
+    if creation_run_kind == RunKind.EXPERIMENTAL.value:
         if not leaf_says_experimental:
             findings.append(
-                {
-                    "rule": "mode_prefix_mismatch",
-                    "tier": "hard",
-                    "matched_token": leaf_dir_name,
-                    "rule_detail": (
-                        f"creation.json run_kind='experimental' requires "
-                        f"leaf prefix 'Run_' but leaf is "
-                        f"{leaf_dir_name!r}."
-                    ),
-                    "offending_kind": "directory_segment",
-                    "offending_path": leaf_dir_name,
-                }
+                _make_finding(
+                    leaf_dir_name,
+                    f"creation.json run_kind='experimental' requires leaf "
+                    f"prefix {RUN_DIR_PREFIX!r} but leaf is {leaf_dir_name!r}.",
+                )
             )
         if parent_is_test_runs:
             findings.append(
-                {
-                    "rule": "mode_prefix_mismatch",
-                    "tier": "hard",
-                    "matched_token": TEST_RUNS_DIR_NAME,
-                    "rule_detail": (
-                        f"creation.json run_kind='experimental' requires "
-                        f"parent != 'TestRuns/' but parent is "
-                        f"{parent_dir_name!r}."
-                    ),
-                    "offending_kind": "directory_segment",
-                    "offending_path": leaf_dir_name,
-                }
+                _make_finding(
+                    TEST_RUNS_DIR_NAME,
+                    f"creation.json run_kind='experimental' requires parent "
+                    f"!= {TEST_RUNS_DIR_NAME!r} but parent is {parent_dir_name!r}.",
+                )
             )
-    elif creation_run_kind == "test":
+    elif creation_run_kind == RunKind.TEST.value:
         if not leaf_says_test:
             findings.append(
-                {
-                    "rule": "mode_prefix_mismatch",
-                    "tier": "hard",
-                    "matched_token": leaf_dir_name,
-                    "rule_detail": (
-                        f"creation.json run_kind='test' requires leaf "
-                        f"prefix 'TestRun_' but leaf is "
-                        f"{leaf_dir_name!r}."
-                    ),
-                    "offending_kind": "directory_segment",
-                    "offending_path": leaf_dir_name,
-                }
+                _make_finding(
+                    leaf_dir_name,
+                    f"creation.json run_kind='test' requires leaf prefix "
+                    f"{TEST_RUN_DIR_PREFIX!r} but leaf is {leaf_dir_name!r}.",
+                )
             )
         if not parent_is_test_runs:
             findings.append(
-                {
-                    "rule": "mode_prefix_mismatch",
-                    "tier": "hard",
-                    "matched_token": str(parent_dir_name),
-                    "rule_detail": (
-                        f"creation.json run_kind='test' requires parent "
-                        f"== 'TestRuns/' but parent is "
-                        f"{parent_dir_name!r}."
-                    ),
-                    "offending_kind": "directory_segment",
-                    "offending_path": leaf_dir_name,
-                }
+                _make_finding(
+                    str(parent_dir_name),
+                    f"creation.json run_kind='test' requires parent == "
+                    f"{TEST_RUNS_DIR_NAME!r} but parent is {parent_dir_name!r}.",
+                )
             )
 
     return findings
@@ -399,22 +385,20 @@ def check_orphan(*, level: str, has_creation_json: bool) -> list[dict[str, Any]]
     Soft-tier. Returns one rule ``orphan`` finding when ``level`` is in
     ``("project", "run")`` and ``has_creation_json`` is ``False``.
     """
-    if level not in ("project", "run"):
-        return []
-    if has_creation_json:
+    if level not in ("project", "run") or has_creation_json:
         return []
 
     return [
         {
-            "rule": "orphan",
-            "tier": "soft",
+            "rule": ProblemClass.ORPHAN.value,
+            "tier": Tier.SOFT.value,
             "matched_token": None,
             "rule_detail": (
                 f"{level.capitalize()}-level directory has no "
                 f"creation.json -- the cache file is expected at this "
                 f"level but is missing."
             ),
-            "offending_kind": "directory_segment",
+            "offending_kind": FindingKind.DIRECTORY_SEGMENT.value,
             "offending_path": "",
         }
     ]
@@ -448,14 +432,14 @@ def check_missing_required_field(
 
     for field_id in required_field_ids:
         value = _lookup_field_value(layers, field_id)
-        if value is None or (isinstance(value, str) and value == ""):
+        if value is None or value == "":  # captures both absent and empty-string
             findings.append(
                 {
-                    "rule": "missing_required_field",
-                    "tier": "soft",
+                    "rule": ProblemClass.MISSING_REQUIRED_FIELD.value,
+                    "tier": Tier.SOFT.value,
                     "matched_token": field_id,
-                    "rule_detail": (f"Required README field {field_id!r} is absent or empty."),
-                    "offending_kind": "file_content",
+                    "rule_detail": f"Required README field {field_id!r} is absent or empty.",
+                    "offending_kind": FindingKind.FILE_CONTENT.value,
                     "offending_path": field_id,
                 }
             )
@@ -501,15 +485,15 @@ def check_malformed_yaml_front_matter(*, content: str) -> list[dict[str, Any]]:
     if closing_index is None:
         return [
             {
-                "rule": "malformed_yaml_front_matter",
-                "tier": "soft",
+                "rule": ProblemClass.MALFORMED_YAML_FRONT_MATTER.value,
+                "tier": Tier.SOFT.value,
                 "matched_token": None,
                 "rule_detail": (
                     "Markdown file opens with '---' but no closing '---' "
                     f"was found within the first {_FRONT_MATTER_MAX_LINES} "
                     f"lines."
                 ),
-                "offending_kind": "file_content",
+                "offending_kind": FindingKind.FILE_CONTENT.value,
                 "offending_path": "",
             }
         ]
@@ -520,11 +504,11 @@ def check_malformed_yaml_front_matter(*, content: str) -> list[dict[str, Any]]:
     except yaml.YAMLError as exc:
         return [
             {
-                "rule": "malformed_yaml_front_matter",
-                "tier": "soft",
+                "rule": ProblemClass.MALFORMED_YAML_FRONT_MATTER.value,
+                "tier": Tier.SOFT.value,
                 "matched_token": None,
-                "rule_detail": (f"YAML front matter failed to parse: {exc!s}"),
-                "offending_kind": "file_content",
+                "rule_detail": f"YAML front matter failed to parse: {exc!s}",
+                "offending_kind": FindingKind.FILE_CONTENT.value,
                 "offending_path": "",
             }
         ]
