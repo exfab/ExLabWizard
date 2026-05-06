@@ -129,8 +129,10 @@ select = ["E", "F", "W", "I", "N", "B", "UP", "ASYNC", "SIM", "TID", "RUF"]
 ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
-# Tests can use bare asserts and looser naming.
-"tests/**/*.py" = ["N802", "N803", "N806"]
+# Tests can use bare asserts and looser naming. ASYNC240 is suppressed because
+# pytest-asyncio test functions use synchronous pathlib operations against
+# tmp_path; this is the established pytest idiom and not a concurrency hazard.
+"tests/**/*.py" = ["N802", "N803", "N806", "ASYNC230", "ASYNC240"]
 
 [tool.ruff.format]
 quote-style = "double"
