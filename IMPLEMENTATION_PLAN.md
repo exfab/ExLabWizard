@@ -272,9 +272,12 @@ and key order); compute setup state.
   (`INCOMPLETE_NO_CONFIG`, `INCOMPLETE_MISSING_PATHS`,
   `INCOMPLETE_NO_EQUIPMENT`, `INCOMPLETE_NO_LIMS`,
   `INCOMPLETE_LIMS_UNREACHABLE`, `READY`).
-- `tests/fixtures/configs/` -- `incomplete_no_config.yaml`,
-  `incomplete_no_paths.yaml`, `incomplete_no_equipment.yaml`,
-  `incomplete_no_lims.yaml`, `complete.yaml`.
+- `tests/fixtures/configs/` -- `incomplete_no_paths.yaml`,
+  `incomplete_no_equipment.yaml`, `incomplete_no_lims.yaml`,
+  `complete.yaml`. (`INCOMPLETE_NO_CONFIG` is the absence-of-file state
+  and is exercised by simply not loading a fixture; it has no
+  corresponding YAML file. `tests/fixtures/configs/README.md` documents
+  the rationale.)
 
 **Subagent plan (3 parallel):**
 - Agent A: models + Pydantic field validators.
