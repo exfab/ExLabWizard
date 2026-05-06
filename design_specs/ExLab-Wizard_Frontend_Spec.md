@@ -51,7 +51,134 @@ Guiding principles:
 
 **Implications for the rest of this document.** Widget mappings in §12 use NiceGUI component names. Modal dialogs (`ui.dialog`) are non-blocking but session-scoped on the server side. Wizard flows use `ui.stepper` with explicit step validation in the controller's `VALIDATING` state — frontend validation is for UX immediacy, the backend is authoritative. Long-running operations are server-side: closing the native window does not interrupt them; reopening reflects the latest state.
 
-**Implications for testing.** Playwright drives a Chromium instance against `http://127.0.0.1:<port>` for e2e tests — same NiceGUI surface that pywebview renders in production. Backend integration tests hit `httpx.AsyncClient(app=app)` directly without spawning the server. The Problems-tab WebSocket and the per-session events WebSocket are exercised in both layers. Tray and window subprocess behavior are exercised by separate cross-platform smoke tests in CI (skipped on the Linux runner where headless tray testing is brittle).
+**Implications for testing.** Playwright drives a Chromium instance against `http://127.0.0.1:<port>` for e2e tests -- same NiceGUI surface that pywebview renders in production. Backend integration tests hit `httpx.AsyncClient(app=app)` directly without spawning the server. The Problems-tab WebSocket and the per-session events WebSocket are exercised in both layers. Tray and window subprocess behavior are exercised by separate cross-platform smoke tests in CI (skipped on the Linux runner where headless tray testing is brittle).
+
+### 2.1 Visual tokens and the design system
+
+ExLab-Wizard inherits its visual design system from the lab's authoritative style guide at [`DESIGN.md`](../DESIGN.md) (*"Scientific Analysis Dashboard Design System v1.1"*). DESIGN.md is the single source of truth for color palette, type scale, spacing tokens, border radius, shadows, and component styling rules across all lab applications (PhenoTypic, ExLab-Wizard, future tools). This subsection describes how ExLab-Wizard consumes those tokens, the small set of ExLab-Wizard-specific overrides, and the Python module that exposes the tokens to runtime code.
+
+#### 2.1.1 The `design.py` module
+
+Backend §4.3 includes `exlab_wizard/ui/design.py` as the single Python source of truth for design tokens at runtime. Its constants mirror DESIGN.md verbatim and are the **only** acceptable source of color hex values, font-family stacks, spacing values, radius values, and shadow definitions inside the codebase. Any UI code that needs a color, font, or spacing value imports it from `design.py`; no inline hex / px / rem literals.
+
+Module shape (illustrative):
+
+```python
+# exlab_wizard/ui/design.py — mirrors DESIGN.md; update both together.
+
+# Primary palette (UI only) — DESIGN.md §01
+COLOR_NAVY    = "#003660"
+COLOR_BLUE    = "#1b75bc"
+COLOR_GOLD    = "#febc11"
+COLOR_BG      = "#f5f7fa"
+COLOR_SURFACE = "#ffffff"
+COLOR_BORDER  = "#dde3ed"
+COLOR_RULE    = "#e8ecf2"
+COLOR_MUTED   = "#8892a4"
+COLOR_BODY    = "#2e3a4e"
+COLOR_HEADING = COLOR_NAVY
+
+# Data palette (Okabe-Ito, visualization only) — DESIGN.md §01
+OI_ORANGE    = "#E69F00"
+OI_SKY       = "#56B4E9"
+OI_GREEN     = "#009E73"
+OI_VERMILION = "#D55E00"
+OI_BLUE      = "#0072B2"
+OI_PURPLE    = "#CC79A7"
+OI_YELLOW    = "#F0E442"
+OI_GREY      = "#BBBBBB"
+
+# Semantic aliases
+COLOR_SUCCESS = OI_GREEN
+COLOR_INFO    = OI_SKY
+COLOR_WARNING = OI_ORANGE          # test mode, blocked sync, hard-tier validator stripe — see §2.1.4
+COLOR_DANGER  = OI_VERMILION
+
+# Typography (ExLab-Wizard override of DESIGN.md §02 — see §2.1.3)
+FONT_BODY = "'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+FONT_MONO = "ui-monospace, 'SF Mono', 'Cascadia Code', 'Fira Code', Menlo, Consolas, monospace"
+
+# Spacing (4px grid) — DESIGN.md §03
+SPACING = { "1": "0.25rem", "2": "0.5rem", "3": "0.75rem", "4": "1rem",
+            "5": "1.25rem", "6": "1.5rem", "8": "2rem", "10": "2.5rem",
+            "12": "3rem",   "16": "4rem" }
+
+# Border radius — DESIGN.md §04
+RADIUS_SM = "3px"
+RADIUS    = "6px"
+RADIUS_MD = "10px"
+RADIUS_LG = "16px"
+
+# Shadows (navy-tinted) — DESIGN.md §04
+SHADOW_SM = "0 1px 3px rgba(0,54,96,0.07), 0 1px 2px rgba(0,54,96,0.04)"
+SHADOW    = "0 4px 12px rgba(0,54,96,0.08), 0 1px 3px rgba(0,54,96,0.05)"
+SHADOW_MD = "0 8px 24px rgba(0,54,96,0.10), 0 2px 6px rgba(0,54,96,0.06)"
+SHADOW_LG = "0 16px 40px rgba(0,54,96,0.12), 0 4px 12px rgba(0,54,96,0.07)"
+```
+
+`exlab_wizard/ui/theme.py` consumes these constants and registers them with NiceGUI/Quasar's theme API at app startup; the same values are also written to a `:root { ... }` CSS block so component CSS uses the standard `var(--color-warning)` / `var(--sp-4)` references documented in DESIGN.md §07.
+
+**Update discipline.** `design.py` and DESIGN.md are kept in sync as a single change. The PR description must either confirm both were updated or explain why one diverged. A simple unit test asserts the constants in `design.py` match a small fixture extracted from DESIGN.md (the seven primary-palette hexes plus the eight Okabe-Ito hexes plus the spacing scale).
+
+#### 2.1.2 What lives in DESIGN.md vs in this spec
+
+- **DESIGN.md (authoritative):** color palette and tokens, typography scale and rules, spacing tokens, radius and shadow tokens, component styling (stat cards, progress bars, buttons, badges, alerts, tables, form inputs, tabs), data-visualization rules (Okabe-Ito series order, chart styling), code integration snippets (matplotlib rcParams, napari label colors, the canonical `:root` CSS block), and the absolute-constraint list (no em dashes, no Okabe-Ito for buttons, no `#F0E442` as text on white, etc.).
+- **This Frontend Spec:** ExLab-Wizard-specific surfaces (main window, wizards, Settings dialog, Problems tab, tray UX), interaction patterns (validation order, mode binding, override flows), and any **overrides** to DESIGN.md called out in §2.1.3. Where a section here describes a styled element, it references DESIGN.md tokens by name (e.g. *"warning-tier border per `--color-warning`"*) rather than re-declaring hex values.
+
+When this spec and DESIGN.md disagree, DESIGN.md wins for visual tokens; this spec wins for ExLab-Wizard-specific behavior. The override list (§2.1.3) is the only set of ExLab-Wizard-side deviations.
+
+#### 2.1.3 ExLab-Wizard typography overrides
+
+DESIGN.md §02 specifies a three-font stack (DM Serif Display / DM Sans / DM Mono). ExLab-Wizard overrides this for two reasons: (1) ExLab-Wizard is a tool / wizard, not a data dashboard with editorial display headings; (2) bundling DM Mono adds licensing friction that we sidestep by using the OS monospace stack.
+
+| Role | DESIGN.md says | ExLab-Wizard uses |
+|---|---|---|
+| Prose / body / UI / headings | DM Sans (body/UI), DM Serif Display (h1–h3) | **IBM Plex Sans** for everything sans-serif (body, UI, headings). Bundled into the PyInstaller artifact (Backend §15.1) at three weights: 400 (body), 500 (UI emphasis, table numerics), 600 (headings, button text). |
+| Monospace (paths, hex values, code) | DM Mono | **`ui-monospace, 'SF Mono', 'Cascadia Code', 'Fira Code', Menlo, Consolas, monospace`** — system stack, no bundled font. |
+
+DESIGN.md's **type scale** (`--text-xs` through `--text-4xl`) is unchanged; we just substitute the families per the table above.
+
+The DESIGN.md absolute constraint *"NEVER render numeric data, axis labels, badge text, captions, or code outside `font-family: 'DM Mono'`"* is satisfied by reading "DM Mono" as the monospace family — for ExLab-Wizard that's the `ui-monospace` stack defined above. The constraint is about monospace correctness, not the specific font.
+
+#### 2.1.4 Warning-tier color (resolves OQ #3)
+
+Per DESIGN.md §01 semantic assignments, warning is **`--oi-orange`** = `#E69F00`. This is the single token referenced from every ExLab-Wizard surface that previously asserted "warning-tier color":
+
+- Test-mode badge in wizard title bar (§5.3)
+- Highlighted `TestRuns/` segment and `TestRun_` leaf prefix in path previews (§5.2, §5.3)
+- `blocked_by_validation` sync-status icon (§3.2)
+- Sync-blocked banner on creation-success card (§10.4)
+- Problems-tab hard-tier accent stripe (§11.2)
+- Problems-tab severity icon (§11.1)
+- Override-reason character-count "near limit" indicator (§11.5)
+- Setup-incomplete banner on the main window (§3.1.4)
+
+When the visual treatment is "fill" (badge, banner background), follow DESIGN.md badge / alert rules: tinted background at 7–10% opacity, darkened text variant `#9A6B00` for WCAG AA contrast (DESIGN.md §05 badges and alerts tables). When the treatment is "stroke or icon" (1px stripe, glyph fill, single-line border), the raw `#E69F00` is acceptable — DESIGN.md flags only thin lines / text on white as the contrast risk.
+
+Resolves Frontend Open Question #3 (test-mode color).
+
+#### 2.1.5 CSS styling reference rule
+
+Every component-level CSS rule in this spec, in `design.py`, in NiceGUI custom-CSS overrides, and in any future component module **MUST** reference DESIGN.md tokens by `--color-*` / `--sp-*` / `--text-*` / `--radius-*` / `--shadow-*` variable name. Inline hex / px / rem literals are forbidden in component CSS. Two exceptions:
+
+1. The `:root { ... }` block (declared once in `ui/theme.py`) is the only acceptable place for raw token values.
+2. Vendor-pinned hex values that DESIGN.md itself lists with a specific hex (e.g. the badge darkened-text variants `#9A6B00`, `#0B6E9E`, `#006B4F`, `#8B3D6E`) may appear in component CSS where DESIGN.md sources them; these are themselves pre-tokenized and don't need a layer of indirection.
+
+Anti-patterns to avoid (these are violations the dedup audit flagged):
+
+- *"Use the same color as the test-mode badge"* — ambiguous string reference. **Use `var(--color-warning)` instead.**
+- Inline `color: #E69F00` — hard-coded hex. **Use `var(--color-warning)` instead.**
+- Repeating the warning-tier hex in narrative prose. **Reference DESIGN.md §01 or this section's §2.1.4.**
+
+#### 2.1.6 DESIGN.md absolute constraints (binding)
+
+The "Absolute Constraints" list at the top of DESIGN.md is binding for ExLab-Wizard. Notable items relevant to this spec:
+
+- **No em dashes.** Use double hyphens (`--`) or restructure the sentence. Affects all generated UI strings, error messages, helper text, banner copy, and spec prose. Existing em-dash usage in this spec set is recorded as a follow-up cleanup task (no functional impact, mechanical replacement).
+- **Okabe-Ito colors are data-only.** UI chrome (buttons, navigation, headings, links, input borders) uses the primary palette only. The semantic-alert exceptions (warning, error, success, info) where Okabe-Ito hues map to UI states are explicitly carved out in DESIGN.md §01 and apply here.
+- **No `#F0E442` (yellow) as text or thin lines on light backgrounds.** Reserved for large filled chart elements only; not used in the wizard chrome.
+- **No raw Okabe-Ito hex as badge text on white.** Use the darkened variants from DESIGN.md badges table.
+- **No red-green colormaps.** Heatmaps in any future ExLab-Wizard surface follow DESIGN.md's navy-to-blue ramp with vermilion for failed cells.
 
 ---
 
@@ -128,7 +255,7 @@ After the first close (either button), the welcome card never appears again. The
 
 When the Main Window renders in Setup-incomplete state, a sticky top banner appears above the toolbar:
 
-- **Color:** warning-tier (the same color used for the test-mode badge and `blocked_by_validation` sync icon, so the visual vocabulary is consistent across surfaces).
+- **Color:** `--color-warning` (§2.1.4) -- the canonical warning-tier token, shared with the test-mode badge, `blocked_by_validation` sync icon, hard-tier validator stripe, and Sync-blocked banner.
 - **Headline:** *"Setup incomplete: <N> required section(s) need configuration."*
 - **Sub-line listing what's missing**, e.g. *"Missing: equipment list, LIMS access."* Each missing slot is named in plain language (not raw config keys).
 - **CTA:** **[Open Settings]** — opens the Settings dialog in setup-incomplete mode (§7.14).
@@ -178,7 +305,7 @@ The Settings dialog's LIMS section (§7.6) renders the fields for both paths; wh
 - **Toolbar actions:** "New Project", "New Run", "New Test Run", "Settings", "Refresh".
   - "New Run" and "New Test Run" are additionally surfaced as a split button to reinforce that they are distinct workflows with different downstream handling.
 - **Tab strip in the right panel:** A tab bar at the top of the right (detail) panel switches between the **Details** view (selected project/run metadata, default) and the **Problems** view (always-on validator audit; Section 11). The Problems tab carries a count badge equal to the number of currently-active hard-tier findings across the managed tree (soft-tier counts shown as a secondary muted number, e.g. `3 + 12`). The badge updates on the same 30-second background refresh used for sync-status icons (Section 3.3) and is independent of which node is selected in the left tree.
-- **Sync-status icon vocabulary (per-run, in the left tree and detail header):** Five states are rendered with distinct icons -- `pending` (queued), `synced` (verified at NAS), `failed` (NAS sync error), `blocked_by_validation` (hard-tier finding gates sync; new in v0.4), and `override_active` (sync allowed under operator override; new in v0.4). The `blocked_by_validation` state uses the same warning-tier color the test-mode badge uses, so problem cues are consistent across surfaces.
+- **Sync-status icon vocabulary (per-run, in the left tree and detail header):** Five states are rendered with distinct icons -- `pending` (queued), `synced` (verified at NAS), `failed` (NAS sync error), `blocked_by_validation` (hard-tier finding gates sync; new in v0.4), and `override_active` (sync allowed under operator override; new in v0.4). The `blocked_by_validation` state uses `--color-warning` (§2.1.4).
 - **Staging panel (orchestrator mode only):** See Section 8.
 
 ### 3.3 Refresh Semantics
@@ -322,8 +449,8 @@ Modal, multi-step. User capabilities: "Create a New Experimental Run" and "Creat
 
 ### 5.3 Visual Differentiation
 
-- The wizard title bar badge is color-coded: experimental uses the app's primary accent color; test uses a distinct warning-tier color (not red; red is reserved for errors).
-- The Preview step's highlighted `TestRuns/` segment and `TestRun_` leaf prefix both use the same test-mode color as the title bar badge, so the operator sees a single consistent cue.
+- The wizard title bar badge is color-coded: experimental uses the app's primary accent color (`--color-navy`); test uses `--color-warning` (§2.1.4). Red is reserved for errors (`--color-danger`) and never used for test mode.
+- The Preview step's highlighted `TestRuns/` segment and `TestRun_` leaf prefix both use `--color-warning`, matching the title bar badge so the operator sees a single consistent cue.
 - On the main window, test runs in the left tree use the dimmed styling noted in Section 3.2 -- the same visual vocabulary is reused.
 
 ---
@@ -683,7 +810,7 @@ If the validator engine (Design Spec §8.1, §11.8) reported a hard-tier finding
 - The first finding's `rule` name and matched token (e.g. *"unresolved placeholder token `<run_date>` in directory name"*).
 - Two affordances: **"View in Problems tab"** (deep link that switches the right panel to the Problems tab and selects this run's row) and **"Override and allow sync"** (opens the override dialog described in Section 11.5).
 
-The banner uses the same warning-tier color as the test-mode badge and the `blocked_by_validation` sync-status icon, so the visual vocabulary is consistent. The banner is dismissible only by closing the wizard; the underlying gate state is unchanged by dismissal.
+The banner uses `--color-warning` (§2.1.4). The banner is dismissible only by closing the wizard; the underlying gate state is unchanged by dismissal.
 
 ---
 
@@ -705,9 +832,9 @@ The tab is a single scrollable table with a fixed header strip and a footer stat
 
 **Table columns** (left to right):
 
-1. **Severity icon.** Hard tier uses a filled warning-tier glyph; soft tier uses an outlined info glyph.
+1. **Severity icon.** Hard tier uses a filled glyph in `--color-warning` (§2.1.4); soft tier uses an outlined glyph in `--color-info`.
 2. **Class.** The problem class name from the rule set (Design Spec §8.1.1-§8.1.5), rendered as a colored pill.
-3. **Path.** The offending segment or file, with the matched token segment **highlighted** inline (e.g. `Run_<run_date>` with `<run_date>` underlined in warning-tier color). Truncated from the left when long; full path on hover/tooltip.
+3. **Path.** The offending segment or file, with the matched token segment **highlighted** inline (e.g. `Run_<run_date>` with `<run_date>` underlined in `--color-warning`). Truncated from the left when long; full path on hover/tooltip.
 4. **Run.** The run-level ancestor's friendly label from `creation.json` (`label` core field), or `--` for orphans at the project/equipment level.
 5. **Equipment.** The equipment ID.
 6. **Detected at.** The most recent audit timestamp where this finding appeared.
@@ -718,7 +845,7 @@ The tab is a single scrollable table with a fixed header strip and a footer stat
 
 ### 11.2 Severity Tier Visual Treatment
 
-Hard-tier rows use a left-edge warning-tier accent stripe (the same color as the test-mode badge and the `blocked_by_validation` sync-status icon) so a hard-tier row is recognizable at a glance even with the table scrolled. Soft-tier rows use a thinner muted-color stripe. The severity icon (column 1) uses the same color cue.
+Hard-tier rows use a left-edge accent stripe in `--color-warning` (§2.1.4) so a hard-tier row is recognizable at a glance even with the table scrolled. Soft-tier rows use a thinner stripe in `--color-muted`. The severity icon (column 1) uses the same color cue as the row stripe.
 
 When a hard-tier row's run has an active override, the row is rendered with a strikethrough on the severity stripe and the State badge reads `Override active`. The row remains visible by default (not hidden) so the operator can still see what was overridden.
 
@@ -809,7 +936,7 @@ OQ #1 (GUI framework) was resolved in v0.5; see §2. Subsequent items renumbered
 
 1. **`.exlab-wizard` tree visibility:** Should `.exlab-wizard` folders be hidden from the main window's directory tree, or shown with a distinct icon to indicate wizard-managed directories? Current draft hides them by default.
 2. **Staging panel placement:** Should the staging panel be a bottom dock (always visible) or a dedicated tab (hidden unless selected)? Preference TBD based on typical monitor sizes in the lab.
-3. **Test-mode color:** Which specific hue for the test-mode badge and the `TestRuns/` / `TestRun_` path highlight? Must be distinguishable from the primary accent color and the error color, and legible against both light and dark themes if themes are supported. The same hue is reused for the `blocked_by_validation` sync icon and the Problems-tab hard-tier accent stripe (Section 11.2), so the choice is now load-bearing across surfaces.
+3. ~~**Test-mode color:**~~ **Resolved (in §2.1.4).** The warning-tier hue is `--color-warning` = `--oi-orange` = `#E69F00`, per DESIGN.md §01. Single token referenced from all surfaces that previously restated this color (test-mode badge, `TestRuns/` and `TestRun_` path highlight, `blocked_by_validation` sync icon, Sync-blocked banner, Problems-tab hard-tier stripe and severity icon, override-reason near-limit indicator, setup-incomplete banner).
 4. **Keyboard-first creation flow:** Should the wizards support a keyboard-only path (tab through fields, Enter to advance, Esc to cancel)? Likely yes for operator efficiency but not specified in detail here. NiceGUI's `ui.stepper` and `ui.dialog` both support keyboard navigation; the question is which keys we bind beyond the defaults.
 5. **Concurrent wizard limit (orchestrator UI):** The backend can handle multiple concurrent creation sessions (backend Open Question 9). Should the frontend enforce a visible cap, or just surface a warning when a threshold is exceeded? With the single-window model (§3.4.1), concurrent wizards share the one native window — open question is whether to allow stacked dialogs, a wizard-panel multiplexer, or hard-cap at one wizard at a time.
 6. ~~**Override-reason length policy:**~~ **Resolved (v0.7):** Min 10 chars, max 500 chars after whitespace trim. Short reasons accepted; no boilerplate detection. See Section 11.5.

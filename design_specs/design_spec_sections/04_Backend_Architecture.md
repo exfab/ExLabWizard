@@ -138,6 +138,8 @@ exlab_wizard/
     loader.py              # config.yaml -> typed model
     models.py              # pydantic models matching §9
   ui/
+    design.py              # design tokens (color, typography, spacing, radius, shadows) mirroring DESIGN.md; see Frontend §2.1
+    theme.py               # NiceGUI/Quasar theme registration that consumes design.py constants
     pages/
       main.py              # NiceGUI main window (left tree + right tabs + toolbar)
       wizard_project.py    # ui.stepper-based New Project flow
