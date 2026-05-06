@@ -65,7 +65,7 @@ _exlab_readme:
       hint: "DOI, internal SOP number, or lab-notebook page"
 ```
 
-Redeclaring a core field ID (`label`, `operator`, `objective`) in a template is a configuration error; the creation controller refuses to render and surfaces the conflict to the user.
+Redeclaring a core field ID (`label`, `operator`, `objective`) in a template is a configuration error. The creation controller refuses to render and returns the API error envelope (§4.6.3) with `code: "template_core_field_redeclared"`, `field` set to the offending core ID, and `details: { "template_name": "<name>", "template_version": "<version>" }`. The frontend renders this as a form-level inline error on the Confirm & Create step (Frontend §2.2.4), naming the offending field and template; Confirm & Create stays disabled until a different template is selected.
 
 ## 10.4 User-Added Custom Fields
 

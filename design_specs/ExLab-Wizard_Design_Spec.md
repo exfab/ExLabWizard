@@ -24,6 +24,7 @@ This Design Spec is the index for the backend behavior, schemas, and persistence
 13. [[design_spec_sections/13_Equipment_to_Orchestrator_Data_Flow|Equipment-to-Orchestrator Data Flow]]
 14. [Open Questions](#14-open-questions)
 15. [[design_spec_sections/15_Distribution|Distribution and Installation]]
+16. [[design_spec_sections/16_Logging|Logging Architecture]]
 
 ---
 
@@ -155,6 +156,14 @@ PyInstaller-based build pipeline, code-signing posture (unsigned for v1; click-t
 
 ---
 
+## 16. Logging Architecture
+
+Moved to [[design_spec_sections/16_Logging]].
+
+The canonical home for ExLab-Wizard logging: the `exlab_wizard/logging/` package (`get_logger`, `configure_logging`, context vars), the on-disk log layout with a where-to-look quick reference, the structured-tag format, level / rotation / config integration, plugin-worker logging, debugging recipes, and the no-direct-`logging.getLogger` pre-commit rule. Other sections cross-reference here for any logging concern; this is the single source for the logger architecture.
+
+---
+
 ## 14. Open Questions
 
 1. ~~**Plugin sandboxing:** Should plugins run in a subprocess to prevent a plugin crash from taking down the app?~~ **Resolved (v0.7):** Yes. Each plugin runs in a dedicated worker subprocess with JSON-over-stdio IPC, declared timeout/memory caps, and a default network deny. Crashes, hangs, and OOM are contained per plugin and do not abort the creation session unless the template opts in via `_exlab_plugins_fatal: true`. See [[design_spec_sections/06_Plugin_System#6.3 Subprocess Isolation|§6.3]].
@@ -173,5 +182,11 @@ PyInstaller-based build pipeline, code-signing posture (unsigned for v1; click-t
 13. ~~**Override expiry:** Should `validation_overrides` entries carry an optional expiry timestamp?~~ **Resolved (v0.7):** Yes. Optional `expires_at` (UTC ISO 8601) field on override entries (not on tombstones). The matching algorithm in [[design_spec_sections/11_Cache_Folders#11.3 `creation.json` Schema|§11.3]] skips entries past `expires_at` without requiring an explicit tombstone; expired overrides remain in the array for audit. Bumps `creation.json` schema to 1.7. UI surface: optional date picker in the override dialog with quick-pick chips (+30d / +90d / +1y).
 14. ~~**Validator content-scan cap:** Is the size cap and the extension allowlist user-configurable in `config.yaml`, or hard-coded?~~ **Resolved (v0.7):** Configurable. `config.yaml` `validator.content_scan_max_mib` (default **5**) and `validator.content_scan_extensions` (default list of common text extensions). Determinism guarantee is footnoted as "across identical configs." See [[design_spec_sections/09_Configuration_File|§9]] and [[design_spec_sections/08_Error_Handling_Principles#8.1.1 Unresolved-placeholder rule (hard tier)|§8.1.1]].
 15. **Cross-run override propagation:** Overrides today are scoped per run, per problem class. Open question: for a known template-level issue (a vendor template that emits angle-bracket tokens by design), should the operator be able to record a template-scoped override in `config.yaml` that applies automatically to every run created from that template? This would reduce override toil at the cost of weakening the per-run audit trail.
+16. **Equipment-ID rename (v2 commitment):** v1 documents a manual workaround (delete + re-add with new ID, manually move data, sync re-register) via a help-link in Frontend §7.7.2. v2 plans an in-app guided migration that handles `paths.py`, NASSync transport state, validator state, validation-overrides keyed on equipment, and the central audit log atomically. Tracked here so the v2 commitment doesn't get lost.
+17. **Run-level LIMS records (v1.x):** Blocked on the LIMS team shipping a `runs` resource (see Backend §7.2.6 ask #2). When that lands, ExLab-Wizard adds `LIMSClient.register_run()`, restores the `LIMS_REGISTER` state in the §4.7 state machine, restores the `registering_with_lims` phase in WS events, and starts writing one record per run per the §7.2.7 logical schema.
+18. **Offline-catalogue authenticity:** Should the producer sign the catalogue JSON (e.g. detached PGP / minisign / SSH-key signature) so consumers can detect a compromised producer that writes forged project metadata? v1 punts on this; defenses today are filesystem ACLs only (Backend §7.2.9.5). Adds a key-distribution and trust-root concern; revisit if labs surface compromised-NAS scenarios as a real threat model.
+19. **Config-schema migration UX:** When a future version renames a required `config.yaml` field (or changes the YAML structure), what does the launcher show on first launch with the old config? In-place rewrite with backup, exit-with-instructions, or a guided migration screen? Backend §11.9.6 currently says the launcher "refuses to start with an unmigrated config" but the operator UX is undefined. v1 has no rename in flight; revisit when the first one ships.
+20. **Retroactive-finding remediation:** When the validator detects a hard-tier finding on a run whose `sync_status` is already `synced` (e.g. a config tightening introduced a stricter rule, see Backend §7.3 / User Interaction Spec §7.5), the gate is forward-only: the row tags `Synced under prior policy` and the operator's actions are diagnostic only. Open question: should v1.x add an explicit remediation flow (re-validate, optionally re-sync after remediation, audit-log the change)? The current "out of scope for the gate" stance leaves operators with no way to act on retroactive findings.
+21. **Dark mode (v1.x):** v1 ships light-mode-only per Frontend §2.1. DESIGN.md is single-mode. Adding dark mode requires DESIGN.md to ship a dark-mode token map and ExLab-Wizard's `design.py` to honor a runtime mode flag (auto-follow OS appearance or in-app toggle). v1.x candidate; not blocking.
 
 Open questions that were previously listed as UI-only (GUI framework selection, `.exlab-wizard` tree visibility) have been relocated to `ExLab-Wizard_Frontend_Spec.md`.

@@ -175,7 +175,7 @@ Operators without a LIMS project for the work they want to start go to the LIMS 
 
 ### 7.2.2 Run-level LIMS integration (deferred to v1.x)
 
-Run creation in ExLab-Wizard is fully local in v1. Runs are not written to LIMS — they live on disk under `<equipment>/<lims_short_id>/Run_<DATE>/` (path-segment convention TBD; see §3 v0.8 update) and in `creation.json`, with full provenance via §11. The Pre-Sync Gate (§7.3), validator audit (§11.8), and Problems tab all operate on the on-disk record without consulting LIMS.
+Run creation in ExLab-Wizard is fully local in v1. Runs are not written to LIMS — they live on disk under `<equipment>/<lims_short_id>/Run_<DATE>/` (path-segment convention specified in §3.1) and in `creation.json`, with full provenance via §11. The Pre-Sync Gate (§7.3), validator audit (§11.8), and Problems tab all operate on the on-disk record without consulting LIMS.
 
 The cleaner long-term model — a `runs` table in LIMS with first-class endpoints — is a v1.x ask of the LIMS team (§7.2.6). When that ships, ExLab-Wizard will gain `LIMSClient.register_run()` and the §4.7 state machine regains a `LIMS_REGISTER` state. Until then, the wizard's success card carries an informational note: *"Run logged locally; LIMS run-level tracking is not yet available."*
 

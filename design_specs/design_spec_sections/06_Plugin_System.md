@@ -425,6 +425,10 @@ The bundled `exlab-wizard plugins lint` command (§6.9) flags any plugin whose c
 | Worker exits 3 (uncaught) | Record `status: "failed"` with `crash: true`. Continue. |
 | Worker times out | SIGTERM, wait 1s, SIGKILL. Record `status: "timeout"`. Continue. |
 | Worker stdout is unparseable JSON | Treat as exit-3 crash. The worker's stderr is preserved verbatim in the log for debugging. |
+| Worker emits a JSON object missing a required IPC field (e.g. `kind`, `request_id`) | Treat as exit-3 crash. Log includes the malformed envelope (truncated at 4 KiB to avoid log bloat) for debugging. |
+| Worker stdin closes mid-frame (host has data to send, worker has hung up) | Treat as worker-side abnormal exit; record `status: "failed"` with reason `worker_stdin_closed`. Continue with remaining plugins. |
+| IPC frame exceeds the per-frame size cap (1 MiB by default; covers any single plugin event) | Drop the frame and record `status: "failed"` with reason `ipc_frame_oversize`. The cap protects the host from a runaway worker emitting unbounded data. |
+| Worker emits valid JSON for an unrecognized `kind` value | Log a warning, ignore the frame, continue. Forward-compatible with future plugin-protocol additions. |
 
 The default policy is **non-fatal continuation**: a single broken plugin does not abort the creation session, consistent with [[08_Error_Handling_Principles|§8]] "Plugin failures: Non-fatal by default". A template can opt into fatal behavior by setting `_exlab_plugins_fatal: true` in `copier.yml`, which causes the host to abort the post-copy task on the first non-success.
 
@@ -887,3 +891,40 @@ exlab-wizard plugins lint <PATH> --strict
 - `--json`: machine-readable JSON for CI consumption. Shape: `{ "plugins": [{"path": "...", "name": "...", "findings": [{"severity": "error", "code": "missing_manifest_field", "message": "...", "field": "..."}]}] }`.
 
 `--strict` treats warnings as errors (exits 2 instead of 1 if any warnings present). Useful in CI pipelines that want zero tolerance.
+
+## 6.10 Test / Debug CLI: `exlab-wizard plugins exec`
+
+Plugin authors need a way to exercise their plugin against synthetic input without spinning up a full creation session. The lint CLI (§6.9) checks static structure; this CLI runs the plugin's `transform()` method against a fixture.
+
+**Usage:**
+
+```
+exlab-wizard plugins exec <plugin_dir> --against <fixture_dir> [--no-isolation] [--input <field>=<value>]...
+```
+
+| Argument | Purpose |
+|---|---|
+| `<plugin_dir>` | Path to a plugin directory (the same shape `--against` lints). |
+| `--against <fixture_dir>` | Path to a fixture directory containing the files the plugin should `transform()`. The fixture is treated as the run-root: the plugin's `transform()` is called once per matching file in the fixture. |
+| `--no-isolation` | Runs the plugin in-process rather than via the subprocess worker. Strips resource limits and timeout enforcement. **Required** for using a Python debugger (e.g. `pdb`) against the plugin -- subprocess workers cannot have a debugger attached. |
+| `--input <field>=<value>` | Pre-supplies values that the plugin would otherwise request via `PluginInputRequired`. Repeatable (one per field). When the plugin emits `PluginInputRequired`, the CLI satisfies it from these flags; if a required field has no `--input`, the CLI prints the request and prompts on stdin (or aborts with `--non-interactive`). |
+
+**Synthetic `PluginContext`.** The CLI constructs a minimal `PluginContext` matching the production shape (Backend §6.1.2) but with synthesized values: a fixture-rooted `run_path`, a stub `lims_project` block (default `PROJ-TEST` / `"Test Project"`), a writable `tmp_path` per invocation, and a `PluginLogger` that writes to stdout. Plugin authors can override individual context fields via `--ctx-override <field>=<json_value>` for advanced cases.
+
+**Output.** Per-file `transform()` calls print a single line: `<file> -> <action>` where `action` is one of `mutated` / `skipped` / `failed: <reason>`. On `--no-isolation`, exceptions propagate; on the default subprocess path, exceptions are caught and the worker exits with the protocol-defined exit code (Backend §6.3.4).
+
+**Exit codes:**
+
+- `0` -- all transforms succeeded.
+- `1` -- at least one transform failed (file-level error).
+- `2` -- the plugin failed to load (manifest missing, import error, etc.).
+- `3` -- the fixture directory is missing or unreadable.
+- `4` -- a required `PluginInputRequired` field was not supplied via `--input` and the CLI is in `--non-interactive` mode.
+
+**Why this exists.** Without it, plugin authors had to create a real run via the wizard, watch their plugin fail, inspect log files, and iterate. The CLI shrinks that loop to seconds and supports debugging via `--no-isolation`. Together with the lint CLI (§6.9), this is the v1 plugin-authoring toolchain. Plugin tests in CI invoke `exlab-wizard plugins exec` against test fixtures stored alongside the plugin source; the spec recommends `tests/fixtures/<file_kind>/` per plugin.
+
+**What this CLI does NOT do:**
+
+- It does not exercise the full controller flow (validator pre-check, cache writer, NAS sync). Those are tested via the integration-test layer (Backend §4.10.2).
+- It does not validate that the plugin's `transform()` produces output that satisfies post-creation validation rules (Backend §8.1). Authors who care about post-validation test in the integration layer.
+- It does not run the README pre-fill flow that wizards use (§10).

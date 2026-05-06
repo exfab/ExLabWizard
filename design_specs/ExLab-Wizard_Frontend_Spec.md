@@ -200,7 +200,7 @@ The surface for any given message is determined by three properties of the under
 | Background / system state | persistent | no | **Status bar** (§3.5.5) |
 | Operator-attention required while window closed | persistent | yes | **OS notification + tray status** (§3.4.5, §15.7.3) |
 
-The rule is enforced through a small notification-helper API (§2.2.5) rather than per-call-site discipline. Every UI module imports `notify_action_result(...)`, `notify_field_error(...)`, etc. from `ui/notifications.py` instead of calling `ui.notify()` directly with arbitrary parameters.
+The rule is enforced through a small notification-helper API (§2.2.5) rather than per-call-site discipline. Every UI module imports the typed helpers (`notify_success`, `notify_info`, `notify_warning`, `notify_error`, `notify_field_error`, `notify_form_error`, `show_banner`, etc.) from `ui/notifications.py` instead of calling `ui.notify()` directly with arbitrary parameters.
 
 #### 2.2.2 Toast specifications
 
@@ -419,7 +419,7 @@ The Settings dialog's LIMS section (§7.6) renders the fields for both paths; wh
 
 - **Left panel:** Tree or list view of the existing `<equipment>/<project>` hierarchy, read from the configured `local_root` (or NAS mount).
   - `TestRuns/` subfolders (and any leaf folder beginning with `TestRun_`) are shown with a distinct icon and dimmed styling so experimental and test runs are visually distinguishable at a glance.
-  - `.exlab-wizard/` folders are hidden by default (see Open Question 2).
+  - `.exlab-wizard/` folders are hidden by default (resolved per §13.1).
   - In orchestrator mode, an equipment selector (sidebar list or tab strip) switches the detail pane between equipment contexts. The project-first tree structure itself is unchanged; only the filter on the selected equipment changes.
 - **Right panel:** Detail pane showing selected project or run metadata.
   - Test runs display a "Test run" badge.
@@ -427,7 +427,7 @@ The Settings dialog's LIMS section (§7.6) renders the fields for both paths; wh
 - **Toolbar actions:** "New Project", "New Run", "New Test Run", "Settings", "Refresh".
   - "New Run" and "New Test Run" are additionally surfaced as a split button to reinforce that they are distinct workflows with different downstream handling.
 - **Tab strip in the right panel:** A tab bar at the top of the right (detail) panel switches between the **Details** view (selected project/run metadata, default) and the **Problems** view (always-on validator audit; Section 11). The Problems tab carries a count badge equal to the number of currently-active hard-tier findings across the managed tree (soft-tier counts shown as a secondary muted number, e.g. `3 + 12`). The badge updates on the same 30-second background refresh used for sync-status icons (Section 3.3) and is independent of which node is selected in the left tree.
-- **Sync-status icon vocabulary (per-run, in the left tree and detail header):** Five states are rendered with distinct icons -- `pending` (queued), `synced` (verified at NAS), `failed` (NAS sync error), `blocked_by_validation` (hard-tier finding gates sync; new in v0.4), and `override_active` (sync allowed under operator override; new in v0.4). The `blocked_by_validation` state uses `--color-warning` (§2.1.4).
+- **Sync-status icon vocabulary (per-run, in the left tree and detail header):** Six states are rendered with distinct icons -- `pending` (queued), `retrying` (queued, currently in the retry-with-backoff sequence; an `(N/M)` retry-counter annotation appears next to the icon — see §10.5.1), `synced` (verified at NAS), `failed` (NAS sync error, retry budget exhausted), `blocked_by_validation` (hard-tier finding gates sync), and `override_active` (sync allowed under operator override). Color mapping: `synced` uses `--color-success`; `pending` uses `--color-muted`; `retrying` uses `--color-info`; `failed` uses `--color-danger`; `blocked_by_validation` uses `--color-warning` (§2.1.4); `override_active` uses `--color-info`. Backend `constants/enums.py` exposes the `SyncStatus` enum as the single code-side source of truth.
 - **Staging panel (orchestrator mode only):** See Section 8.
 
 ### 3.3 Refresh Semantics
@@ -573,7 +573,7 @@ Empty search resets to the unfiltered view.
 - **Archived** -- off by default. Toggle on to show archived projects (with §3.5.3 strikethrough treatment).
 - **Test runs** -- on by default. Toggle off to hide test runs (the dim-styled `TestRun_*` leaves) without hiding their parent projects -- useful for a clean view of just experimental runs.
 
-Chip state persists per-tab in NiceGUI `app.storage.tab` (Backend §4.4.7); resets to defaults when the window is reopened from the tray.
+Chip state persists per-window in NiceGUI's `app.storage.tab` namespace (a per-pywebview-window-process key/value store; the namespace name predates the native-window distribution). The state is bound to the window subprocess, so it is reset when the operator closes the window and reopens it from the tray.
 
 Chips and search compose: a search query filters within whatever the chips have not hidden. When a search returns zero matches because of the active chip set, the empty state (§3.5.6) names the chips that may be hiding results.
 
@@ -583,7 +583,7 @@ A persistent strip pinned to the bottom of the main window, ~24 px tall, in `var
 
 | Segment | Content | Click action |
 |---|---|---|
-| **Sync** | *"All synced"* / *"Sync: N jobs"* / *"⚠ N sync failed"*. Reflects `NASSyncClient` aggregate state from Backend §4.5. The warning prefix appears only when at least one job is in `failed` with no retries left. | Opens the Problems tab filtered to sync-state findings; or, if no findings yet, opens a sync-detail view in the right panel listing in-flight jobs. |
+| **Sync** | Four states: *"All synced"* / *"Sync: N jobs"* (queue + in-flight, including retrying) / *"⚠ N sync failed"* (when at least one job is `failed` with no retries left) / *"⚠ N operations need input"* (when at least one creation session is suspended in `INPUT_REQUIRED`; see §9.5). The warning prefix in the third and fourth states uses `--color-warning`. Reflects `NASSyncClient` aggregate state per Backend §4.4.6 / §7.1 plus `SessionStore` suspended-session count per Backend §4.4.7. | Opens the Problems tab filtered to sync-state findings if a `failed` state is active; opens the Operations panel (§9.5) if the suspended-input state is active; otherwise opens a sync-detail view in the right panel listing in-flight jobs. |
 | **Validator** | *"Last audit: HH:MM:SS"* with a relative-time tooltip on hover. Updates on every 30-second background refresh (§3.3). | Triggers an immediate audit via `POST /api/v1/problems/refresh` (Backend §4.6.1) and opens the Problems tab. |
 | **LIMS** | *"LIMS: live"* / *"LIMS: cached (last fetched HH:MM)"* / *"LIMS: catalogue (produced by &lt;workstation&gt;)"* / *"LIMS: unreachable"*. Reflects the most recent `LIMSClient.health_check()` result. | Opens Settings -> LIMS section (§7.6) with the Test connection button highlighted. |
 
@@ -643,7 +643,7 @@ A project page does NOT show README, Validation, or Plugin-output sections -- th
 | **README** | collapsed | Per §3.6.5 — collapsed by default with *"Show README"* expansion. |
 | **Files** | collapsed | A simple file listing of the run directory (filenames + sizes), bounded to the first ~200 entries; *"View all in file manager"* affordance opens the OS file browser at the directory. Useful for verifying what landed without leaving the app. |
 
-#### 3.6.4 Validation and override summary (resolves Decision 3)
+#### 3.6.4 Validation and override summary
 
 The Validation section shows a compact, glanceable view of per-run validation state and links to the Problems tab for canonical interactions.
 
@@ -714,7 +714,7 @@ Beyond NiceGUI's component defaults (Tab / Shift-Tab navigation, Enter to submit
 
 **Disabled-context behavior.** All shortcuts are no-ops when the relevant action is disabled (e.g. wizard buttons are disabled in setup-incomplete state per §3.1.4 -- `Cmd+N` does nothing in that state).
 
-**Discoverability.** A `[Keyboard shortcuts]` action in the Help menu (Backend §15.3.4) opens a cheatsheet dialog rendering the table above. This is the single source-of-truth surface operators consult when they forget a binding.
+**Discoverability.** A `[Keyboard shortcuts]` action in the window's File / Help menu (the native menu bar specified for both platforms in Backend §15.3.2 / Frontend §3.4) opens a cheatsheet dialog rendering the table above. This is the single source-of-truth surface operators consult when they forget a binding.
 
 **Implementation.** Bindings live in `ui/keyboard.py` as a single registry; per-shortcut handlers dispatch to the same controller actions the toolbar buttons use. Adding a binding is a spec change to the table above plus a registry entry; bypassing the registry (e.g. binding directly to a NiceGUI element) is a code-review reject.
 
@@ -739,8 +739,8 @@ Navigation: "Back" / "Next" at the footer; "Cancel" closes the wizard and aborts
 ### 4.1 LIMS Picker Behavior
 
 - **Filter scope.** The picker shows projects the logged-in operator is a member of (per `project_users` in the LIMS schema; the backend filters via `GET /api/v1/projects` scoped by the result of `GET /api/v1/me`). Operators with no project memberships see an empty list and a help message: *"You are not a member of any LIMS projects. Ask your PI to add you, or click '+ New in LIMS' to create one yourself."*
-- **Refresh.** Clicking "Refresh" forces an immediate cache invalidation and re-fetch from LIMS. Failure shows a non-blocking toast (`ui.notify`) and leaves the existing list in place with the stale badge.
-- **+ New in LIMS.** Opens the LIMS web UI's create-project page in a new browser tab. The URL is derived from `config.yaml` `lims.endpoint` rather than configured separately: the backend strips the trailing `/api/v1` (or `/api/v<N>`) path component and appends `/projects/new`. So an `endpoint` of `https://lims.lab.example/api/v1` resolves to `https://lims.lab.example/projects/new`. If the derivation rule needs to differ (a LIMS deployment that hosts the UI on a different host than the API), the LIMS team is asked to align them; v1 does not add a separate config knob. The operator creates the project in the LIMS UI, returns to the wizard, clicks "Refresh", and the new project appears.
+- **Refresh.** Clicking "Refresh" forces an immediate cache invalidation and re-fetch from LIMS. Failure surfaces via `notify_warning(...)` (§2.2.5) and leaves the existing list in place with the stale badge.
+- **+ New in LIMS.** Opens the LIMS web UI's create-project page in the OS default browser (the URL is delivered to the OS via `webbrowser.open`; the pywebview window itself doesn't carry tabs). The URL is derived from `config.yaml` `lims.endpoint` rather than configured separately: the backend strips the trailing `/api/v1` (or `/api/v<N>`) path component and appends `/projects/new`. So an `endpoint` of `https://lims.lab.example/api/v1` resolves to `https://lims.lab.example/projects/new`. If the derivation rule needs to differ (a LIMS deployment that hosts the UI on a different host than the API), the LIMS team is asked to align them; v1 does not add a separate config knob. The operator creates the project in the LIMS UI, returns to the wizard, clicks "Refresh", and the new project appears.
 - **Offline catalogue fallback.** When the consumer rules in Design Spec §7.2.9.3 trigger (catalogue path configured, local cache empty, LIMS unreachable), the picker reads from the offline catalogue and renders the rows normally. Each row carries an *"(via offline catalogue)"* badge in a muted treatment alongside the row's status pill; hovering the badge reveals a tooltip with the catalogue's producer workstation and timestamp (e.g. *"Produced by `LAB_STATION_01` on 2026-05-04 23:11"*). All other behavior (filter, search, "+ New in LIMS") is unchanged; only the source annotation differs. Catalogue read failures (file unreadable, parse error, `lims_endpoint` mismatch — see §7.2.9.4) are surfaced via the same blocking error described in the next bullet.
 - **Empty cache + offline + no catalogue.** If the cache is empty, the LIMS is unreachable, AND no offline catalogue is available (path unset, file missing, or read failed for any reason), the picker shows a blocking error: *"No LIMS projects available. Connect to the LIMS network and click Refresh, configure an offline catalogue path in Settings (LIMS section), or copy the cache from a connected machine."* The wizard's "Next" button is disabled.
 - **Status filter.** A small filter bar at the top of the picker offers `Active` (default), `Pending`, `Completed`, `Archived` chips. By default only `Active` and `Pending` projects are shown to reduce clutter.
@@ -764,7 +764,7 @@ Modal, multi-step. User capabilities: "Create a New Experimental Run" and "Creat
 |---|---|---|
 | 1. Project + Equipment | User selects parent project and equipment. Pre-selected if one is highlighted in the main window. | Same in both modes |
 | 2. Template Selection | Lists run-scope templates filtered by `_exlab_run_scope`. | Experimental: scope `"experimental"` or `"both"`. Test: scope `"test"` or `"both"`. |
-| 3. Variable Form | Auto-generated form from the template manifest. `run_date` is auto-filled to now; user may override. | Same in both modes |
+| 3. Variable Form | Auto-generated form from the template manifest. `run_date` is auto-filled to now; the operator may override. | Same in both modes |
 | 4. README Form | Same as project wizard. | Same in both modes |
 | 5. Preview | Destination path shown. The validator (Design Spec §8.1) runs against the resolved path before this step renders; any unresolved placeholder tokens (e.g. a literal `<run_date>` segment because the variable form left `run_date` empty) or illegal characters surface as an inline error block above the path, with the "Next" button disabled until the operator revisits the variable form. | Experimental: `<equipment>/<project>/Run_<DATE>/`. Test: `<equipment>/<project>/TestRuns/TestRun_<DATE>/`, with both the `TestRuns/` segment and the `TestRun_` leaf prefix **visually highlighted** and a short advisory underneath: *"This run will be excluded from automated analysis."* |
 | 6. Confirm & Create | Same pattern as project wizard. | Test: the primary button is labeled **"Create test run"** and uses a differently colored button to reduce accidental creation in the wrong mode. Experimental: primary button is **"Create run"** in the default primary color. |
@@ -842,7 +842,7 @@ Switching sections does NOT discard a section's edits — the working copy persi
 
 **Sub-dialogs stage into the working copy.** The Equipment Add/Edit sub-dialog (§7.7.2) carries a primary button labelled **Done** rather than "Save" to signal that nothing is persisted by clicking it — only by the parent dialog's **[Save all changes]**. The equipment list table updates immediately to reflect the working copy.
 
-**Side-effect ordering on Save.** After `config.yaml` is written, the dialog triggers component re-initialization in this order: template re-discovery, plugin re-discovery, NASSync transport re-registration, LIMS cache invalidation. A toast (`ui.notify`) summarizes what changed (e.g., *"Saved. 2 equipment entries updated; LIMS cache invalidated."*).
+**Side-effect ordering on Save.** After `config.yaml` is written, the dialog triggers component re-initialization in this order: template re-discovery, plugin re-discovery, NASSync transport re-registration, LIMS cache invalidation. A success toast via `notify_success(...)` (§2.2.5) summarizes what changed (e.g., *"Saved. 2 equipment entries updated; LIMS cache invalidated."*).
 
 **Credentials are independent of Save.** Set / Replace / Clear actions on credential fields (§7.4.1) write directly to the OS keyring at the moment they are clicked. Credentials are not part of the working copy, are not affected by **[Discard all]**, and don't contribute to the Save badge's pending-change count.
 
@@ -924,7 +924,7 @@ Above the table: **[+ Add equipment]**.
 
 **Reorder.** Rows are draggable; the order in `equipment[]` matches the table order. Drag-reorder mutates the working copy.
 
-**Delete.** Clicking Delete prompts a confirmation: *"Remove `<ID>`? Existing data on disk is not affected; this only removes the equipment from `config.yaml`."* On confirm, the row is removed from the working copy and an undo toast (`ui.notify` with **Undo**, 8-second duration) appears; clicking Undo restores the row to its previous position. The disk-side delete only happens when the dialog's **[Save all changes]** fires.
+**Delete.** Clicking Delete prompts a confirmation: *"Remove `<ID>`? Existing data on disk is not affected; this only removes the equipment from `config.yaml`."* On confirm, the row is removed from the working copy and an undo toast appears via `notify_warning("Equipment removed.", action=ActionSpec(label="Undo", on_click=...))` per §2.2.5; the warning-tier 8-second duration is extended to 12 s by the action presence (§2.2.2). Clicking Undo restores the row to its previous position. The disk-side delete only happens when the dialog's **[Save all changes]** fires.
 
 #### 7.7.2 Add / Edit sub-dialog
 
@@ -932,7 +932,7 @@ Modal-on-modal sub-dialog. Scrollable single-column form. Primary button: **Done
 
 **Identity group**
 
-- **ID.** Single-line input, validated against `^[A-Z][A-Z0-9_]*$` (max 32 chars; Design Spec §3.1). On Edit, this field is read-only with a help-link beside it: *"Need to rename? See [docs/equipment-rename.md] for the manual procedure."* The link opens the renaming-workaround documentation (delete + re-add with new ID + filesystem move + sync re-register). Equipment renames are rare in practice; an in-app guided migration is planned for v2 (Backend §15.8 OQ #5 tracks this as a v2 commitment). (Resolves Open Question §13.9.)
+- **ID.** Single-line input, validated against `^[A-Z][A-Z0-9_]*$` (max 32 chars; Design Spec §3.1). On Edit, this field is read-only with a help-link beside it: *"Need to rename? See [docs/equipment-rename.md] for the manual procedure."* The link opens the renaming-workaround documentation (delete + re-add with new ID + filesystem move + sync re-register). Equipment renames are rare in practice; an in-app guided migration is a planned v2 feature (tracked in Design Spec §14 global OQ list). (Resolves Open Question §13.9.)
 - **Label.** Single-line input, max 100 chars.
 - **Completeness signal.** Radio: `sentinel_file` / `manifest`. Selecting a value reveals a sub-field:
   - `sentinel_file`: **Sentinel filename** input (default `acquisition_complete.flag`).
@@ -1017,7 +1017,7 @@ Backs the `validator` block (Design Spec §8.1.1, §11.8, §9).
 
 ### 7.11 Logging section
 
-Backs the `logging` block (Design Spec §11.5.1, §9).
+Backs the `logging` block (Design Spec [[design_spec_sections/16_Logging|§16]] is the canonical logger architecture; the on-disk format and rotation policy live at [[design_spec_sections/11_Cache_Folders#11.5.1 Logging infrastructure|§11.5.1]]; the config schema is at [[design_spec_sections/09_Configuration_File|§9]]).
 
 | Field | Backs | Notes |
 |---|---|---|
@@ -1067,7 +1067,7 @@ Only shown when `orchestrator.enabled: true` in `config.yaml`. User capability: 
 
 ### 8.1 Equipment Selector
 
-A sidebar list or tab strip in the main window header that switches which equipment context the left tree and detail pane display. Exactly one equipment is active at a time in the main view. Multiple wizard windows may be open simultaneously for different equipment; they are independent.
+A sidebar list or tab strip in the main window header that switches which equipment context the left tree and detail pane display. Exactly one equipment is active at a time in the main view. Multiple creation sessions may run concurrently across equipment in orchestrator mode (§9.6); they share the single native window per the §3.4.1 invariant, with the Operations panel (§9.5) as the surface for switching between them.
 
 ### 8.2 Staging Panel
 
@@ -1113,7 +1113,7 @@ A modal dialog rendered over whatever wizard step is currently active. **Click-o
 
 A plugin processing N files may emit `PluginInputRequired` once per file. The controller protocol is sequential: each escalation dialog must be Submitted (or Cancelled) before the next opens. The wizard's progress bar shows phase = `running_plugins` throughout; each escalation is a brief modal-dialog interruption rather than a phase change.
 
-A small toast (`ui.notify` per the notification taxonomy) appears between consecutive escalations (*"Resuming -- next prompt incoming"*) so the operator isn't surprised by a second dialog opening immediately after Submit.
+A small `notify_info(...)` toast (§2.2.5) appears between consecutive escalations (*"Resuming -- next prompt incoming"*) so the operator isn't surprised by a second dialog opening immediately after Submit.
 
 There is no batched "1 of N" indicator. Each escalation is treated as an independent request because escalation N's questions often depend on escalation N-1's answers (e.g. *"You said the experiment uses cell line A; what passage number?"*); batching would force plugin authors to design for it, which most won't.
 
@@ -1182,7 +1182,7 @@ The panel auto-refreshes on the same WebSocket events that drive per-session pro
 
 Whether the operator can open a new wizard while another session is suspended is **mode-dependent**:
 
-- **Single-equipment mode** (`orchestrator.enabled: false`): NO. The toolbar's wizard buttons (New Project / New Run / New Test Run) are disabled while any session is in `RUNNING` or `INPUT_REQUIRED`. Tooltip: *"An operation is in progress. Resume or cancel it from the Operations panel."* with a deep link to §9.5.
+- **Single-equipment mode** (`orchestrator.enabled: false`): NO. The toolbar's wizard buttons (New Project / New Run / New Test Run) are disabled while any session is in a non-terminal state (`VALIDATING`, `RENDERING`, `PLUGIN_PASS`, `INPUT_REQUIRED`, `CACHE_WRITE`, `POST_VALIDATE`, or `SYNC_QUEUED` per Backend §4.7). Tooltip: *"An operation is in progress. Resume or cancel it from the Operations panel."* with a deep link to §9.5.
 - **Orchestrator mode** (`orchestrator.enabled: true`): YES. Multiple equipment may need attention concurrently; locking out new wizards because one equipment is suspended would block the orchestrator-mode workflow. Wizard buttons remain enabled; the operator may start a new creation (against any equipment) while previous sessions remain suspended in the Operations panel. The single-window invariant (§3.4.1) still applies -- new wizards open in the same window, with the previously-suspended escalation dialog stashed (the operator returns to it from the Operations panel or via the next-pending notification).
 
 This resolves Frontend Open Question #5 (concurrent wizard limit) for v1: single-equipment locks down to one creation at a time; orchestrator mode allows concurrent creations across equipment.
@@ -1193,7 +1193,7 @@ This resolves Frontend Open Question #5 (concurrent wizard limit) for v1: single
 
 ### 10.1 Progress
 
-Step 6 (Confirm & Create) shows a progress bar with phase labels: "Validating inputs", "Rendering template", "Running plugins", "Writing cache", "Registering with LIMS", "Queueing NAS sync". The UI advances through each phase as the backend emits progress events.
+Step 6 (Confirm & Create) shows a progress bar with phase labels matching the Backend §4.7 / §4.6.2 phase enum: *"Validating inputs", "Rendering template", "Running plugins", "Writing cache", "Validating post-creation", "Queueing NAS sync"*. The UI advances through each phase as the backend emits progress events. (The `registering_with_lims` phase from earlier drafts is removed in v1 because there is no per-run LIMS write; it returns in v1.x when the LIMS gains a `runs` resource — see Backend §7.2.7.)
 
 ### 10.2 Errors
 
@@ -1356,9 +1356,9 @@ When the filter set returns no rows, the tab shows a centered illustration with 
 
 When the 30-second background audit (§3.3) detects a new hard-tier finding while the operator has the right panel on Details, the surfacing rule is **toast-first-then-badge**:
 
-- **First hard-tier finding per session:** a toast (`var(--color-warning)`) appears with the rule name, the matched-token snippet, and a `[Open Problems tab]` action. Toast duration follows the warning-tier 8-second timer (§2.2.2). Operator's first-occurrence flag for the session is set after dismissal.
+- **First hard-tier finding per session:** the validator emits `notify_warning(...)` (§2.2.5) with the rule name, the matched-token snippet, and an `ActionSpec(label="Open Problems tab", on_click=open_problems_tab)`. Toast duration follows the warning-tier defaults from §2.2.2. The operator's first-occurrence flag for the session is set after dismissal.
 - **Subsequent hard-tier findings in the same session:** silent badge update only (the Problems-tab count badge in the right-panel tab strip increments). No toast.
-- **Across sessions:** the first-occurrence flag resets when the window closes (it's `app.storage.tab` -- Backend §4.4.7), so reopening the window can fire one more first-occurrence toast.
+- **Across sessions:** the first-occurrence flag lives in `app.storage.tab` and so resets when the window subprocess exits; reopening the window can fire one more first-occurrence toast.
 
 Soft-tier findings never auto-surface; operators see them by enabling the Severity = Soft chip.
 
@@ -1370,7 +1370,7 @@ A modal dialog opened from the `Override and allow sync` action or from the wiza
 
 - **Header:** *"Override sync gate -- this finding will be ignored for this run only"*.
 - **Finding summary card** (read-only): rule name, severity, run path, matched token, full offending path. Mirrors the row's data so the operator sees exactly what they are overriding.
-- **Operator confirmation:** read-only field showing the `operator` value that will be attributed to the override (pre-filled from the OS username, matching the README pre-fill rule in Section 6.2). Cannot be edited from this dialog; if the wrong operator is shown, the user-facing message instructs the operator to cancel and update their session identity in Settings.
+- **Operator confirmation:** read-only field showing the `operator` value that will be attributed to the override (pre-filled from the OS username, matching the README pre-fill rule in Section 6.2). Cannot be edited from this dialog; if the wrong operator is shown, the dialog instructs the operator to cancel and update their session identity in Settings.
 - **Reason text area:** required, multi-line, **minimum 10 characters and maximum 500 characters** after trimming leading/trailing whitespace. A character counter (`123 / 500`) is shown beneath the text area; turning red when within 10 characters of the limit. Short reasons (e.g. *"Approved by PI"*) are accepted — the audit value comes from having any attributed reason; boilerplate detection is not enforced. The placeholder text reads *"Why is this override appropriate? (Required. Visible in the audit log and in `creation.json`.)"*.
 - **Optional expiry:** a date picker with the label *"Expires (optional)"* and a small "Clear" button to reset to no-expiry. Default: empty (no expiry). Quick-pick chips beside the picker offer **+30 days**, **+90 days**, **+1 year** for common cases. The picker is bounded to dates strictly in the future (today + 1 day onward). When set, the value is stored as a UTC ISO 8601 timestamp at the end of the chosen day; the operator's local time zone is used for the picker's calendar but never persisted. Helper text below the picker reads *"Once expired, this override is automatically deactivated and the sync gate re-engages. The audit entry remains visible."*
 - **Acknowledgement checkbox:** *"I understand this override will be appended to `creation.json` `validation_overrides` and to the equipment-level audit log."* Must be checked.
@@ -1384,7 +1384,7 @@ The Problems tab is reachable from:
 
 - The right-panel tab strip (always visible).
 - The wizard success card's "Sync blocked" banner (Section 10.4).
-- A keyboard shortcut (Cmd/Ctrl+Shift+P; subject to Open Question 5 on keyboard-first navigation).
+- A keyboard shortcut: `Cmd/Ctrl+Shift+P` (per the §3.7 binding table).
 - A small "View N problems" link on the run's Details panel when that run has any active findings.
 
 Conversely, the **Reveal in tree** action and the row's `Path` column hover (which becomes a clickable link) navigate from the Problems tab back to the Details tab on the relevant run.
@@ -1433,7 +1433,7 @@ OQ #1 (GUI framework) was resolved in v0.5; see §2. Subsequent items renumbered
 2. ~~**Staging panel placement:**~~ **Resolved (in §8.2).** Bottom dock, always visible when orchestrator mode is enabled. Not collapsible; orchestrator mode exists specifically to monitor staging across equipment.
 3. ~~**Test-mode color:**~~ **Resolved (in §2.1.4).** The warning-tier hue is `--color-warning` = `--oi-orange` = `#E69F00`, per DESIGN.md §01. Single token referenced from all surfaces that previously restated this color (test-mode badge, `TestRuns/` and `TestRun_` path highlight, `blocked_by_validation` sync icon, Sync-blocked banner, Problems-tab hard-tier stripe and severity icon, override-reason near-limit indicator, setup-incomplete banner).
 4. ~~**Keyboard-first creation flow:**~~ **Resolved (in §3.7).** A small set of ~10 app-level shortcuts (New Project, New Run, New Test Run, Settings, Refresh, Problems, focus search, Cmd+Enter to advance, Esc to cancel-with-confirmation, etc.) bound centrally in `ui/keyboard.py`. Cheatsheet dialog reachable from the Help menu.
-5. ~~**Concurrent wizard limit (orchestrator UI):**~~ **Resolved (in §9.6).** Mode-dependent: single-equipment workstations forbid concurrent suspended sessions (wizard buttons disable while any session is in `RUNNING` or `INPUT_REQUIRED`); orchestrator-mode workstations allow concurrent sessions across equipment, with the Operations panel (§9.5) as the surface for managing them.
+5. ~~**Concurrent wizard limit (orchestrator UI):**~~ **Resolved (in §9.6).** Mode-dependent: single-equipment workstations forbid concurrent suspended sessions (wizard buttons disable while any session is in a non-terminal state (`VALIDATING`, `RENDERING`, `PLUGIN_PASS`, `INPUT_REQUIRED`, `CACHE_WRITE`, `POST_VALIDATE`, or `SYNC_QUEUED` per Backend §4.7)); orchestrator-mode workstations allow concurrent sessions across equipment, with the Operations panel (§9.5) as the surface for managing them.
 6. ~~**Override-reason length policy:**~~ **Resolved (v0.7):** Min 10 chars, max 500 chars after whitespace trim. Short reasons accepted; no boilerplate detection. See Section 11.5.
 7. ~~**Problems-tab default-open behavior:**~~ **Resolved (in §11.4.1).** Toast-first-then-badge: a single warning-tier toast on the first hard-tier finding per session (with `[Open Problems tab]` action); subsequent findings in the same session update the count badge silently. First-occurrence flag persists in `app.storage.tab` and resets when the window closes.
 8. ~~**Hard-tier-finding scope at empty state:**~~ **Resolved (in §11.4).** Conditional empty-state copy: *"No active problems."* when no soft-tier findings exist; *"No active problems. (N soft-tier findings hidden by filter.)"* with a `[Show soft-tier findings]` link otherwise.

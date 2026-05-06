@@ -154,6 +154,12 @@ exlab_wizard/
       session_progress.py  # WebSocket-driven progress bar
   errors.py                # ExLabError hierarchy
   paths.py                 # path composition helpers, equipment-id canonicalization, OS-appropriate config/log/state directories
+  logging/                 # canonical logger system; see [[16_Logging|§16]]
+    __init__.py            # exports get_logger, configure_logging, set_run_context
+    manager.py             # logger factory; reads config; configures handlers
+    format.py              # format string template + structured-tag renderer
+    context.py             # contextvars for run_id, equipment_id, project, kind, host
+    handlers.py            # EquipmentScopedFileHandler + central RotatingFileHandler config
   constants/               # single source of truth for values referenced from multiple modules; see §4.3.1
     __init__.py
     schema_versions.py     # CREATION_JSON_VERSION, README_FIELDS_JSON_VERSION, INGEST_JSON_VERSION
@@ -362,7 +368,7 @@ In-memory `dict[str, Session]` for v1. Session count is bounded by concurrent in
 
 The FastAPI lifespan (`@asynccontextmanager`) is responsible for: loading config, building the plugin registry once at startup, refreshing the LIMS project cache (best effort; failure does not abort startup), starting the audit task, and on shutdown closing in-flight sessions and waiting up to 5 s for plugin workers to terminate cleanly before SIGKILL.
 
-**Concurrent log writes within orchestrator mode.** Resolves Should-resolve item #7 from the audit. In orchestrator mode the same hostname can drive concurrent creation sessions on different equipment. Equipment-level logs are file-per-equipment, so cross-equipment concurrency is naturally isolated. **Same-equipment** concurrency on a single hostname uses POSIX `O_APPEND` writes (atomic up to `PIPE_BUF`, which exceeds our line size of ~1 KiB) and the Windows equivalent via `FILE_APPEND_DATA` opened with `FILE_SHARE_WRITE`. Each log line is bounded to 1 KiB; longer messages are truncated with a continuation marker. Per-run logs are single-writer by definition (only one session creates a given run) and require no special handling.
+**Concurrent log writes within orchestrator mode.** Resolves Should-resolve item #7 from the audit. In orchestrator mode the same hostname can drive concurrent creation sessions on different equipment. Equipment-level logs are file-per-equipment, so cross-equipment concurrency is naturally isolated. **Same-equipment** concurrency on a single hostname uses POSIX `O_APPEND` writes (atomic up to `PIPE_BUF`, which exceeds our line size of ~1 KiB) and the Windows equivalent via `FILE_APPEND_DATA` opened with `FILE_SHARE_WRITE`. Each log line is bounded to 1 KiB; longer messages are truncated with a continuation marker. Per-run logs are single-writer by definition (only one session creates a given run) and require no special handling. The full logger architecture (handlers, format, context vars, async-safety) is specified in [[16_Logging|§16]].
 
 ## 4.6 Frontend ↔ Backend Protocol
 
@@ -473,7 +479,29 @@ Per-component `status` is `"ok"` | `"warn"` | `"error"`. Top-level `status` is t
 
 Required: `code` (stable string identifier; this is what client code branches on), `message` (human-readable). Optional: `field` (for field-level validation errors), `details` (free-form structured detail), `trace_id` (echoed back from the request's `X-Trace-Id` header if present, else server-generated; used to correlate with the central app log).
 
-The `code` enum is open-ended and additive: new codes can appear without a version bump. Documented codes include: `setup_incomplete`, `validation_failed`, `plugin_variable_validation_failed`, `template_load_error`, `lims_unreachable`, `keyring_unavailable`, `session_not_found`, `session_already_completed`, `nas_sync_failed`, and the equipment-id and field-length validation errors. Component sections in this spec define their own codes; the full enum is enumerated in `api/schemas.py` (see [[#4.3 Package Layout|§4.3]]).
+The `code` enum is open-ended and additive: new codes can appear without a version bump. The full enum is the union of the table below and any per-component additions; `api/schemas.py` is the code-side source of truth and must stay in sync with the table. Adding a new code requires a row here and a `Literal` constant in `api/schemas.py`.
+
+| `code` | HTTP status | Emitted by | Frontend handling |
+|---|---|---|---|
+| `setup_incomplete` | 503 | Setup gate (§4.9.2) on creation / browse / problems endpoints when state is `INCOMPLETE_*` | Frontend §3.1.4 setup-incomplete banner; redirects to Settings (§7.13) |
+| `shutting_down` | 503 | Quit-coordinator (§4.3.2) on creation endpoints during graceful shutdown | Frontend toast *"App is shutting down"* and disables wizard buttons |
+| `validation_failed` | 422 | Pre-creation validator (§8.1) on path / character / mode / placeholder violations | Field-level inline error per Frontend §2.2.4 |
+| `plugin_variable_validation_failed` | 422 | Plugin host (§6.4) when `PluginInputRequired` response fails plugin-side validation | Inline error within escalation dialog (Frontend §9.1) |
+| `template_load_error` | 422 | TemplateEngine (§4.4.2) on Copier load failure | Form-level inline error (Frontend §2.2.4) on the Confirm & Create step |
+| `template_core_field_redeclared` | 422 | Template loader (§10.3) when a template declares `label` / `operator` / `objective` | Form-level inline error naming the offending field; wizard cannot start creation |
+| `lims_unreachable` | 503 (`/setup/test-lims`) or 200 with structured detail (catalogue-fallback path) | LIMSClient (§7.2) | Banner per Frontend §10.5.2; LIMS picker fallback per §4.1 |
+| `keyring_unavailable` | 503 | Keyring manager (§7.4.4) on backend-init failure with no fallback | Settings-section error; documented fallback (encrypted-at-rest) |
+| `session_not_found` | 404 | Controller (§4.4.1) on `/sessions/{id}/*` for an unknown id | Toast; logged (likely a stale operator action) |
+| `session_already_completed` | 409 | Controller on resume / cancel for a session in a terminal state | Toast *"This session has already finished"*; refreshes Operations panel |
+| `nas_sync_failed` | 200 (status update) | NASSync (§7.1) on terminal failure for a single job | Per-run sync icon flips to `failed`; toast on terminal failure |
+| `schema_major_mismatch` | 422 | Cache reader (§11.9.2) when `creation.json` major version exceeds reader's understanding | Halts the affected operation; surfaces in Problems tab as a hard finding |
+| `equipment_id_invalid` | 422 | Settings save (§9) on regex / length violation | Field-level inline error per §7.7.2 |
+| `field_too_long` | 422 | Validation gate on `label` (>100) / `objective` (>2000) | Field-level inline error |
+| `disk_space_insufficient` | 422 | Pre-flight (§10.5.4) before Confirm & Create | Form-level inline error; Confirm & Create disabled |
+| `plugin_host_unavailable` | 503 | Pre-flight or runtime when plugin worker subprocess fails to spawn | Form-level inline error |
+| `internal_error` | 500 | FastAPI exception-handler boundary (uncaught) | Generic toast with `trace_id` for support; logged at ERROR |
+
+Codes not listed here are reserved for future component-section additions and must be appended to the table when introduced.
 
 HTTP status codes used: `200` (success), `201` (created — sessions, overrides), `204` (delete), `400` (validation), `401` (auth — only for the LIMS-passthrough case if any), `404` (not found), `409` (conflict — e.g. session already in terminal state when resume requested), `422` (unprocessable — schema-valid but semantically invalid), `503` (setup incomplete or component unavailable). No `5xx` other than `503`; uncaught exceptions are caught at the FastAPI exception-handler boundary and surfaced as `500` with `code: "internal_error"` and a `trace_id` for log correlation.
 

@@ -163,7 +163,7 @@ sync:
 orchestrator:
   enabled: false
   label: "Lab Acquisition Station 01"
-  staging_root: "/staging"
+  staging_root: "/staging"        # POSIX example. Windows orchestrators use a Windows-style path (e.g. C:\staging or \\nas01\staging). The default value is OS-conditional at first-launch (§3.1.5): /staging on macOS/Linux, %LOCALAPPDATA%\exlab-wizard\staging on Windows. The operator can override in Settings.
   staging_cleanup:
     mode: "manual"          # or "scheduled"
     retain_hours: 24        # only used if mode is "scheduled"

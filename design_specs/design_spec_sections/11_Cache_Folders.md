@@ -83,7 +83,7 @@ All `.exlab-wizard` contents sync to NAS as part of the directory mirror with SH
 
 ```json
 {
-  "schema_version": "1.7",
+  "schema_version": "1.8",
   "created_at": "2026-04-17T14:32:00Z",
   "created_by": "asmith",
   "level": "run",
@@ -91,7 +91,9 @@ All `.exlab-wizard` contents sync to NAS as part of the directory mirror with SH
   "lims_project": {
     "uid": "8c7e9d2f-1a4b-4e6c-9b3d-7f2a1e5d8c4b",
     "short_id": "PROJ-0042",
-    "name_at_creation": "Cortex Q3 Pilot"
+    "name_at_creation": "Cortex Q3 Pilot",
+    "source": "live",
+    "cache_freshness_at_use": null
   },
   "template": {
     "name": "confocal_run_v2",
@@ -131,13 +133,15 @@ All `.exlab-wizard` contents sync to NAS as part of the directory mirror with SH
 }
 ```
 
-**v0.7 schema version: `1.7`.** The 1.5 → 1.6 → 1.7 progression added (in order) the `lims_project` block (Mapping B; [[07_Sync_and_Database_Integration#7.2 LIMS Integration|§7.2]]), tombstone-by-reference for `validation_overrides`, and optional `expires_at` on overrides. See the "Schema-version history" table near the bottom of this section for the full progression. Notes specific to `lims_project` (introduced in 1.5):
+**Current schema version: `1.8`.** The 1.5 → 1.6 → 1.7 → 1.8 progression added (in order) the `lims_project` block (Mapping B; [[07_Sync_and_Database_Integration#7.2 LIMS Integration|§7.2]]), tombstone-by-reference for `validation_overrides`, optional `expires_at` on overrides, and the `lims_project.source` + `lims_project.cache_freshness_at_use` fields that record which LIMS data source the wizard used at creation time. See the "Schema-version history" table near the bottom of this section for the full progression. Notes specific to `lims_project` (introduced in 1.5):
 
 - `lims_project.uid` — the LIMS project's stable UUID. Authoritative identity.
 - `lims_project.short_id` — the LIMS project's `PROJ-NNNN` form. **Authoritative for the on-disk path segment** (see [[03_Directory_Structure_Convention|§3]]). Path examples in this section show `PROJ-0042`. Stable across LIMS-side renames of the project's `name`.
 - `lims_project.name_at_creation` — the LIMS project's human-readable name at the time the run was created. Stored as a denormalized snapshot so a later LIMS-side rename does not silently mutate the audit trail. The current name is fetched live from LIMS when needed (or from the cache; §7.2.4).
+- `lims_project.source` — closed enum `"live"` | `"cache"` | `"offline_catalogue"`. Records WHICH LIMS data source the wizard used at creation time. `"live"` means the wizard hit the LIMS API and got a fresh response; `"cache"` means it fell back to the local SQLite cache (§7.2.4) because the API was unreachable; `"offline_catalogue"` means it read from the NAS-shared catalogue (§7.2.9). Used by the Frontend recovery flows (Frontend §10.5.2) and as an audit signal for runs created during a LIMS outage.
+- `lims_project.cache_freshness_at_use` — UTC timestamp string OR `null`. Set only when `source != "live"`. Records when the cached data was last refreshed from LIMS, so an auditor can see "the wizard used data from N hours before creation" without re-fetching anything.
 
-The `lims_project` block is **absent** at the equipment level (`equipment.json` lives there instead; §11.1, §11.2 — equipment is registry-driven, not LIMS-bound). The `lims_project` block is **required** at the project and run levels in v0.7.
+The `lims_project` block is **absent** at the equipment level (`equipment.json` lives there instead; §11.1, §11.2 — equipment is registry-driven, not LIMS-bound). The `lims_project` block is **required** at the project and run levels in v0.7. (`source` and `cache_freshness_at_use` are required in 1.8 and later; on a 1.7 file they're absent and read as `"live"` and `null` respectively per the migration policy in §11.9.2.)
 
 Readers expecting `1.0`–`1.4` ignore the `lims_project` block. The validator's audit-mode walk treats the **absence** of `lims_project` in a project- or run-level `creation.json` whose `schema_version` is ≥ 1.5 as a soft-tier `missing_required_field` finding ([[08_Error_Handling_Principles#8.1.5 Missing-required-field rule (soft tier)|§8.1.5]]), with `field: "lims_project"` and the run path. Files with `schema_version` ≤ 1.4 are exempt because the field did not exist when they were written.
 
@@ -219,8 +223,9 @@ Empty array (the default) means no overrides are active. Tombstones with no matc
 | `1.5` | `lims_project` block (`uid`, `short_id`, `name_at_creation`) at project and run levels | Mapping B; [[07_Sync_and_Database_Integration#7.2 LIMS Integration|§7.2]]. |
 | `1.6` | `validation_overrides[].id` (UUID v4, required on every entry) and `validation_overrides[].revokes` (present on tombstones); `plugins_applied[].status` gains `"policy_violation"` value | Tombstone-by-reference for unambiguous revocation; plugins-must-not-touch enforcement ([[06_Plugin_System#6.1.5 What plugins must not touch|§6.1.5]]). |
 | `1.7` | `validation_overrides[].expires_at` (optional, override entries only) | Time-bounded overrides; resolves OQ #13. The matching algorithm skips entries past `expires_at`. |
+| `1.8` | `lims_project.source` (closed enum `live` / `cache` / `offline_catalogue`) and `lims_project.cache_freshness_at_use` (UTC timestamp string OR `null`) | Audit signal for runs created during a LIMS outage. See Frontend §10.5.2 for the recovery flow that drives non-`live` source values. |
 
-Readers expecting earlier versions ignore unknown fields; `run_kind` defaults to `"experimental"`, `validation_overrides` defaults to `[]`, `plugins_applied[].isolation` is treated as absent when missing, and `lims_project` is treated as absent — matching historical behavior before each respective addition.
+Readers expecting earlier versions ignore unknown fields; `run_kind` defaults to `"experimental"`, `validation_overrides` defaults to `[]`, `plugins_applied[].isolation` is treated as absent when missing, `lims_project` is treated as absent, and `lims_project.source` defaults to `"live"` with `cache_freshness_at_use` defaulting to `null` — matching historical behavior before each respective addition.
 
 ## 11.4 `readme_fields.json` Schema
 
@@ -260,7 +265,53 @@ Schema version 1.1 separates the four field layers so downstream tools can reaso
 
 `core_fields` is always present and always fully populated -- the creation controller guarantees this by validating before any filesystem writes. `template_fields`, `config_fields`, and `custom_fields` may be empty objects/arrays if no fields of that layer were declared or supplied. Readers that expect `"1.0"` can continue to parse the file by treating unknown keys as no-ops; the `template_fields` key preserves its 1.0 meaning.
 
+**Field length limits.** `core_fields.label` is bounded to 100 characters and `core_fields.objective` to 2000 characters, both after whitespace trim. Both are enforced by the creation controller at validation time per User Interaction Spec §2; a writer must not produce a file violating these limits. Readers may surface a validation finding (Backend §8.1) when an out-of-bound value is encountered (e.g. a hand-edited file).
+
+### 11.4.1 `equipment.json` Schema
+
+```json
+{
+  "schema_version": "1.0",
+  "id": "CONFOCAL_01",
+  "label": "Confocal Microscope 1",
+  "configured_local_root": "/data/lab",
+  "configured_nas_root": "//nas01/lab",
+  "first_seen_at": "2025-09-12T09:14:00Z",
+  "last_modified_at": "2026-04-17T14:32:00Z"
+}
+```
+
+One file per equipment, written at `<local_root>/<equipment_id>/.exlab-wizard/equipment.json`. Treated as a registry record (the equipment is a configured workstation peripheral, not an instance of a creation flow), distinct from `creation.json` which is provenance for a single creation event.
+
+Field semantics:
+
+- `id` mirrors the equipment's `config.yaml` `equipment[].id` and is validated against the same regex (`^[A-Z][A-Z0-9_]*$`, max 32 chars; Design Spec §3.1).
+- `label` mirrors `config.yaml` `equipment[].label`. Operator-edited; may diverge from `config.yaml` if the operator renames the equipment in Settings without re-walking the file system.
+- `configured_local_root` and `configured_nas_root` mirror `config.yaml` `equipment[].local_root` / `equipment[].nas_root` at the time the file was last written. Useful for diagnosing "this equipment used to live elsewhere" cases.
+- `first_seen_at` is the UTC timestamp at which `equipment.json` was first written for this equipment. Never updated on subsequent writes.
+- `last_modified_at` is updated on every `config.yaml`-driven re-sync of this equipment's metadata.
+
+Schema version `1.0` is the only valid value in v1. The orphan rule (Backend §8.1.4) does NOT apply at the equipment level — equipment without `equipment.json` is a different problem class (Settings warning), not a Problems-tab finding.
+
+### 11.4.2 `test_runs.json` Schema
+
+```json
+{
+  "schema_version": "1.0",
+  "run_kind": "test",
+  "created_at": "2026-04-17T14:00:00Z",
+  "project": "PROJ-0042",
+  "equipment": "CONFOCAL_01"
+}
+```
+
+Marker file written once on the first test run within `<equipment>/<project>/TestRuns/`. Filename retained from v0.5 for backward compatibility (the parent folder was renamed `TestRuns/` in v0.6 but the marker file kept its name to avoid breaking old readers). The marker declares the entire `TestRuns/` subtree as test-only; downstream consumers (validator, NAS sync) read it to apply mode-aware rules without inspecting individual run-level `creation.json` files.
+
+Schema version `1.0` is the only valid value in v1. Subsequent test-run creations under the same project do NOT rewrite this file.
+
 ## 11.5 `wizard.<hostname>.log` Format
+
+The on-disk format of `wizard.<hostname>.log` is canonical here; the runtime logger architecture that produces this file is specified in [[16_Logging|§16]].
 
 Plain text, append-only, one structured event per line. Uses absolute local machine paths for full debugging traceability. Includes `[host:]` and `[equip:]` tags per entry for disambiguation when logs are aggregated or reviewed outside their original context.
 
@@ -283,7 +334,7 @@ Log entries add `[proj:]` and `[kind:]` tags so that when logs are aggregated ac
 
 ### 11.5.1 Log Levels, Rotation, and the Central App Log
 
-The per-event format above (§11.5) applies to the equipment-, project-, and run-level `wizard.<hostname>.log` files. There is also a **central app log** for events that are not scoped to any single equipment, project, or run.
+The per-event format above (§11.5) applies to the equipment-, project-, and run-level `wizard.<hostname>.log` files. There is also a **central app log** for events that are not scoped to any single equipment, project, or run. See [[16_Logging|§16]] for the full logger architecture (the `logging/` package, debugging recipes, plugin worker logging, where-to-look quick reference); this subsection covers only the on-disk rotation policy and central-log location.
 
 **Log levels.** Standard Python `logging` levels: `DEBUG`, `INFO`, `WARN`, `ERROR`. Threshold is configurable in `config.yaml` `logging.level` (default in [[09_Configuration_File|§9]]). Default for stderr (visible in the launcher console) is `WARN` regardless of the file-log threshold. `DEBUG` is recommended for support and reproduction work; production runs should sit at `INFO`.
 
