@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from copier.errors import CopierError
@@ -311,3 +312,288 @@ async def test_render_into_dst_with_conflicting_files_raises(
     # content differs from what the template would produce.
     with pytest.raises(CopierError):
         await engine.render(tpl, dst, {"_exlab_proj": "First"})
+
+
+# ---------------------------------------------------------------------------
+# render(): pins the §4.4.2 / §5.3 contract for copier.run_copy kwargs
+# ---------------------------------------------------------------------------
+
+
+async def test_render_calls_copier_run_copy_with_spec_kwargs(tmp_path: Path) -> None:
+    # Backend Spec §4.4.2 / §5.3: copier.run_copy is invoked with
+    # overwrite=False, unsafe=False, quiet=True. We additionally pass
+    # skip_tasks=True so Copier silently ignores _tasks (§5.5) instead
+    # of raising UnsafeTemplateError.
+    engine = TemplateEngine()
+    tpl = engine.resolve(PROJECT_BASIC, TemplateType.PROJECT)
+    dst = tmp_path / "out"
+
+    with patch("exlab_wizard.template.copier_driver.copier.run_copy") as mock_run_copy:
+        await engine.render(tpl, dst, {"_exlab_proj": "MyProj"})
+
+    mock_run_copy.assert_called_once()
+    kwargs = mock_run_copy.call_args.kwargs
+    assert kwargs["src_path"] == str(tpl.path)
+    assert kwargs["dst_path"] == str(dst)
+    assert kwargs["data"] == {"_exlab_proj": "MyProj"}
+    assert kwargs["overwrite"] is False
+    assert kwargs["unsafe"] is False
+    assert kwargs["quiet"] is True
+    assert kwargs["skip_tasks"] is True
+
+
+# ---------------------------------------------------------------------------
+# resolve(): error branches not exercised by the on-disk fixtures
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_unreadable_copier_yml_raises_template_load_error(
+    tmp_path: Path,
+) -> None:
+    # OSError during read_text -- e.g. the path resolves to a directory
+    # rather than a file. is_file() guard returns False for a directory
+    # named "copier.yml", but the symlink case below targets the OSError
+    # branch. Use a directory entry to drive read_text into IsADirectoryError
+    # which subclasses OSError; we bypass the is_file() guard by patching it.
+    template_dir = tmp_path / "unreadable"
+    template_dir.mkdir()
+    (template_dir / "copier.yml").mkdir()  # a directory named copier.yml
+
+    engine = TemplateEngine()
+    with (
+        patch.object(Path, "is_file", return_value=True),
+        pytest.raises(TemplateLoadError) as info,
+    ):
+        engine.resolve(template_dir, TemplateType.PROJECT)
+    assert "failed to read" in str(info.value)
+
+
+def test_resolve_malformed_yaml_raises_template_load_error(tmp_path: Path) -> None:
+    # An unparseable copier.yml surfaces yaml.YAMLError as a TemplateLoadError
+    # carrying "failed to parse".
+    template_dir = tmp_path / "bad_yaml"
+    template_dir.mkdir()
+    (template_dir / "copier.yml").write_text(
+        "key: : : not valid yaml ::\n  - [\n",
+        encoding="utf-8",
+    )
+
+    engine = TemplateEngine()
+    with pytest.raises(TemplateLoadError) as info:
+        engine.resolve(template_dir, TemplateType.PROJECT)
+    assert "failed to parse" in str(info.value)
+
+
+def test_resolve_empty_copier_yml_treats_manifest_as_empty_and_rejects_missing_type(
+    tmp_path: Path,
+) -> None:
+    # safe_load returns None for an empty file. The driver normalizes that
+    # to {} and then rejects the missing _exlab_type. This exercises the
+    # ``manifest is None -> {}`` branch.
+    template_dir = tmp_path / "empty_yaml"
+    template_dir.mkdir()
+    (template_dir / "copier.yml").write_text("", encoding="utf-8")
+
+    engine = TemplateEngine()
+    with pytest.raises(TemplateLoadError) as info:
+        engine.resolve(template_dir, TemplateType.PROJECT)
+    assert "_exlab_type" in str(info.value)
+
+
+def test_resolve_non_mapping_yaml_raises_template_load_error(tmp_path: Path) -> None:
+    # safe_load returns a list for a top-level YAML sequence. The driver
+    # must reject this -- copier.yml MUST be a mapping (§5.2).
+    template_dir = tmp_path / "list_yaml"
+    template_dir.mkdir()
+    (template_dir / "copier.yml").write_text(
+        "- one\n- two\n",
+        encoding="utf-8",
+    )
+
+    engine = TemplateEngine()
+    with pytest.raises(TemplateLoadError) as info:
+        engine.resolve(template_dir, TemplateType.PROJECT)
+    assert "did not parse to a mapping" in str(info.value)
+
+
+def test_resolve_missing_exlab_type_raises_template_load_error(tmp_path: Path) -> None:
+    # _exlab_type absent (or empty) is rejected with a message naming the field.
+    template_dir = tmp_path / "no_type"
+    template_dir.mkdir()
+    (template_dir / "copier.yml").write_text(
+        '_exlab_version: "0.1.0"\n',
+        encoding="utf-8",
+    )
+
+    engine = TemplateEngine()
+    with pytest.raises(TemplateLoadError) as info:
+        engine.resolve(template_dir, TemplateType.PROJECT)
+    assert "_exlab_type" in str(info.value)
+
+
+def test_resolve_invalid_exlab_type_value_raises_template_load_error(
+    tmp_path: Path,
+) -> None:
+    # _exlab_type must be one of project / equipment / run -- anything else
+    # is a load error citing the allowed values.
+    template_dir = tmp_path / "bad_type"
+    template_dir.mkdir()
+    (template_dir / "copier.yml").write_text(
+        '_exlab_type: "rune"\n_exlab_version: "0.1.0"\n',
+        encoding="utf-8",
+    )
+
+    engine = TemplateEngine()
+    with pytest.raises(TemplateLoadError) as info:
+        engine.resolve(template_dir, TemplateType.PROJECT)
+    msg = str(info.value)
+    assert "_exlab_type" in msg
+    assert "rune" in msg
+
+
+# ---------------------------------------------------------------------------
+# resolve(): _exlab_readme.fields tolerance + non-core entries pass through
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_readme_fields_with_non_core_entries_passes_through(
+    tmp_path: Path,
+) -> None:
+    # A non-core extra README field is preserved on the ResolvedTemplate.
+    # Mixed entries -- including a non-dict element -- are tolerated:
+    # non-dicts are dropped, dicts are kept.
+    template_dir = tmp_path / "extra_fields"
+    template_dir.mkdir()
+    (template_dir / "copier.yml").write_text(
+        '_exlab_type: "project"\n'
+        '_exlab_version: "0.1.0"\n'
+        "_exlab_readme:\n"
+        "  fields:\n"
+        '    - id: "sample_count"\n'
+        '      label: "Sample count"\n'
+        '      type: "int"\n'
+        '    - "not a dict -- silently dropped"\n',
+        encoding="utf-8",
+    )
+
+    engine = TemplateEngine()
+    tpl = engine.resolve(template_dir, TemplateType.PROJECT)
+
+    assert len(tpl.extra_readme_fields) == 1
+    assert tpl.extra_readme_fields[0]["id"] == "sample_count"
+
+
+def test_resolve_readme_block_not_a_mapping_yields_empty_extra_fields(
+    tmp_path: Path,
+) -> None:
+    # A non-dict _exlab_readme block (e.g. a string) is tolerated -- the
+    # driver returns empty extra fields rather than raising.
+    template_dir = tmp_path / "readme_str"
+    template_dir.mkdir()
+    (template_dir / "copier.yml").write_text(
+        '_exlab_type: "project"\n_exlab_version: "0.1.0"\n_exlab_readme: "this is not a mapping"\n',
+        encoding="utf-8",
+    )
+
+    engine = TemplateEngine()
+    tpl = engine.resolve(template_dir, TemplateType.PROJECT)
+    assert tpl.extra_readme_fields == []
+
+
+def test_resolve_readme_fields_not_a_list_yields_empty_extra_fields(
+    tmp_path: Path,
+) -> None:
+    # _exlab_readme.fields must be a list. If a template author writes a
+    # mapping by mistake, the driver returns empty extra fields rather
+    # than raising -- the §5.8 lint pass is the place that flags shape.
+    template_dir = tmp_path / "readme_fields_dict"
+    template_dir.mkdir()
+    (template_dir / "copier.yml").write_text(
+        '_exlab_type: "project"\n'
+        '_exlab_version: "0.1.0"\n'
+        "_exlab_readme:\n"
+        "  fields:\n"
+        '    nested: "wrong shape"\n',
+        encoding="utf-8",
+    )
+
+    engine = TemplateEngine()
+    tpl = engine.resolve(template_dir, TemplateType.PROJECT)
+    assert tpl.extra_readme_fields == []
+
+
+# ---------------------------------------------------------------------------
+# resolve(): description / plugin_order tolerance
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_non_string_description_falls_back_to_empty(tmp_path: Path) -> None:
+    # _exlab_description is documented as a string. A non-string value
+    # is silently coerced to "" so the rest of the pipeline can rely on
+    # ResolvedTemplate.description always being a str.
+    template_dir = tmp_path / "bad_desc"
+    template_dir.mkdir()
+    (template_dir / "copier.yml").write_text(
+        '_exlab_type: "project"\n_exlab_version: "0.1.0"\n_exlab_description: 123\n',
+        encoding="utf-8",
+    )
+
+    engine = TemplateEngine()
+    tpl = engine.resolve(template_dir, TemplateType.PROJECT)
+    assert tpl.description == ""
+
+
+def test_resolve_plugin_order_preserved(tmp_path: Path) -> None:
+    # _exlab_plugins is the plugin-order hint per §6.2.3. The driver
+    # must preserve list ordering so the plugin host can honour it.
+    template_dir = tmp_path / "with_plugins"
+    template_dir.mkdir()
+    (template_dir / "copier.yml").write_text(
+        '_exlab_type: "project"\n'
+        '_exlab_version: "0.1.0"\n'
+        "_exlab_plugins:\n"
+        '  - "alpha"\n'
+        '  - "beta"\n',
+        encoding="utf-8",
+    )
+
+    engine = TemplateEngine()
+    tpl = engine.resolve(template_dir, TemplateType.PROJECT)
+    assert tpl.plugin_order == ["alpha", "beta"]
+
+
+def test_resolve_non_list_plugin_order_falls_back_to_empty(tmp_path: Path) -> None:
+    # If _exlab_plugins is malformed (a string instead of a list) the
+    # driver returns an empty plugin_order rather than raising.
+    template_dir = tmp_path / "bad_plugins"
+    template_dir.mkdir()
+    (template_dir / "copier.yml").write_text(
+        '_exlab_type: "project"\n_exlab_version: "0.1.0"\n_exlab_plugins: "alpha"\n',
+        encoding="utf-8",
+    )
+
+    engine = TemplateEngine()
+    tpl = engine.resolve(template_dir, TemplateType.PROJECT)
+    assert tpl.plugin_order == []
+
+
+# ---------------------------------------------------------------------------
+# _snapshot_files(): edge case where dst is an existing regular file
+# ---------------------------------------------------------------------------
+
+
+async def test_render_snapshots_existing_regular_file_at_dst(tmp_path: Path) -> None:
+    # _snapshot_files treats a regular file at the dst path as a single-
+    # entry snapshot. We exercise this branch by pre-creating dst as a
+    # file and observing that render's "before" snapshot includes it; the
+    # render itself fails (Copier needs a directory), which we catch.
+    engine = TemplateEngine()
+    tpl = engine.resolve(PROJECT_BASIC, TemplateType.PROJECT)
+    dst = tmp_path / "dst_is_file"
+    dst.write_text("placeholder\n", encoding="utf-8")
+
+    # Render against a file path -- Copier raises some flavour of error;
+    # the driver still calls _snapshot_files on the file path, which is
+    # the branch under test.
+    with pytest.raises(Exception):  # noqa: B017 -- Copier surface varies
+        await engine.render(tpl, dst, {"_exlab_proj": "X"})

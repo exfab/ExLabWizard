@@ -52,9 +52,6 @@ __all__ = [
 # Backend Spec §10.3.
 CORE_README_FIELD_IDS: frozenset[str] = frozenset({"label", "operator", "objective"})
 
-_VALID_RUN_SCOPES: frozenset[str] = frozenset(s.value for s in RunScope)
-_VALID_TEMPLATE_TYPES: frozenset[str] = frozenset(t.value for t in TemplateType)
-
 _log = get_logger(__name__)
 
 
@@ -162,21 +159,22 @@ class TemplateEngine:
             )
 
         # _exlab_type: must be present, valid, and match the caller scope.
-        exlab_type = manifest.get("_exlab_type")
-        if not isinstance(exlab_type, str) or not exlab_type:
+        raw_type = manifest.get("_exlab_type")
+        if not isinstance(raw_type, str) or not raw_type:
             raise TemplateLoadError(
                 f"{manifest_path}: _exlab_type missing or empty",
             )
-        if exlab_type not in _VALID_TEMPLATE_TYPES:
+        try:
+            parsed_type = TemplateType(raw_type)
+        except ValueError as exc:
             raise TemplateLoadError(
                 f"{manifest_path}: _exlab_type must be one of "
-                f"{sorted(_VALID_TEMPLATE_TYPES)}, got {exlab_type!r}",
-            )
-        scope_value = scope.value if isinstance(scope, TemplateType) else str(scope)
-        if exlab_type != scope_value:
+                f"{sorted(t.value for t in TemplateType)}, got {raw_type!r}",
+            ) from exc
+        if parsed_type is not scope:
             raise TemplateLoadError(
-                f"{manifest_path}: _exlab_type {exlab_type!r} does not match "
-                f"requested scope {scope_value!r}",
+                f"{manifest_path}: _exlab_type {parsed_type.value!r} does not "
+                f"match requested scope {scope.value!r}",
             )
 
         # _exlab_version: required non-empty string per §5.7.
@@ -189,19 +187,21 @@ class TemplateEngine:
 
         # _exlab_run_scope: required for run templates, optional otherwise.
         run_scope: str | None = None
-        if exlab_type == TemplateType.RUN.value:
+        if parsed_type is TemplateType.RUN:
             raw_scope = manifest.get("_exlab_run_scope")
             if not isinstance(raw_scope, str) or not raw_scope:
                 raise TemplateLoadError(
                     f"{manifest_path}: _exlab_run_scope is required for run "
-                    f"templates and must be one of {sorted(_VALID_RUN_SCOPES)}",
+                    f"templates and must be one of "
+                    f"{sorted(s.value for s in RunScope)}",
                 )
-            if raw_scope not in _VALID_RUN_SCOPES:
+            try:
+                run_scope = RunScope(raw_scope).value
+            except ValueError as exc:
                 raise TemplateLoadError(
                     f"{manifest_path}: _exlab_run_scope must be one of "
-                    f"{sorted(_VALID_RUN_SCOPES)}, got {raw_scope!r}",
-                )
-            run_scope = raw_scope
+                    f"{sorted(s.value for s in RunScope)}, got {raw_scope!r}",
+                ) from exc
 
         # _exlab_readme.fields: reject redeclaration of core fields.
         extra_fields = self._extract_readme_fields(manifest, manifest_path)
@@ -215,17 +215,16 @@ class TemplateEngine:
             )
 
         # _exlab_plugins: optional ordered list (§6.2.3).
-        raw_plugin_order = manifest.get("_exlab_plugins") or []
-        plugin_order = list(raw_plugin_order) if isinstance(raw_plugin_order, list) else []
+        raw_plugins = manifest.get("_exlab_plugins")
+        plugin_order = list(raw_plugins) if isinstance(raw_plugins, list) else []
 
-        description = manifest.get("_exlab_description") or ""
-        if not isinstance(description, str):
-            description = ""
+        raw_description = manifest.get("_exlab_description")
+        description = raw_description if isinstance(raw_description, str) else ""
 
         return ResolvedTemplate(
             name=template_path.name,
             path=template_path,
-            exlab_type=exlab_type,
+            exlab_type=parsed_type.value,
             exlab_version=exlab_version,
             run_scope=run_scope,
             description=description,
@@ -238,18 +237,23 @@ class TemplateEngine:
     def _extract_readme_fields(
         manifest: dict[str, Any], manifest_path: Path
     ) -> list[dict[str, Any]]:
-        """Pull ``_exlab_readme.fields`` and reject core-field collisions."""
-        readme_block = manifest.get("_exlab_readme") or {}
+        """Pull ``_exlab_readme.fields`` and reject core-field collisions.
+
+        Tolerates malformed shapes by returning an empty list when the
+        ``_exlab_readme`` block or its ``fields`` key is not the expected
+        shape. Raises :class:`TemplateCoreFieldRedeclaredError` only on
+        the one fatal case: a field entry whose ``id`` is one of the
+        backend-managed core fields (§10.3).
+        """
+        readme_block = manifest.get("_exlab_readme")
         if not isinstance(readme_block, dict):
             return []
-        raw_fields = readme_block.get("fields") or []
+        raw_fields = readme_block.get("fields")
         if not isinstance(raw_fields, list):
             return []
 
-        normalized: list[dict[str, Any]] = []
-        for entry in raw_fields:
-            if not isinstance(entry, dict):
-                continue
+        dict_entries = [entry for entry in raw_fields if isinstance(entry, dict)]
+        for entry in dict_entries:
             field_id = entry.get("id")
             if isinstance(field_id, str) and field_id in CORE_README_FIELD_IDS:
                 raise TemplateCoreFieldRedeclaredError(
@@ -257,8 +261,7 @@ class TemplateEngine:
                     f"field {field_id!r}; core fields (label / operator / "
                     f"objective) are backend-managed (§10.3)",
                 )
-            normalized.append(entry)
-        return normalized
+        return dict_entries
 
     async def render(
         self,
