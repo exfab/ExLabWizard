@@ -489,3 +489,18 @@ async def test_append_state_transition_raises_on_schema_major_mismatch(
 
     with pytest.raises(SchemaMajorMismatchError):
         await writer.append_state_transition(path, IngestState.COMPLETE, host=_HOST)
+
+
+# ---------------------------------------------------------------------------
+# default_host()
+# ---------------------------------------------------------------------------
+
+
+def test_default_host_returns_socket_gethostname() -> None:
+    """The convenience exposed for tests + orchestrator bootstrap matches
+    ``socket.gethostname()`` exactly."""
+    import socket
+
+    from exlab_wizard.cache.ingest_writer import default_host
+
+    assert default_host() == socket.gethostname()

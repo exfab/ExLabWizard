@@ -35,7 +35,7 @@ writes.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from exlab_wizard.constants import LOG_LINE_MAX_BYTES
@@ -122,8 +122,6 @@ def _format_utc_timestamp(dt: datetime) -> str:
     """
     if dt.tzinfo is not None:
         # Convert to UTC then drop the offset for a clean Z suffix.
-        from datetime import UTC
-
         dt = dt.astimezone(UTC).replace(tzinfo=None)
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 

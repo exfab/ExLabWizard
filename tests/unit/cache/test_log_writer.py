@@ -11,6 +11,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from exlab_wizard.cache.log_writer import append_log_line, format_log_line
 from exlab_wizard.constants import LOG_LINE_MAX_BYTES
 
@@ -256,3 +258,46 @@ def test_append_log_line_idempotent_directory_creation(tmp_path: Path) -> None:
     append_log_line(log_path, "a")
     append_log_line(log_path, "b")
     assert log_path.read_text(encoding="utf-8") == "a\nb\n"
+
+
+# ---------------------------------------------------------------------------
+# Truncation pathological-case tests (very small caps; oversized prefixes)
+# ---------------------------------------------------------------------------
+
+
+def test_format_log_line_truncation_prefix_alone_too_big_emits_marker_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the cap is so small that even the truncation marker alone exceeds
+    it, the formatter falls back to the marker as a self-describing line."""
+    # Patch LOG_LINE_MAX_BYTES to a value less than the marker's UTF-8 byte
+    # length so the ``budget <= 0`` branch fires.
+    from exlab_wizard.cache import log_writer as log_writer_module
+
+    monkeypatch.setattr(log_writer_module, "LOG_LINE_MAX_BYTES", 4)
+    line = log_writer_module.format_log_line(
+        timestamp_utc=_CANONICAL_TS,
+        level="INFO",
+        message="anything",
+    )
+    assert line == "...[truncated]"
+
+
+def test_format_log_line_truncation_prefix_alone_exhausts_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the prefix itself is longer than the budget but smaller than the
+    cap (i.e. budget > 0 but len(prefix) >= budget), the formatter
+    truncates the prefix and appends the marker."""
+    from exlab_wizard.cache import log_writer as log_writer_module
+
+    # Cap is just barely larger than the marker so budget > 0, but the
+    # un-tagged prefix (timestamp + level) already overruns the budget.
+    monkeypatch.setattr(log_writer_module, "LOG_LINE_MAX_BYTES", len("...[truncated]") + 4)
+    line = log_writer_module.format_log_line(
+        timestamp_utc=_CANONICAL_TS,
+        level="INFO",
+        message="msg",
+    )
+    assert line.endswith("...[truncated]")
+    assert len(line.encode("utf-8")) <= len("...[truncated]") + 4

@@ -195,3 +195,29 @@ def test_redact_coerces_non_string_input() -> None:
 
     redacted = redact_secret(Path("/data/example"))
     assert redacted == "/data/example"
+
+
+def test_format_appends_exception_text_when_exc_info_set() -> None:
+    """``record.exc_info`` triggers the formatter to append a traceback (§16.4
+    keeps stdlib exception-text behavior)."""
+    formatter = StructuredTagFormatter()
+    try:
+        raise RuntimeError("synthetic")
+    except RuntimeError:
+        import sys
+
+        record = logging.LogRecord(
+            name="test",
+            level=logging.ERROR,
+            pathname=__file__,
+            lineno=1,
+            msg="boom",
+            args=None,
+            exc_info=sys.exc_info(),
+        )
+    record.created = 1776436320.0
+    line = formatter.format(record)
+    # The stdlib traceback follows the message on a new line.
+    assert "boom" in line
+    assert "RuntimeError" in line
+    assert "synthetic" in line

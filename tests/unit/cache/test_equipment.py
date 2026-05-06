@@ -255,3 +255,115 @@ async def test_write_test_runs_marker_concurrent_first_writes_safe(tmp_path: Pat
     # The winning write's project must be one of the candidates; the loss
     # of the others is silent (idempotent contract).
     assert on_disk.project in {p.project for p in payloads}
+
+
+# ---------------------------------------------------------------------------
+# read_test_runs_marker
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_read_test_runs_marker_round_trips(tmp_path: Path) -> None:
+    """Round-trip: write -> read returns an equivalent payload."""
+    writer = EquipmentCacheWriter()
+    path = tmp_path / "test_runs.json"
+    await writer.write_test_runs_marker(path, _make_test_runs_payload())
+    on_disk = await writer.read_test_runs_marker(path)
+    assert on_disk.project == "PROJ-0042"
+    assert on_disk.equipment == "CONFOCAL_01"
+    assert on_disk.run_kind == "test"
+
+
+# ---------------------------------------------------------------------------
+# require_schema_major (shared helper) edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_require_schema_major_raises_on_none_version() -> None:
+    """An absent or ``None`` ``schema_version`` is a major-mismatch case."""
+    from exlab_wizard.cache.equipment import require_schema_major
+    from exlab_wizard.errors import SchemaMajorMismatchError
+
+    with pytest.raises(SchemaMajorMismatchError):
+        require_schema_major(None, expected_major=1)
+
+
+def test_require_schema_major_raises_on_empty_version() -> None:
+    """Empty string is treated like ``None`` (no parseable major)."""
+    from exlab_wizard.cache.equipment import require_schema_major
+    from exlab_wizard.errors import SchemaMajorMismatchError
+
+    with pytest.raises(SchemaMajorMismatchError):
+        require_schema_major("", expected_major=1)
+
+
+def test_require_schema_major_raises_on_garbage_version() -> None:
+    """A non-``MAJOR.MINOR`` string is treated as a major-mismatch case."""
+    from exlab_wizard.cache.equipment import require_schema_major
+    from exlab_wizard.errors import SchemaMajorMismatchError
+
+    with pytest.raises(SchemaMajorMismatchError):
+        require_schema_major("garbage", expected_major=1)
+
+
+def test_require_schema_major_passes_on_same_major() -> None:
+    """Same major (different minor) is allowed."""
+    from exlab_wizard.cache.equipment import require_schema_major
+
+    # Same-major: passes.
+    require_schema_major("1.0", expected_major=1)
+    require_schema_major("1.99", expected_major=1)
+
+
+@pytest.mark.asyncio
+async def test_read_equipment_skips_check_for_malformed_json(tmp_path: Path) -> None:
+    """The ``_check_schema_major_from_bytes`` helper silently ignores malformed
+    JSON -- the typed decoder downstream surfaces the precise error."""
+    writer = EquipmentCacheWriter()
+    path = tmp_path / "equipment.json"
+    path.write_bytes(b"this is not json at all")
+    # The schema-major gate doesn't raise on malformed JSON; the typed
+    # decode below does.
+    with pytest.raises((msgspec.DecodeError, msgspec.ValidationError)):
+        await writer.read_equipment(path)
+
+
+@pytest.mark.asyncio
+async def test_read_equipment_skips_check_when_schema_version_missing(
+    tmp_path: Path,
+) -> None:
+    """A file with no ``schema_version`` falls through to the typed decoder
+    (which surfaces the precise validation error)."""
+    writer = EquipmentCacheWriter()
+    path = tmp_path / "equipment.json"
+    # JSON without schema_version key.
+    path.write_bytes(b'{"id": "X"}')
+    # No SchemaMajorMismatchError; the typed decoder downstream surfaces
+    # the precise validation error.
+    with pytest.raises(msgspec.ValidationError):
+        await writer.read_equipment(path)
+
+
+# ---------------------------------------------------------------------------
+# _atomic_write_bytes cleanup-on-exception
+# ---------------------------------------------------------------------------
+
+
+def test_atomic_write_bytes_cleans_up_tmp_on_exception(tmp_path: Path) -> None:
+    """If ``os.replace`` raises mid-write, the leftover temp file is cleaned up."""
+    from unittest import mock
+
+    from exlab_wizard.cache.equipment import _atomic_write_bytes
+
+    target = tmp_path / "equipment.json"
+    with (
+        mock.patch(
+            "exlab_wizard.cache.equipment.os.replace",
+            side_effect=OSError("simulated rename failure"),
+        ),
+        pytest.raises(OSError),
+    ):
+        _atomic_write_bytes(target, b'{"x": 1}')
+    # No leftover .tmp files.
+    leftover = list(tmp_path.glob("*.tmp"))
+    assert leftover == []

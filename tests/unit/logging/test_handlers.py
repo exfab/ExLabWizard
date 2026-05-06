@@ -237,3 +237,23 @@ def test_close_is_idempotent(tmp_path: Path) -> None:
     # A second close call must not raise (e.g. closing an already-closed
     # file).
     handler.close()
+
+
+# ---------------------------------------------------------------------------
+# Error-path handling on emit (stdlib ``handleError`` contract)
+# ---------------------------------------------------------------------------
+
+
+def test_emit_routes_unexpected_exception_through_handle_error(tmp_path: Path) -> None:
+    """The ``Exception`` branch in :meth:`emit` is the stdlib handler-error
+    contract: any error inside the emit body must funnel into
+    :meth:`logging.Handler.handleError` rather than propagate, so a single
+    bad record can't poison the whole listener thread (§16.2.5)."""
+    handler = _make_handler(tmp_path)
+    with (
+        mock.patch.object(handler, "handleError") as mock_handle_error,
+        mock.patch.object(handler, "_open_for", side_effect=OSError("disk full")),
+        set_run_context(equipment_id="CONFOCAL_01"),
+    ):
+        handler.emit(_make_record(message="boom"))
+    mock_handle_error.assert_called_once()

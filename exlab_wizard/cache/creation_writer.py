@@ -45,8 +45,8 @@ from filelock import FileLock, ReadWriteLock
 from msgspec import json as msgspec_json
 
 from exlab_wizard.api.schemas import CreationJson
-from exlab_wizard.constants import CREATION_JSON_VERSION
-from exlab_wizard.errors import SchemaMajorMismatchError
+from exlab_wizard.cache.equipment import require_schema_major
+from exlab_wizard.constants import CREATION_JSON_VERSION, LIMSProjectSource, RunKind
 from exlab_wizard.logging import get_logger
 
 __all__ = [
@@ -144,18 +144,6 @@ def _is_future(expires_at: str, now: datetime) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _parse_version(value: str) -> tuple[int, int]:
-    """Split a ``MAJOR.MINOR`` string into a ``(major, minor)`` tuple.
-
-    Raises ``ValueError`` if the string is not in the expected shape;
-    the caller maps that to a structured error.
-    """
-    parts = value.split(".")
-    if len(parts) != 2:
-        raise ValueError(f"schema_version must be MAJOR.MINOR, got {value!r}")
-    return int(parts[0]), int(parts[1])
-
-
 def _apply_migration_defaults(raw: dict[str, Any]) -> dict[str, Any]:
     """Apply §11.3 history-table defaults for fields missing on old minors.
 
@@ -182,7 +170,7 @@ def _apply_migration_defaults(raw: dict[str, Any]) -> dict[str, Any]:
     * 1.7 -> 1.8: ``lims_project.source`` defaults to ``"live"``,
       ``lims_project.cache_freshness_at_use`` defaults to ``None``.
     """
-    raw.setdefault("run_kind", "experimental")
+    raw.setdefault("run_kind", RunKind.EXPERIMENTAL.value)
     raw.setdefault("validation_overrides", [])
     # Backfill UUIDs on override entries that are missing one.
     for entry in raw.get("validation_overrides", []):
@@ -191,7 +179,7 @@ def _apply_migration_defaults(raw: dict[str, Any]) -> dict[str, Any]:
     # Backfill lims_project subfields for files predating 1.8.
     lims_project = raw.get("lims_project")
     if isinstance(lims_project, dict):
-        lims_project.setdefault("source", "live")
+        lims_project.setdefault("source", LIMSProjectSource.LIVE.value)
         lims_project.setdefault("cache_freshness_at_use", None)
     return raw
 
@@ -304,16 +292,8 @@ class CreationWriter:
     def _reject_major_mismatch(self, raw: dict[str, Any]) -> None:
         version = raw.get("schema_version")
         if not isinstance(version, str):
-            raise SchemaMajorMismatchError(
-                expected_major=_READER_MAJOR,
-                found=str(version),
-            )
-        try:
-            major, _minor = _parse_version(version)
-        except ValueError as exc:
-            raise SchemaMajorMismatchError(expected_major=_READER_MAJOR, found=version) from exc
-        if major != _READER_MAJOR:
-            raise SchemaMajorMismatchError(expected_major=_READER_MAJOR, found=version)
+            version = str(version) if version is not None else ""
+        require_schema_major(version, expected_major=_READER_MAJOR)
 
     def _encode_and_replace(self, path: Path, payload: dict[str, Any]) -> None:
         """Encode ``payload`` to bytes, write to a tempfile, ``os.replace``.

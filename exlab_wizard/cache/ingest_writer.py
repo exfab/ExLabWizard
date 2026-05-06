@@ -31,8 +31,8 @@ import msgspec
 from filelock import FileLock
 
 from exlab_wizard.api.schemas import IngestJson
+from exlab_wizard.cache.equipment import require_schema_major
 from exlab_wizard.constants import INGEST_JSON_VERSION, IngestState
-from exlab_wizard.errors import SchemaMajorMismatchError
 from exlab_wizard.logging import get_logger
 
 __all__ = ["IngestWriter"]
@@ -50,32 +50,13 @@ _FORWARD_TRANSITIONS: dict[IngestState, frozenset[IngestState]] = {
     IngestState.CLEARED: frozenset(),
 }
 
+# Reader's expected major version (every writer always emits this major).
+_EXPECTED_MAJOR: int = int(INGEST_JSON_VERSION.split(".", 1)[0])
+
 
 def _now_iso() -> str:
     """Return current UTC time as ISO 8601 with the trailing ``Z`` per §13.4."""
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _expected_major() -> int:
-    """Return the major component of ``INGEST_JSON_VERSION`` as an int."""
-    return int(INGEST_JSON_VERSION.split(".", 1)[0])
-
-
-def _check_schema_major(found: str) -> None:
-    """Raise ``SchemaMajorMismatchError`` when ``found`` is a different major.
-
-    Backend Spec §11.9.2 rule 3: refuse any file at version ``M.x`` where
-    ``M != R.major``. Same major (older or newer minor) is allowed.
-    """
-    expected = _expected_major()
-    try:
-        found_major = int(str(found).split(".", 1)[0])
-    except (ValueError, AttributeError) as exc:
-        # Malformed schema_version is treated as a major mismatch -- the
-        # reader cannot tell what version the file claims to be.
-        raise SchemaMajorMismatchError(expected_major=expected, found=str(found)) from exc
-    if found_major != expected:
-        raise SchemaMajorMismatchError(expected_major=expected, found=str(found))
 
 
 def _atomic_write_bytes(path: Path, data: bytes) -> None:
@@ -187,7 +168,7 @@ class IngestWriter:
         # a future-major file with a compatible shape or raise a generic
         # validation error). Per §11.9.2 we explicitly check the major.
         meta: dict[str, Any] = msgspec.json.decode(raw)
-        _check_schema_major(meta.get("schema_version", ""))
+        require_schema_major(str(meta.get("schema_version", "")), expected_major=_EXPECTED_MAJOR)
         return msgspec.json.decode(raw, type=IngestJson)
 
     def _append_state_transition_blocking(
@@ -203,7 +184,9 @@ class IngestWriter:
         with FileLock(str(path) + ".lock"):
             raw = path.read_bytes()
             meta: dict[str, Any] = msgspec.json.decode(raw)
-            _check_schema_major(meta.get("schema_version", ""))
+            require_schema_major(
+                str(meta.get("schema_version", "")), expected_major=_EXPECTED_MAJOR
+            )
             payload = msgspec.json.decode(raw, type=IngestJson)
 
             current = IngestState(payload.current_state)

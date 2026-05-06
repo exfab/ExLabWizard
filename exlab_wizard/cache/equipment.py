@@ -30,6 +30,11 @@ locks in ``filelock`` would force the writer to wait on stale readers.
 A reader that races with a writer will see either the pre-write content
 (via the original inode) or the post-write content (via the
 ``os.replace`` atomic rename); both are valid points-in-time.
+
+The :func:`require_schema_major` helper at module bottom is the shared
+schema-major gate used by every cache writer in the package -- it
+implements §11.9.2 reader rule 3 (a reader at major ``R`` MUST refuse any
+file at major ``M != R``).
 """
 
 from __future__ import annotations
@@ -50,7 +55,7 @@ from exlab_wizard.logging import get_logger
 
 logger = get_logger(__name__)
 
-__all__ = ["EquipmentCacheWriter"]
+__all__ = ["EquipmentCacheWriter", "require_schema_major"]
 
 
 # Suffix used for the per-file advisory lock that ``filelock`` creates
@@ -152,7 +157,7 @@ class EquipmentCacheWriter:
     @staticmethod
     def _read_equipment_sync(path: Path) -> EquipmentJson:
         data = path.read_bytes()
-        _check_schema_major(data, expected_major=1)
+        _check_schema_major_from_bytes(data, expected_major=1)
         return msgspec.json.decode(data, type=EquipmentJson)
 
     async def read_test_runs_marker(self, path: Path) -> TestRunsJson:
@@ -166,7 +171,7 @@ class EquipmentCacheWriter:
     @staticmethod
     def _read_test_runs_marker_sync(path: Path) -> TestRunsJson:
         data = path.read_bytes()
-        _check_schema_major(data, expected_major=1)
+        _check_schema_major_from_bytes(data, expected_major=1)
         return msgspec.json.decode(data, type=TestRunsJson)
 
     @staticmethod
@@ -187,30 +192,48 @@ class EquipmentCacheWriter:
 # ---------------------------------------------------------------------------
 
 
-def _check_schema_major(data: bytes, *, expected_major: int) -> None:
-    """Inspect the on-disk ``schema_version`` and raise on a major mismatch.
+def require_schema_major(version: str | None, *, expected_major: int) -> None:
+    """Raise ``SchemaMajorMismatchError`` when ``version`` is a different major.
 
-    Spec §11.9.2 reader rule 3: a reader at major ``R`` MUST refuse any file
-    at major ``M != R`` with a structured error. We surface the error as
-    ``SchemaMajorMismatchError`` carrying ``expected_major`` and ``found``
-    so the caller can report it via the §4.6.3 error envelope.
+    Shared schema-major gate for every cache writer in the package
+    (Backend Spec §11.9.2 rule 3): a reader at major ``R`` MUST refuse any
+    file at major ``M != R`` with a structured error. We surface the error
+    as :class:`SchemaMajorMismatchError` carrying ``expected_major`` and
+    ``found`` so the caller can report it via the §4.6.3 error envelope.
+
+    A ``None``, empty, or non-``MAJOR.MINOR`` version string is treated as
+    a major mismatch (the reader cannot tell what version the file claims
+    to be). Callers that want to be lenient about a missing version (e.g.
+    a partially-written or corrupt registry file that should be recovered
+    by rewriting) check that condition themselves before invoking this
+    helper.
+    """
+    if version is None or not version:
+        raise SchemaMajorMismatchError(expected_major=expected_major, found=str(version))
+    try:
+        found_major = int(version.split(".", 1)[0])
+    except ValueError as exc:
+        raise SchemaMajorMismatchError(expected_major=expected_major, found=version) from exc
+    if found_major != expected_major:
+        raise SchemaMajorMismatchError(expected_major=expected_major, found=version)
+
+
+def _check_schema_major_from_bytes(data: bytes, *, expected_major: int) -> None:
+    """Convenience wrapper: peek ``schema_version`` from ``data`` then check.
+
+    Used by readers that already have the file bytes in hand and want a
+    one-liner schema-major gate. Malformed JSON or an absent
+    ``schema_version`` are silently passed through; the typed decoder
+    downstream surfaces the precise validation error.
     """
     try:
         head = msgspec.json.decode(data, type=dict)
     except (msgspec.DecodeError, msgspec.ValidationError):
-        # Malformed JSON is not a major-mismatch case; let downstream
-        # decoders surface the precise validation error.
         return
     version = str(head.get("schema_version", ""))
     if not version:
         return
-    major_part = version.split(".", 1)[0]
-    try:
-        major = int(major_part)
-    except ValueError:
-        return
-    if major != expected_major:
-        raise SchemaMajorMismatchError(expected_major=expected_major, found=version)
+    require_schema_major(version, expected_major=expected_major)
 
 
 def _utc_now_iso() -> str:

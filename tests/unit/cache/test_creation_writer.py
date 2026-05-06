@@ -569,3 +569,97 @@ async def test_reading_file_with_missing_required_field_raises_validation_error(
     creation_path.write_bytes(b'{"schema_version": "1.8"}')
     with pytest.raises(msgspec.ValidationError):
         await writer.read_creation_snapshot(creation_path)
+
+
+# ---------------------------------------------------------------------------
+# Edge-case branches in select_active_overrides + reader major-mismatch path
+# ---------------------------------------------------------------------------
+
+
+def test_select_active_overrides_skips_tombstone_with_null_revokes_target() -> None:
+    """A tombstone with no ``revokes`` key is silently skipped (no-op).
+
+    Spec §11.3 says tombstones with a missing target are logged WARN; one
+    with literally no target (``revokes is None``) is even softer -- the
+    matching algorithm just leaves it alone.
+    """
+    entries = [
+        {
+            "id": "tomb",
+            "operator": "op",
+            "recorded_at": "2026-04-18T10:00:00Z",
+            "reason": "no target",
+            "revoked": True,
+            # ``revokes`` deliberately absent; ``entry.get("revokes")`` -> None.
+        },
+        override_entry_to_dict(
+            OverrideEntry(
+                id="aa",
+                problem_class="leftover_jinja_marker",
+                operator="op",
+                recorded_at="2026-04-18T09:14:22Z",
+                reason="r",
+            )
+        ),
+    ]
+    active = select_active_overrides(entries)
+    assert {e["id"] for e in active} == {"aa"}
+
+
+def test_select_active_overrides_naive_expires_at_is_treated_as_utc() -> None:
+    """``_is_future``'s naive-datetime branch attaches UTC and compares
+    against ``now`` (also UTC). A naive timestamp in the future remains
+    active."""
+    naive_future = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S")
+    entry = override_entry_to_dict(
+        OverrideEntry(
+            id="aa",
+            problem_class="leftover_jinja_marker",
+            operator="op",
+            recorded_at="2026-04-18T09:14:22Z",
+            reason="r",
+            expires_at=naive_future,
+        )
+    )
+    active = select_active_overrides([entry])
+    assert len(active) == 1
+
+
+@pytest.mark.asyncio
+async def test_reading_file_missing_schema_version_raises_schema_major_mismatch(
+    writer: CreationWriter, creation_path: Path
+) -> None:
+    """A file without a ``schema_version`` field is treated as a major
+    mismatch -- the reader cannot tell what version the file claims to be."""
+    creation_path.write_bytes(b'{"created_by": "x"}')
+    with pytest.raises(SchemaMajorMismatchError):
+        await writer.read_creation_snapshot(creation_path)
+
+
+@pytest.mark.asyncio
+async def test_update_creation_atomic_backfills_missing_override_id(
+    writer: CreationWriter, creation_path: Path
+) -> None:
+    """Pre-1.6 files may carry override entries without an ``id``. The
+    migration helper backfills a UUID v4 (§11.3 history)."""
+    raw = msgspec_json.decode(msgspec_json.encode(_build_minimal_payload()), type=dict[str, object])
+    # Pre-1.6 override entry without ``id``.
+    raw["validation_overrides"] = [
+        {
+            "problem_class": "leftover_jinja_marker",
+            "operator": "asmith",
+            "recorded_at": "2026-04-18T09:14:22Z",
+            "reason": "r",
+            "revoked": False,
+        }
+    ]
+    creation_path.write_bytes(msgspec_json.encode(raw))
+
+    def mutator(p: CreationJson) -> CreationJson:
+        return p
+
+    after = await writer.update_creation_atomic(creation_path, mutator)
+    assert len(after.validation_overrides) == 1
+    backfilled = after.validation_overrides[0]
+    assert "id" in backfilled
+    assert isinstance(backfilled["id"], str)
