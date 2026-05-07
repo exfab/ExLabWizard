@@ -172,19 +172,21 @@ def _resolve_icon() -> str | None:
     PyInstaller accepts ``None`` for ``icon`` (uses its default). Real
     icons land in ``assets/icons/`` in a follow-up populating step;
     Phase 15 commits the spec without binding to a specific filename.
+
+    macOS ``BUNDLE`` rejects non-``.icns`` icons, and Windows ``EXE``
+    rejects non-``.ico`` icons. On Linux any image works (PyInstaller
+    treats the icon as decorative). We only return a path that matches
+    the platform's required extension; otherwise return None and let
+    PyInstaller emit its default icon. The SVG repo logo is NOT a
+    valid platform icon for any of these targets and is never returned.
     """
-    candidates: list[Path] = []
     if sys.platform == "darwin":
-        candidates.append(ICON_DIR / "icons" / "ExLabWizard.icns")
+        candidate = ICON_DIR / "icons" / "ExLabWizard.icns"
     elif sys.platform == "win32":
-        candidates.append(ICON_DIR / "icons" / "ExLabWizard.ico")
+        candidate = ICON_DIR / "icons" / "ExLabWizard.ico"
     else:
-        candidates.append(ICON_DIR / "icons" / "ExLabWizard.png")
-    candidates.append(ICON_DIR / "ExLabWizardLogo.svg")  # fallback
-    for c in candidates:
-        if c.exists():
-            return str(c)
-    return None
+        candidate = ICON_DIR / "icons" / "ExLabWizard.png"
+    return str(candidate) if candidate.exists() else None
 
 
 ICON_PATH = _resolve_icon()
