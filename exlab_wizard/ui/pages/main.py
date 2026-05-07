@@ -23,6 +23,7 @@ from exlab_wizard.logging import get_logger
 from exlab_wizard.ui import notifications
 from exlab_wizard.ui.components import banner_stack, filter_chips, status_bar_segment
 from exlab_wizard.ui.components.tree import TreeFilters, build_tree
+from exlab_wizard.ui.pages.staging import StagingDockState, render_staging_dock
 
 _log = get_logger(__name__)
 
@@ -39,6 +40,10 @@ class MainPageState:
     active_tab: str = "details"  # "details" | "problems"
     problems_count_hard: int = 0
     problems_count_soft: int = 0
+    orchestrator_enabled: bool = False
+    """When True the staging dock is rendered below the main content (§13.8)."""
+    staging_dock: StagingDockState | None = None
+    """Staging-panel state -- None means render an empty dock."""
 
 
 def _default_chips() -> tuple[filter_chips.ChipDefinition, ...]:
@@ -185,6 +190,13 @@ def render_main_page(
                     ui.label(
                         f"Showing 0 of {s.problems_count_hard + s.problems_count_soft} findings",
                     ).style("font-family: var(--font-mono); color: var(--color-muted);")
+
+    if s.orchestrator_enabled:
+        # Mount the bottom-dock staging panel when orchestrator mode is active
+        # (§13.8). The dock is non-collapsible and ~120 px tall; see
+        # ``ui/pages/staging.py`` for the per-row actions and column layout.
+        dock_state = s.staging_dock or StagingDockState(rows=[])
+        render_staging_dock(dock_state)
 
     if not s.setup_incomplete:
         with (

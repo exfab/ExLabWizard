@@ -41,6 +41,7 @@ from exlab_wizard.api.routers.config import build_config_router
 from exlab_wizard.api.routers.operations import build_operations_router
 from exlab_wizard.api.routers.problems import build_problems_router
 from exlab_wizard.api.routers.sessions import build_sessions_router
+from exlab_wizard.api.routers.staging import build_staging_router
 from exlab_wizard.api.setup import build_setup_router
 from exlab_wizard.config.models import Config
 from exlab_wizard.constants import AUDIT_REFRESH_SECONDS
@@ -172,6 +173,8 @@ class AppDependencies:
     lims_client: Any = None
     nas_sync: Any = None
     session_store: Any = None
+    ingest_writer: Any = None
+    staging_watcher: Any = None
 
     # Audit / pub-sub ---------------------------------------------------
     audit_channel: AuditChannel | None = None
@@ -247,6 +250,12 @@ def create_app(
     api_v1.include_router(build_browse_router())
     api_v1.include_router(build_health_router())
     api_v1.include_router(build_setup_router())
+    # Staging router is orchestrator-only -- mounted unconditionally so the
+    # endpoints surface a structured 503 with code ``orchestrator_disabled``
+    # when ``config.orchestrator.enabled`` is False (Backend Spec §13.7,
+    # §13.8). The router itself enforces the gate so a future deployment
+    # toggling the flag at runtime works without remounting routes.
+    api_v1.include_router(build_staging_router())
     app.include_router(api_v1)
 
     register_exception_handlers(app)

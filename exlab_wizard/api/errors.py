@@ -82,6 +82,8 @@ ERROR_CODES: frozenset[str] = frozenset(
         "field_too_long",
         "disk_space_insufficient",
         "plugin_host_unavailable",
+        "orchestrator_disabled",
+        "staging_not_sync_verified",
         "internal_error",
     }
 )
