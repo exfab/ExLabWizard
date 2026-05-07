@@ -1,0 +1,15 @@
+name: crash_plugin
+version: "0.1.0"
+author: "ExLab Wizard tests"
+description: "Plugin that hard-exits via os._exit(139) before writing anything."
+
+supported_extensions: [".txt"]
+api_version: "1"
+
+required_variables: []
+optional_variables: []
+
+isolation:
+  timeout_seconds: 5
+  memory_mb: 64
+  network: false

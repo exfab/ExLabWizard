@@ -31,3 +31,17 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 .pyright/
+
+# State directories during development
+state/
+*.tmp
+.tmp/
+
+# pre-commit cache
+.pre-commit-cache/
+
+# PyInstaller
+*.spec.bak
+
+# Local agent artifacts
+.claude-agent-output/

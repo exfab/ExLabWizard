@@ -1,0 +1,74 @@
+paths:
+  templates_dir: "/opt/exlab-wizard/templates"
+  plugin_dir: "/opt/exlab-wizard/plugins"
+  local_root: "/data/lab"
+
+lims:
+  endpoint: ""                                  # empty
+  email: ""                                     # empty
+  cache_ttl_hours: 24
+  offline_catalogue_path: ""                    # also empty -- no offline fallback either
+
+readme:
+  defaults: []
+
+equipment:
+  - id: "CONFOCAL_01"
+    label: "Confocal Microscope 1"
+    local_root: "/data/lab"
+    nas_root: "//nas01/lab"
+    completeness_signal: "sentinel_file"
+    sentinel_filename: "acquisition_complete.flag"
+    transport:
+      type: "rclone"
+      rclone_remote: "lab-nas"
+      rclone_remote_path: "lab/CONFOCAL_01"
+      bandwidth:
+        upload_mbps: 50
+
+nas_cleanup:
+  enabled: true
+  min_verify_passes: 2
+  min_age_hours: 24
+  retain_cache: true
+
+logging:
+  level: "INFO"
+  central_log_max_mb: 10
+  central_log_keep: 5
+
+operators:
+  allowlist: []
+
+validator:
+  content_scan_max_mib: 5
+  content_scan_extensions:
+    - ".txt"
+    - ".md"
+    - ".csv"
+    - ".tsv"
+    - ".json"
+    - ".yaml"
+    - ".yml"
+    - ".toml"
+    - ".ini"
+    - ".cfg"
+    - ".conf"
+    - ".xml"
+    - ".sh"
+    - ".py"
+
+plugins:
+  allow_network: false
+
+sync:
+  enabled: true
+  retry_attempts: 3
+
+orchestrator:
+  enabled: false
+  label: ""
+  staging_root: ""
+  staging_cleanup:
+    mode: "manual"
+    retain_hours: 24

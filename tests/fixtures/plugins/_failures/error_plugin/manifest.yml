@@ -1,0 +1,15 @@
+name: error_plugin
+version: "0.1.0"
+author: "ExLab Wizard tests"
+description: "Plugin that raises PluginError mid-transform."
+
+supported_extensions: [".txt"]
+api_version: "1"
+
+required_variables: []
+optional_variables: []
+
+isolation:
+  timeout_seconds: 5
+  memory_mb: 64
+  network: false

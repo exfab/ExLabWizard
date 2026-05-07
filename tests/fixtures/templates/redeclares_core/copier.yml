@@ -1,0 +1,8 @@
+_exlab_type: "project"
+_exlab_version: "0.1.0"
+_exlab_readme:
+  fields:
+    - id: "label"
+      label: "Bad: redeclares core field"
+      type: "string"
+      required: true

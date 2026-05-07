@@ -36,7 +36,7 @@ dependencies = [
 
     # ---- YAML I/O (config.yaml round-trip + read-only manifest reads; §6.1.2, §9, §10.7.1) ----
     "ruamel.yaml>=0.18",                   # Round-trip preserving comments + key order for config.yaml (Settings UI writes back via this)
-    "pyyaml>=6.0",                         # Read-only path for copier.yml, manifest.yml, README front matter — faster than ruamel for these
+    "pyyaml>=6.0",                         # Read-only path for copier.yml, manifest.yml, README front matter -- faster than ruamel for these
 
     # ---- Credential storage (Backend §7.4) ----
     "keyring>=24.0",                       # OS keyring (Keychain / Credential Manager / Secret Service)
@@ -67,7 +67,8 @@ test = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "playwright>=1.40",                    # E2E browser automation against http://127.0.0.1:<port> (Backend §4.10.3)
-    # httpx is already in core deps — used for AsyncClient(app=app) in integration tests too
+    "pytest-cov>=4.1",                     # Coverage reporting; configured under [tool.coverage.run]
+    # httpx is already in core deps -- used for AsyncClient(app=app) in integration tests too
 ]
 
 # Build (Backend §15.1; PyInstaller --onedir with three entry points).
@@ -75,9 +76,16 @@ build = [
     "pyinstaller>=6.3",
 ]
 
+# Lint / static analysis / pre-commit (Phase 1B tooling).
+lint = [
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+]
+
 # Dev convenience: install everything for local development with `uv pip install -e .[dev]`.
 dev = [
-    "exlabwizard[plugin-examples,test,build]",
+    "exlabwizard[plugin-examples,test,build,lint]",
 ]
 
 [project.scripts]
@@ -92,3 +100,56 @@ exlab-wizard-window = "exlab_wizard.window.main:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["exlab_wizard"]
+
+# ---------------------------------------------------------------------------
+# Tool configuration (Phase 1B)
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# Rule families:
+#   E/W  : pycodestyle errors and warnings
+#   F    : pyflakes
+#   I    : import sorting (isort)
+#   N    : pep8-naming
+#   B    : flake8-bugbear
+#   UP   : pyupgrade (modernize syntax for the py312 target)
+#   ASYNC: flake8-async (catches blocking calls in async fns; matches Backend §4.4)
+#   SIM  : flake8-simplify
+#   TID  : flake8-tidy-imports
+#   RUF  : ruff-specific rules
+select = ["E", "F", "W", "I", "N", "B", "UP", "ASYNC", "SIM", "TID", "RUF"]
+# E501 (line-too-long) is enforced via the formatter; we sometimes need long URLs in comments.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests can use bare asserts and looser naming. ASYNC240 is suppressed because
+# pytest-asyncio test functions use synchronous pathlib operations against
+# tmp_path; this is the established pytest idiom and not a concurrency hazard.
+"tests/**/*.py" = ["N802", "N803", "N806", "ASYNC230", "ASYNC240"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.coverage.run]
+source = ["exlab_wizard"]
+omit = [
+    "exlab_wizard/_worker.py",
+    "*/tests/*",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+ignore_missing_imports = true

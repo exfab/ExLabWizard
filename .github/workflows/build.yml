@@ -1,0 +1,144 @@
+# PyInstaller multi-OS build matrix. Backend Spec §15.1.
+#
+# Runs on every push to a branch that touches the build inputs (the spec
+# file, the workflow itself, ``pyproject.toml``, or any package source)
+# and on every release tag. The three matrix targets line up 1:1 with
+# the supported artifact rows:
+#
+# | OS        | Runner          | Artifact suffix              |
+# |-----------|-----------------|------------------------------|
+# | Windows   | windows-latest  | win-x64                      |
+# | macOS arm | macos-14        | mac-arm64                    |
+# | Linux x64 | ubuntu-latest   | linux-x64                    |
+#
+# v1 drops the Intel-mac (``macos-13``) target: GitHub-hosted Intel
+# macOS runners are deprecated, queue times have grown materially, and
+# Apple Silicon is the dominant macOS deployment target. A reintroduced
+# ``mac-x64`` row is a v1.1 candidate when self-hosted Intel hardware
+# is available.
+#
+# v1 ships unsigned (Backend Spec §15.2); signing/notarization is a v1.1
+# follow-up. The smoke step here is structural -- it invokes the
+# bundled binary with ``--version`` and asserts it prints the package
+# version.
+
+name: build
+
+# Build checks run only on pull requests targeting ``main`` plus the
+# release-publish path and a manual dispatch hook. We do NOT run on
+# every branch push: feature branches are exercised by unit + e2e
+# locally and via PR; binary builds are reserved for the merge gate.
+on:
+  pull_request:
+    branches: ["main"]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+# Auto-cancel superseded runs on the same branch / PR. When a new commit
+# lands, any in-flight or queued run on the older SHA is cancelled so we
+# don't burn macOS minutes on stale builds.
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux-x64
+            artifact_suffix: linux-x64
+            tray_exe: ExLab-Wizard/ExLab-Wizard-Tray
+          - os: windows-latest
+            label: win-x64
+            artifact_suffix: win-x64
+            tray_exe: ExLab-Wizard/ExLab-Wizard-Tray.exe
+          - os: macos-14
+            label: mac-arm64
+            artifact_suffix: mac-arm64
+            tray_exe: ExLab-Wizard.app/Contents/MacOS/ExLab-Wizard-Tray
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install build + test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[build,test]
+
+      - name: Run PyInstaller
+        run: pyinstaller exlab_wizard.spec
+        env:
+          PYTHONHASHSEED: "0"
+
+      - name: Smoke test (binary launches and prints version)
+        shell: bash
+        run: |
+          set -euo pipefail
+          tray="dist/${{ matrix.tray_exe }}"
+          if [ ! -f "$tray" ]; then
+            echo "tray binary not found at $tray" >&2
+            ls -R dist/ >&2
+            exit 1
+          fi
+          # Minimal smoke: invoke the bundled binary with --version and
+          # assert it prints the package version then exits 0. This
+          # exercises the full PyInstaller bundle + frozen Python +
+          # package import path without depending on a display server,
+          # tray icon backend, or live HTTP server. A more thorough
+          # boot-the-server-and-curl-/health flow lives in the unit +
+          # integration suites; the matrix only needs to confirm the
+          # bundled artifact actually runs.
+          expected_version=$(python -c "from exlab_wizard import __version__; print(__version__)")
+          actual_version=$("$tray" --version 2>&1 | tail -n 1 | tr -d '\r')
+          echo "expected: ${expected_version}"
+          echo "actual:   ${actual_version}"
+          test "$actual_version" = "$expected_version"
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python -c "from exlab_wizard import __version__; print(__version__)")
+          out_name="ExLab-Wizard-${version}-${{ matrix.artifact_suffix }}"
+          case "${{ matrix.os }}" in
+            windows-latest)
+              cd dist
+              7z a -tzip "../${out_name}.zip" "ExLab-Wizard"
+              cd ..
+              ;;
+            macos-*)
+              # v1 ships an unsigned ``.app`` directory inside a tar;
+              # a real ``.dmg`` is a v1.1 follow-up (Backend Spec §15.2).
+              cd dist
+              tar -czf "../${out_name}.tar.gz" "ExLab-Wizard.app"
+              cd ..
+              ;;
+            ubuntu-latest)
+              cd dist
+              tar -czf "../${out_name}.tar.gz" "ExLab-Wizard"
+              cd ..
+              ;;
+          esac
+          ls -lh ExLab-Wizard-* || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: exlab-wizard-${{ matrix.artifact_suffix }}
+          path: |
+            ExLab-Wizard-*.zip
+            ExLab-Wizard-*.tar.gz
+          if-no-files-found: error
+          retention-days: 30
