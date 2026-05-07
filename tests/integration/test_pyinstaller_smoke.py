@@ -11,8 +11,9 @@ worth running:
   Backend Spec §15.3.
 * ``exlab_wizard.spec`` is valid Python and references each of the
   three entry points by name.
-* ``.github/workflows/build.yml`` is valid YAML and lists all four
-  target runners (Backend Spec §15.1 table).
+* ``.github/workflows/build.yml`` is valid YAML and lists the three
+  v1 target runners (Linux, Windows, Apple Silicon macOS). Intel
+  macOS is dropped per the workflow comment.
 * The bundled-content placeholder directories exist (``_internal/``).
 
 If any of these regress, the CI build will either fail later or produce
@@ -46,8 +47,10 @@ EXPECTED_SCRIPTS = {
     "exlab-wizard-window": "exlab_wizard.window.main:main",
 }
 
-# The four CI runners enumerated in the §15.1 table.
-EXPECTED_RUNNERS = {"ubuntu-latest", "windows-latest", "macos-13", "macos-14"}
+# The three CI runners exercised by the v1 build matrix. macOS Intel
+# (``macos-13``) is intentionally excluded; see the workflow's header
+# comment for the rationale.
+EXPECTED_RUNNERS = {"ubuntu-latest", "windows-latest", "macos-14"}
 
 
 # ---------------------------------------------------------------------------
@@ -143,9 +146,7 @@ def test_spec_file_is_valid_python() -> None:
     ast.parse(source, filename=str(SPEC_PATH))
 
 
-@pytest.mark.parametrize(
-    "exe_name", ["ExLab-Wizard-Tray", "ExLab-Wizard-Window", "ExLab-Wizard"]
-)
+@pytest.mark.parametrize("exe_name", ["ExLab-Wizard-Tray", "ExLab-Wizard-Window", "ExLab-Wizard"])
 def test_spec_references_entry_executable(exe_name: str) -> None:
     """The spec names each of the three §15.1 executables."""
     source = SPEC_PATH.read_text(encoding="utf-8")
@@ -214,26 +215,27 @@ def test_workflow_is_valid_yaml() -> None:
     assert "jobs" in data and "build" in data["jobs"]
 
 
-def test_workflow_matrix_lists_all_four_targets() -> None:
-    """The matrix covers all four §15.1 runners."""
+def test_workflow_matrix_lists_all_v1_targets() -> None:
+    """The matrix covers the three v1 runners (Linux, Windows, mac arm64)."""
     with WORKFLOW_PATH.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     matrix_includes = data["jobs"]["build"]["strategy"]["matrix"]["include"]
     runners = {entry["os"] for entry in matrix_includes}
-    assert runners == EXPECTED_RUNNERS, (
-        f"matrix runners mismatch: {runners} != {EXPECTED_RUNNERS}"
-    )
+    assert runners == EXPECTED_RUNNERS, f"matrix runners mismatch: {runners} != {EXPECTED_RUNNERS}"
 
 
 def test_workflow_runs_pyinstaller_and_smoke() -> None:
-    """The workflow runs ``pyinstaller exlab_wizard.spec`` and a smoke step.
+    """The workflow runs ``pyinstaller exlab_wizard.spec`` and a version probe.
 
     Backend Spec §15.1: the CI build is the canonical artifact producer;
     the smoke step is what gives us confidence the bundle even boots.
+    The probe just runs the bundled binary with ``--version`` and
+    asserts the printed version matches the package's ``__version__``.
     """
     source = WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "pyinstaller exlab_wizard.spec" in source
-    assert "/api/v1/health" in source
+    assert "--version" in source
+    assert "exlab_wizard import __version__" in source
 
 
 # ---------------------------------------------------------------------------
@@ -244,17 +246,13 @@ def test_workflow_runs_pyinstaller_and_smoke() -> None:
 def test_internal_templates_dir_exists() -> None:
     """``_internal/templates/`` is checked into the repo (§15.4)."""
     assert INTERNAL_TEMPLATES.is_dir(), f"{INTERNAL_TEMPLATES} missing"
-    assert (INTERNAL_TEMPLATES / ".gitkeep").is_file(), (
-        "templates/.gitkeep placeholder missing"
-    )
+    assert (INTERNAL_TEMPLATES / ".gitkeep").is_file(), "templates/.gitkeep placeholder missing"
 
 
 def test_internal_plugins_dir_exists() -> None:
     """``_internal/plugins/`` is checked into the repo (§15.4)."""
     assert INTERNAL_PLUGINS.is_dir(), f"{INTERNAL_PLUGINS} missing"
-    assert (INTERNAL_PLUGINS / ".gitkeep").is_file(), (
-        "plugins/.gitkeep placeholder missing"
-    )
+    assert (INTERNAL_PLUGINS / ".gitkeep").is_file(), "plugins/.gitkeep placeholder missing"
 
 
 # ---------------------------------------------------------------------------
@@ -275,3 +273,56 @@ def test_local_build_scripts_exist() -> None:
     if sys.platform != "win32":
         # POSIX permission bit. On Windows the bit is meaningless.
         assert sh.stat().st_mode & 0o111, "build_local.sh must be executable"
+
+
+# ---------------------------------------------------------------------------
+# Workflow trigger surface (PR-only) and concurrency
+# ---------------------------------------------------------------------------
+
+
+def test_workflow_does_not_run_on_branch_push() -> None:
+    """Build matrix is reserved for the merge gate, not every branch push.
+
+    Branch pushes are exercised by the unit / integration / e2e suites
+    locally and via PR; the binary build burns macOS minutes and is
+    only worth running once at the merge boundary.
+    """
+    with WORKFLOW_PATH.open("r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+    triggers = data["on" if "on" in data else True]
+    assert "pull_request" in triggers, "workflow must keep the pull_request trigger"
+    assert "push" not in triggers, (
+        "workflow must NOT keep the push trigger; build runs on PR-to-main only"
+    )
+
+
+def test_workflow_pull_request_targets_main_only() -> None:
+    """``pull_request`` is gated on ``main`` so PRs to other branches don't run."""
+    with WORKFLOW_PATH.open("r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+    triggers = data["on" if "on" in data else True]
+    pr = triggers["pull_request"]
+    assert pr.get("branches") == ["main"], (
+        f"pull_request branches must be ['main']; got {pr.get('branches')!r}"
+    )
+
+
+def test_workflow_concurrency_cancels_in_progress() -> None:
+    """Superseded runs on the same ref are auto-cancelled.
+
+    Without ``cancel-in-progress``, a quick succession of pushes (or
+    multiple events triggering on the same SHA) can pile up macOS
+    minutes; the queue depth on Apple Silicon runners is small.
+    """
+    with WORKFLOW_PATH.open("r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+    concurrency = data.get("concurrency")
+    assert concurrency is not None, "workflow must declare a concurrency block"
+    assert concurrency.get("cancel-in-progress") is True, (
+        "concurrency.cancel-in-progress must be true"
+    )
+    # The group must be specific enough to not cancel unrelated workflows.
+    group = concurrency.get("group", "")
+    assert "github.workflow" in group and "github.ref" in group, (
+        f"concurrency.group must scope to (workflow, ref); got {group!r}"
+    )

@@ -2,37 +2,45 @@
 #
 # Runs on every push to a branch that touches the build inputs (the spec
 # file, the workflow itself, ``pyproject.toml``, or any package source)
-# and on every release tag. The four matrix targets line up 1:1 with the
-# four artifact rows in the §15.1 table:
+# and on every release tag. The three matrix targets line up 1:1 with
+# the supported artifact rows:
 #
 # | OS        | Runner          | Artifact suffix              |
 # |-----------|-----------------|------------------------------|
 # | Windows   | windows-latest  | win-x64                      |
-# | macOS x64 | macos-13        | mac-x64                      |
 # | macOS arm | macos-14        | mac-arm64                    |
 # | Linux x64 | ubuntu-latest   | linux-x64                    |
 #
+# v1 drops the Intel-mac (``macos-13``) target: GitHub-hosted Intel
+# macOS runners are deprecated, queue times have grown materially, and
+# Apple Silicon is the dominant macOS deployment target. A reintroduced
+# ``mac-x64`` row is a v1.1 candidate when self-hosted Intel hardware
+# is available.
+#
 # v1 ships unsigned (Backend Spec §15.2); signing/notarization is a v1.1
-# follow-up. The smoke step here is structural -- it boots the tray
-# binary, hits ``/api/v1/health``, and tears it down.
+# follow-up. The smoke step here is structural -- it invokes the
+# bundled binary with ``--version`` and asserts it prints the package
+# version.
 
 name: build
 
+# Build checks run only on pull requests targeting ``main`` plus the
+# release-publish path and a manual dispatch hook. We do NOT run on
+# every branch push: feature branches are exercised by unit + e2e
+# locally and via PR; binary builds are reserved for the merge gate.
 on:
-  push:
-    branches: ["**"]
-    paths:
-      - "exlab_wizard.spec"
-      - ".github/workflows/build.yml"
-      - "pyproject.toml"
-      - "exlab_wizard/**"
-      - "_internal/**"
-      - "scripts/build_local.*"
   pull_request:
     branches: ["main"]
   release:
     types: [published]
   workflow_dispatch:
+
+# Auto-cancel superseded runs on the same branch / PR. When a new commit
+# lands, any in-flight or queued run on the older SHA is cancelled so we
+# don't burn macOS minutes on stale builds.
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -50,10 +58,6 @@ jobs:
             label: win-x64
             artifact_suffix: win-x64
             tray_exe: ExLab-Wizard/ExLab-Wizard-Tray.exe
-          - os: macos-13
-            label: mac-x64
-            artifact_suffix: mac-x64
-            tray_exe: ExLab-Wizard.app/Contents/MacOS/ExLab-Wizard-Tray
           - os: macos-14
             label: mac-arm64
             artifact_suffix: mac-arm64
