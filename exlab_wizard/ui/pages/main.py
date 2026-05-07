@@ -99,11 +99,16 @@ def render_main_page(
     on_refresh: Callable[[], None],
     state: MainPageState | None = None,
     hierarchy: dict | None = None,
+    tree_expand_all: bool = False,
 ) -> Any:
     """Render the main window.
 
     ``state`` and ``hierarchy`` are injected by the caller; this lets the
     page stay free of any session-store / SSE dependency at unit-test time.
+
+    ``tree_expand_all`` forwards to :func:`build_tree`'s ``expand_all``
+    kwarg -- only set by e2e tests that need every node visible in the
+    DOM up front.
     """
 
     s = state or MainPageState()
@@ -181,6 +186,7 @@ def render_main_page(
             build_tree(
                 hierarchy=hierarchy or {},
                 filters=chip_state_to_tree_filters(s.chip_state),
+                expand_all=tree_expand_all,
             )
         with split.after:
             with ui.tabs() as tabs:

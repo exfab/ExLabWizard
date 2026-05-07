@@ -48,7 +48,7 @@ def _build_creation_json_dict(
     run_kind: str = "experimental",
     sync_status: str = "pending",
     validation_overrides: list[dict[str, Any]] | None = None,
-    schema_version: str = "1.8",
+    schema_version: str = "1.9",
     short_id: str = "PROJ-0042",
     level: str = "run",
     extras: dict[str, Any] | None = None,
@@ -314,6 +314,32 @@ def test_audit_synced_under_prior_policy_flag_for_hard_finding_on_synced_run(
     # Soft-tier findings should NOT carry the flag even on the synced run.
     soft_findings = [f for f in findings if f.tier == "soft"]
     assert all(not f.synced_under_prior_policy for f in soft_findings)
+
+
+def test_audit_synced_under_prior_policy_flag_for_hard_finding_on_cleaned_run(
+    tmp_path: Path,
+) -> None:
+    """Cleaned run + hard finding -> ``synced_under_prior_policy=True``.
+
+    A ``cleaned`` run was synced first, so any hard-tier finding it carries
+    must still flag as "synced under the prior policy" — same gate as
+    ``synced``.
+    """
+    equipment_root = tmp_path / "CONFOCAL_01"
+    project_dir = equipment_root / "PROJ-0042"
+    placeholder_run = project_dir / "Run_<run_date>"
+    placeholder_run.mkdir(parents=True)
+    _write_creation_json(project_dir, _build_creation_json_dict(level="project"))
+    _write_creation_json(
+        placeholder_run,
+        _build_creation_json_dict(level="run", sync_status="cleaned"),
+    )
+
+    validator = _make_validator(equipment_root=equipment_root)
+    findings = validator.audit({"kind": "all"})
+    placeholder_findings = _by_rule(findings, "unresolved_placeholder_token")
+    on_leaf = [f for f in placeholder_findings if f.offending_path == str(placeholder_run)]
+    assert any(f.synced_under_prior_policy for f in on_leaf)
 
 
 def test_audit_respects_content_scan_max_mib_cap(tmp_path: Path) -> None:

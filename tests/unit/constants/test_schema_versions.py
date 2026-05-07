@@ -12,7 +12,7 @@ from exlab_wizard.constants import schema_versions
 
 def test_creation_json_version_is_pinned() -> None:
     # Backend Spec §11.3 history table.
-    assert schema_versions.CREATION_JSON_VERSION == "1.8"
+    assert schema_versions.CREATION_JSON_VERSION == "1.9"
 
 
 def test_readme_fields_json_version_is_pinned() -> None:
@@ -65,7 +65,7 @@ def test_schema_versions_re_exported_from_package() -> None:
     # ``from exlab_wizard.constants import CREATION_JSON_VERSION``.
     from exlab_wizard import constants
 
-    assert constants.CREATION_JSON_VERSION == "1.8"
+    assert constants.CREATION_JSON_VERSION == "1.9"
     assert constants.README_FIELDS_JSON_VERSION == "1.1"
     assert constants.INGEST_JSON_VERSION == "1.1"
     assert constants.EQUIPMENT_JSON_VERSION == "1.0"

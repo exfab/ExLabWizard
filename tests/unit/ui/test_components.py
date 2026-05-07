@@ -124,6 +124,14 @@ def test_sync_status_override_uses_info() -> None:
     assert props["color_var"] == "--color-info"
 
 
+def test_sync_status_cleaned_uses_success_with_cloud_icon() -> None:
+    """Cleaned status (post-cleanup) reuses the success color with a cloud glyph."""
+
+    props = sync_status_icon.sync_status_props("cleaned")
+    assert props["color_var"] == "--color-success"
+    assert props["icon_name"] == "cloud_done"
+
+
 def test_sync_status_retrying_with_counter() -> None:
     """Retry counter renders as ``(N/M)`` (Frontend §10.5.1)."""
 
@@ -562,6 +570,87 @@ def test_tree_test_run_carries_test_badge() -> None:
     )
     badges = nodes[0].children[0].children[0].badges
     assert "Test" in badges
+
+
+def test_tree_run_node_propagates_sync_status() -> None:
+    """``RunNode.sync_status`` flows through to the resulting ``TreeNode``."""
+
+    equipment = tree.EquipmentNode(equipment_id="CONFOCAL_01")
+    project = tree.ProjectNode(short_id="PROJ-1", name="Cortex Q3")
+    run = tree.RunNode(
+        directory_name="Run_2026-05-07",
+        run_kind="experimental",
+        sync_status="cleaned",
+    )
+    nodes = tree.build_nodes(
+        hierarchy={equipment: {project: [run]}},
+        filters=tree.TreeFilters(),
+    )
+    assert nodes[0].children[0].children[0].sync_status == "cleaned"
+
+
+def test_to_nicegui_nodes_cleaned_run_uses_cloud_icon() -> None:
+    """A ``cleaned`` run row carries the cloud-icon URL and its sync_status."""
+
+    equipment = tree.EquipmentNode(equipment_id="CONFOCAL_01")
+    project = tree.ProjectNode(short_id="PROJ-1", name="Cortex Q3")
+    run = tree.RunNode(
+        directory_name="Run_2026-05-07",
+        run_kind="experimental",
+        sync_status="cleaned",
+    )
+    payload = tree.to_nicegui_nodes(
+        tree.build_nodes(
+            hierarchy={equipment: {project: [run]}},
+            filters=tree.TreeFilters(),
+        )
+    )
+    run_dict = payload[0]["children"][0]["children"][0]
+    assert run_dict["sync_icon"] == tree.SYNC_ICON_CLOUD_URL
+    assert run_dict["sync_status"] == "cleaned"
+
+
+def test_to_nicegui_nodes_local_run_uses_local_icon() -> None:
+    """Any non-``cleaned`` sync status (or unset) maps to the local-icon URL."""
+
+    equipment = tree.EquipmentNode(equipment_id="CONFOCAL_01")
+    project = tree.ProjectNode(short_id="PROJ-1", name="Cortex Q3")
+    pending_run = tree.RunNode(
+        directory_name="Run_2026-05-07",
+        run_kind="experimental",
+        sync_status="pending",
+    )
+    unknown_run = tree.RunNode(
+        directory_name="Run_2026-05-08",
+        run_kind="experimental",
+        sync_status=None,
+    )
+    payload = tree.to_nicegui_nodes(
+        tree.build_nodes(
+            hierarchy={equipment: {project: [pending_run, unknown_run]}},
+            filters=tree.TreeFilters(),
+        )
+    )
+    run_dicts = payload[0]["children"][0]["children"]
+    assert run_dicts[0]["sync_icon"] == tree.SYNC_ICON_LOCAL_URL
+    assert run_dicts[1]["sync_icon"] == tree.SYNC_ICON_LOCAL_URL
+
+
+def test_to_nicegui_nodes_equipment_and_project_have_no_sync_icon() -> None:
+    """Equipment and project rows render without the per-row sync icon."""
+
+    equipment = tree.EquipmentNode(equipment_id="CONFOCAL_01")
+    project = tree.ProjectNode(short_id="PROJ-1", name="Cortex Q3")
+    run = tree.RunNode(directory_name="Run_2026-05-07", run_kind="experimental")
+    payload = tree.to_nicegui_nodes(
+        tree.build_nodes(
+            hierarchy={equipment: {project: [run]}},
+            filters=tree.TreeFilters(),
+        )
+    )
+    assert "sync_icon" not in payload[0]
+    assert "sync_icon" not in payload[0]["children"][0]
+    assert "sync_icon" in payload[0]["children"][0]["children"][0]
 
 
 # ---------------------------------------------------------------------------

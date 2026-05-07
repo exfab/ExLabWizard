@@ -32,11 +32,13 @@ def test_sync_status_values() -> None:
     assert issubclass(enums.SyncStatus, StrEnum)
     assert enums.SyncStatus.PENDING.value == "pending"
     assert enums.SyncStatus.SYNCED.value == "synced"
+    assert enums.SyncStatus.CLEANED.value == "cleaned"
     assert enums.SyncStatus.FAILED.value == "failed"
     assert enums.SyncStatus.BLOCKED_BY_VALIDATION.value == "blocked_by_validation"
     assert {m.value for m in enums.SyncStatus} == {
         "pending",
         "synced",
+        "cleaned",
         "failed",
         "blocked_by_validation",
     }

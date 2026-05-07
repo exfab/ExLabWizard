@@ -43,9 +43,9 @@ from exlab_wizard.api.schemas import TestRunsJson as RunsTestMarkerJson
 
 
 def _minimal_creation_json(**overrides: object) -> CreationJson:
-    """Build a minimal valid CreationJson at v1.8 for round-trip tests."""
+    """Build a minimal valid CreationJson at the current version for round-trip tests."""
     base = dict(
-        schema_version="1.8",
+        schema_version="1.9",
         created_at="2026-04-17T14:32:00Z",
         created_by="asmith",
         level="run",
@@ -158,7 +158,7 @@ def test_creation_json_default_validation_overrides_is_empty_list() -> None:
 def test_creation_json_missing_required_field_raises() -> None:
     import msgspec
 
-    incomplete = b'{"schema_version": "1.8"}'
+    incomplete = b'{"schema_version": "1.9"}'
     with pytest.raises(msgspec.ValidationError):
         msgspec_json.decode(incomplete, type=CreationJson)
 
@@ -167,7 +167,7 @@ def test_creation_json_missing_lims_project_raises() -> None:
     """``lims_project`` is required at the project- and run-levels for v1.8."""
     bad = msgspec_json.encode(
         {
-            "schema_version": "1.8",
+            "schema_version": "1.9",
             "created_at": "2026-04-17T14:32:00Z",
             "created_by": "asmith",
             "level": "run",
@@ -194,7 +194,7 @@ def test_creation_json_unknown_field_is_ignored_on_decode() -> None:
     decode-time; the writer round-trips them via its raw-dict pass."""
     bad = msgspec_json.encode(
         {
-            "schema_version": "1.8",
+            "schema_version": "1.9",
             "created_at": "2026-04-17T14:32:00Z",
             "created_by": "asmith",
             "level": "run",
@@ -217,7 +217,7 @@ def test_creation_json_unknown_field_is_ignored_on_decode() -> None:
     )
     decoded = msgspec_json.decode(bad, type=CreationJson)
     # No exception raised; future_field is dropped from the typed view.
-    assert decoded.schema_version == "1.8"
+    assert decoded.schema_version == "1.9"
 
 
 # ---------------------------------------------------------------------------

@@ -1006,8 +1006,9 @@ class Validator:
 
         Computes ``override_active`` (the rule's class is in
         ``active_classes``) and ``synced_under_prior_policy`` (the
-        finding is hard-tier AND ``sync_status`` is ``"synced"``) per
-        §11.8, then builds the :class:`Finding` instance.
+        finding is hard-tier AND the run was already synced -- either
+        ``"synced"`` or ``"cleaned"``, since a cleaned run was synced
+        first) per §11.8, then builds the :class:`Finding` instance.
         """
         rule_name = str(raw["rule"])
         tier = str(raw["tier"])
@@ -1021,8 +1022,9 @@ class Validator:
         rule_detail = str(raw.get("rule_detail", ""))
 
         override_active = rule_name in active_classes
-        synced_under_prior_policy = (
-            tier == Tier.HARD.value and sync_status == SyncStatus.SYNCED.value
+        synced_under_prior_policy = tier == Tier.HARD.value and sync_status in (
+            SyncStatus.SYNCED.value,
+            SyncStatus.CLEANED.value,
         )
 
         return Finding(

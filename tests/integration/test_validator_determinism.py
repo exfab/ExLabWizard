@@ -54,7 +54,7 @@ def _build_creation_json_dict(
     level: str = "run",
 ) -> dict[str, Any]:
     return {
-        "schema_version": "1.8",
+        "schema_version": "1.9",
         "created_at": "2026-04-17T14:32:00Z",
         "created_by": "asmith",
         "level": level,

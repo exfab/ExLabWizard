@@ -105,3 +105,12 @@ def test_root_css_includes_body_resets() -> None:
     assert "body {" in css
     assert "var(--color-body)" in css
     assert "var(--font-body)" in css
+
+
+def test_resolve_assets_dir_points_at_repo_assets_in_source_layout() -> None:
+    """In source layout, the resolver returns ``<repo>/assets/``."""
+
+    assets_dir = theme.resolve_assets_dir()
+    assert assets_dir.is_dir()
+    assert (assets_dir / "sync_local.svg").is_file()
+    assert (assets_dir / "sync_cloud.svg").is_file()

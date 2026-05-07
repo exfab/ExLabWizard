@@ -134,6 +134,10 @@ if _nicegui_static is not None:
 DATAS.append(("_internal/templates", "_internal/templates"))
 DATAS.append(("_internal/plugins", "_internal/plugins"))
 
+# Static UI assets (SVG icons, etc.) served at ``/assets`` by the
+# NiceGUI app via ``ui/theme.py:register_static_assets``.
+DATAS.append(("assets", "assets"))
+
 
 # ---------------------------------------------------------------------------
 # Bundled binaries

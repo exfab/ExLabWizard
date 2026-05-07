@@ -11,10 +11,15 @@ The block is generated from :mod:`exlab_wizard.ui.design` so DESIGN.md and
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from exlab_wizard.logging import get_logger
 from exlab_wizard.ui import design
 
 _log = get_logger(__name__)
+
+_STATIC_ASSETS_MOUNTED = False
 
 
 def build_root_css() -> str:
@@ -112,3 +117,35 @@ def register_theme() -> str:
         extra={"event": "ui.theme.registered", "bytes": len(css)},
     )
     return css
+
+
+def resolve_assets_dir() -> Path:
+    """Return the absolute path to the bundled ``assets/`` directory.
+
+    Resolves both in source layout (``<repo>/assets/``) and in a
+    PyInstaller-frozen layout (``sys._MEIPASS/assets/``).
+    """
+    if hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / "assets"  # type: ignore[attr-defined]
+    return Path(__file__).resolve().parent.parent.parent / "assets"
+
+
+def register_static_assets() -> Path:
+    """Mount the project's ``assets/`` directory at ``/assets``.
+
+    Idempotent: a module-level guard prevents double-mounting on import
+    cycles. Returns the resolved assets directory.
+    """
+    global _STATIC_ASSETS_MOUNTED
+    assets_dir = resolve_assets_dir()
+    if _STATIC_ASSETS_MOUNTED:
+        return assets_dir
+    from nicegui import app as nicegui_app
+
+    nicegui_app.add_static_files("/assets", str(assets_dir))
+    _STATIC_ASSETS_MOUNTED = True
+    _log.debug(
+        "registered_static_assets",
+        extra={"event": "ui.static.registered", "path": str(assets_dir)},
+    )
+    return assets_dir

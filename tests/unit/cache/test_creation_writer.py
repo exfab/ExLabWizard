@@ -86,14 +86,14 @@ def creation_path(tmp_path: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_write_creation_emits_valid_v18_file(
+async def test_write_creation_emits_valid_current_version_file(
     writer: CreationWriter, creation_path: Path
 ) -> None:
     payload = _build_minimal_payload()
     await writer.write_creation(creation_path, payload)
     assert creation_path.exists()
     decoded = msgspec_json.decode(creation_path.read_bytes(), type=CreationJson)
-    assert decoded.schema_version == "1.8"
+    assert decoded.schema_version == CREATION_JSON_VERSION
     assert decoded.lims_project.short_id == "PROJ-0042"
 
 
@@ -275,7 +275,7 @@ async def test_reading_1_0_file_applies_documented_defaults(
 ) -> None:
     """Spec §11.3 history: a 1.0 file predates ``run_kind``,
     ``validation_overrides``, ``lims_project``, etc. The reader fills the
-    defaults so it can be parsed against the 1.8 Struct."""
+    defaults so it can be parsed against the current Struct."""
     on_wire = {
         "schema_version": "1.0",
         "created_at": "2024-01-01T00:00:00Z",
@@ -566,7 +566,7 @@ async def test_round_trip_preserves_plugins_applied_with_isolation(
 async def test_reading_file_with_missing_required_field_raises_validation_error(
     writer: CreationWriter, creation_path: Path
 ) -> None:
-    creation_path.write_bytes(b'{"schema_version": "1.8"}')
+    creation_path.write_bytes(b'{"schema_version": "1.9"}')
     with pytest.raises(msgspec.ValidationError):
         await writer.read_creation_snapshot(creation_path)
 

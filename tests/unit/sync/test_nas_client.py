@@ -462,3 +462,52 @@ async def test_close_is_idempotent(tmp_path: Path, writer: CreationWriter) -> No
     await client.init()
     await client.close()
     await client.close()
+
+
+# ---------------------------------------------------------------------------
+# _mark_cleaned: writes sync_status="cleaned" after local cleanup
+# ---------------------------------------------------------------------------
+
+
+async def test_mark_cleaned_writes_cleaned_to_creation_json(
+    tmp_path: Path, writer: CreationWriter
+) -> None:
+    """``_mark_cleaned`` flips ``creation.json.sync_status`` to ``"cleaned"``."""
+    cfg = _build_config(tmp_path)
+    run_dir = await _populate_run(tmp_path)
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+    )
+    await client.init()
+    try:
+        await client._mark_cleaned(run_dir)
+        creation_path = run_dir / CACHE_DIR_NAME / CREATION_JSON_NAME
+        decoded = msgspec_json.decode(creation_path.read_bytes(), type=CreationJson)
+        assert decoded.sync_status == "cleaned"
+    finally:
+        await client.close()
+
+
+async def test_mark_cleaned_is_noop_when_creation_json_missing(
+    tmp_path: Path, writer: CreationWriter
+) -> None:
+    """With ``retain_cache=False`` the cache dir is gone; ``_mark_cleaned`` no-ops."""
+    cfg = _build_config(tmp_path, retain_cache=False)
+    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Run_2026-04-17T14-32-00"
+    run_dir.mkdir(parents=True)  # no .exlab-wizard/creation.json
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+    )
+    await client.init()
+    try:
+        # Should not raise even though creation.json doesn't exist.
+        await client._mark_cleaned(run_dir)
+    finally:
+        await client.close()
