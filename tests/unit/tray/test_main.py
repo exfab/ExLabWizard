@@ -285,3 +285,86 @@ def test_build_default_components_falls_back_to_default_app(
     monkeypatch.setattr(tray_main, "_build_default_app", lambda: sentinel)
     tray = tray_main._build_default_components(state_dir=tmp_path)
     assert tray.server_runner is not None
+
+
+def test_parse_argv_defaults_no_smoke() -> None:
+    """No flags -> ``smoke`` is False, ``no_autostart_prompt`` is False."""
+    from exlab_wizard.tray.main import _parse_argv
+
+    args = _parse_argv([])
+    assert args.smoke is False
+    assert args.no_autostart_prompt is False
+
+
+def test_parse_argv_smoke_flag() -> None:
+    """``--smoke`` sets the smoke flag."""
+    from exlab_wizard.tray.main import _parse_argv
+
+    args = _parse_argv(["--smoke"])
+    assert args.smoke is True
+
+
+def test_parse_argv_no_autostart_prompt_silently_accepted() -> None:
+    """``--no-autostart-prompt`` is silently accepted (reserved)."""
+    from exlab_wizard.tray.main import _parse_argv
+
+    args = _parse_argv(["--no-autostart-prompt"])
+    assert args.no_autostart_prompt is True
+
+
+def test_run_smoke_starts_server_and_stops_on_signal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``_run_smoke`` boots the server, blocks on a stop event, and stops cleanly."""
+    import threading
+
+    from exlab_wizard.tray import main as tray_main
+
+    started: list[bool] = []
+    stopped: list[bool] = []
+
+    class _SmokeRunner:
+        def __init__(self, *, app: Any, state_dir: Path) -> None:
+            self.port = 9999
+
+        def start(self) -> int:
+            started.append(True)
+            return self.port
+
+        def stop(self) -> None:
+            stopped.append(True)
+
+    monkeypatch.setattr(tray_main, "ServerRunner", _SmokeRunner)
+    monkeypatch.setattr(tray_main, "_build_default_app", lambda: object())
+
+    # Replace threading.Event with a pre-set event so wait() returns
+    # immediately and we don't block the test.
+    event = threading.Event()
+    event.set()
+    monkeypatch.setattr(tray_main.threading, "Event", lambda: event)
+
+    rc = tray_main._run_smoke(state_dir=tmp_path)
+    assert rc == 0
+    assert started == [True]
+    assert stopped == [True]
+
+
+def test_main_smoke_dispatches_to_run_smoke(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``main(["--smoke"])`` calls ``_run_smoke`` instead of the icon loop."""
+    from exlab_wizard.tray import main as tray_main
+
+    monkeypatch.setattr(tray_main, "configure_logging", lambda: None)
+    monkeypatch.setattr("exlab_wizard.paths.ensure_state_dir", lambda: tmp_path)
+
+    called_with: list[Path] = []
+
+    def _fake_run_smoke(state_dir: Path) -> int:
+        called_with.append(state_dir)
+        return 0
+
+    monkeypatch.setattr(tray_main, "_run_smoke", _fake_run_smoke)
+    rc = tray_main.main(["--smoke"])
+    assert rc == 0
+    assert called_with == [tmp_path]

@@ -88,11 +88,12 @@ jobs:
             ls -R dist/ >&2
             exit 1
           fi
-          # Boot the tray in the background; redirect logs to a file so
-          # we can surface them on failure. The tray writes its
-          # ``server.json`` handshake to its OS-default state dir; we
-          # poll ``/api/v1/health`` against the published port.
-          "$tray" --no-autostart-prompt > tray.log 2>&1 &
+          # Boot the tray in --smoke mode (server-only, no pystray).
+          # CI runners are headless so the real tray's icon loop would
+          # fail immediately; --smoke skips it. The server still writes
+          # ``server.json`` and serves ``/api/v1/health``. Backend Spec
+          # §15.1 smoke step.
+          "$tray" --smoke > tray.log 2>&1 &
           tray_pid=$!
           # Wait up to 30s for ``server.json`` to appear, then read the
           # port. State-dir resolution lives in ``exlab_wizard.paths``.

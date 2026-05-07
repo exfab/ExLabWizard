@@ -19,8 +19,12 @@ delegates.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+import contextlib
+import signal
 import sys
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -166,6 +170,67 @@ def _build_default_components(
     )
 
 
+def _parse_argv(argv: list[str] | None) -> argparse.Namespace:
+    """Parse the tray's CLI arguments.
+
+    The tray accepts:
+
+    - ``--smoke`` -- server-only mode used by the CI smoke job. Boots
+      the FastAPI server, writes ``server.json``, then waits on
+      SIGTERM/SIGINT. Skips pystray entirely so the tray works on
+      headless runners with no display server. Backend Spec §15.1
+      smoke step.
+    - ``--no-autostart-prompt`` -- silently accepted; reserved for a
+      future surface that suppresses the welcome card's autostart
+      affordance during automated launches. Discarded today.
+    """
+    parser = argparse.ArgumentParser(prog="exlab-wizard-tray", add_help=True)
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Server-only mode: boot the FastAPI server, write server.json, wait on signal. Used by CI smoke tests.",
+    )
+    parser.add_argument(
+        "--no-autostart-prompt",
+        action="store_true",
+        help="Suppress the welcome card autostart prompt (no-op today; reserved).",
+    )
+    return parser.parse_args(argv)
+
+
+def _run_smoke(state_dir: Path) -> int:
+    """Server-only loop. Boots the FastAPI server, prints the published
+    port, waits on SIGTERM/SIGINT, then stops cleanly.
+
+    The CI smoke step needs the server to come up but does not need (and
+    cannot drive) the pystray icon on a headless runner. This path
+    bypasses pystray entirely.
+    """
+    fastapi_app = _build_default_app()
+    server_runner = ServerRunner(app=fastapi_app, state_dir=state_dir)
+    port = server_runner.start()
+    _log.info("smoke: server bound to port %d", port)
+    print(f"exlab-wizard-tray smoke: server on port {port}", flush=True)
+
+    stop_event = threading.Event()
+
+    def _on_signal(signum: int, _frame: Any) -> None:
+        _log.info("smoke: received signal %d; stopping", signum)
+        stop_event.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        # Signals only register on the main thread; skip silently if
+        # we're not it (defensive; smoke runs on the main thread).
+        with contextlib.suppress(OSError, ValueError):
+            signal.signal(sig, _on_signal)
+
+    try:
+        stop_event.wait()
+    finally:
+        server_runner.stop()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """``exlab-wizard-tray`` entry point.
 
@@ -173,12 +238,15 @@ def main(argv: list[str] | None = None) -> int:
     thread inside :class:`ServerRunner`. The function returns the exit
     code (0 on clean tray-driven Quit).
     """
-    _ = argv  # CLI parsing is expanded in a later phase; stable signature here.
+    args = _parse_argv(argv)
     configure_logging()
 
     from exlab_wizard.paths import ensure_state_dir
 
     state_dir = ensure_state_dir()
+    if args.smoke:
+        return _run_smoke(state_dir)
+
     app = _build_default_components(state_dir=state_dir)
     try:
         return app.run()
