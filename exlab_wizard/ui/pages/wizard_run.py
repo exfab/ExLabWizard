@@ -147,28 +147,33 @@ def render_run_wizard(
     except Exception:
         return payload
 
-    dialog = ui.dialog(value=True)
-    with (
-        dialog,
-        ui.card().style(
+    card = (
+        ui.card()
+        .props(f'data-testid="wizard-run-card-{state.run_kind}"')
+        .style(
             "min-width: 720px; "
             "padding: var(--sp-6); "
             "background: var(--color-surface); "
             "border-radius: var(--radius-md); "
             "box-shadow: var(--shadow-md);"
-        ),
-    ):
+        )
+    )
+    with card:
         with ui.row().classes("items-center w-full"):
-            ui.label(title_text(state)).style(
+            ui.label(title_text(state)).props('data-testid="wizard-run-title"').style(
                 "font-family: var(--font-display); "
                 "font-size: var(--text-lg); "
                 "color: var(--color-heading); "
                 "font-weight: 600;"
             )
             mode_badge.mode_badge(state.run_kind)
-        with ui.stepper(value=state.active_step).props("vertical") as stepper:
+        with ui.stepper(value=state.active_step).props(
+            'vertical data-testid="wizard-run-stepper"'
+        ) as stepper:
             for step_id in RUN_WIZARD_STEPS:
-                with ui.step(step_id, title=RUN_STEP_TITLES[step_id]):
+                with ui.step(step_id, title=RUN_STEP_TITLES[step_id]).props(
+                    f'data-testid="wizard-run-step-{step_id}"'
+                ):
                     ui.label(_step_helper_text(step_id, state)).style("color: var(--color-body);")
                     if step_id == "confirm":
                         session_progress.session_progress(active_phase=None)
@@ -176,7 +181,7 @@ def render_run_wizard(
                         ui.button(
                             "Back",
                             on_click=lambda _evt, sp=stepper: sp.previous(),
-                        ).props("flat")
+                        ).props('flat data-testid="wizard-run-back"')
                         primary_label = (
                             primary_button_label(state) if step_id == "confirm" else "Next"
                         )
@@ -190,10 +195,13 @@ def render_run_wizard(
                                 on_submit(state)
                             sp.next()
 
-                        ui.button(primary_label, on_click=_on_primary).props(
-                            f"color={primary_button_color(state)}"
+                        button_testid = (
+                            "wizard-run-submit" if step_id == "confirm" else "wizard-run-next"
                         )
-    return dialog
+                        ui.button(primary_label, on_click=_on_primary).props(
+                            f'color={primary_button_color(state)} data-testid="{button_testid}"'
+                        )
+    return card
 
 
 def _step_helper_text(step_id: str, state: RunWizardState) -> str:

@@ -133,23 +133,23 @@ def render_main_page(
         ui.button(
             "New Project",
             on_click=lambda _evt: on_open_new_project(),
-        ).props("color=primary")
+        ).props('color=primary data-testid="toolbar-new-project"')
         ui.button(
             "New Run",
             on_click=lambda _evt: on_open_new_run(),
-        ).props("color=primary")
+        ).props('color=primary data-testid="toolbar-new-run"')
         ui.button(
             "New Test Run",
             on_click=lambda _evt: on_open_new_test_run(),
-        ).props("color=warning")
+        ).props('color=warning data-testid="toolbar-new-test-run"')
         ui.button(
             "Settings",
             on_click=lambda _evt: on_open_settings(),
-        ).props("flat")
+        ).props('flat data-testid="toolbar-settings"')
         ui.button(
             "Refresh",
             on_click=lambda _evt: on_refresh(),
-        ).props("flat")
+        ).props('flat data-testid="toolbar-refresh"')
 
     if s.setup_incomplete:
         notifications.show_banner(
@@ -163,11 +163,17 @@ def render_main_page(
             ),
             dismissible=False,
         )
+    else:
+        notifications.clear_banner(notifications.BannerId.SETUP_INCOMPLETE)
     banner_stack.banner_stack(notifications.ContainerId.GLOBAL)
+    # Stable testid alias for the setup-incomplete banner so e2e flows
+    # can wait on a single locator regardless of banner order.
+    if s.setup_incomplete:
+        ui.element("div").props('data-testid="setup-incomplete-banner"').style("display:none;")
 
     with ui.splitter(value=30).classes("w-full h-full") as split:
         with split.before, ui.column().classes("w-full p-3").style("gap: 0.5rem;"):
-            ui.input(label="Search").style("width: 100%;")
+            ui.input(label="Search").props('data-testid="main-search"').style("width: 100%;")
             filter_chips.filter_chips(
                 chips,
                 state=s.chip_state,
@@ -178,18 +184,22 @@ def render_main_page(
             )
         with split.after:
             with ui.tabs() as tabs:
-                ui.tab("details", "Details")
+                ui.tab("details", "Details").props('data-testid="tab-details"')
                 ui.tab(
                     "problems",
                     f"Problems ({problems_badge_text(s)})",
-                )
+                ).props('data-testid="tab-problems"')
             with ui.tab_panels(tabs, value=s.active_tab).classes("w-full"):
                 with ui.tab_panel("details"):
-                    ui.label("Select a node to see details.").style("color: var(--color-muted);")
+                    ui.label("Select a node to see details.").props(
+                        'data-testid="details-empty"'
+                    ).style("color: var(--color-muted);")
                 with ui.tab_panel("problems"):
                     ui.label(
                         f"Showing 0 of {s.problems_count_hard + s.problems_count_soft} findings",
-                    ).style("font-family: var(--font-mono); color: var(--color-muted);")
+                    ).props('data-testid="problems-summary"').style(
+                        "font-family: var(--font-mono); color: var(--color-muted);"
+                    )
 
     if s.orchestrator_enabled:
         # Mount the bottom-dock staging panel when orchestrator mode is active

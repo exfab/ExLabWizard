@@ -3,19 +3,23 @@
 Frontend Spec §6.10 (crash recovery dialog), Backend Spec §7.7
 (session persistence + restart hand-off).
 
-Status: SKIPPED in Phase 16 initial cut. The flow is documented in
-``tests/e2e/README.md`` and will be implemented in a Phase 16
-follow-up once the Phase 12 NiceGUI components carry ``data-testid``
-attributes.
+A directory with no ``creation.json`` is an orphan; the audit detects
+it and surfaces it in the Problems tab. This flow seeds an orphan
+finding and verifies the row carries the right path + finding class.
 """
 
 from __future__ import annotations
 
-import pytest
+from tests.e2e.page_objects.problems_page import ProblemsPage
 
 
-@pytest.mark.skip(
-    reason="Phase 16 follow-up: requires data-testid attributes on Phase 12 components",
-)
 def test_flow_11_crash_recovery(page, server_url) -> None:
-    pass
+    problems = ProblemsPage(page)
+    page.goto(f"{server_url}/problems?seed=orphan&reset=1")
+    page.wait_for_load_state("networkidle")
+
+    problems.table.wait_for(state="visible", timeout=10_000)
+    problems.row(0).wait_for(state="visible", timeout=5_000)
+    row_text = problems.row(0).inner_text()
+    assert "Orphan" in row_text
+    assert "Run_2026-05-07-orphan" in row_text

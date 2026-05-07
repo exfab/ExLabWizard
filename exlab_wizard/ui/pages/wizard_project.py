@@ -138,27 +138,32 @@ def render_project_wizard(
     except Exception:
         return payload
 
-    dialog = ui.dialog(value=True)
-    with (
-        dialog,
-        ui.card().style(
+    card = (
+        ui.card()
+        .props('data-testid="wizard-project-card"')
+        .style(
             "min-width: 720px; "
             "padding: var(--sp-6); "
             "background: var(--color-surface); "
             "border-radius: var(--radius-md); "
             "box-shadow: var(--shadow-md);"
-        ),
-    ):
+        )
+    )
+    with card:
         with ui.row().classes("items-center w-full"):
-            ui.label("New Project").style(
+            ui.label("New Project").props('data-testid="wizard-project-title"').style(
                 "font-family: var(--font-display); "
                 "font-size: var(--text-lg); "
                 "color: var(--color-heading); "
                 "font-weight: 600;"
             )
-        with ui.stepper(value=s.active_step).props("vertical") as stepper:
+        with ui.stepper(value=s.active_step).props(
+            'vertical data-testid="wizard-project-stepper"'
+        ) as stepper:
             for step_id in PROJECT_WIZARD_STEPS:
-                with ui.step(step_id, title=PROJECT_STEP_TITLES[step_id]):
+                with ui.step(step_id, title=PROJECT_STEP_TITLES[step_id]).props(
+                    f'data-testid="wizard-step-{step_id}"'
+                ):
                     ui.label(_step_helper_text(step_id, s)).style("color: var(--color-body);")
                     if step_id == "confirm":
                         session_progress.session_progress(
@@ -168,7 +173,7 @@ def render_project_wizard(
                         ui.button(
                             "Back",
                             on_click=lambda _evt, sp=stepper: sp.previous(),
-                        ).props("flat")
+                        ).props('flat data-testid="wizard-back"')
                         primary_label = "Create" if step_id == "confirm" else "Next"
 
                         def _on_primary(
@@ -180,8 +185,11 @@ def render_project_wizard(
                                 on_submit(s)
                             sp.next()
 
-                        ui.button(primary_label, on_click=_on_primary).props("color=primary")
-    return dialog
+                        button_testid = "wizard-submit" if step_id == "confirm" else "wizard-next"
+                        ui.button(primary_label, on_click=_on_primary).props(
+                            f'color=primary data-testid="{button_testid}"'
+                        )
+    return card
 
 
 def _step_helper_text(step_id: str, state: ProjectWizardState) -> str:

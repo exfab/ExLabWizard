@@ -231,7 +231,7 @@ def build_tree(
     except Exception:
         return payload
 
-    tree = ui.tree(payload, label_key="label", node_key="id")
+    tree = ui.tree(payload, label_key="label", node_key="id").props('data-testid="main-tree"')
     if on_select is not None:
 
         def _selected(event: Any) -> None:

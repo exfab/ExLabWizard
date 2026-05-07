@@ -3,19 +3,29 @@
 Frontend Spec §6.8 (staging panel), Backend Spec §13 (orchestrator
 mode + ingest.json contract).
 
-Status: SKIPPED in Phase 16 initial cut. The flow is documented in
-``tests/e2e/README.md`` and will be implemented in a Phase 16
-follow-up once the Phase 12 NiceGUI components carry ``data-testid``
-attributes.
+The flow:
+
+1. Plant a staged run via the test app's ``/staging?state=staging`` route.
+2. Verify the staging row renders with the right state pill.
+3. Click ``Force sync`` and verify the row's state advances to
+   ``sync_queued``.
 """
 
 from __future__ import annotations
 
-import pytest
+from tests.e2e.page_objects.staging_page import StagingPage
 
 
-@pytest.mark.skip(
-    reason="Phase 16 follow-up: requires data-testid attributes on Phase 12 components",
-)
 def test_flow_09_orchestrator(page, server_url) -> None:
-    pass
+    staging = StagingPage(page)
+    page.goto(f"{server_url}/staging?state=staging")
+    page.wait_for_load_state("networkidle")
+
+    staging.dock.wait_for(state="visible", timeout=10_000)
+    staging.row(0).wait_for(state="visible", timeout=5_000)
+    assert "staging" in staging.row(0).inner_text().lower()
+
+    staging.force_sync(0).click()
+    page.wait_for_load_state("networkidle")
+    staging.row(0).wait_for(state="visible", timeout=5_000)
+    assert "sync_queued" in staging.row(0).inner_text().lower()

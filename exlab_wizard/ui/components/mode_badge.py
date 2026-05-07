@@ -68,14 +68,19 @@ def mode_badge(run_kind: str | None, *, label: str | None = None) -> Any:
 
     # Per Frontend §5.3 and DESIGN.md §05 badges, the badge background
     # uses a tinted fill and the text uses the darkened-AA variant.
-    badge = ui.badge(props["label"]).style(
-        f"background: var({props['color_var']}); "
-        "color: var(--color-surface); "
-        "font-family: var(--font-mono); "
-        "font-size: var(--text-xs); "
-        "padding: 0.2rem 0.55rem; "
-        "border-radius: var(--radius-sm); "
-        "letter-spacing: 0.08em; "
-        "text-transform: uppercase;"
+    badge_kind = props["run_kind"] or "none"
+    badge = (
+        ui.badge(props["label"])
+        .props(f'data-testid="mode-badge-{badge_kind}"')
+        .style(
+            f"background: var({props['color_var']}); "
+            "color: var(--color-surface); "
+            "font-family: var(--font-mono); "
+            "font-size: var(--text-xs); "
+            "padding: 0.2rem 0.55rem; "
+            "border-radius: var(--radius-sm); "
+            "letter-spacing: 0.08em; "
+            "text-transform: uppercase;"
+        )
     )
     return badge

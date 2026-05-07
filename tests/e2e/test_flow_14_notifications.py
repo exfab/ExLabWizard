@@ -3,19 +3,27 @@
 Frontend Spec §6.13 (notification surface), Backend Spec §12.4 (tray
 notifications) + §11.9 (in-app problem toasts).
 
-Status: SKIPPED in Phase 16 initial cut. The flow is documented in
-``tests/e2e/README.md`` and will be implemented in a Phase 16
-follow-up once the Phase 12 NiceGUI components carry ``data-testid``
-attributes.
+The notification helpers can render any of the §2.2.3 closed set of
+five banner ids. The /notifications test route accepts a ``?banner=``
+query param and renders the banner stack; this flow asserts each of
+the five banner variants surfaces a stable ``data-testid`` selector.
 """
 
 from __future__ import annotations
 
 import pytest
 
-
-@pytest.mark.skip(
-    reason="Phase 16 follow-up: requires data-testid attributes on Phase 12 components",
+BANNER_IDS = (
+    "setup_incomplete",
+    "sync_blocked_on_success_card",
+    "lims_unreachable",
+    "nas_unreachable",
+    "reconnecting",
 )
-def test_flow_14_notifications(page, server_url) -> None:
-    pass
+
+
+@pytest.mark.parametrize("banner_id", BANNER_IDS)
+def test_flow_14_notifications(page, server_url, banner_id) -> None:
+    page.goto(f"{server_url}/notifications?banner={banner_id}")
+    page.wait_for_load_state("networkidle")
+    page.locator(f'[data-testid="banner-{banner_id}"]').wait_for(state="visible", timeout=10_000)

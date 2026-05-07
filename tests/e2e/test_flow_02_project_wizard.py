@@ -2,19 +2,41 @@
 
 Frontend Spec §6.3 (project wizard stepper).
 
-Status: SKIPPED in Phase 16 initial cut. The flow is documented in
-``tests/e2e/README.md`` and will be implemented in a Phase 16
-follow-up once the Phase 12 NiceGUI components carry ``data-testid``
-attributes.
+Walks the seven-step wizard end-to-end and asserts the success card
+renders after submit.
 """
 
 from __future__ import annotations
 
-import pytest
+from tests.e2e.page_objects.wizard_project_page import WizardProjectPage
 
 
-@pytest.mark.skip(
-    reason="Phase 16 follow-up: requires data-testid attributes on Phase 12 components",
-)
 def test_flow_02_project_wizard(page, server_url) -> None:
-    pass
+    wizard = WizardProjectPage(page)
+    page.goto(f"{server_url}/wizard/project")
+    page.wait_for_load_state("networkidle")
+
+    wizard.card.wait_for(state="visible", timeout=10_000)
+    wizard.stepper.wait_for(state="visible", timeout=5_000)
+
+    # Walk every step Next, then Create on the confirm step.
+    for step_id in (
+        "lims_project",
+        "template",
+        "equipment",
+        "variables",
+        "readme",
+        "preview",
+    ):
+        # Each step's container must exist.
+        wizard.step(step_id).wait_for(state="attached", timeout=2_000)
+        # The Next button on the active step is the visible one.
+        page.locator(
+            f'[data-testid="wizard-step-{step_id}"] [data-testid="wizard-next"]',
+        ).first.click()
+
+    # Confirm step: hit Create.
+    page.locator(
+        '[data-testid="wizard-step-confirm"] [data-testid="wizard-submit"]',
+    ).first.click()
+    wizard.success_card.wait_for(state="visible", timeout=5_000)

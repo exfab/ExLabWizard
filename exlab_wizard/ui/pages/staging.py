@@ -197,13 +197,17 @@ def render_staging_dock(state: StagingDockState) -> Any:
             "rows": [row_props(r) for r in state.rows],
         }
 
-    with ui.element("div").style(
-        f"height: {STAGING_DOCK_HEIGHT_PX}px; "
-        "border-top: 1px solid var(--color-rule); "
-        "background: var(--color-bg); "
-        "padding: var(--sp-2) var(--sp-4); "
-        "overflow: auto;",
-    ) as dock:
+    with (
+        ui.element("div")
+        .props('data-testid="staging-dock"')
+        .style(
+            f"height: {STAGING_DOCK_HEIGHT_PX}px; "
+            "border-top: 1px solid var(--color-rule); "
+            "background: var(--color-bg); "
+            "padding: var(--sp-2) var(--sp-4); "
+            "overflow: auto;",
+        ) as dock
+    ):
         with ui.row().classes("items-center w-full").style("gap: var(--sp-3);"):
             ui.label("Staging").style(
                 "font-family: var(--font-display); "
@@ -213,20 +217,24 @@ def render_staging_dock(state: StagingDockState) -> Any:
             )
             ui.space()
             verified_count = sum(
-                1
-                for row in state.rows
-                if row.current_state == IngestState.SYNC_VERIFIED.value
+                1 for row in state.rows if row.current_state == IngestState.SYNC_VERIFIED.value
             )
             ui.button(
                 f"Clear verified runs ({verified_count})",
                 on_click=lambda _evt: _invoke(state.on_clear_verified),
-            ).props("flat dense").style("color: var(--color-body);")
+            ).props('flat dense data-testid="staging-clear-verified"').style(
+                "color: var(--color-body);"
+            )
 
         # Header row.
-        with ui.row().classes("w-full").style(
-            "gap: var(--sp-3); "
-            "padding: var(--sp-1) 0; "
-            "border-bottom: 1px solid var(--color-rule);",
+        with (
+            ui.row()
+            .classes("w-full")
+            .style(
+                "gap: var(--sp-3); "
+                "padding: var(--sp-1) 0; "
+                "border-bottom: 1px solid var(--color-rule);",
+            )
         ):
             for col in STAGING_TABLE_COLUMNS:
                 ui.label(col).style(
@@ -236,10 +244,15 @@ def render_staging_dock(state: StagingDockState) -> Any:
                 )
 
         # Body rows.
-        for row in state.rows:
+        for idx, row in enumerate(state.rows):
             props = row_props(row)
-            with ui.row().classes("items-center w-full").style(
-                "gap: var(--sp-3); padding: var(--sp-1) 0;",
+            with (
+                ui.row()
+                .classes("items-center w-full")
+                .props(f'data-testid="staging-row-{idx}"')
+                .style(
+                    "gap: var(--sp-3); padding: var(--sp-1) 0;",
+                )
             ):
                 ui.badge(props["state"]).style(
                     f"background: {props['state_pill']['background']}; "
@@ -275,17 +288,17 @@ def render_staging_dock(state: StagingDockState) -> Any:
                     ui.button(
                         "Force sync",
                         on_click=lambda _evt, p=row.path: _invoke(state.on_force_sync, p),
-                    ).props("flat dense")
+                    ).props(f'flat dense data-testid="staging-row-{idx}-force-sync"')
                     clear_button = ui.button(
                         "Clear",
                         on_click=lambda _evt, p=row.path: _invoke(state.on_clear, p),
-                    ).props("flat dense")
+                    ).props(f'flat dense data-testid="staging-row-{idx}-clear"')
                     if not props["is_clearable"]:
                         clear_button.disable()
                     ui.button(
                         "View log",
                         on_click=lambda _evt, p=row.path: _invoke(state.on_view_log, p),
-                    ).props("flat dense")
+                    ).props(f'flat dense data-testid="staging-row-{idx}-view-log"')
     return dock
 
 

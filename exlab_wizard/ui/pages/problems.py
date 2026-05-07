@@ -194,7 +194,9 @@ def render_problems_page(
     except Exception:
         return payload
 
-    container = ui.column().classes("w-full").style("gap: 0.5rem;")
+    container = (
+        ui.column().classes("w-full").props('data-testid="problems-table"').style("gap: 0.5rem;")
+    )
     with container:
         with ui.row().classes("items-center w-full").style("gap: 0.5rem;"):
             ui.label("Severity").style(
@@ -234,15 +236,16 @@ def render_problems_page(
             )
 
         if not visible:
-            ui.label(empty_state_text(s)).style(
+            ui.label(empty_state_text(s)).props('data-testid="problems-empty"').style(
                 "color: var(--color-muted); font-family: var(--font-body); padding: 1rem 0;"
             )
         else:
-            for finding in visible:
+            for idx, finding in enumerate(visible):
                 color_var = "--color-warning" if finding.severity == TIER_HARD else "--color-muted"
                 with (
                     ui.row()
                     .classes("items-center w-full")
+                    .props(f'data-testid="problems-row-{idx}"')
                     .style(
                         f"border-left: 4px solid var({color_var}); "
                         "padding: 0.5rem 0.75rem; "
@@ -258,6 +261,10 @@ def render_problems_page(
                         "font-size: var(--text-xs); "
                         "color: var(--color-body);"
                     )
+                    ui.label(finding.state).props(f'data-testid="problems-row-{idx}-state"').style(
+                        "font-family: var(--font-mono); font-size: var(--text-xs); "
+                        "color: var(--color-muted);"
+                    )
                     if (
                         finding.severity == TIER_HARD
                         and finding.state == "Active"
@@ -266,12 +273,12 @@ def render_problems_page(
                         ui.button(
                             "Override and allow sync",
                             on_click=lambda _evt, fid=finding.finding_id: on_override(fid),
-                        ).props("flat")
+                        ).props(f'flat data-testid="problems-row-{idx}-override"')
                     if finding.state == "Override active" and on_revoke_override is not None:
                         ui.button(
                             "Revoke override",
                             on_click=lambda _evt, fid=finding.finding_id: on_revoke_override(fid),
-                        ).props("flat")
+                        ).props(f'flat data-testid="problems-row-{idx}-revoke"')
 
         ui.label(
             f"Showing {len(visible)} of {len(findings)} findings  ·  Last audit: --",

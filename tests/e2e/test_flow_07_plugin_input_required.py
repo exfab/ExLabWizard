@@ -3,19 +3,26 @@
 Frontend Spec §6.4.5 (plugin step), Backend Spec §6.4
 (``WAIT_PLUGIN_INPUT`` state + reply contract).
 
-Status: SKIPPED in Phase 16 initial cut. The flow is documented in
-``tests/e2e/README.md`` and will be implemented in a Phase 16
-follow-up once the Phase 12 NiceGUI components carry ``data-testid``
-attributes.
+Drives the plugin-input dialog: navigate to the plugin-input route,
+fill the requested field, click Submit, and assert the wizard resumes
+on the project wizard with the provided value visible in the URL.
 """
 
 from __future__ import annotations
 
-import pytest
 
-
-@pytest.mark.skip(
-    reason="Phase 16 follow-up: requires data-testid attributes on Phase 12 components",
-)
 def test_flow_07_plugin_input_required(page, server_url) -> None:
-    pass
+    page.goto(f"{server_url}/plugin-input")
+    page.wait_for_load_state("networkidle")
+
+    page.locator('[data-testid="plugin-input-dialog"]').wait_for(state="visible", timeout=10_000)
+    page.locator('[data-testid="plugin-input-headline"]').wait_for(state="visible")
+    page.locator('[data-testid="plugin-input-field-operator_initials"]').fill("AS")
+    page.locator('[data-testid="plugin-input-submit"]').click()
+    page.wait_for_load_state("networkidle")
+
+    # The submit handler navigates to the wizard with the supplied value
+    # embedded in the URL; this confirms the resume contract is wired.
+    assert "resumed=1" in page.url
+    assert "v=AS" in page.url
+    page.locator('[data-testid="wizard-project-card"]').wait_for(state="visible", timeout=10_000)

@@ -3,19 +3,25 @@
 Frontend Spec §6.9 (schema-mismatch dialog), Backend Spec §3.4 (cache
 schema versioning).
 
-Status: SKIPPED in Phase 16 initial cut. The flow is documented in
-``tests/e2e/README.md`` and will be implemented in a Phase 16
-follow-up once the Phase 12 NiceGUI components carry ``data-testid``
-attributes.
+When a future-version ``creation.json`` is detected, the audit raises
+a hard-tier finding with code ``schema_major_mismatch``. This flow
+seeds a schema-mismatch finding via ``/problems?seed=schema_mismatch``
+and asserts the row renders.
 """
 
 from __future__ import annotations
 
-import pytest
+from tests.e2e.page_objects.problems_page import ProblemsPage
 
 
-@pytest.mark.skip(
-    reason="Phase 16 follow-up: requires data-testid attributes on Phase 12 components",
-)
 def test_flow_10_schema_mismatch(page, server_url) -> None:
-    pass
+    problems = ProblemsPage(page)
+    page.goto(f"{server_url}/problems?seed=schema_mismatch&reset=1")
+    page.wait_for_load_state("networkidle")
+
+    problems.table.wait_for(state="visible", timeout=10_000)
+    problems.row(0).wait_for(state="visible", timeout=5_000)
+    row_text = problems.row(0).inner_text()
+    # The schema-mismatch finding's matched_token captures the version.
+    assert "creation.json" in row_text
+    assert "Active" in problems.row_state(0).inner_text()

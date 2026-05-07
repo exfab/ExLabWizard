@@ -1,9 +1,4 @@
-"""Page object for the first-launch welcome card. Frontend Spec §6.1.
-
-Selectors target ``data-testid`` attributes that the Phase 12 NiceGUI
-welcome card is expected to expose in the Phase 16 follow-up
-retrofit (see ``tests/e2e/README.md``).
-"""
+"""Page object for the first-launch welcome card. Frontend Spec §6.1."""
 
 from __future__ import annotations
 
@@ -18,6 +13,11 @@ class WelcomePage:
 
     def __init__(self, page: Page) -> None:
         self._page = page
+
+    @property
+    def card(self) -> Locator:
+        """The welcome card container."""
+        return self._page.get_by_test_id("welcome-card")
 
     @property
     def headline(self) -> Locator:
@@ -38,3 +38,8 @@ class WelcomePage:
     def skip_for_now(self) -> Locator:
         """The secondary "Skip for now" CTA on the welcome card."""
         return self._page.get_by_test_id("welcome-skip-for-now")
+
+    @property
+    def status_marker(self) -> Locator:
+        """Hidden marker emitted by the test app to surface state."""
+        return self._page.get_by_test_id("welcome-status")

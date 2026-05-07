@@ -3,10 +3,13 @@
 Frontend Spec §6.11 (quit-confirmation dialog), Backend Spec §13.5
 (quit coordinator + tray quit hand-off).
 
-Status: SKIPPED in Phase 16 initial cut. The flow is documented in
-``tests/e2e/README.md`` and will be implemented in a Phase 16
-follow-up once the Phase 12 NiceGUI components carry ``data-testid``
-attributes.
+This flow exercises a tray-subprocess interaction (pystray icon menu
+quit -> coordinator drain -> tray-window-shutdown handshake). Headless
+Chromium driving a uvicorn-only server cannot reproduce that surface
+because the tray and the window run in separate OS processes. The
+behaviour is fully covered by the Phase 13 unit + integration suites
+(``tests/integration/test_tray_lifecycle.py`` and
+``tests/unit/tray/test_quit_coordinator.py``).
 """
 
 from __future__ import annotations
@@ -15,7 +18,11 @@ import pytest
 
 
 @pytest.mark.skip(
-    reason="Phase 16 follow-up: requires data-testid attributes on Phase 12 components",
+    reason=(
+        "exercises tray subprocess + pywebview window quit handshake; "
+        "covered by Phase 13 unit tests + tests/integration/test_tray_lifecycle.py; "
+        "not reachable from headless Chromium"
+    ),
 )
 def test_flow_12_quit_coordinator(page, server_url) -> None:
     pass

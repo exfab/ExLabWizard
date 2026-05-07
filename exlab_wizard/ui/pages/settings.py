@@ -87,11 +87,21 @@ def render_settings_page(
     state: SettingsState | None = None,
     on_save: Callable[[SettingsState], None] | None = None,
     on_discard: Callable[[SettingsState], None] | None = None,
+    on_select_section: Callable[[str], None] | None = None,
 ) -> Any:
-    """Render the settings dialog."""
+    """Render the settings dialog.
+
+    ``on_select_section`` is invoked when the operator clicks a sidebar
+    nav row. The Phase 12 cut bound this to a no-op (the selection
+    cycle is handled by the host page); the e2e harness wires it to a
+    navigation hook so each section's body becomes assertable.
+    """
 
     s = state or SettingsState()
-    if s.incomplete_sections:
+    if s.incomplete_sections and s.active_section not in s.incomplete_sections:
+        # Setup-incomplete mode: auto-select the first incomplete section
+        # unless the caller has already pinned a specific section to render
+        # (for example, after the operator clicks a sidebar nav row).
         first = first_incomplete_section(s.incomplete_sections)
         if first is not None:
             s = SettingsState(
@@ -112,21 +122,22 @@ def render_settings_page(
     except Exception:
         return payload
 
-    dialog = ui.dialog(value=True)
-    with (
-        dialog,
-        ui.card().style(
+    card = (
+        ui.card()
+        .props('data-testid="settings-dialog"')
+        .style(
             "min-width: 880px; min-height: 600px; "
             "padding: var(--sp-4); "
             "background: var(--color-surface); "
             "border-radius: var(--radius-md); "
             "box-shadow: var(--shadow-md);"
-        ),
-    ):
+        )
+    )
+    with card:
         if s.incomplete_sections:
             ui.label(
                 "Setup incomplete. Configure the highlighted sections to start using ExLab-Wizard.",
-            ).style(
+            ).props('data-testid="settings-incomplete-banner"').style(
                 "padding: 0.75rem 1rem; "
                 "border-left: 4px solid var(--color-warning); "
                 "background: rgba(230,159,0,0.07); "
@@ -135,13 +146,20 @@ def render_settings_page(
         with ui.splitter(value=22).classes("w-full") as split:
             with split.before, ui.column().classes("w-full").style("gap: 0.25rem;"):
                 for section in SETTINGS_SECTIONS:
-                    with (
+                    nav_row = (
                         ui.row()
                         .classes("items-center w-full")
+                        .props(f'data-testid="settings-nav-{section}"')
                         .style(
                             "padding: 0.5rem 0.75rem; cursor: pointer;",
                         )
-                    ):
+                    )
+                    if on_select_section is not None:
+                        nav_row.on(
+                            "click",
+                            lambda _evt, sec=section: on_select_section(sec),
+                        )
+                    with nav_row:
                         ui.label(SECTION_TITLES[section]).style(
                             "font-family: var(--font-body); "
                             "font-size: var(--text-sm);"
@@ -167,12 +185,12 @@ def render_settings_page(
             ui.button(
                 "Discard all",
                 on_click=lambda _evt: on_discard(s) if on_discard else None,
-            ).props("flat")
+            ).props('flat data-testid="settings-discard"')
             ui.button(
                 save_button_label(s),
                 on_click=lambda _evt: on_save(s) if on_save else None,
-            ).props("color=primary")
-    return dialog
+            ).props('color=primary data-testid="settings-save"')
+    return card
 
 
 def _render_section_body(section: str) -> None:
@@ -185,7 +203,12 @@ def _render_section_body(section: str) -> None:
 
     from nicegui import ui
 
-    with ui.column().classes("w-full").style("gap: 0.5rem; padding: 0 1rem;"):
+    with (
+        ui.column()
+        .classes("w-full")
+        .props(f'data-testid="settings-section-{section}"')
+        .style("gap: 0.5rem; padding: 0 1rem;")
+    ):
         ui.label(SECTION_TITLES[section]).style(
             "font-family: var(--font-display); "
             "font-size: var(--text-md); "
@@ -194,22 +217,32 @@ def _render_section_body(section: str) -> None:
         )
 
         if section == "paths":
-            ui.input(label="Templates directory")
-            ui.input(label="Plugin directory")
-            ui.input(label="Local data root")
+            ui.input(label="Templates directory").props('data-testid="settings-paths-templates"')
+            ui.input(label="Plugin directory").props('data-testid="settings-paths-plugin"')
+            ui.input(label="Local data root").props('data-testid="settings-paths-local-root"')
         elif section == "lims":
-            ui.input(label="Endpoint URL")
-            ui.input(label="Operator email")
+            ui.input(label="Endpoint URL").props('data-testid="settings-lims-endpoint"')
+            ui.input(label="Operator email").props('data-testid="settings-lims-email"')
             credential_field.credential_field(
                 label="LIMS password",
                 on_save=lambda v: None,
                 on_clear=lambda: None,
             )
-            ui.number(label="Cache TTL (hours)", value=24)
-            ui.input(label="Offline catalogue path")
+            ui.number(label="Cache TTL (hours)", value=24).props(
+                'data-testid="settings-lims-cache-ttl"'
+            )
+            ui.input(label="Offline catalogue path").props(
+                'data-testid="settings-lims-offline-path"'
+            )
             test_connection_panel.test_connection_panel(None)
         elif section == "equipment":
-            ui.label("Configured equipment will appear here. [+ Add equipment]")
+            ui.label("Configured equipment will appear here. [+ Add equipment]").props(
+                'data-testid="settings-equipment-empty"'
+            )
+            ui.input(label="Equipment ID (regex ^[A-Z][A-Z0-9_]*$, len 1-32)").props(
+                'data-testid="settings-equipment-id"'
+            )
+            ui.button("Add equipment").props('data-testid="settings-equipment-add"')
         elif section == "nas_cleanup":
             ui.checkbox("Cleanup enabled")
             ui.number(label="Minimum verify passes", value=2)

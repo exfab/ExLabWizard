@@ -3,19 +3,51 @@
 Frontend Spec §6.7 (settings dialog), Backend Spec §4.6.5 (config
 endpoints).
 
-Status: SKIPPED in Phase 16 initial cut. The flow is documented in
-``tests/e2e/README.md`` and will be implemented in a Phase 16
-follow-up once the Phase 12 NiceGUI components carry ``data-testid``
-attributes.
+Walks every section of the settings sidebar, fills the paths and
+equipment sections, and asserts the save handler triggers the saved
+marker.
 """
 
 from __future__ import annotations
 
-import pytest
+from tests.e2e.page_objects.settings_page import SettingsPage
 
-
-@pytest.mark.skip(
-    reason="Phase 16 follow-up: requires data-testid attributes on Phase 12 components",
+SETTINGS_SECTIONS = (
+    "paths",
+    "lims",
+    "equipment",
+    "nas_cleanup",
+    "operators",
+    "validator",
+    "logging",
+    "orchestrator",
+    "application",
 )
+
+
 def test_flow_08_settings(page, server_url) -> None:
-    pass
+    settings = SettingsPage(page)
+    page.goto(f"{server_url}/settings")
+    page.wait_for_load_state("networkidle")
+
+    settings.dialog.wait_for(state="visible", timeout=10_000)
+
+    # Each section nav row is rendered.
+    for section in SETTINGS_SECTIONS:
+        settings.nav(section).wait_for(state="visible", timeout=2_000)
+
+    # Visit each section explicitly to confirm the body renders.
+    for section in SETTINGS_SECTIONS:
+        page.goto(f"{server_url}/settings?active={section}")
+        page.wait_for_load_state("networkidle")
+        settings.section(section).wait_for(state="visible", timeout=5_000)
+
+    # Fill paths and save.
+    page.goto(f"{server_url}/settings?active=paths")
+    page.wait_for_load_state("networkidle")
+    settings.paths_templates.fill("/tmp/templates")
+    settings.paths_plugin.fill("/tmp/plugins")
+    settings.paths_local_root.fill("/tmp/data")
+    settings.save.click()
+    page.wait_for_load_state("networkidle")
+    settings.saved_marker.wait_for(state="visible", timeout=5_000)

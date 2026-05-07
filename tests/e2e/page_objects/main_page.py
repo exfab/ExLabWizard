@@ -1,10 +1,7 @@
 """Page object for the main window. Frontend Spec §6.
 
-Selectors target ``data-testid`` attributes that the Phase 12 NiceGUI
-components are expected to expose in the Phase 16 follow-up retrofit
-(see ``tests/e2e/README.md``). The page object is intentionally
-minimal -- enough hooks for the placeholder flows to compile and to
-guide the data-testid retrofit.
+Selectors target ``data-testid`` attributes added to the Phase 12
+NiceGUI components in the Phase 16 follow-up.
 """
 
 from __future__ import annotations
@@ -37,6 +34,36 @@ class MainPage:
         return self._page.get_by_test_id("toolbar-new-project")
 
     @property
+    def toolbar_new_run(self) -> Locator:
+        """Toolbar button that opens the new-run wizard (§6.2.2)."""
+        return self._page.get_by_test_id("toolbar-new-run")
+
+    @property
+    def toolbar_new_test_run(self) -> Locator:
+        """Toolbar button that opens the new-test-run wizard (§6.2.2)."""
+        return self._page.get_by_test_id("toolbar-new-test-run")
+
+    @property
     def toolbar_settings(self) -> Locator:
         """Toolbar button that opens the settings dialog (§6.2.2)."""
         return self._page.get_by_test_id("toolbar-settings")
+
+    @property
+    def toolbar_refresh(self) -> Locator:
+        """Toolbar refresh button (§6.2.2)."""
+        return self._page.get_by_test_id("toolbar-refresh")
+
+    @property
+    def search_box(self) -> Locator:
+        """The tree search input (§6.2.1)."""
+        return self._page.get_by_test_id("main-search")
+
+    @property
+    def tab_details(self) -> Locator:
+        """Details tab (§6.2.3)."""
+        return self._page.get_by_test_id("tab-details")
+
+    @property
+    def tab_problems(self) -> Locator:
+        """Problems tab (§6.2.3)."""
+        return self._page.get_by_test_id("tab-problems")

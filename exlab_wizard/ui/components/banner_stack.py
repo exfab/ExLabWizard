@@ -56,7 +56,12 @@ def banner_stack(container: ContainerId = ContainerId.GLOBAL) -> Any:
     except Exception:
         return props
 
-    column = ui.column().classes("w-full").style("gap: 0.5rem;")
+    column = (
+        ui.column()
+        .classes("w-full")
+        .props(f'data-testid="banner-stack-{container.value}"')
+        .style("gap: 0.5rem;")
+    )
     with column:
         for banner_id, record in props["visible"]:
             severity = record["severity"]
@@ -65,6 +70,7 @@ def banner_stack(container: ContainerId = ContainerId.GLOBAL) -> Any:
             with (
                 ui.row()
                 .classes("items-center w-full")
+                .props(f'data-testid="banner-{banner_id.value}"')
                 .style(
                     f"border-left: 4px solid var({color}); "
                     f"background: rgba(230,159,0,0.07); "

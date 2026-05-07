@@ -83,18 +83,19 @@ def render_welcome_page(
 
     autostart_value = {"on": spec.autostart_default_on}
 
-    dialog = ui.dialog(value=True)
-    with (
-        dialog,
-        ui.card().style(
+    card = (
+        ui.card()
+        .props('data-testid="welcome-card"')
+        .style(
             "max-width: 480px; "
             "padding: var(--sp-8); "
             "background: var(--color-surface); "
             "border-radius: var(--radius-lg); "
             "box-shadow: var(--shadow-lg);"  # modal card -- shadow-lg permitted
-        ),
-    ):
-        ui.label(spec.headline).style(
+        )
+    )
+    with card:
+        ui.label(spec.headline).props('data-testid="welcome-headline"').style(
             "font-family: var(--font-display); "
             "font-size: var(--text-2xl); "
             "color: var(--color-heading); "
@@ -117,7 +118,7 @@ def render_welcome_page(
             spec.autostart_label,
             value=spec.autostart_default_on,
             on_change=_on_toggle,
-        )
+        ).props('data-testid="welcome-autostart-toggle"')
         ui.label(spec.autostart_helper).style(
             "font-family: var(--font-body); font-size: var(--text-xs); color: var(--color-muted);"
         )
@@ -126,9 +127,9 @@ def render_welcome_page(
             ui.button(
                 spec.secondary_label,
                 on_click=lambda _evt: on_skip(autostart_value["on"]),
-            ).props("flat")
+            ).props('flat data-testid="welcome-skip-for-now"')
             ui.button(
                 spec.primary_label,
                 on_click=lambda _evt: on_get_started(autostart_value["on"]),
-            ).props("color=primary")
-    return dialog
+            ).props('color=primary data-testid="welcome-get-started"')
+    return card
