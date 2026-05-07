@@ -1,0 +1,15 @@
+name: policy_violation_plugin
+version: "0.1.0"
+author: "ExLab Wizard tests"
+description: "Plugin that writes to README.md, which is forbidden by Backend Spec §6.1.5."
+
+supported_extensions: [".txt"]
+api_version: "1"
+
+required_variables: []
+optional_variables: []
+
+isolation:
+  timeout_seconds: 5
+  memory_mb: 64
+  network: false

@@ -1,0 +1,15 @@
+name: timeout_plugin
+version: "0.1.0"
+author: "ExLab Wizard tests"
+description: "Plugin whose transform sleeps far longer than its declared timeout."
+
+supported_extensions: [".txt"]
+api_version: "1"
+
+required_variables: []
+optional_variables: []
+
+isolation:
+  timeout_seconds: 2
+  memory_mb: 64
+  network: false

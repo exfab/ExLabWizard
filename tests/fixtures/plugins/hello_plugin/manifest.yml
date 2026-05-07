@@ -1,0 +1,15 @@
+name: hello_plugin
+version: "0.1.0"
+author: "ExLab Wizard tests"
+description: "Canonical hello-world plugin from Backend Spec §6.5"
+
+supported_extensions: [".txt"]
+api_version: "1"
+
+required_variables: []
+optional_variables: []
+
+isolation:
+  timeout_seconds: 10
+  memory_mb: 64
+  network: false
