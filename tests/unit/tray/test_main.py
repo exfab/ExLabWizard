@@ -368,3 +368,24 @@ def test_main_smoke_dispatches_to_run_smoke(
     rc = tray_main.main(["--smoke"])
     assert rc == 0
     assert called_with == [tmp_path]
+
+
+def test_parse_argv_version_flag() -> None:
+    """``--version`` sets the version flag."""
+    from exlab_wizard.tray.main import _parse_argv
+
+    args = _parse_argv(["--version"])
+    assert args.version is True
+
+
+def test_main_version_prints_version_and_exits_zero(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``main(["--version"])`` prints the package version and returns 0."""
+    from exlab_wizard import __version__
+    from exlab_wizard.tray.main import main
+
+    rc = main(["--version"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == __version__

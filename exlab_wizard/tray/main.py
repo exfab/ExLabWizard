@@ -175,20 +175,28 @@ def _parse_argv(argv: list[str] | None) -> argparse.Namespace:
 
     The tray accepts:
 
-    - ``--smoke`` -- server-only mode used by the CI smoke job. Boots
-      the FastAPI server, writes ``server.json``, then waits on
-      SIGTERM/SIGINT. Skips pystray entirely so the tray works on
-      headless runners with no display server. Backend Spec §15.1
-      smoke step.
+    - ``--version`` -- print the package version and exit 0. Used by
+      the CI build matrix as a minimal smoke check that the
+      PyInstaller bundle produces a working binary.
+    - ``--smoke`` -- server-only mode. Boots the FastAPI server,
+      writes ``server.json``, then waits on SIGTERM/SIGINT. Skips
+      pystray entirely so the tray works on headless runners with no
+      display server. Useful for richer integration smoke flows that
+      need to hit a live HTTP endpoint.
     - ``--no-autostart-prompt`` -- silently accepted; reserved for a
       future surface that suppresses the welcome card's autostart
       affordance during automated launches. Discarded today.
     """
     parser = argparse.ArgumentParser(prog="exlab-wizard-tray", add_help=True)
     parser.add_argument(
+        "--version",
+        action="store_true",
+        help="Print the package version and exit.",
+    )
+    parser.add_argument(
         "--smoke",
         action="store_true",
-        help="Server-only mode: boot the FastAPI server, write server.json, wait on signal. Used by CI smoke tests.",
+        help="Server-only mode: boot the FastAPI server, write server.json, wait on signal.",
     )
     parser.add_argument(
         "--no-autostart-prompt",
@@ -239,6 +247,11 @@ def main(argv: list[str] | None = None) -> int:
     code (0 on clean tray-driven Quit).
     """
     args = _parse_argv(argv)
+    if args.version:
+        from exlab_wizard import __version__
+
+        print(__version__)
+        return 0
     configure_logging()
 
     from exlab_wizard.paths import ensure_state_dir
