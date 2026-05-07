@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -147,9 +147,7 @@ class SessionStore:
             "awaiting_input" if new_state is SessionState.INPUT_REQUIRED else "none"
         )
 
-    def attach_event_queue(
-        self, session_id: str, queue: asyncio.Queue[dict[str, Any]]
-    ) -> None:
+    def attach_event_queue(self, session_id: str, queue: asyncio.Queue[dict[str, Any]]) -> None:
         """Attach a WebSocket fan-out queue to the session.
 
         The controller pushes WebSocket frames onto the queue; the
@@ -205,8 +203,7 @@ class SessionStore:
         return [
             sid
             for sid, session in self._sessions.items()
-            if session.state is SessionState.INPUT_REQUIRED
-            and session.last_heartbeat < threshold
+            if session.state is SessionState.INPUT_REQUIRED and session.last_heartbeat < threshold
         ]
 
     async def gc_loop(self, interval_seconds: float = 300.0) -> None:

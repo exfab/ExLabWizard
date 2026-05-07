@@ -48,7 +48,6 @@ from exlab_wizard.controller import (
 )
 from exlab_wizard.controller.creation import ReadmeContext
 from exlab_wizard.plugins.host import (
-    InputRequiredPayload,
     PluginHost,
     PluginRecord,
     PluginRegistryProtocol,
@@ -231,9 +230,7 @@ async def test_full_experimental_run_creation_happy_path(tmp_path: Path) -> None
     final = await _drain_to_done(controller, handle.session_id)
     assert final["state"] is SessionState.DONE
 
-    expected_run = (
-        local_root / "EQ1" / "PROJ-0042" / "Run_2026-04-17T14-32-00"
-    )
+    expected_run = local_root / "EQ1" / "PROJ-0042" / "Run_2026-04-17T14-32-00"
     assert expected_run.is_dir()
     cache_path = expected_run / CACHE_DIR_NAME / CREATION_JSON_NAME
     decoded = msgspec.json.decode(cache_path.read_bytes(), type=CreationJson)
@@ -265,13 +262,7 @@ async def test_test_run_creation_uses_test_runs_subdir_and_marks_run_kind(
     final = await _drain_to_done(controller, handle.session_id)
     assert final["state"] is SessionState.DONE
 
-    expected_dir = (
-        local_root
-        / "EQ1"
-        / "PROJ-0042"
-        / "TestRuns"
-        / "TestRun_2026-04-17T14-32-00"
-    )
+    expected_dir = local_root / "EQ1" / "PROJ-0042" / "TestRuns" / "TestRun_2026-04-17T14-32-00"
     assert expected_dir.is_dir()
     cache_path = expected_dir / CACHE_DIR_NAME / CREATION_JSON_NAME
     decoded = msgspec.json.decode(cache_path.read_bytes(), type=CreationJson)
@@ -304,9 +295,7 @@ async def test_validation_rejects_label_over_length(tmp_path: Path) -> None:
     config = _build_config(local_root)
     controller = _build_controller(config)
 
-    handle = await controller.create_project(
-        _project_request(label="x" * (LABEL_MAX_LENGTH + 1))
-    )
+    handle = await controller.create_project(_project_request(label="x" * (LABEL_MAX_LENGTH + 1)))
     assert handle.state is SessionState.FAILED
     session = controller.session_store.get(handle.session_id)
     assert session is not None and session.error is not None
@@ -445,9 +434,7 @@ _exlab_plugins:
     plugin_host = PluginHost(registry=registry)
     controller = _build_controller(config, plugin_host=plugin_host)
 
-    handle = await controller.create_run(
-        _run_request(template_path=template_dir, variables={})
-    )
+    handle = await controller.create_run(_run_request(template_path=template_dir, variables={}))
     session_id = handle.session_id
 
     # Wait for the session to enter INPUT_REQUIRED. Poll because the
@@ -495,10 +482,7 @@ async def test_cancel_with_discard_files_removes_partial_dir(tmp_path: Path) -> 
     # Open a second session whose pipeline we will cancel mid-flight.
     # Use a slow plugin scenario by attaching a hand-crafted hung
     # input_required prompt to the controller-level cancel path.
-    handle2 = await controller.create_project(
-        _project_request(short_id="PROJ-0099")
-    )
-    session = controller.session_store.get(handle2.session_id)
+    handle2 = await controller.create_project(_project_request(short_id="PROJ-0099"))
     # Wait until the directory exists, then cancel.
     target = local_root / "EQ1" / "PROJ-0099"
     for _ in range(200):
@@ -669,3 +653,453 @@ async def test_noop_nas_sync_returns_none(tmp_path: Path) -> None:
     sync = NoOpNASSync()
     result = await sync.enqueue(tmp_path)
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# More edge cases for branch coverage
+# ---------------------------------------------------------------------------
+
+
+async def test_resume_unknown_session_raises(tmp_path: Path) -> None:
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    controller = _build_controller(_build_config(local_root))
+    with pytest.raises(ValueError, match="unknown session_id"):
+        await controller.resume("not-a-session", {})
+
+
+async def test_required_template_field_missing_in_readme_extra_fails(
+    tmp_path: Path,
+) -> None:
+    """A template-required README field missing from ``readme_extra``
+    must trigger a validation failure."""
+    template_dir = tmp_path / "tpl"
+    template_dir.mkdir()
+    (template_dir / "copier.yml").write_text(
+        """
+_min_copier_version: "9.0"
+_exlab_type: "run"
+_exlab_version: "1.0"
+_exlab_run_scope: "experimental"
+_exlab_readme:
+  fields:
+    - id: hypothesis
+      required: true
+      type: text
+""",
+        encoding="utf-8",
+    )
+    (template_dir / "data.txt").write_text("ok\n", encoding="utf-8")
+
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+    controller = _build_controller(config)
+
+    handle = await controller.create_run(_run_request(template_path=template_dir))
+    assert handle.state is SessionState.FAILED
+    session = controller.session_store.get(handle.session_id)
+    assert session is not None and session.error is not None
+    assert session.error["code"] == "validation_failed"
+    assert session.error["field"] == "hypothesis"
+
+
+async def test_required_template_field_present_passes_validation(
+    tmp_path: Path,
+) -> None:
+    """When ``readme_extra`` supplies a non-empty value for a required
+    field the validation gate accepts it."""
+    template_dir = tmp_path / "tpl"
+    template_dir.mkdir()
+    (template_dir / "copier.yml").write_text(
+        """
+_min_copier_version: "9.0"
+_exlab_type: "run"
+_exlab_version: "1.0"
+_exlab_run_scope: "experimental"
+_exlab_readme:
+  fields:
+    - id: hypothesis
+      required: true
+      type: text
+""",
+        encoding="utf-8",
+    )
+    (template_dir / "data.txt").write_text("ok\n", encoding="utf-8")
+
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+    controller = _build_controller(config)
+
+    req = _run_request(template_path=template_dir)
+    object.__setattr__(req, "readme_extra", {"hypothesis": "the cells respond"})
+    handle = await controller.create_run(req)
+    final = await _drain_to_done(controller, handle.session_id)
+    assert final["state"] is SessionState.DONE
+
+
+async def test_subscribe_unknown_session_raises(tmp_path: Path) -> None:
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    controller = _build_controller(_build_config(local_root))
+    with pytest.raises(ValueError, match="unknown session_id"):
+        async for _ in controller.subscribe("not-a-session"):
+            break  # pragma: no cover
+
+
+async def test_cancel_input_required_aborts_session_via_plugin_callback(
+    tmp_path: Path,
+) -> None:
+    """When the operator cancels the input-required prompt (host returns
+    ``aborted=True``) the controller fails the session."""
+    template_dir = tmp_path / "tpl"
+    template_dir.mkdir()
+    (template_dir / "copier.yml").write_text(
+        """
+_min_copier_version: "9.0"
+_exlab_type: "run"
+_exlab_version: "1.0"
+_exlab_run_scope: "experimental"
+_exlab_plugins:
+  - input_required_plugin
+""",
+        encoding="utf-8",
+    )
+    (template_dir / "data.txt.jinja").write_text("initial\n", encoding="utf-8")
+
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+
+    record = PluginRecord(
+        name="input_required_plugin",
+        version="0.1.0",
+        package_path=FIXTURE_PLUGINS / "_failures" / "input_required_plugin",
+        module_name="input_required_plugin",
+        timeout_seconds=5,
+        memory_mb=64,
+        supported_extensions=(".txt",),
+    )
+
+    class _StubRegistry:
+        def get_record(self, name: str) -> PluginRecord | None:
+            return record if name == record.name else None
+
+    plugin_host = PluginHost(registry=_StubRegistry())
+    controller = _build_controller(config, plugin_host=plugin_host)
+
+    handle = await controller.create_run(_run_request(template_path=template_dir, variables={}))
+    session_id = handle.session_id
+
+    # Wait for INPUT_REQUIRED.
+    for _ in range(200):
+        session = controller.session_store.get(session_id)
+        if session is not None and session.state is SessionState.INPUT_REQUIRED:
+            break
+        await asyncio.sleep(0.05)
+
+    # Cancel the session; this pushes ``None`` onto the resume queue,
+    # which the host translates to ``PluginPassResult(aborted=True)``.
+    await controller.cancel(session_id, discard_files=False)
+    handle2 = await controller.status(session_id)
+    assert handle2.state in (SessionState.FAILED, SessionState.ABORTED)
+
+
+async def test_cancel_invokes_cleanup_when_compose_path_fails(
+    tmp_path: Path,
+) -> None:
+    """``_cleanup`` swallows compose-path errors gracefully."""
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+    controller = _build_controller(config)
+
+    # Deliberately corrupt a request: invalid project_short_id makes
+    # compose_run_path raise; cleanup with discard_files=True should
+    # still return without raising.
+    handle = await controller.create_project(_project_request(short_id="PROJ-0042"))
+    await _drain_to_done(controller, handle.session_id)
+    session = controller.session_store.get(handle.session_id)
+    assert session is not None
+    # Mutate the request to trip compose_path.
+    object.__setattr__(session.request, "lims_project", {"short_id": "BAD"})
+    # Cancel a terminal session is a no-op, but the cleanup helper
+    # itself swallows errors -- exercise it directly.
+    await controller._cleanup(session, discard_files=True)
+
+
+async def test_cleanup_removes_existing_directory_when_discard_files_true(
+    tmp_path: Path,
+) -> None:
+    """``_cleanup`` removes the destination directory when ``discard_files=True``."""
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+    controller = _build_controller(config)
+
+    # Open a session whose dst directory we'll create manually.
+    session = controller.session_store.open("project", _project_request())
+    target = local_root / "EQ1" / "PROJ-0042"
+    target.mkdir(parents=True)
+    (target / "marker.txt").write_text("partial\n", encoding="utf-8")
+
+    await controller._cleanup(session, discard_files=True)
+    assert not target.exists()
+
+
+async def test_config_required_readme_field_missing_fails(tmp_path: Path) -> None:
+    """A config.yaml-required README field missing from ``readme_extra``
+    must trigger a validation failure."""
+    from exlab_wizard.config.models import READMEDefaultField
+
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+    config.readme.defaults = [
+        READMEDefaultField(
+            id="irb_protocol",
+            label="IRB Protocol",
+            type="string",
+            required=True,
+            default="",
+        )
+    ]
+    controller = _build_controller(config)
+
+    handle = await controller.create_project(_project_request())
+    assert handle.state is SessionState.FAILED
+    session = controller.session_store.get(handle.session_id)
+    assert session is not None and session.error is not None
+    assert session.error["field"] == "irb_protocol"
+
+
+async def test_render_failure_transitions_session_to_failed(tmp_path: Path) -> None:
+    """A Copier render failure (e.g. dst exists) transitions the session
+    to ``FAILED`` with the wrapped error."""
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+    controller = _build_controller(config)
+
+    # Create the destination directory ahead of time so Copier raises
+    # ``UserMessageError`` because ``overwrite=False``.
+    dst = local_root / "EQ1" / "PROJ-0042"
+    dst.mkdir(parents=True)
+    # Drop a file so Copier sees a conflict.
+    (dst / "PROJ-0042").mkdir()
+    (dst / "PROJ-0042" / "README.md").write_text("existing\n", encoding="utf-8")
+
+    handle = await controller.create_project(_project_request())
+    # Wait for the session to land in a terminal state.
+    for _ in range(200):
+        s = controller.session_store.get(handle.session_id)
+        if s is not None and s.is_terminal():
+            break
+        await asyncio.sleep(0.05)
+    final_handle = await controller.status(handle.session_id)
+    assert final_handle.state is SessionState.FAILED
+
+
+async def test_run_creation_writes_equipment_json_at_root(tmp_path: Path) -> None:
+    """The controller writes ``equipment.json`` under ``<local_root>/<EQUIP>/.exlab-wizard/``."""
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+    controller = _build_controller(config)
+
+    handle = await controller.create_project(_project_request())
+    await _drain_to_done(controller, handle.session_id)
+
+    equipment_json = local_root / "EQ1" / CACHE_DIR_NAME / "equipment.json"
+    assert equipment_json.is_file()
+
+
+async def test_format_error_with_non_validation_exception_returns_internal_error(
+    tmp_path: Path,
+) -> None:
+    """Generic exceptions are wrapped as ``internal_error``."""
+    err = CreationController._format_error(RuntimeError("boom"))
+    assert err["code"] == "internal_error"
+    assert err["message"] == "boom"
+
+
+async def test_append_log_writes_log_line(tmp_path: Path) -> None:
+    """The best-effort log appender writes to the equipment cache dir."""
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+    controller = _build_controller(config)
+
+    handle = await controller.create_project(_project_request())
+    await _drain_to_done(controller, handle.session_id)
+
+    log_path = local_root / "EQ1" / CACHE_DIR_NAME / "wizard.local.log"
+    assert log_path.is_file()
+    text = log_path.read_text(encoding="utf-8")
+    assert "creation completed" in text
+
+
+async def test_run_request_with_explicit_lims_project_block_used(tmp_path: Path) -> None:
+    """When a run request carries a ``lims_project`` block, the writer
+    should include it on creation.json."""
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+    controller = _build_controller(config)
+
+    req = _run_request()
+    handle = await controller.create_run(req)
+    await _drain_to_done(controller, handle.session_id)
+
+    expected = local_root / "EQ1" / "PROJ-0042"
+    cache = next(expected.glob("Run_*")) / CACHE_DIR_NAME / CREATION_JSON_NAME
+    decoded = msgspec.json.decode(cache.read_bytes(), type=CreationJson)
+    assert decoded.lims_project.uid == "8c7e9d2f-1a4b-4e6c-9b3d-7f2a1e5d8c4b"
+
+
+async def test_cancel_before_task_starts_invokes_cleanup(tmp_path: Path) -> None:
+    """If ``cancel`` is invoked on a session that has not yet started a
+    pipeline task, the defensive cleanup path runs."""
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+    controller = _build_controller(config)
+
+    # Open a session manually (bypassing _launch) so no task is registered.
+    session = controller.session_store.open("project", _project_request())
+    # Put it in a non-terminal state so cancel proceeds.
+    controller.session_store.transition(session.session_id, SessionState.VALIDATING)
+    controller.session_store.transition(session.session_id, SessionState.RENDERING)
+
+    # cancel must run cleanup defensively (no task to cancel).
+    await controller.cancel(session.session_id, discard_files=True)
+    handle = await controller.status(session.session_id)
+    assert handle.state is SessionState.ABORTED
+
+
+async def test_resume_session_with_no_resume_queue_raises(tmp_path: Path) -> None:
+    """Resume against a session that has no resume queue raises."""
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+    controller = _build_controller(config)
+
+    # Open a session manually and force INPUT_REQUIRED state.
+    session = controller.session_store.open("project", _project_request())
+    for state in (
+        SessionState.VALIDATING,
+        SessionState.RENDERING,
+        SessionState.PLUGIN_PASS,
+        SessionState.INPUT_REQUIRED,
+    ):
+        controller.session_store.transition(session.session_id, state)
+    # Note: no resume queue registered in controller._resume_queues.
+    with pytest.raises(ValueError, match="no resume queue"):
+        await controller.resume(session.session_id, {})
+
+
+async def test_subscribe_creates_queue_when_missing(tmp_path: Path) -> None:
+    """``subscribe`` initializes ``event_queue`` if the session opened
+    with none (defensive path -- ``_launch`` normally creates one)."""
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+    controller = _build_controller(config)
+
+    session = controller.session_store.open("project", _project_request())
+    assert session.event_queue is None
+
+    async def consumer() -> dict:
+        async for event in controller.subscribe(session.session_id):
+            return event
+
+    consumer_task = asyncio.create_task(consumer())
+    # Push an event onto the queue (now exists thanks to subscribe).
+    await asyncio.sleep(0.05)
+    assert session.event_queue is not None
+    await session.event_queue.put({"kind": "done", "result": {}})
+    event = await consumer_task
+    assert event == {"kind": "done", "result": {}}
+
+
+async def test_plugin_pass_aborted_transitions_to_failed(tmp_path: Path) -> None:
+    """When :class:`PluginHost` returns ``aborted=True``, the controller
+    transitions to ``FAILED`` with a cancelled-by-operator error."""
+    from exlab_wizard.plugins.host import PluginPassResult
+
+    template_dir = tmp_path / "tpl"
+    template_dir.mkdir()
+    (template_dir / "copier.yml").write_text(
+        """
+_min_copier_version: "9.0"
+_exlab_type: "run"
+_exlab_version: "1.0"
+_exlab_run_scope: "experimental"
+_exlab_plugins:
+  - dummy_plugin
+""",
+        encoding="utf-8",
+    )
+    (template_dir / "data.txt.jinja").write_text("ok\n", encoding="utf-8")
+
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+
+    # Replace ``_plugin_pass`` so it returns aborted=True directly.
+    controller = _build_controller(config)
+
+    async def fake_pass(*args: Any, **kwargs: Any) -> Any:
+        return PluginPassResult(applied=[], aborted=True)
+
+    controller._plugin_pass = fake_pass  # type: ignore[method-assign]
+
+    handle = await controller.create_run(_run_request(template_path=template_dir))
+    for _ in range(200):
+        s = controller.session_store.get(handle.session_id)
+        if s is not None and s.is_terminal():
+            break
+        await asyncio.sleep(0.02)
+    final_handle = await controller.status(handle.session_id)
+    assert final_handle.state is SessionState.FAILED
+    session = controller.session_store.get(handle.session_id)
+    assert session is not None and session.error is not None
+    assert session.error["code"] == "cancelled"
+
+
+async def test_required_field_ids_filters_non_dict_entries() -> None:
+    """The ``_required_field_ids`` helper must skip non-dict entries
+    in the template ``_exlab_readme.fields`` list (defensive against
+    malformed YAML)."""
+    from exlab_wizard.controller.creation import _required_field_ids
+
+    fields: list[Any] = [
+        "string-not-a-dict",
+        {"id": "x", "required": True},
+        {"id": "y", "required": False},
+        {"required": True},  # missing id
+        {"id": 42, "required": True},  # non-string id
+    ]
+    assert _required_field_ids(fields) == ("x",)
+
+
+async def test_run_request_without_lims_project_fills_stub_block(tmp_path: Path) -> None:
+    """A run request without ``lims_project`` data still produces a
+    valid ``creation.json`` with a stub ``lims_project`` block."""
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+    controller = _build_controller(config)
+
+    req = _run_request()
+    object.__setattr__(req, "lims_project", {})
+    handle = await controller.create_run(req)
+    await _drain_to_done(controller, handle.session_id)
+
+    expected = local_root / "EQ1" / "PROJ-0042"
+    cache = next(expected.glob("Run_*")) / CACHE_DIR_NAME / CREATION_JSON_NAME
+    decoded = msgspec.json.decode(cache.read_bytes(), type=CreationJson)
+    # Stub block: short_id falls back to req.project_short_id.
+    assert decoded.lims_project.short_id == "PROJ-0042"
+    assert decoded.lims_project.uid == ""

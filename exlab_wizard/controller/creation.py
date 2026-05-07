@@ -41,6 +41,7 @@ from typing import Any, Protocol
 
 from exlab_wizard.api.schemas import (
     CreationJson,
+    EquipmentJson,
     LimsProjectBlock,
     PathsBlock,
     PluginApplied,
@@ -56,17 +57,16 @@ from exlab_wizard.constants import (
     CACHE_DIR_NAME,
     CREATION_JSON_NAME,
     CREATION_JSON_VERSION,
+    EQUIPMENT_JSON_NAME,
+    EQUIPMENT_JSON_VERSION,
     LABEL_MAX_LENGTH,
     LOG_FILE_TEMPLATE,
     OBJECTIVE_MAX_LENGTH,
     PROJECT_SHORT_ID_PATTERN,
-    RUN_DATE_STRFTIME,
-    RUN_DIR_PREFIX,
-    TEST_RUN_DIR_PREFIX,
-    TEST_RUNS_DIR_NAME,
     PluginStatus,
     RunKind,
     SyncStatus,
+    TemplateType,
     Tier,
 )
 from exlab_wizard.controller.session_store import Session, SessionStore
@@ -197,11 +197,7 @@ class NoOpReadmeGenerator:
 
     async def generate(self, dst: Path, ctx: ReadmeContext) -> Path:
         readme = dst / "README.md"
-        body = (
-            f"# {ctx.label}\n\n"
-            f"Operator: {ctx.operator}\n\n"
-            f"{ctx.objective}\n"
-        )
+        body = f"# {ctx.label}\n\nOperator: {ctx.operator}\n\n{ctx.objective}\n"
         readme.write_text(body, encoding="utf-8")
         return readme
 
@@ -257,7 +253,9 @@ class CreationController:
             readme_generator if readme_generator is not None else NoOpReadmeGenerator()
         )
         self._nas_sync: NASSyncProtocol = nas_sync if nas_sync is not None else NoOpNASSync()
-        self._sessions: SessionStore = session_store if session_store is not None else SessionStore()
+        self._sessions: SessionStore = (
+            session_store if session_store is not None else SessionStore()
+        )
         # Per-session resume queues: a controller-internal asyncio.Queue
         # the create_* loop awaits while ``INPUT_REQUIRED`` is held. The
         # ``resume`` method puts a payload on the queue (or ``None`` to
@@ -416,9 +414,7 @@ class CreationController:
             await self._fail(session, error=self._format_error(exc))
             return self._handle(session)
         except Exception as exc:  # pragma: no cover -- defensive
-            await self._fail(
-                session, error={"code": "internal_error", "message": str(exc)}
-            )
+            await self._fail(session, error={"code": "internal_error", "message": str(exc)})
             return self._handle(session)
 
         # Validation passed; transition to RENDERING and kick off the
@@ -497,9 +493,7 @@ class CreationController:
             raise ValidationError(
                 {
                     "code": "validation_failed",
-                    "message": (
-                        f"operator {operator!r} is not in the configured allowlist"
-                    ),
+                    "message": (f"operator {operator!r} is not in the configured allowlist"),
                     "field": "operator",
                     "details": {"allowed": list(allowlist)},
                 }
@@ -525,18 +519,19 @@ class CreationController:
             )
 
         # Run-specific gates.
-        if isinstance(req, RunCreateRequest):
-            if not PROJECT_SHORT_ID_PATTERN.fullmatch(req.project_short_id):
-                raise ValidationError(
-                    {
-                        "code": "validation_failed",
-                        "message": (
-                            f"project_short_id {req.project_short_id!r} does not match "
-                            f"pattern {PROJECT_SHORT_ID_PATTERN.pattern}"
-                        ),
-                        "field": "project_short_id",
-                    }
-                )
+        if isinstance(req, RunCreateRequest) and not PROJECT_SHORT_ID_PATTERN.fullmatch(
+            req.project_short_id
+        ):
+            raise ValidationError(
+                {
+                    "code": "validation_failed",
+                    "message": (
+                        f"project_short_id {req.project_short_id!r} does not match "
+                        f"pattern {PROJECT_SHORT_ID_PATTERN.pattern}"
+                    ),
+                    "field": "project_short_id",
+                }
+            )
 
         # Resolve the template so we can read its required-field ids
         # and store the resolved object on the session for downstream
@@ -600,7 +595,7 @@ class CreationController:
         dst = self._compose_destination_path(req)
 
         # RENDERING.
-        render_result = await self._render(session, resolved, dst, req)
+        render_result = await self._render(resolved, dst, req)
 
         # PLUGIN_PASS.
         await self._transition(session, SessionState.PLUGIN_PASS)
@@ -673,25 +668,35 @@ class CreationController:
     # ------------------------------------------------------------------
 
     def _resolve_template(self, req: ProjectCreateRequest | RunCreateRequest) -> ResolvedTemplate:
-        scope = (
-            __import__(
-                "exlab_wizard.constants", fromlist=["TemplateType"]
-            ).TemplateType.PROJECT
-            if isinstance(req, ProjectCreateRequest)
-            else __import__(
-                "exlab_wizard.constants", fromlist=["TemplateType"]
-            ).TemplateType.RUN
-        )
+        scope = TemplateType.PROJECT if isinstance(req, ProjectCreateRequest) else TemplateType.RUN
         return self._template_engine.resolve(req.template_path, scope)
+
+    @staticmethod
+    def _short_id_for(req: ProjectCreateRequest | RunCreateRequest) -> str:
+        """Return the LIMS project ``short_id`` for the request."""
+        if isinstance(req, RunCreateRequest):
+            return req.project_short_id
+        return str(req.lims_project.get("short_id", ""))
+
+    @staticmethod
+    def _run_kind_value_for(req: ProjectCreateRequest | RunCreateRequest) -> str:
+        """Return the ``run_kind`` value to record on ``creation.json``.
+
+        Project-level creations default to ``experimental`` per the
+        v1.7 history table (see §11.3); run requests carry the bound
+        ``run_kind`` directly.
+        """
+        if isinstance(req, RunCreateRequest):
+            return req.run_kind.value
+        return RunKind.EXPERIMENTAL.value
 
     def _compose_destination_path(self, req: ProjectCreateRequest | RunCreateRequest) -> Path:
         local_root = Path(self._config.paths.local_root)
         if isinstance(req, ProjectCreateRequest):
-            short_id = str(req.lims_project.get("short_id", ""))
             return compose_project_path(
                 local_root=local_root,
                 equipment_id=req.equipment_id,
-                project_short_id=short_id,
+                project_short_id=self._short_id_for(req),
             )
         run_date = req.run_date or datetime.now(tz=UTC)
         return compose_run_path(
@@ -704,22 +709,25 @@ class CreationController:
 
     async def _render(
         self,
-        session: Session,
         resolved: ResolvedTemplate,
         dst: Path,
         req: ProjectCreateRequest | RunCreateRequest,
     ) -> RenderResult:
-        # Variables go through Copier verbatim; the README core fields
-        # are added so templates that reference them resolve.
+        """Render the resolved template into ``dst``.
+
+        Copier receives the request's ``variables`` map plus a small set
+        of core defaults (label, operator, objective, project_short_id,
+        run_kind) so templates that reference them via Jinja resolve.
+        Existing keys in ``variables`` are not overwritten -- the
+        operator's explicit values win.
+        """
         variables = dict(req.variables)
         variables.setdefault("label", req.label)
         variables.setdefault("operator", req.operator)
         variables.setdefault("objective", req.objective)
+        variables.setdefault("project_short_id", self._short_id_for(req))
         if isinstance(req, RunCreateRequest):
-            variables.setdefault("project_short_id", req.project_short_id)
             variables.setdefault("run_kind", req.run_kind.value)
-        else:
-            variables.setdefault("project_short_id", req.lims_project.get("short_id", ""))
         return await self._template_engine.render(resolved, dst, variables)
 
     async def _plugin_pass(
@@ -733,17 +741,12 @@ class CreationController:
             # No plugins configured for this template -- skip the pass.
             return PluginPassResult()
 
-        # Build the per-session context for the plugin host.
-        run_kind = (
-            req.run_kind.value
-            if isinstance(req, RunCreateRequest)
-            else "project"
-        )
-        project_short_id = (
-            req.project_short_id
-            if isinstance(req, RunCreateRequest)
-            else str(req.lims_project.get("short_id", ""))
-        )
+        # Build the per-session context for the plugin host. Project
+        # creations carry no run_kind; the literal string ``"project"``
+        # is used so plugins inspecting ``ctx.run_kind`` can detect the
+        # level without misinterpreting it as ``"experimental"``.
+        run_kind = req.run_kind.value if isinstance(req, RunCreateRequest) else "project"
+        project_short_id = self._short_id_for(req)
         ctx = PluginContext(
             variables=dict(req.variables),
             dst_root=render.dst_path,
@@ -805,16 +808,8 @@ class CreationController:
             operator=req.operator,
             objective=req.objective,
             equipment_id=req.equipment_id,
-            project_short_id=(
-                req.project_short_id
-                if isinstance(req, RunCreateRequest)
-                else str(req.lims_project.get("short_id", ""))
-            ),
-            run_kind=(
-                req.run_kind.value
-                if isinstance(req, RunCreateRequest)
-                else "project"
-            ),
+            project_short_id=self._short_id_for(req),
+            run_kind=(req.run_kind.value if isinstance(req, RunCreateRequest) else "project"),
             variables=dict(req.variables),
             template=resolved,
             extra_fields=dict(req.readme_extra),
@@ -826,22 +821,14 @@ class CreationController:
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_path = cache_dir / CREATION_JSON_NAME
 
-        lims_block_dict = (
-            req.lims_project
-            if (isinstance(req, ProjectCreateRequest) or req.lims_project)
-            else {}
-        )
+        lims_block_dict = req.lims_project if req.lims_project else {}
         if not lims_block_dict:
             # Run requests may not carry a lims_project block in v1; we
-            # still write a stub block from the configured equipment so
-            # the schema's required fields are present.
+            # still write a stub block so the schema's required fields
+            # are present.
             lims_block_dict = {
                 "uid": "",
-                "short_id": (
-                    req.project_short_id
-                    if isinstance(req, RunCreateRequest)
-                    else ""
-                ),
+                "short_id": self._short_id_for(req),
                 "name_at_creation": req.label,
                 "source": "live",
             }
@@ -853,11 +840,7 @@ class CreationController:
             cache_freshness_at_use=lims_block_dict.get("cache_freshness_at_use"),
         )
 
-        run_kind_value = (
-            req.run_kind.value
-            if isinstance(req, RunCreateRequest)
-            else RunKind.EXPERIMENTAL.value
-        )
+        run_kind_value = self._run_kind_value_for(req)
         level_value = "run" if isinstance(req, RunCreateRequest) else "project"
 
         nas_root = ""
@@ -875,9 +858,7 @@ class CreationController:
                 isolation=PluginIsolation(
                     duration_ms=int(entry.get("isolation", {}).get("duration_ms", 0)),
                     exit_code=int(entry.get("isolation", {}).get("exit_code", 0)),
-                    peak_memory_mb=int(
-                        entry.get("isolation", {}).get("peak_memory_mb", 0)
-                    ),
+                    peak_memory_mb=int(entry.get("isolation", {}).get("peak_memory_mb", 0)),
                 )
                 if "isolation" in entry
                 else None,
@@ -907,7 +888,49 @@ class CreationController:
             sync_status=SyncStatus.PENDING.value,
         )
         await self._cache_creation.write_creation(cache_path, payload)
+
+        # Write or refresh ``equipment.json`` at the equipment root.
+        # The writer is idempotent on ``first_seen_at`` and only
+        # refreshes ``last_modified_at`` on subsequent writes (§11.4.1).
+        await self._write_equipment_json(req, nas_root)
+
         return payload
+
+    async def _write_equipment_json(
+        self,
+        req: ProjectCreateRequest | RunCreateRequest,
+        nas_root: str,
+    ) -> None:
+        """Write the per-equipment ``equipment.json`` registry record.
+
+        Backend Spec §11.4.1. Idempotent: the writer preserves the
+        original ``first_seen_at`` on subsequent rewrites and updates
+        only ``last_modified_at``.
+        """
+        equipment_label = req.equipment_id
+        for entry in self._config.equipment:
+            if entry.id == req.equipment_id:
+                equipment_label = entry.label or entry.id
+                break
+
+        local_root = Path(self._config.paths.local_root)
+        equipment_dir = local_root / req.equipment_id
+        equipment_cache_path = equipment_dir / CACHE_DIR_NAME / EQUIPMENT_JSON_NAME
+
+        # The ``first_seen_at`` / ``last_modified_at`` fields are
+        # stamped by the writer; the values supplied here are
+        # placeholders that the writer overwrites.
+        now_iso = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        equipment_payload = EquipmentJson(
+            schema_version=EQUIPMENT_JSON_VERSION,
+            id=req.equipment_id,
+            label=equipment_label,
+            configured_local_root=str(local_root),
+            configured_nas_root=nas_root,
+            first_seen_at=now_iso,
+            last_modified_at=now_iso,
+        )
+        await self._cache_equipment.write_equipment(equipment_cache_path, equipment_payload)
 
     def _post_validate(
         self,
@@ -944,15 +967,12 @@ class CreationController:
         # short-circuits -- that rule is a run-level invariant
         # (Backend Spec §8.1.3) and a project leaf like ``PROJ-0042`` is
         # not a ``Run_*`` / ``TestRun_*`` candidate.
-        run_kind_value = (
-            req.run_kind.value if isinstance(req, RunCreateRequest) else ""
-        )
         params = CreationValidationInput(
             proposed_path=str(dst),
             variables=dict(req.variables),
             file_names=tuple(file_names),
             file_contents=dict(file_contents),
-            run_kind=run_kind_value,
+            run_kind=self._run_kind_value_for(req) if isinstance(req, RunCreateRequest) else "",
         )
         return self._validator.validate_creation(params)
 
@@ -1030,11 +1050,16 @@ class CreationController:
         return {"code": "internal_error", "message": str(exc)}
 
     def _append_log(self, session: Session, dst: Path, message: str) -> None:
-        """Best-effort append to the equipment-level log. Backend Spec §11.5."""
-        equipment_dir = dst.parent.parent if dst.parent.parent.name else dst.parent
-        cache_dir = equipment_dir / CACHE_DIR_NAME
+        """Best-effort append to the equipment-level log. Backend Spec §11.5.
+
+        Computes the equipment directory from the configured local root
+        and the request's equipment id (rather than walking up from
+        ``dst``) so the path is identical for project- and run-level
+        creations.
+        """
+        equipment_dir = Path(self._config.paths.local_root) / session.request.equipment_id
         log_name = LOG_FILE_TEMPLATE.format(hostname="local")
-        log_path = cache_dir / log_name
+        log_path = equipment_dir / CACHE_DIR_NAME / log_name
         line = format_log_line(
             timestamp_utc=datetime.now(tz=UTC),
             level="INFO",

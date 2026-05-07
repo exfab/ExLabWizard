@@ -24,7 +24,6 @@ import pytest
 from exlab_wizard.controller.session_store import Session, SessionStore
 from exlab_wizard.controller.state_machine import Phase, SessionState
 
-
 # ---------------------------------------------------------------------------
 # open
 # ---------------------------------------------------------------------------

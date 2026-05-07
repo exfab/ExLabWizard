@@ -29,7 +29,7 @@ Defines two enums and the mapping/transition tables that govern a
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 __all__ = [
     "VALID_TRANSITIONS",
@@ -40,12 +40,12 @@ __all__ = [
 ]
 
 
-class SessionState(str, Enum):
+class SessionState(StrEnum):
     """Internal creation-session state. Backend Spec §4.7.
 
     Values mirror the §4.7 state-machine diagram. Lower-case strings so
-    JSON encoding is direct (the ``str`` mixin makes the value the raw
-    string value rather than ``SessionState.PENDING`` repr).
+    JSON encoding is direct (``StrEnum`` makes ``SessionState.PENDING``
+    render as ``"pending"``).
     """
 
     PENDING = "pending"
@@ -61,7 +61,7 @@ class SessionState(str, Enum):
     ABORTED = "aborted"
 
 
-class Phase(str, Enum):
+class Phase(StrEnum):
     """Externally-emitted ``phase`` event. Backend Spec §4.6.2.
 
     Sent over the ``WS /api/v1/sessions/{id}/events`` channel on every
@@ -123,9 +123,7 @@ _FORWARD_TRANSITIONS: dict[SessionState, frozenset[SessionState]] = {
     SessionState.PENDING: frozenset({SessionState.VALIDATING}),
     SessionState.VALIDATING: frozenset({SessionState.RENDERING}),
     SessionState.RENDERING: frozenset({SessionState.PLUGIN_PASS}),
-    SessionState.PLUGIN_PASS: frozenset(
-        {SessionState.INPUT_REQUIRED, SessionState.CACHE_WRITE}
-    ),
+    SessionState.PLUGIN_PASS: frozenset({SessionState.INPUT_REQUIRED, SessionState.CACHE_WRITE}),
     SessionState.INPUT_REQUIRED: frozenset({SessionState.PLUGIN_PASS}),
     SessionState.CACHE_WRITE: frozenset({SessionState.POST_VALIDATE}),
     SessionState.POST_VALIDATE: frozenset({SessionState.SYNC_QUEUED}),
