@@ -9,7 +9,7 @@ from __future__ import annotations
 
 # Version of the per-run ``creation.json`` cache file. See Backend Spec
 # section 11.3 (history table) for the schema and migration rules.
-CREATION_JSON_VERSION: str = "1.8"
+CREATION_JSON_VERSION: str = "1.9"
 
 # Version of the per-equipment ``readme_fields.json`` cache. Backend Spec §11.4.
 README_FIELDS_JSON_VERSION: str = "1.1"

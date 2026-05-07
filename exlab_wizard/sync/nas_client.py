@@ -490,6 +490,7 @@ class NASSyncClient:
         # Promote to CLEANUP_ELIGIBLE then perform the deletion.
         await self._queue.transition(job_id, SyncJobState.CLEANUP_ELIGIBLE)
         self._delete_local(run_path)
+        await self._mark_cleaned(run_path)
         await self._queue.transition(job_id, SyncJobState.CLEANED)
 
     def _delete_local(self, run_path: Path) -> None:
@@ -560,6 +561,24 @@ class NASSyncClient:
 
         def _flip(payload: CreationJson) -> CreationJson:
             payload.sync_status = SyncStatus.SYNCED.value
+            return payload
+
+        with contextlib.suppress(Exception):
+            await self._cache_creation.update_creation_atomic(creation_path, _flip)
+
+    async def _mark_cleaned(self, run_path: Path) -> None:
+        """Mutate ``creation.json`` ``sync_status`` to ``cleaned``. Backend Spec §7.1.10.
+
+        No-op when ``creation.json`` no longer exists (the
+        ``retain_cache=False`` path removes the cache directory along with
+        the data files).
+        """
+        creation_path = run_path / CACHE_DIR_NAME / CREATION_JSON_NAME
+        if not creation_path.exists():
+            return
+
+        def _flip(payload: CreationJson) -> CreationJson:
+            payload.sync_status = SyncStatus.CLEANED.value
             return payload
 
         with contextlib.suppress(Exception):

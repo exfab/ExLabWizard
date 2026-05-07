@@ -9,6 +9,14 @@ Renders the ``<equipment>/<project>/<run>`` hierarchy:
 * Run node (test) -- dimmed styling + ``TestRun_`` prefix in
   warning-tier color + a *"Test"* pill.
 
+Run rows also carry a small **sync icon** to the left of the label:
+
+* ``sync_local.svg`` -- run data is still on local disk (any sync
+  status other than ``cleaned``).
+* ``sync_cloud.svg`` -- run has been synced, verified, and locally
+  cleaned (``sync_status == "cleaned"``); only the ``.exlab-wizard/``
+  cache subtree remains on disk (§7.1.10).
+
 ``.exlab-wizard/`` folders are hidden by default (Frontend §13.1) and
 hidden filtering is the caller's concern.
 
@@ -23,6 +31,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from exlab_wizard.constants.enums import SyncStatus
 from exlab_wizard.logging import get_logger
 
 _log = get_logger(__name__)
@@ -33,6 +42,12 @@ KIND_EQUIPMENT = "equipment"
 KIND_PROJECT = "project"
 KIND_RUN_EXPERIMENTAL = "run_experimental"
 KIND_RUN_TEST = "run_test"
+
+_RUN_KINDS: frozenset[str] = frozenset({KIND_RUN_EXPERIMENTAL, KIND_RUN_TEST})
+
+# Static URLs served by ``ui/theme.py:register_static_assets``.
+SYNC_ICON_LOCAL_URL = "/assets/sync_local.svg"
+SYNC_ICON_CLOUD_URL = "/assets/sync_cloud.svg"
 
 
 # LIMS-side project status.
@@ -68,6 +83,7 @@ class RunNode:
     directory_name: str
     run_kind: str  # "experimental" | "test"
     label: str | None = None
+    sync_status: str | None = None  # one of SyncStatus values; None when unknown
 
 
 @dataclass(frozen=True)
@@ -80,6 +96,7 @@ class TreeNode:
     children: tuple[TreeNode, ...] = field(default_factory=tuple)
     badges: tuple[str, ...] = field(default_factory=tuple)
     style_hints: dict[str, str] = field(default_factory=dict)
+    sync_status: str | None = None  # set on run nodes only
 
 
 def _matches_search(text: str, query: str) -> bool:
@@ -160,6 +177,7 @@ def build_nodes(
                         kind=kind,
                         badges=badges,
                         style_hints=style_hints,
+                        sync_status=run.sync_status,
                     )
                 )
 
@@ -196,19 +214,61 @@ def build_nodes(
     return nodes
 
 
-def to_nicegui_nodes(nodes: Iterable[TreeNode]) -> list[dict[str, Any]]:
-    """Convert :class:`TreeNode` instances to NiceGUI ``ui.tree`` dicts."""
+def _sync_icon_url(node: TreeNode) -> str | None:
+    """Return the per-row sync-icon URL, or ``None`` for non-run rows.
 
-    return [
-        {
+    Run rows get one of the two ``/assets/sync_*.svg`` URLs depending on
+    whether the run has been locally cleaned (``sync_cloud.svg``) or
+    still has data on disk (``sync_local.svg``). Equipment / project
+    rows render unchanged.
+    """
+    if node.kind not in _RUN_KINDS:
+        return None
+    if node.sync_status == SyncStatus.CLEANED.value:
+        return SYNC_ICON_CLOUD_URL
+    return SYNC_ICON_LOCAL_URL
+
+
+def to_nicegui_nodes(nodes: Iterable[TreeNode]) -> list[dict[str, Any]]:
+    """Convert :class:`TreeNode` instances to NiceGUI ``ui.tree`` dicts.
+
+    Run rows additionally carry a ``sync_icon`` URL string and a
+    ``sync_status`` string used by the ``default-header`` scoped-slot
+    template attached in :func:`build_tree`.
+    """
+
+    out: list[dict[str, Any]] = []
+    for node in nodes:
+        payload: dict[str, Any] = {
             "id": node.node_id,
             "label": node.label,
             "kind": node.kind,
             "badges": list(node.badges),
             "children": to_nicegui_nodes(node.children),
         }
-        for node in nodes
-    ]
+        icon_url = _sync_icon_url(node)
+        if icon_url is not None:
+            payload["sync_icon"] = icon_url
+            payload["sync_status"] = node.sync_status or ""
+        out.append(payload)
+    return out
+
+
+# Quasar ``q-tree`` does not honour an ``icon`` / ``img`` field on plain
+# node dicts; per-node images must come through a scoped slot template.
+# We drop in a single ``default-header`` template that renders the run's
+# sync icon (when present) immediately to the left of the node label.
+_TREE_DEFAULT_HEADER_SLOT = (
+    '<div class="row items-center" style="gap: 0.4rem">'
+    '<img v-if="props.node.sync_icon" :src="props.node.sync_icon" '
+    'style="width: 1rem; height: 1rem; flex-shrink: 0;" '
+    ':alt="props.node.sync_status || \'\'" />'
+    '<span :data-kind="props.node.kind" '
+    ':data-sync-status="props.node.sync_status || \'\'">'
+    "{{ props.node.label }}"
+    "</span>"
+    "</div>"
+)
 
 
 def build_tree(
@@ -216,11 +276,16 @@ def build_tree(
     hierarchy: dict[EquipmentNode, dict[ProjectNode, list[RunNode]]],
     on_select: Callable[[str], None] | None = None,
     filters: TreeFilters | None = None,
+    expand_all: bool = False,
 ) -> Any:
     """Build the project / equipment tree.
 
     Returns the NiceGUI ``ui.tree`` element, or the immutable nodes list
     when called outside of a NiceGUI app context (tests).
+
+    ``expand_all`` toggles Quasar's ``default-expand-all`` prop -- used
+    by e2e tests that need every node visible in the DOM without
+    having to click expand carets.
     """
 
     f = filters or TreeFilters()
@@ -232,6 +297,10 @@ def build_tree(
         return payload
 
     tree = ui.tree(payload, label_key="label", node_key="id").props('data-testid="main-tree"')
+    tree.add_slot("default-header", _TREE_DEFAULT_HEADER_SLOT)
+    if expand_all:
+        # NiceGUI's wrapper for Quasar's expandAll() method.
+        tree.expand()
     if on_select is not None:
 
         def _selected(event: Any) -> None:

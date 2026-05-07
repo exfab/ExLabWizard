@@ -82,9 +82,16 @@ def build_test_app() -> FastAPI:
     """Construct the FastAPI app and mount the NiceGUI test surface."""
     from nicegui import ui
 
+    from exlab_wizard.ui.theme import register_static_assets
+
     app = create_app()
     test_state = TestState()
     app.state.test_state = test_state
+
+    # Mount the project's ``assets/`` directory at ``/assets`` so the
+    # tree component's sync-icon SVGs (sync_local.svg / sync_cloud.svg)
+    # resolve under e2e tests. Idempotent.
+    register_static_assets()
 
     # ----------------------------------------------------------------------
     # Welcome (Flow 01)
@@ -125,7 +132,16 @@ def build_test_app() -> FastAPI:
         hierarchy: dict[Any, Any] = {
             tree_component.EquipmentNode("EQ1"): {
                 tree_component.ProjectNode("LIMS-001", "Demo Project"): [
+                    # Local run: no sync_status -> renders sync_local.svg.
                     tree_component.RunNode("Run_2026-05-07", "experimental", "Demo run"),
+                    # Cleaned run: sync_status="cleaned" -> renders sync_cloud.svg
+                    # (data already moved to NAS, only .exlab-wizard/ retained).
+                    tree_component.RunNode(
+                        directory_name="Run_2026-05-06",
+                        run_kind="experimental",
+                        label="Cleaned run",
+                        sync_status="cleaned",
+                    ),
                     tree_component.RunNode("TestRun_2026-05-07", "test", "Test run"),
                 ],
             },
@@ -178,6 +194,9 @@ def build_test_app() -> FastAPI:
             on_refresh=_on_refresh,
             state=state,
             hierarchy=hierarchy,
+            # Expand the whole tree up front so e2e tests see every run
+            # row (and its sync icon) in the DOM without clicking carets.
+            tree_expand_all=True,
         )
 
     # ----------------------------------------------------------------------

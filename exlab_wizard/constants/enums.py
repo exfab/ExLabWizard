@@ -25,10 +25,15 @@ class SyncStatus(StrEnum):
     """State machine for an item in the NAS sync queue.
 
     Stored under ``sync_status`` in creation.json. Backend Spec §7.1, §11.3.
+
+    ``CLEANED`` is written by the cleanup reaper after the local data files
+    are deleted (``retain_cache=True`` keeps ``.exlab-wizard/`` so the run
+    remains visible in the local browse view; §7.1.10).
     """
 
     PENDING = "pending"
     SYNCED = "synced"
+    CLEANED = "cleaned"
     FAILED = "failed"
     BLOCKED_BY_VALIDATION = "blocked_by_validation"
 

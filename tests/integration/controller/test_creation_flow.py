@@ -187,7 +187,7 @@ async def _drain_to_done(controller: CreationController, session_id: str) -> dic
 
 
 async def test_full_project_creation_happy_path(tmp_path: Path) -> None:
-    """Project creation walks every state and emits a v1.8 creation.json."""
+    """Project creation walks every state and emits a current-version creation.json."""
     local_root = tmp_path / "data"
     local_root.mkdir()
     config = _build_config(local_root)
@@ -204,7 +204,7 @@ async def test_full_project_creation_happy_path(tmp_path: Path) -> None:
     cache_path = project_dir / CACHE_DIR_NAME / CREATION_JSON_NAME
     assert cache_path.is_file()
 
-    # Validate the on-disk creation.json is schema 1.8.
+    # Validate the on-disk creation.json is at the current schema version.
     decoded = msgspec.json.decode(cache_path.read_bytes(), type=CreationJson)
     assert decoded.schema_version == CREATION_JSON_VERSION
     assert decoded.lims_project.short_id == "PROJ-0042"

@@ -1,10 +1,11 @@
 """Sync-status icon component (Frontend Spec §3.2, §10.5.1).
 
-Six distinct visual states with a fixed color mapping:
+Seven distinct visual states with a fixed color mapping:
 
 * ``pending``               -- ``--color-muted``
 * ``retrying`` (with N/M)   -- ``--color-info``
 * ``synced``                -- ``--color-success``
+* ``cleaned``               -- ``--color-success``
 * ``failed``                -- ``--color-danger``
 * ``blocked_by_validation`` -- ``--color-warning``
 * ``override_active``       -- ``--color-info``
@@ -28,6 +29,7 @@ _log = get_logger(__name__)
 STATUS_PENDING = "pending"
 STATUS_RETRYING = "retrying"
 STATUS_SYNCED = "synced"
+STATUS_CLEANED = "cleaned"
 STATUS_FAILED = "failed"
 STATUS_BLOCKED = "blocked_by_validation"
 STATUS_OVERRIDE = "override_active"
@@ -48,6 +50,11 @@ _STATUS_TO_PROPS: dict[str, dict[str, str]] = {
         "icon_name": "check_circle",
         "color_var": "--color-success",
         "tooltip": "Synced and verified at NAS",
+    },
+    STATUS_CLEANED: {
+        "icon_name": "cloud_done",
+        "color_var": "--color-success",
+        "tooltip": "Synced and locally cleaned; data on NAS only",
     },
     STATUS_FAILED: {
         "icon_name": "error",
