@@ -19,10 +19,11 @@ def test_flow_07_plugin_input_required(page, server_url) -> None:
     page.locator('[data-testid="plugin-input-headline"]').wait_for(state="visible")
     page.locator('[data-testid="plugin-input-field-operator_initials"]').fill("AS")
     page.locator('[data-testid="plugin-input-submit"]').click()
-    page.wait_for_load_state("networkidle")
 
-    # The submit handler navigates to the wizard with the supplied value
-    # embedded in the URL; this confirms the resume contract is wired.
+    # The submit handler issues a NiceGUI ``ui.navigate.to`` over the
+    # WebSocket; the round-trip can outlast a ``networkidle`` window on
+    # slower CI runners, so wait for the resumed-wizard URL explicitly.
+    page.wait_for_url("**/wizard/project*", timeout=10_000)
     assert "resumed=1" in page.url
     assert "v=AS" in page.url
     page.locator('[data-testid="wizard-project-card"]').wait_for(state="visible", timeout=10_000)

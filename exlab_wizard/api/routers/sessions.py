@@ -330,7 +330,9 @@ def _build_run_request(body: _RunSessionBody) -> RunCreateRequest:
 
 def _handle_to_response(handle: Any, session: Any) -> SessionHandleResponse:
     """Build the response model from a controller :class:`SessionHandle` and the live session."""
-    state_value = handle.state.value if isinstance(handle.state, SessionState) else str(handle.state)
+    state_value = (
+        handle.state.value if isinstance(handle.state, SessionState) else str(handle.state)
+    )
     phase_value = handle.current_phase.value if handle.current_phase is not None else None
     pending = session.pending_input if session is not None else None
     error = session.error if session is not None else None

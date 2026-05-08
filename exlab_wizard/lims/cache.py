@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import aiosqlite
 import msgspec
@@ -204,7 +205,7 @@ class LIMSCache:
         return self._conn
 
     @staticmethod
-    def _row_to_project(row: tuple) -> LIMSProject:
+    def _row_to_project(row: aiosqlite.Row | tuple[Any, ...]) -> LIMSProject:
         (
             uid,
             short_id,

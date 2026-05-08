@@ -33,19 +33,15 @@ def test_flow_05_sync_icons_render_in_tree(page, server_url) -> None:
     cloud_icons = tree.locator('img[src="/assets/sync_cloud.svg"]')
 
     # Two local runs (one experimental, one test) and one cleaned run.
-    assert local_icons.count() == 2, (
-        f"expected 2 sync_local icons, got {local_icons.count()}"
-    )
-    assert cloud_icons.count() == 1, (
-        f"expected 1 sync_cloud icon, got {cloud_icons.count()}"
-    )
+    assert local_icons.count() == 2, f"expected 2 sync_local icons, got {local_icons.count()}"
+    assert cloud_icons.count() == 1, f"expected 1 sync_cloud icon, got {cloud_icons.count()}"
 
     # The cleaned-run icon's parent header carries the canonical sync_status
     # marker on the label span (set by the default-header slot template).
     cloud_header = cloud_icons.first.locator("xpath=..")
-    assert (
-        cloud_header.locator('span[data-sync-status="cleaned"]').count() == 1
-    ), "cleaned run header missing data-sync-status='cleaned' marker"
+    assert cloud_header.locator('span[data-sync-status="cleaned"]').count() == 1, (
+        "cleaned run header missing data-sync-status='cleaned' marker"
+    )
 
 
 def test_flow_05_sync_icons_static_assets_serve_200(server_url) -> None:

@@ -90,7 +90,9 @@ def test_cleanup_eligible_pre_sync_verified_states_return_false() -> None:
         IngestState.COMPLETE,
         IngestState.SYNC_QUEUED,
     ):
-        ingest = _make_ingest(current_state=state, history=[{"state": state.value, "at": "2026-04-01T00:00:00Z"}])
+        ingest = _make_ingest(
+            current_state=state, history=[{"state": state.value, "at": "2026-04-01T00:00:00Z"}]
+        )
         assert cleanup_eligible(ingest=ingest, config=config) is False, state
 
 
@@ -195,7 +197,11 @@ async def _seed_staged_run(tmp_path: Path) -> tuple[Path, IngestWriter, Config]:
                 {"state": IngestState.STAGING.value, "at": "2026-04-17T14:00:00Z", "host": "h"},
                 {"state": IngestState.COMPLETE.value, "at": "2026-04-17T14:30:00Z", "host": "h"},
                 {"state": IngestState.SYNC_QUEUED.value, "at": "2026-04-17T14:31:00Z", "host": "h"},
-                {"state": IngestState.SYNC_VERIFIED.value, "at": "2026-04-17T14:32:00Z", "host": "h"},
+                {
+                    "state": IngestState.SYNC_VERIFIED.value,
+                    "at": "2026-04-17T14:32:00Z",
+                    "host": "h",
+                },
             ],
         },
         type=IngestJson,

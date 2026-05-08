@@ -26,7 +26,7 @@ import contextlib
 import os
 import sys
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from exlab_wizard.logging import get_logger
 
@@ -177,31 +177,27 @@ class AutostartManager:
 
     def _set_win_reg_value(self) -> None:
         winreg = _import_winreg()
-        with winreg.OpenKey(  # type: ignore[union-attr]
-            winreg.HKEY_CURRENT_USER, _REG_RUN_KEY, 0, winreg.KEY_SET_VALUE
-        ) as key:
-            winreg.SetValueEx(  # type: ignore[union-attr]
-                key, AUTOSTART_REG_VALUE, 0, winreg.REG_SZ, self._executable
-            )
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _REG_RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, AUTOSTART_REG_VALUE, 0, winreg.REG_SZ, self._executable)
         _log.info("registered Windows Run value %s", AUTOSTART_REG_VALUE)
 
     def _delete_win_reg_value(self) -> None:
         winreg = _import_winreg()
         try:
-            with winreg.OpenKey(  # type: ignore[union-attr]
+            with winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER, _REG_RUN_KEY, 0, winreg.KEY_SET_VALUE
             ) as key:
-                winreg.DeleteValue(key, AUTOSTART_REG_VALUE)  # type: ignore[union-attr]
+                winreg.DeleteValue(key, AUTOSTART_REG_VALUE)
         except FileNotFoundError:
             pass
 
     def _win_reg_value(self) -> str | None:
         winreg = _import_winreg()
         try:
-            with winreg.OpenKey(  # type: ignore[union-attr]
+            with winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER, _REG_RUN_KEY, 0, winreg.KEY_QUERY_VALUE
             ) as key:
-                value, _kind = winreg.QueryValueEx(key, AUTOSTART_REG_VALUE)  # type: ignore[union-attr]
+                value, _kind = winreg.QueryValueEx(key, AUTOSTART_REG_VALUE)
                 return str(value)
         except FileNotFoundError:
             return None
@@ -283,13 +279,16 @@ def _silently_unlink(path: Path) -> None:
         path.unlink()
 
 
-def _import_winreg() -> object:
+def _import_winreg() -> Any:
     """Import ``winreg`` lazily so the module loads on macOS / Linux too.
 
-    Returns the imported module. Raises ``RuntimeError`` when called on
-    a non-Windows host without a winreg shim mounted (tests inject a
-    fake under ``sys.modules['winreg']`` to exercise the registry
-    path).
+    Returns the imported module (typed as ``Any`` since the stdlib's
+    ``winreg`` constants and functions are only typed on Windows; using
+    ``Any`` here keeps the registry-specific call sites readable without
+    per-attribute ``# type: ignore`` markers). Raises ``RuntimeError``
+    when called on a non-Windows host without a winreg shim mounted
+    (tests inject a fake under ``sys.modules['winreg']`` to exercise the
+    registry path).
     """
     try:
         import winreg  # type: ignore[import-not-found]

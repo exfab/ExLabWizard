@@ -109,15 +109,19 @@ _STILL_ACTIVE = 259
 def _win_is_pid_alive(pid: int) -> bool:  # pragma: no cover -- non-Windows CI
     import ctypes
 
-    handle = ctypes.windll.kernel32.OpenProcess(_SYNCHRONIZE, False, pid)
+    # ``ctypes.windll`` is Windows-only; mypy on Linux flags it as
+    # missing, so route the whole branch through one ignored attribute
+    # access instead of one ignore per call.
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    handle = kernel32.OpenProcess(_SYNCHRONIZE, False, pid)
     if not handle:
         return False
     try:
         exit_code = ctypes.c_ulong()
-        ok = ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+        ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
         return bool(ok) and exit_code.value == _STILL_ACTIVE
     finally:
-        ctypes.windll.kernel32.CloseHandle(handle)
+        kernel32.CloseHandle(handle)
 
 
 # ---------------------------------------------------------------------------

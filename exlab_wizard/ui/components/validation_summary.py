@@ -94,12 +94,15 @@ def validation_summary(summary: ValidationSummary) -> Any:
     """Build the summary block."""
 
     header_text, header_color = header_line(summary)
-    payload = {
+    excerpts: list[str] = [excerpt_line(f) for f in summary.excerpts[:2]]
+    overflow = overflow_line(summary)
+    override = override_line(summary)
+    payload: dict[str, Any] = {
         "header_text": header_text,
         "header_color": header_color,
-        "excerpts": [excerpt_line(f) for f in summary.excerpts[:2]],
-        "overflow": overflow_line(summary),
-        "override_line": override_line(summary),
+        "excerpts": excerpts,
+        "overflow": overflow,
+        "override_line": override,
     }
 
     try:
@@ -116,21 +119,21 @@ def validation_summary(summary: ValidationSummary) -> Any:
                 "font-weight: 600; "
                 "font-size: var(--text-sm);"
             )
-        for excerpt in payload["excerpts"]:
+        for excerpt in excerpts:
             ui.label(f"⚠ {excerpt}").style(
                 "font-family: var(--font-mono); "
                 "font-size: var(--text-xs); "
                 "color: var(--color-body);"
             )
-        if payload["overflow"]:
-            ui.label(payload["overflow"]).style(
+        if overflow:
+            ui.label(overflow).style(
                 "font-family: var(--font-body); "
                 "font-size: var(--text-xs); "
                 "color: var(--color-info); "
                 "cursor: pointer;"
             )
-        if payload["override_line"]:
-            ui.label(payload["override_line"]).style(
+        if override:
+            ui.label(override).style(
                 "font-family: var(--font-body); "
                 "font-size: var(--text-xs); "
                 "color: var(--color-info);"

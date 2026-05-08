@@ -30,11 +30,15 @@ from exlab_wizard.plugins.logger import (
 # ---------------------------------------------------------------------------
 
 
-def test_host_plugin_logger_forwards_info_to_stdlib_logger(caplog: pytest.LogCaptureFixture) -> None:
+def test_host_plugin_logger_forwards_info_to_stdlib_logger(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     log = HostPluginLogger(name="exlab_wizard.test.plugin.host_info")
     with caplog.at_level(logging.INFO, logger="exlab_wizard.test.plugin.host_info"):
         log.info("hello world")
-    assert any(rec.message == "hello world" and rec.levelno == logging.INFO for rec in caplog.records)
+    assert any(
+        rec.message == "hello world" and rec.levelno == logging.INFO for rec in caplog.records
+    )
 
 
 def test_host_plugin_logger_forwards_debug(caplog: pytest.LogCaptureFixture) -> None:
@@ -77,7 +81,9 @@ def test_host_plugin_logger_uses_default_logger_name_when_unspecified(
     log = HostPluginLogger()
     with caplog.at_level(logging.INFO, logger="exlab_wizard.plugins"):
         log.info("default-channel")
-    assert any(r.name == "exlab_wizard.plugins" and r.message == "default-channel" for r in caplog.records)
+    assert any(
+        r.name == "exlab_wizard.plugins" and r.message == "default-channel" for r in caplog.records
+    )
 
 
 # ---------------------------------------------------------------------------

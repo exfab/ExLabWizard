@@ -19,9 +19,7 @@ from exlab_wizard.config.models import (
 
 def _ready_config() -> Config:
     return Config(
-        paths=PathsConfig(
-            templates_dir="/t", plugin_dir="/p", local_root="/d"
-        ),
+        paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
         equipment=[
             EquipmentConfig(
                 id="EQ1",

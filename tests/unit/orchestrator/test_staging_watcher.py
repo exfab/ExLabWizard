@@ -105,7 +105,9 @@ def _make_config(
                 local_root=str(staging_root),
                 nas_root="/nas",
                 completeness_signal=completeness_signal,
-                sentinel_filename=sentinel_filename if completeness_signal == "sentinel_file" else None,
+                sentinel_filename=sentinel_filename
+                if completeness_signal == "sentinel_file"
+                else None,
                 manifest_filename=manifest_filename if completeness_signal == "manifest" else None,
                 transport=RcloneTransport(
                     type="rclone",
@@ -124,7 +126,9 @@ def _make_config(
             enabled=enabled,
             label="ORCH",
             staging_root=str(staging_root),
-            staging_cleanup=OrchestratorStagingCleanup(mode=cleanup_mode, retain_hours=retain_hours),
+            staging_cleanup=OrchestratorStagingCleanup(
+                mode=cleanup_mode, retain_hours=retain_hours
+            ),
         ),
     )
 
@@ -158,7 +162,9 @@ def _make_creation() -> CreationJson:
     )
 
 
-def _seed_pushed_run(staging_root: Path, *, equipment: str = "EQ1", project: str = "PROJ-0001") -> Path:
+def _seed_pushed_run(
+    staging_root: Path, *, equipment: str = "EQ1", project: str = "PROJ-0001"
+) -> Path:
     """Create the on-disk push that an equipment machine would produce."""
     run_dir = staging_root / equipment / project / "Run_2026-04-17T14-32-00"
     run_dir.mkdir(parents=True)
@@ -505,7 +511,9 @@ async def test_evaluate_run_returns_cleared_when_already_cleared(tmp_path: Path)
             "run_path": str(run_dir),
             "transport": "smb_mount",
             "current_state": IngestState.CLEARED.value,
-            "history": [{"state": IngestState.CLEARED.value, "at": "2026-04-17T14:00:00Z", "host": "h"}],
+            "history": [
+                {"state": IngestState.CLEARED.value, "at": "2026-04-17T14:00:00Z", "host": "h"}
+            ],
         },
         type=IngestJson,
     )

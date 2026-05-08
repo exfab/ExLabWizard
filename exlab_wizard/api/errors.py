@@ -239,9 +239,7 @@ def _config_error_handler(request: Request, exc: ConfigError) -> JSONResponse:
     )
 
 
-def _keyring_unavailable_handler(
-    request: Request, exc: KeyringUnavailableError
-) -> JSONResponse:
+def _keyring_unavailable_handler(request: Request, exc: KeyringUnavailableError) -> JSONResponse:
     return error_response(
         request=request,
         code="keyring_unavailable",
@@ -250,9 +248,7 @@ def _keyring_unavailable_handler(
     )
 
 
-def _schema_major_mismatch_handler(
-    request: Request, exc: SchemaMajorMismatchError
-) -> JSONResponse:
+def _schema_major_mismatch_handler(request: Request, exc: SchemaMajorMismatchError) -> JSONResponse:
     return error_response(
         request=request,
         code="schema_major_mismatch",
@@ -314,9 +310,7 @@ def _http_exception_handler(request: Request, exc: HTTPException) -> JSONRespons
         field = detail.get("field")
         details = detail.get("details")
         extra = {
-            k: v
-            for k, v in detail.items()
-            if k not in {"code", "message", "field", "details"}
+            k: v for k, v in detail.items() if k not in {"code", "message", "field", "details"}
         }
         return error_response(
             request=request,
@@ -373,14 +367,38 @@ def register_exception_handlers(app: FastAPI) -> None:
     Registered in priority order (FastAPI dispatch is most-specific
     first by ``isinstance`` tree; the order below is exhaustive enough
     that the order at registration is mostly cosmetic).
+
+    Each handler is typed against its concrete exception subclass for
+    readability, but Starlette's ``add_exception_handler`` is typed to
+    accept callables over the base ``Exception`` -- the dispatcher only
+    invokes a handler when the instance matches its registered type, so
+    the per-handler signatures are sound at runtime. We funnel the
+    registrations through :func:`_register` so the necessary cast lives
+    in one place.
     """
-    app.add_exception_handler(SetupIncompleteError, _setup_incomplete_handler)
-    app.add_exception_handler(KeyringUnavailableError, _keyring_unavailable_handler)
-    app.add_exception_handler(SchemaMajorMismatchError, _schema_major_mismatch_handler)
-    app.add_exception_handler(TemplateLoadError, _template_load_error_handler)
-    app.add_exception_handler(ConfigError, _config_error_handler)
-    app.add_exception_handler(ExLabValidationError, _exlab_validation_handler)
-    app.add_exception_handler(RequestValidationError, _pydantic_validation_handler)
-    app.add_exception_handler(PydanticValidationError, _pydantic_validation_handler)
-    app.add_exception_handler(HTTPException, _http_exception_handler)
-    app.add_exception_handler(Exception, _generic_handler)
+    _register(app, SetupIncompleteError, _setup_incomplete_handler)
+    _register(app, KeyringUnavailableError, _keyring_unavailable_handler)
+    _register(app, SchemaMajorMismatchError, _schema_major_mismatch_handler)
+    _register(app, TemplateLoadError, _template_load_error_handler)
+    _register(app, ConfigError, _config_error_handler)
+    _register(app, ExLabValidationError, _exlab_validation_handler)
+    _register(app, RequestValidationError, _pydantic_validation_handler)
+    _register(app, PydanticValidationError, _pydantic_validation_handler)
+    _register(app, HTTPException, _http_exception_handler)
+    _register(app, Exception, _generic_handler)
+
+
+def _register(
+    app: FastAPI,
+    exc_type: type[Exception],
+    handler: Any,
+) -> None:
+    """Wrap ``app.add_exception_handler`` so the handler is accepted as ``Any``.
+
+    Starlette's signature wants ``Callable[[Request, Exception], ...]``;
+    our handlers are typed against narrower exception subclasses for
+    clarity. The dispatcher only invokes a handler when the runtime
+    instance matches ``exc_type``, so the wider type at registration is
+    sound. ``handler`` is typed as ``Any`` to avoid a per-call cast.
+    """
+    app.add_exception_handler(exc_type, handler)

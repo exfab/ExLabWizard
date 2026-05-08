@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import shutil
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -97,33 +97,79 @@ def _build_transport_driver(equipment: EquipmentConfig) -> tuple[Any, Callable[.
     """Return a ``(driver, push_callable)`` pair for ``equipment.transport``.
 
     The push callable closes over the equipment's static ``ssh_target`` /
-    ``rclone_remote`` so the queue worker only needs the local source path
-    and the per-equipment bandwidth cap at call time.
+    ``rclone_remote`` so the queue worker only needs the local source
+    path and the per-equipment bandwidth cap at call time. Both rclone
+    and rsync_ssh push closures nest the remote target under
+    ``<remote_path>/<local.name>`` so each run lives in its own subdir
+    on the NAS, matching the §7.1.4 hashsum probe layout.
     """
     transport = equipment.transport
     if isinstance(transport, RcloneTransport):
-        driver = RcloneDriver()
-        remote = f"{transport.rclone_remote}:{transport.rclone_remote_path}"
+        rclone_driver = RcloneDriver()
+        remote_name = transport.rclone_remote
+        remote_path = transport.rclone_remote_path
 
-        async def _push(local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
-            return await driver.push(local, remote, bwlimit_kibps=bwlimit_kibps)
+        async def _push_rclone(local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
+            target = f"{remote_name}:{remote_path}/{local.name}"
+            return await rclone_driver.push(local, target, bwlimit_kibps=bwlimit_kibps)
 
-        return driver, _push
+        return rclone_driver, _push_rclone
 
     if isinstance(transport, RsyncSshTransport):
-        driver = RsyncDriver()
+        rsync_driver = RsyncDriver()
         ssh_key = Path(transport.ssh_key_path).expanduser()
+        ssh_target = transport.ssh_target
+        remote_path_value = transport.remote_path
 
-        async def _push(local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
-            return await driver.push(
+        async def _push_rsync(local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
+            target = f"{remote_path_value}/{local.name}"
+            return await rsync_driver.push(
                 local,
-                transport.ssh_target,
+                ssh_target,
                 ssh_key,
-                transport.remote_path,
+                target,
                 bwlimit_kibps=bwlimit_kibps,
             )
 
-        return driver, _push
+        return rsync_driver, _push_rsync
+
+    msg = f"unsupported transport type: {type(transport).__name__}"
+    raise ValueError(msg)
+
+
+def _build_hashsum_callable(
+    equipment: EquipmentConfig,
+) -> Callable[[Path], Awaitable[dict[str, str]]]:
+    """Return a remote-hashsum closure for ``equipment.transport``.
+
+    The closure takes a local run directory and asks the remote-side
+    hash probe (``rclone hashsum sha256`` or ``ssh ... sha256sum``) for
+    the manifest of ``<remote_path>/<run_dir.name>``. Backend Spec
+    §7.1.4 (integrity-in-transit gap closure).
+    """
+    transport = equipment.transport
+    if isinstance(transport, RcloneTransport):
+        rclone_driver = RcloneDriver()
+        remote_name = transport.rclone_remote
+        remote_path = transport.rclone_remote_path
+
+        async def _hashsum_rclone(run_dir: Path) -> dict[str, str]:
+            target = f"{remote_name}:{remote_path}/{run_dir.name}"
+            return await rclone_driver.hashsum(target)
+
+        return _hashsum_rclone
+
+    if isinstance(transport, RsyncSshTransport):
+        rsync_driver = RsyncDriver()
+        ssh_key = Path(transport.ssh_key_path).expanduser()
+        ssh_target = transport.ssh_target
+        remote_path_value = transport.remote_path
+
+        async def _hashsum_rsync(run_dir: Path) -> dict[str, str]:
+            run_remote_path = f"{remote_path_value}/{run_dir.name}"
+            return await rsync_driver.hashsum(ssh_target, ssh_key, run_remote_path)
+
+        return _hashsum_rsync
 
     msg = f"unsupported transport type: {type(transport).__name__}"
     raise ValueError(msg)
@@ -164,6 +210,9 @@ class NASSyncClient:
         verifier: Verifier | None = None,
         worker_poll_interval_s: float = 0.05,
         push_callable_factory: Callable[[EquipmentConfig], Callable[..., Any]] | None = None,
+        hashsum_callable_factory: (
+            Callable[[EquipmentConfig], Callable[[Path], Awaitable[dict[str, str]]]] | None
+        ) = None,
         remote_stat_callable: Callable[[SyncJobRow], bool] | None = None,
     ) -> None:
         self._config = config
@@ -178,6 +227,7 @@ class NASSyncClient:
         self._wake_event = asyncio.Event()
         self._stopping = False
         self._push_callable_factory = push_callable_factory
+        self._hashsum_callable_factory = hashsum_callable_factory
         # Default remote stat: optimistic OK so unit tests don't need
         # to wire a real network probe.
         self._remote_stat_callable = remote_stat_callable or (lambda _row: True)
@@ -322,10 +372,16 @@ class NASSyncClient:
           FAILED with ``local_file_vanished``.
         - Transition QUEUED -> RUNNING.
         - Push via the transport; on AUTH or LOCAL_FILE_VANISHED, mark
-          terminal FAILED. On NETWORK or UNKNOWN, schedule a retry.
-        - On success, transition RUNNING -> AWAITING_VERIFY -> VERIFIED.
-        - On VERIFIED, write/refresh the manifest and bump
+          terminal FAILED. On HASH_MISMATCH, single retry then terminal.
+          On NETWORK or UNKNOWN, schedule a backoff retry.
+        - On push success, transition RUNNING -> AWAITING_VERIFY and run
+          :meth:`_verify_pass` (local manifest + remote hashsum probe).
+        - On verify success, transition to VERIFIED and bump
           ``sync_status`` to ``"synced"``.
+        - On verify failure, route by ``VerifyResult.error_kind``: AUTH
+          -> terminal FAILED, NETWORK / UNKNOWN -> backoff retry, every
+          other case (genuine hash mismatch or unclassified probe error)
+          -> single retry then terminal.
         - Subsequent passes (a manual ``force_verify`` or the audit
           loop) increment ``verify_passes`` and may move the job
           through CLEANUP_ELIGIBLE -> CLEANED.
@@ -370,13 +426,14 @@ class NASSyncClient:
         # Push succeeded. Transition RUNNING -> AWAITING_VERIFY.
         await self._queue.transition(job.id, SyncJobState.AWAITING_VERIFY)
 
-        # Verify locally (the §7.1.4 manifest pass). The remote-side hash
-        # comparison is the responsibility of integration tests; the
-        # in-process verifier asserts the local subtree matches its own
-        # manifest, which is the cheaper subset that catches partial
-        # transports.
+        # Verify locally (the §7.1.4 manifest pass) and then compare
+        # against the remote-derived manifest. The local pass catches
+        # partial transports cheaply; the remote pass closes the
+        # integrity-in-transit gap and is the reason ``equipment`` flows
+        # in here -- the verifier needs the transport-specific hashsum
+        # callable.
         try:
-            verify_result = await self._verify_pass(run_path)
+            verify_result = await self._verify_pass(run_path, equipment)
         except FileNotFoundError:
             await self._queue.record_failure(
                 job.id,
@@ -386,9 +443,44 @@ class NASSyncClient:
             return
 
         if not verify_result.ok:
-            # Hash mismatch policy: single retry of the transport phase
-            # by re-queuing once. Track the previous hash mismatch via
-            # ``last_error`` so a second failure becomes terminal.
+            # Spec §7.1.5 retry-class routing for verify failures. The
+            # remote hashsum probe may have raised TransportError before
+            # the verifier could compare manifests; in that case
+            # ``verify_result.error_kind`` carries the transport's
+            # classification:
+            #
+            # - AUTH -- terminal FAILED (configuration problem, no retry).
+            # - NETWORK / UNKNOWN -- non-terminal failure with backoff.
+            # - Any other case (genuine hash mismatch from
+            #   ``verify_against_remote``, or a TransportError raised
+            #   without a classified ``error_kind``, e.g. binary spawn
+            #   failure) -- the §7.1.5 HASH_MISMATCH single-retry-then-
+            #   terminal branch. A spawn failure routed this way means the
+            #   worker re-queues once, retries the push+probe, and
+            #   terminates FAILED on the second failure; the operator
+            #   surfaces the binary-missing reason via ``last_error``.
+            kind = verify_result.error_kind
+            if kind is TransportErrorKind.AUTH:
+                await self._queue.record_failure(
+                    job.id,
+                    error=TransportErrorKind.AUTH.value,
+                    terminal=True,
+                )
+                return
+            if kind in (
+                TransportErrorKind.NETWORK,
+                TransportErrorKind.UNKNOWN,
+            ):
+                await self._queue.record_failure(
+                    job.id,
+                    error=kind.value,
+                    terminal=False,
+                )
+                return
+            # Genuine hash mismatch (or unclassified probe failure):
+            # single retry of the transport phase by re-queuing once.
+            # Track the previous hash mismatch via ``last_error`` so a
+            # second failure becomes terminal.
             previous = job.last_error or ""
             if TransportErrorKind.HASH_MISMATCH.value in previous:
                 await self._queue.transition(
@@ -431,6 +523,19 @@ class NASSyncClient:
         _, push = _build_transport_driver(equipment)
         return push
 
+    def _build_hashsum(
+        self, equipment: EquipmentConfig
+    ) -> Callable[[Path], Awaitable[dict[str, str]]]:
+        """Resolve the hashsum callable for ``equipment.transport``.
+
+        Tests can inject a custom factory via the constructor's
+        ``hashsum_callable_factory`` argument so they don't need real
+        rclone / rsync binaries (or network access).
+        """
+        if self._hashsum_callable_factory is not None:
+            return self._hashsum_callable_factory(equipment)
+        return _build_hashsum_callable(equipment)
+
     async def _handle_push_failure(self, job: SyncJobRow, result: TransportResult) -> None:
         """Translate a transport failure into a queue update."""
         kind = result.error_kind or TransportErrorKind.UNKNOWN
@@ -455,10 +560,42 @@ class NASSyncClient:
         # NETWORK / UNKNOWN -> backoff retry.
         await self._queue.record_failure(job.id, error=kind.value, terminal=False)
 
-    async def _verify_pass(self, run_path: Path) -> VerifyResult:
-        """Run one local manifest + verify pass."""
+    async def _verify_pass(self, run_path: Path, equipment: EquipmentConfig) -> VerifyResult:
+        """Run one local manifest + verify pass, then probe the remote.
+
+        The local pass is the cheap pre-check; if the local subtree no
+        longer matches its own freshly-computed manifest, we return that
+        result immediately without spending a remote round-trip. Otherwise
+        we ask the transport for its remote-side manifest and compare via
+        :meth:`Verifier.verify_against_remote` (Backend Spec §7.1.4 -- the
+        integrity-in-transit gap closure).
+
+        A :class:`TransportError` from the hashsum probe is surfaced as a
+        verify failure (``ok=False``) carrying the transport's classified
+        ``error_kind``. The §7.1.4 step-2 contract mandates a remote
+        SHA-256 walk; silently skipping it on a probe error would let the
+        job promote through VERIFIED -> CLEANED without the integrity
+        check. ``_drive_job`` keys off ``error_kind`` to route the failure
+        through the spec-correct §7.1.5 retry path (AUTH -> terminal,
+        NETWORK / UNKNOWN -> backoff, every other case including a
+        missing-binary spawn failure -> single retry then terminal).
+        """
         manifest = await self._verifier.compute_local_manifest(run_path)
-        return await self._verifier.verify_against_local(run_path, manifest)
+        local_result = await self._verifier.verify_against_local(run_path, manifest)
+        if not local_result.ok:
+            return local_result
+
+        hashsum = self._build_hashsum(equipment)
+        try:
+            remote_manifest = await hashsum(run_path)
+        except TransportError as exc:
+            _log.warning("remote hashsum probe failed: %s", exc)
+            return VerifyResult(
+                ok=False,
+                manifest=dict(manifest),
+                error_kind=exc.error_kind,
+            )
+        return self._verifier.verify_against_remote(manifest, remote_manifest)
 
     async def _maybe_cleanup(self, job_id: str, run_path: Path) -> None:
         """Apply the §7.1.6 interlocks; if all pass, run the cleanup."""
