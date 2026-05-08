@@ -213,17 +213,18 @@ class LIMSProject:
 `LIMSUser` mirrors the upstream `safe_user` shape:
 
 ```python
+@dataclass(frozen=True)
 class LIMSUser:
     uid: str
     email: str
     role: str
 ```
 
-**Wire format.** Real upstream (`gitlab.com/mcnaughtonadm/exlab`) wraps the project list in `{"data": [...], "count": N}` and serves the safe_user shape `{id, uid, email, role, created_at, updated_at}` from `GET /api/v1/me`; extra fields are dropped by msgspec because `LIMSUser` and `LIMSProject` set `forbid_unknown_fields=False`. The local offline-catalogue format (§7.2.7) is independent of the wire envelope and keeps its `{"projects": [...]}` shape.
+**Wire format.** Upstream (`gitlab.com/mcnaughtonadm/exlab`) wraps the project list in `{"data": [...], "count": N}` and serves `safe_user` as `{id, uid, email, role, created_at, updated_at}` from `GET /api/v1/me`. Extra fields are dropped on decode, so upstream payload additions do not break the read path. The local offline-catalogue format (§7.2.9) is independent and keeps its own `{"projects": [...]}` shape.
 
-The wire envelope is verified two ways:
+The wire format is verified two ways:
 - `tests/integration/test_lims_contract.py` decodes vendored snapshots in `tests/fixtures/lims/exlab_v1/` on every PR.
-- `.github/workflows/lims-live.yml` clones upstream at HEAD, boots the bundled `deploy/docker-compose.local.yml` stack, and runs the LIMS integration + contract suites against it weekly, on every merge to `main`, and on PRs that touch the LIMS surface.
+- `.github/workflows/lims-live.yml` boots the upstream stack at HEAD via `deploy/docker-compose.local.yml` and runs the LIMS integration + contract suites against it weekly, on every merge to `main`, and on PRs that touch the LIMS surface.
 
 ### 7.2.4 Project cache and offline behavior
 
