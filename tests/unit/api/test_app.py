@@ -21,8 +21,13 @@ from exlab_wizard.config.models import Config
 class _F:
     """Tiny finding-shaped object for diff tests."""
 
-    def __init__(self, rule: str, offending_path: str, matched_token: str | None = None,
-                 rule_detail: str = "") -> None:
+    def __init__(
+        self,
+        rule: str,
+        offending_path: str,
+        matched_token: str | None = None,
+        rule_detail: str = "",
+    ) -> None:
         self.rule = rule
         self.offending_path = offending_path
         self.matched_token = matched_token
@@ -148,7 +153,6 @@ def test_create_app_attaches_audit_channel() -> None:
 @pytest.mark.asyncio
 async def test_lifespan_starts_and_stops_audit_task() -> None:
     """When start_audit_task=True the lifespan starts the audit task and cancels on close."""
-
 
     audit_calls = {"count": 0}
 

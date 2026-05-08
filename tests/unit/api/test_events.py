@@ -74,7 +74,9 @@ def test_failed_event_carries_error() -> None:
 
 
 def test_snapshot_event_lists_findings() -> None:
-    event = SnapshotEvent(findings=[{"rule": "orphan", "tier": "soft"}], audit_at="2026-05-05T12:00:00Z")
+    event = SnapshotEvent(
+        findings=[{"rule": "orphan", "tier": "soft"}], audit_at="2026-05-05T12:00:00Z"
+    )
     decoded = json.loads(encode_event(event))
     assert decoded["kind"] == "snapshot"
     assert len(decoded["findings"]) == 1

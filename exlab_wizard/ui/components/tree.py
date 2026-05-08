@@ -161,6 +161,7 @@ def build_nodes(
                     and not _matches_search(project_search, filters.search)
                 ):
                     continue
+                badges: tuple[str, ...]
                 if run.run_kind == "test":
                     style_hints = {"variant": "dim", "prefix_color": "--color-warning"}
                     badges = ("Test",)
@@ -262,9 +263,9 @@ _TREE_DEFAULT_HEADER_SLOT = (
     '<div class="row items-center" style="gap: 0.4rem">'
     '<img v-if="props.node.sync_icon" :src="props.node.sync_icon" '
     'style="width: 1rem; height: 1rem; flex-shrink: 0;" '
-    ':alt="props.node.sync_status || \'\'" />'
+    ":alt=\"props.node.sync_status || ''\" />"
     '<span :data-kind="props.node.kind" '
-    ':data-sync-status="props.node.sync_status || \'\'">'
+    ":data-sync-status=\"props.node.sync_status || ''\">"
     "{{ props.node.label }}"
     "</span>"
     "</div>"

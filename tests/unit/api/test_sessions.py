@@ -244,9 +244,7 @@ def test_post_cancel_404_for_unknown() -> None:
     deps = AppDependencies(config=_ready_config(), controller=controller)
     app = create_app(dependencies=deps)
     client = TestClient(app)
-    response = client.post(
-        "/api/v1/sessions/no_id/cancel", json={"discard_files": False}
-    )
+    response = client.post("/api/v1/sessions/no_id/cancel", json={"discard_files": False})
     assert response.status_code == 404
 
 

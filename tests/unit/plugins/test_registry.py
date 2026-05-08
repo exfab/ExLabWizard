@@ -61,12 +61,8 @@ def _write_plugin(
         "description": '"Test plugin"',
         "supported_extensions": "[" + ", ".join(f'"{e}"' for e in extensions) + "]",
         "api_version": f'"{api_version}"',
-        "required_variables": (
-            "[" + ", ".join(f'"{v}"' for v in required_variables) + "]"
-        ),
-        "optional_variables": (
-            "[" + ", ".join(f'"{v}"' for v in optional_variables) + "]"
-        ),
+        "required_variables": ("[" + ", ".join(f'"{v}"' for v in required_variables) + "]"),
+        "optional_variables": ("[" + ", ".join(f'"{v}"' for v in optional_variables) + "]"),
     }
     if omit_field is not None:
         fields.pop(omit_field, None)
@@ -226,10 +222,7 @@ def test_rejects_supported_extensions_when_not_a_list_of_strings(tmp_path: Path)
     plugin_dir = bundled / "bad_exts"
     plugin_dir.mkdir(parents=True)
     (plugin_dir / PLUGIN_MANIFEST_NAME).write_text(
-        'name: "bad_exts"\n'
-        'version: "0.1.0"\n'
-        "supported_extensions: 42\n"
-        'api_version: "1"\n',
+        'name: "bad_exts"\nversion: "0.1.0"\nsupported_extensions: 42\napi_version: "1"\n',
         encoding="utf-8",
     )
     registry = PluginRegistry(bundled_dir=bundled, lab_dir=None)
