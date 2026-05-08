@@ -78,22 +78,35 @@ jobs:
           DEFAULT_ADMIN_EMAIL: ${{ env.EXLAB_ADMIN_EMAIL }}
           DEFAULT_ADMIN_PASSWORD: ${{ env.EXLAB_ADMIN_PASSWORD }}
           AUTO_POPULATE_TEST_DATA: "true"
-        run: docker compose -f "${EXLAB_COMPOSE_FILE}" up -d --build
+        run: |
+          docker compose -f "${EXLAB_COMPOSE_FILE}" up -d --build
+          docker compose -f "${EXLAB_COMPOSE_FILE}" ps
 
       # 300 attempts * 2s = 10 minutes. Cold-runner Postgres + a fresh
       # OCaml ``--build`` regularly exceeds 4 minutes on ubuntu-latest;
       # the job-level ``timeout-minutes`` (25) is the real ceiling.
-      - name: Wait for /api/v1/me (401 means server is up)
+      # We accept *any* HTTP response from ``/api/v1/me`` (not just
+      # 401): the marker is "the port is bound and the OCaml app is
+      # serving requests"; pytest immediately afterwards is the real
+      # contract check, so a 200/403/404 here still produces a useful
+      # downstream signal instead of a silent loop timeout.
+      - name: Wait for /api/v1/me to respond
         run: |
-          for _ in $(seq 1 300); do
-            status="$(curl -fsS -o /dev/null -w '%{http_code}' http://localhost:8080/api/v1/me || true)"
-            if [[ "${status}" == "401" ]]; then
-              echo "exlab is up"
+          status="000"
+          for i in $(seq 1 300); do
+            status="$(curl -fsS -o /dev/null -w '%{http_code}' http://localhost:8080/api/v1/me || echo 000)"
+            if [[ "${status}" =~ ^[1-5][0-9][0-9]$ ]]; then
+              echo "exlab responded HTTP ${status} after $((i * 2))s"
               exit 0
+            fi
+            if (( i % 30 == 0 )); then
+              echo "[wait] ${i}/300 attempts; last status=${status}; container state:"
+              docker compose -f "${EXLAB_COMPOSE_FILE}" ps || true
             fi
             sleep 2
           done
-          echo "exlab failed to start; last status=${status:-000}" >&2
+          echo "exlab failed to start within 600s; last status=${status}" >&2
+          docker compose -f "${EXLAB_COMPOSE_FILE}" ps >&2 || true
           exit 1
 
       - name: Run LIMS integration + contract suites against live exlab
