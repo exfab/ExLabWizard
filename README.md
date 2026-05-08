@@ -1,6 +1,7 @@
 # ExLabWizard
 
-![Development Status](https://img.shields.io/badge/dev_status-alpha-red)
+[![Development Status](https://img.shields.io/badge/dev_status-alpha-red)](#)
+[![Documentation](https://img.shields.io/badge/docs-online-blue?logo=readthedocs&logoColor=white)](https://exfab.github.io/ExLabWizard/index.html)
 
 <div style="background-color: white; display: inline-block; padding: 10px; border-radius: 0px;">
   <img src="assets/ExLabWizardLogo.svg" alt="Phenotypic Logo" style="width: 400px; height: auto;">
@@ -111,6 +112,10 @@ workflow additionally verifies the LIMS client against a live upstream
 container weekly and on every merge to `main`.
 
 ## Documentation
+
+The published Sphinx site is at
+[**exfab.github.io/ExLabWizard**](https://exfab.github.io/ExLabWizard/index.html).
+Local sources:
 
 - Operator-facing user guide: `docs/user_guide/` (rendered via
   Sphinx; `make -C docs html`).
