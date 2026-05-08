@@ -102,21 +102,41 @@ jobs:
           DEFAULT_ADMIN_EMAIL: ${{ env.EXLAB_ADMIN_EMAIL }}
           DEFAULT_ADMIN_PASSWORD: ${{ env.EXLAB_ADMIN_PASSWORD }}
           AUTO_POPULATE_TEST_DATA: "true"
+        # The override does two jobs on top of the upstream compose
+        # file: (a) point the ``app`` service at the GHA-cached image
+        # so we skip rebuild, and (b) add a postgres healthcheck so
+        # compose waits for the DB to actually accept connections
+        # before starting the app. Upstream's ``depends_on: db`` only
+        # gates on container *start*, and the OCaml app's own
+        # wait_for_db retries 15 x 2s = 30s before exiting -- on a
+        # cold CI runner postgres init can exceed that, the app dies,
+        # and ``restart: always`` hides the repeated crash.
         run: |
           cat > "${EXLAB_DEPLOY_DIR}/deploy/docker-compose.override.yml" <<YAML
           services:
+            db:
+              healthcheck:
+                test: ["CMD-SHELL", "pg_isready -U user -d exlab_dev"]
+                interval: 2s
+                timeout: 5s
+                retries: 30
             app:
               image: ${EXLAB_APP_IMAGE}
+              depends_on:
+                db:
+                  condition: service_healthy
           YAML
           docker compose \
             -f "${EXLAB_COMPOSE_FILE}" \
             -f "${EXLAB_DEPLOY_DIR}/deploy/docker-compose.override.yml" \
             up -d
           docker compose -f "${EXLAB_COMPOSE_FILE}" ps
+          echo "---app startup logs (first 50 lines)---"
+          docker compose -f "${EXLAB_COMPOSE_FILE}" logs --tail=50 app || true
 
       # 300 attempts * 2s = 10 minutes. Cold-runner Postgres + a fresh
       # OCaml ``--build`` regularly exceeds 4 minutes on ubuntu-latest;
-      # the job-level ``timeout-minutes`` (25) is the real ceiling.
+      # the job-level ``timeout-minutes`` (40) is the real ceiling.
       # We accept *any* HTTP response from ``/api/v1/me`` (not just
       # 401): the marker is "the port is bound and the OCaml app is
       # serving requests"; pytest immediately afterwards is the real
@@ -134,11 +154,15 @@ jobs:
             if (( i % 30 == 0 )); then
               echo "[wait] ${i}/300 attempts; last status=${status}; container state:"
               docker compose -f "${EXLAB_COMPOSE_FILE}" ps || true
+              echo "[wait] last 20 lines of app log:"
+              docker compose -f "${EXLAB_COMPOSE_FILE}" logs --tail=20 app || true
             fi
             sleep 2
           done
           echo "exlab failed to start within 600s; last status=${status}" >&2
           docker compose -f "${EXLAB_COMPOSE_FILE}" ps >&2 || true
+          echo "---app log on timeout---" >&2
+          docker compose -f "${EXLAB_COMPOSE_FILE}" logs app >&2 || true
           exit 1
 
       - name: Run LIMS integration + contract suites against live exlab
