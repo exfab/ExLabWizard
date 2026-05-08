@@ -182,12 +182,7 @@ class DeltaEvent(
 # Closed union of session-channel frame types. Used for documentation
 # and to make ``encode_event`` callers explicit.
 SessionEvent = (
-    PhaseEvent
-    | ProgressEvent
-    | InputRequiredEvent
-    | WarningEvent
-    | DoneEvent
-    | FailedEvent
+    PhaseEvent | ProgressEvent | InputRequiredEvent | WarningEvent | DoneEvent | FailedEvent
 )
 
 

@@ -58,8 +58,30 @@ class TransportResult:
 
 
 class TransportError(Exception):
-    """Raised when a transport's external dependency is unusable.
+    """Raised when a transport probe cannot complete.
 
-    Distinct from :class:`TransportResult`: this is for cases where the
-    upstream binary is missing entirely (e.g. ``rclone`` not on PATH).
+    Distinct from :class:`TransportResult`: this surfaces conditions
+    where the transport's hashsum-style probe could not produce a
+    manifest at all -- either because the upstream binary is missing
+    (``error_kind=None`` for the historical "binary not on PATH" case)
+    or because the probe ran and failed in a classifiable way (AUTH,
+    NETWORK, UNKNOWN). The queue worker uses ``error_kind`` to route the
+    failure through the §7.1.5 retry policy:
+
+    - ``AUTH`` -- terminal FAILED, no retry (configuration problem).
+    - ``NETWORK`` -- non-terminal failure, exponential backoff retry.
+    - ``UNKNOWN`` -- treated as ``NETWORK`` for retry purposes.
+    - ``None`` -- legacy "binary missing" callers. Routed through the
+      §7.1.5 HASH_MISMATCH branch: one immediate retry, then terminal
+      FAILED on the second occurrence. The operator surfaces the
+      binary-missing reason via ``last_error``.
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_kind: TransportErrorKind | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.error_kind = error_kind

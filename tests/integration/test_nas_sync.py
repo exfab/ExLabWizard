@@ -155,6 +155,17 @@ async def test_full_happy_path_via_stub_rclone(
     Uses the Python stub_rclone binary on PATH; the stub copies the
     source tree into ``STUB_RCLONE_DEST_ROOT`` so the verifier sees real
     contents and the local-only verify pass succeeds.
+
+    The test config sets ``min_verify_passes=1`` and ``min_age_hours=0``
+    so the cleanup reaper runs in the same worker pass that promotes
+    the job to ``VERIFIED``. Per spec §7.1.10 (metadata-only retention),
+    the post-cleanup ``creation.json`` ``sync_status`` is ``"cleaned"``,
+    not ``"synced"``: ``"synced"`` is the transient state set by
+    ``_mark_synced`` between ``VERIFIED`` and ``CLEANED``, and
+    ``_mark_cleaned`` flips it to ``"cleaned"`` immediately after the
+    local data files are removed. Either value is correct for a
+    successful happy-path run; we accept both so the test is robust to
+    the worker scheduling jitter that decides which one we observe.
     """
     local_root = tmp_path / "local"
     local_root.mkdir()
@@ -191,10 +202,14 @@ async def test_full_happy_path_via_stub_rclone(
             SyncJobState.CLEANED,
         }
 
-        # ``creation.json`` reflects the synced status.
+        # ``creation.json`` reflects the post-sync status. Per §7.1.10
+        # the post-cleanup status is ``"cleaned"``; ``"synced"`` is the
+        # transient state set by ``_mark_synced`` before cleanup runs.
+        # Both are valid happy-path outcomes; cleanup may have already
+        # fired by the time we read the file.
         creation_path = run_dir / CACHE_DIR_NAME / CREATION_JSON_NAME
         decoded = msgspec_json.decode(creation_path.read_bytes(), type=CreationJson)
-        assert decoded.sync_status == "synced"
+        assert decoded.sync_status in {"synced", "cleaned"}
     finally:
         await client.close()
 
@@ -289,5 +304,225 @@ async def test_force_verify_returns_ok_after_compute(
         assert result.ok is True
         # The manifest file landed in the cache subtree.
         assert (run_dir / CACHE_DIR_NAME / "checksums.sha256").exists()
+    finally:
+        await client.close()
+
+
+# ---------------------------------------------------------------------------
+# Remote-hash mismatch policy (§7.1.4 integrity-in-transit gap)
+# ---------------------------------------------------------------------------
+
+
+async def test_remote_hash_mismatch_triggers_retry(
+    stub_binaries_on_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A first remote-hash mismatch retries the transport phase once.
+
+    The injected ``hashsum_callable_factory`` returns a closure backed by
+    a counter. On the first invocation it returns a mutated manifest
+    (every digest replaced with ``00...``); on the second it returns a
+    correct manifest computed from the on-disk run subtree. The job
+    reaches VERIFIED and the queue row records exactly one HASH_MISMATCH.
+    """
+    import hashlib
+
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    nas_root = tmp_path / "nas"
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
+    monkeypatch.setenv("STUB_RCLONE_DEST_ROOT", str(nas_root))
+
+    cfg = _build_config(local_root)
+    run_dir = await _populate_run(local_root)
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+
+    counter = [0]
+
+    def _correct_manifest(target: Path) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for f in sorted(target.rglob("*")):
+            if not f.is_file():
+                continue
+            rel = f.relative_to(target).as_posix()
+            if rel.startswith(".exlab-wizard/"):
+                continue
+            out[rel] = hashlib.sha256(f.read_bytes()).hexdigest()
+        return out
+
+    def _factory(_equipment):
+        async def _hashsum(target: Path) -> dict[str, str]:
+            counter[0] += 1
+            real = _correct_manifest(target)
+            if counter[0] == 1:
+                # First call: mutate every digest so verify_against_remote
+                # surfaces every key as mismatched.
+                return {k: "0" * 64 for k in real}
+            return real
+
+        return _hashsum
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        worker_poll_interval_s=0.01,
+        hashsum_callable_factory=_factory,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir)
+        assert handle.state == HandleState.QUEUED
+
+        row = await _wait_for_state(
+            client._queue.get_by_id,
+            handle.job_id,
+            {SyncJobState.VERIFIED, SyncJobState.CLEANUP_ELIGIBLE, SyncJobState.CLEANED},
+        )
+        assert row.state in {
+            SyncJobState.VERIFIED,
+            SyncJobState.CLEANUP_ELIGIBLE,
+            SyncJobState.CLEANED,
+        }
+        # The mismatch from the first pass was recorded; the success on
+        # the second pass leaves last_error in place because transition()
+        # only patches columns the caller passes.
+        assert row.last_error == "hash_mismatch"
+        # Counter ran exactly twice: once mismatched, once correct.
+        assert counter[0] == 2
+    finally:
+        await client.close()
+
+
+async def test_remote_hashsum_probe_failure_does_not_skip_verify(
+    stub_binaries_on_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Spec §7.1.4 step 2: remote SHA-256 walk is REQUIRED, not optional.
+
+    The spec mandates a remote-side SHA-256 walk after a successful
+    transport push and a pairwise comparison. The only spec-allowed
+    fallback is the rsync-restricted-shell case where the verifier may
+    use streaming download-and-hash bounded by ``verify.max_stream_bytes``.
+    A ``TransportError`` from the hashsum probe (e.g. binary missing)
+    is NOT one of the spec's allowed bypass conditions; the verifier
+    MUST NOT silently fall through to a local-only pass.
+
+    This test injects a hashsum factory whose closure raises
+    :class:`TransportError`. The spec-aligned outcome is that the job
+    does NOT reach ``VERIFIED`` purely on the strength of the local pass:
+    it must either be marked FAILED (because remote verify could not
+    complete) or stay non-terminal pending an operator-resolvable
+    condition. Reaching VERIFIED means the implementation is bypassing
+    the §7.1.4 step-2 contract.
+
+    NOTE: this test is expected to FAIL against the current implementation;
+    the failure flags a real spec drift documented in
+    ``NASSyncClient._verify_pass`` (the "remote check skipped" branch).
+    """
+    from exlab_wizard.sync.transports import TransportError
+
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    nas_root = tmp_path / "nas"
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
+    monkeypatch.setenv("STUB_RCLONE_DEST_ROOT", str(nas_root))
+
+    cfg = _build_config(local_root)
+    run_dir = await _populate_run(local_root)
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+
+    def _factory(_equipment):
+        async def _hashsum(_target: Path) -> dict[str, str]:
+            msg = "rclone binary not found: 'rclone'"
+            raise TransportError(msg)
+
+        return _hashsum
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        worker_poll_interval_s=0.01,
+        hashsum_callable_factory=_factory,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir)
+        # If the spec is honored, the job must NOT reach VERIFIED purely
+        # because the local pass succeeded; the remote walk is mandatory.
+        # Allow up to ~3s for the worker to converge on a terminal outcome.
+        terminal = {SyncJobState.FAILED, SyncJobState.VERIFIED, SyncJobState.CLEANED}
+        row = await _wait_for_state(
+            client._queue.get_by_id,
+            handle.job_id,
+            terminal,
+            timeout_s=3.0,
+        )
+        # Spec-aligned assertion: a TransportError from the hashsum probe
+        # must be surfaced as a verify failure, not silently swallowed.
+        assert row.state is not SyncJobState.VERIFIED, (
+            "remote hashsum probe raised TransportError but the job reached "
+            "VERIFIED on the strength of the local-only pass; this bypasses "
+            "the §7.1.4 step-2 contract that mandates a remote SHA-256 walk."
+        )
+        assert row.state is not SyncJobState.CLEANED, (
+            "job reached CLEANED without a successful remote verify pass; violates §7.1.4."
+        )
+    finally:
+        await client.close()
+
+
+async def test_remote_hash_mismatch_terminal(
+    stub_binaries_on_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second remote-hash mismatch terminates the job at FAILED."""
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    nas_root = tmp_path / "nas"
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
+    monkeypatch.setenv("STUB_RCLONE_DEST_ROOT", str(nas_root))
+
+    cfg = _build_config(local_root)
+    run_dir = await _populate_run(local_root)
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+
+    counter = [0]
+
+    def _factory(_equipment):
+        async def _hashsum(_target: Path) -> dict[str, str]:
+            counter[0] += 1
+            # Always return a mutated single-key manifest so the verifier
+            # sees a mismatch on every pass.
+            return {"data.bin": "0" * 64}
+
+        return _hashsum
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        worker_poll_interval_s=0.01,
+        hashsum_callable_factory=_factory,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir)
+        row = await _wait_for_state(
+            client._queue.get_by_id,
+            handle.job_id,
+            {SyncJobState.FAILED},
+        )
+        assert row.state is SyncJobState.FAILED
+        assert row.last_error == "hash_mismatch"
+        # The factory was invoked twice (the single retry exhausts there).
+        assert counter[0] == 2
     finally:
         await client.close()

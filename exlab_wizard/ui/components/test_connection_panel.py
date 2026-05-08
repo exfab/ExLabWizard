@@ -35,7 +35,7 @@ class TestConnectionResult:
     raw: str
 
 
-def panel_props(result: TestConnectionResult | None, *, stale: bool = False) -> dict[str, object]:
+def panel_props(result: TestConnectionResult | None, *, stale: bool = False) -> dict[str, Any]:
     """Compute the rendered props for the panel.
 
     Returns a dict suitable for asserting in tests; the NiceGUI factory

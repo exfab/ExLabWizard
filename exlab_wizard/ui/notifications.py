@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
 from exlab_wizard.logging import get_logger
 
@@ -149,7 +150,7 @@ def _emit_toast(
     except Exception:
         return
 
-    kwargs: dict[str, object] = {
+    kwargs: dict[str, Any] = {
         "type": nicegui_type,
         "position": "bottom-right",
         "timeout": timeout_ms,

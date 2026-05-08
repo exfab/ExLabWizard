@@ -32,7 +32,7 @@ class CredentialState:
     pending_value: str | None = None  # only populated while editing
 
 
-def credential_props(state: CredentialState) -> dict[str, object]:
+def credential_props(state: CredentialState) -> dict[str, Any]:
     """Compute the visible labels / button names for a state.
 
     Returns a dict with ``state``, ``label``, ``primary_button``,

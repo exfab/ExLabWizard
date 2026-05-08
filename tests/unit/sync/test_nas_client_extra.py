@@ -45,6 +45,7 @@ from exlab_wizard.sync.nas_client import (
 from exlab_wizard.sync.queue import SyncJobState
 from exlab_wizard.sync.transports import TransportErrorKind, TransportResult
 from exlab_wizard.validator.engine import Validator
+from tests.unit.sync._helpers import local_hashsum_factory
 
 
 def _build_config(
@@ -193,6 +194,12 @@ async def test_hash_mismatch_first_failure_retries(tmp_path: Path) -> None:
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
+        # Inject a synthetic remote-hash probe so the §7.1.4 step-2 walk
+        # finds matching digests. Removing this would surface as a
+        # spurious HASH_MISMATCH (the no-op stub push doesn't actually
+        # transfer files, so a real hashsum probe would see nothing on
+        # the "remote" side). See ``local_hashsum_factory`` docstring.
+        hashsum_callable_factory=local_hashsum_factory(),
         worker_poll_interval_s=0.005,
     )
     await client.init()
@@ -267,6 +274,7 @@ async def test_cleanup_full_delete_when_retain_cache_false(tmp_path: Path) -> No
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
+        hashsum_callable_factory=local_hashsum_factory(),
         worker_poll_interval_s=0.005,
     )
     await client.init()
@@ -300,6 +308,7 @@ async def test_cleanup_retain_cache_keeps_metadata(tmp_path: Path) -> None:
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
+        hashsum_callable_factory=local_hashsum_factory(),
         worker_poll_interval_s=0.005,
     )
     await client.init()
@@ -335,6 +344,7 @@ async def test_cleanup_disabled_keeps_files(tmp_path: Path) -> None:
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
+        hashsum_callable_factory=local_hashsum_factory(),
         worker_poll_interval_s=0.005,
     )
     await client.init()
@@ -370,6 +380,7 @@ async def test_cleanup_eligible_when_min_verify_passes_unmet(tmp_path: Path) -> 
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
+        hashsum_callable_factory=local_hashsum_factory(),
         worker_poll_interval_s=0.005,
     )
     await client.init()
@@ -403,6 +414,7 @@ async def test_cleanup_blocked_by_remote_stat(tmp_path: Path) -> None:
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
+        hashsum_callable_factory=local_hashsum_factory(),
         remote_stat_callable=lambda _row: False,
         worker_poll_interval_s=0.005,
     )
@@ -506,6 +518,7 @@ async def test_verifier_mismatch_first_failure_then_pass(tmp_path: Path) -> None
         cache_creation=writer,
         verifier=_StubVerifier(),
         push_callable_factory=_factory(_push),
+        hashsum_callable_factory=local_hashsum_factory(),
         worker_poll_interval_s=0.005,
     )
     await client.init()

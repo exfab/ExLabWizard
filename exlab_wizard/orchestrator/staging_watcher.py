@@ -146,9 +146,7 @@ class StagingWatcher:
         self._poll_interval_s = poll_interval_s
         self._task: asyncio.Task[None] | None = None
         self._stopping = False
-        self._equipment_by_id: dict[str, EquipmentConfig] = {
-            e.id: e for e in config.equipment
-        }
+        self._equipment_by_id: dict[str, EquipmentConfig] = {e.id: e for e in config.equipment}
 
     # ------------------------------------------------------------------ lifecycle
 

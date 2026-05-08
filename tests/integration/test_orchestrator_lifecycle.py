@@ -207,9 +207,7 @@ async def test_orchestrator_full_five_state_lifecycle(tmp_path: Path) -> None:
 
     # 5. sync_verified -> cleared (after backdating the entry).
     payload = msgspec.json.decode(ingest_path.read_bytes(), type=IngestJson)
-    backdated_at = (datetime.now(tz=UTC) - timedelta(hours=2)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    backdated_at = (datetime.now(tz=UTC) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
     new_history = []
     for entry in payload.history:
         new_entry = dict(entry)
@@ -228,9 +226,7 @@ async def test_orchestrator_full_five_state_lifecycle(tmp_path: Path) -> None:
 
 async def test_orchestrator_lifecycle_through_api(tmp_path: Path) -> None:
     """Mount the full app and drive the staging endpoints against a seeded run."""
-    config = _make_config(
-        tmp_path, cleanup_mode=StagingCleanupMode.MANUAL.value
-    )
+    config = _make_config(tmp_path, cleanup_mode=StagingCleanupMode.MANUAL.value)
     run_dir = _stage_pushed_run(tmp_path)
     nas_sync = _StubNasSync()
     ingest_writer = IngestWriter()
@@ -321,9 +317,7 @@ async def test_orchestrator_concurrent_pushes_are_independent(tmp_path: Path) ->
 async def test_orchestrator_endpoint_shows_test_run_runs(tmp_path: Path) -> None:
     """Test runs (TestRuns/TestRun_<DATE>) surface alongside experimental ones."""
     config = _make_config(tmp_path)
-    test_run_dir = (
-        tmp_path / "EQ1" / "PROJ-0001" / "TestRuns" / "TestRun_2026-04-17T09-12-00"
-    )
+    test_run_dir = tmp_path / "EQ1" / "PROJ-0001" / "TestRuns" / "TestRun_2026-04-17T09-12-00"
     test_run_dir.mkdir(parents=True)
     (test_run_dir / "data.bin").write_bytes(b"x" * 10)
     cache = test_run_dir / CACHE_DIR_NAME

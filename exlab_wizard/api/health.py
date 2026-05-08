@@ -171,5 +171,3 @@ def _top_level_status(components: dict[str, dict[str, Any]]) -> str:
     if "warn" in severities:
         return "warn"
     return "ok"
-
-

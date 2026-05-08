@@ -22,7 +22,7 @@ _log = get_logger(__name__)
 _BANNER_STACK_MAX = 2
 
 
-def banner_stack_props(container: ContainerId) -> dict[str, object]:
+def banner_stack_props(container: ContainerId) -> dict[str, Any]:
     """Compute the visible / overflow split for a container.
 
     Returns a dict with ``visible`` (list of (BannerId, record) tuples

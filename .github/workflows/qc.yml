@@ -1,0 +1,127 @@
+# Quality-control workflow: lint + coverage + e2e gates.
+#
+# Three jobs:
+#   * ``lint``     -- ruff (lint + format) and mypy on the package source.
+#   * ``coverage`` -- the unit + integration suite under coverage with a
+#     baseline floor enforced via ``--cov-fail-under``.
+#   * ``e2e``      -- the Playwright headless-browser flow suite, run
+#     without coverage to avoid a known pytest-cov + pytest-asyncio
+#     interaction that breaks aiosqlite-backed unit tests when both run
+#     in the same pytest invocation as the e2e flows.
+#
+# Triggers: pull requests targeting ``main`` and direct pushes to
+# ``main``. Runs are auto-cancelled on the same ref when a newer commit
+# arrives, mirroring the convention in ``build.yml``.
+#
+# Coverage threshold: see the ``coverage`` job's pytest invocation.
+
+name: qc
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+# Auto-cancel superseded runs on the same branch / PR. Format mirrors
+# ``build.yml`` so CI dashboards group runs consistently.
+concurrency:
+  group: qc-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint (ruff + mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install lint dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[lint]
+
+      - name: ruff check
+        run: ruff check .
+
+      - name: ruff format --check
+        run: ruff format --check .
+
+      - name: mypy
+        run: mypy exlab_wizard
+
+  coverage:
+    name: coverage (unit + integration)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[test]
+
+      # Coverage threshold rationale:
+      #   Baseline measured 2026-05-08 over unit + integration: 93% TOTAL
+      #   (e2e flows are excluded -- see workflow header for why). The
+      #   gate is ``floor(baseline) - 2 = 91``, which leaves room for
+      #   day-to-day drift while catching material regressions. Bump in
+      #   lockstep when the operating baseline rises.
+      - name: pytest with coverage
+        run: pytest tests/unit tests/integration --ignore=tests/integration/test_pyinstaller_smoke.py --cov --cov-report=xml --cov-report=term-missing --cov-fail-under=91
+
+      - name: Upload coverage.xml
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: error
+          retention-days: 30
+
+  e2e:
+    name: e2e (playwright flows)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[test]
+
+      - name: Install Playwright browsers
+        # ``--with-deps`` provisions the chromium-required system shared
+        # libraries (libnss3, libxkbcommon, libgbm, ...) via ``apt-get``
+        # on the runner. Without it, ``playwright install chromium``
+        # only fetches the browser binary and a launch can fail with
+        # missing-symbol errors that are hard to diagnose.
+        run: playwright install --with-deps chromium
+
+      - name: pytest e2e
+        # Verbose output + long traceback so any per-test failure is
+        # diagnosable without re-running. ``-rA`` includes a summary
+        # of every test outcome (pass / fail / skip) in the tail of
+        # the log.
+        run: pytest tests/e2e -v --tb=long -rA
