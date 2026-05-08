@@ -49,12 +49,17 @@ jobs:
   live:
     name: live (upstream HEAD)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # First run with a cold GHA cache rebuilds the OCaml deps layer
+    # from scratch (~15 min); subsequent runs hit the cache and the
+    # image build collapses to ~1 min. 40 min covers both cases plus
+    # a 10-min wait window and the pytest run with comfortable margin.
+    timeout-minutes: 40
     env:
       EXLAB_DEPLOY_DIR: /tmp/exlab
       EXLAB_COMPOSE_FILE: /tmp/exlab/deploy/docker-compose.local.yml
       EXLAB_ADMIN_EMAIL: admin@exlab.test
       EXLAB_ADMIN_PASSWORD: ci-test-password
+      EXLAB_APP_IMAGE: exlab-app-cached:latest
     steps:
       - name: Checkout (this repo)
         uses: actions/checkout@v4
@@ -73,13 +78,40 @@ jobs:
       - name: Clone upstream exlab @ HEAD
         run: git clone --depth=1 https://gitlab.com/mcnaughtonadm/exlab.git "${EXLAB_DEPLOY_DIR}"
 
-      - name: Boot exlab + postgres
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build the OCaml app image with the GHA cache backend so the
+      # `opam install . --deps-only` layer (the long pole, ~15 min on
+      # a cold runner) is cached between workflow runs. The compose
+      # `app` service has both ``image`` (set via the override file
+      # in the next step) and ``build``; with ``compose up`` *not*
+      # passing ``--build``, compose reuses the pre-built image.
+      - name: Build exlab app image (cached via GHA)
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ env.EXLAB_DEPLOY_DIR }}
+          file: ${{ env.EXLAB_DEPLOY_DIR }}/Dockerfile
+          tags: ${{ env.EXLAB_APP_IMAGE }}
+          load: true
+          cache-from: type=gha,scope=lims-live-app
+          cache-to: type=gha,scope=lims-live-app,mode=max
+
+      - name: Boot exlab + postgres (pre-built app image)
         env:
           DEFAULT_ADMIN_EMAIL: ${{ env.EXLAB_ADMIN_EMAIL }}
           DEFAULT_ADMIN_PASSWORD: ${{ env.EXLAB_ADMIN_PASSWORD }}
           AUTO_POPULATE_TEST_DATA: "true"
         run: |
-          docker compose -f "${EXLAB_COMPOSE_FILE}" up -d --build
+          cat > "${EXLAB_DEPLOY_DIR}/deploy/docker-compose.override.yml" <<YAML
+          services:
+            app:
+              image: ${EXLAB_APP_IMAGE}
+          YAML
+          docker compose \
+            -f "${EXLAB_COMPOSE_FILE}" \
+            -f "${EXLAB_DEPLOY_DIR}/deploy/docker-compose.override.yml" \
+            up -d
           docker compose -f "${EXLAB_COMPOSE_FILE}" ps
 
       # 300 attempts * 2s = 10 minutes. Cold-runner Postgres + a fresh
