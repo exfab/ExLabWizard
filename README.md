@@ -46,9 +46,8 @@ source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
-The `[dev]` extra pulls `[plugin-examples,test,build,lint]`. For a
-slimmer install (runtime only) drop the extra: `uv sync` /
-`pip install -e .`.
+The `[dev]` extra pulls `[plugin-examples,test,build,lint,docs]`. For a
+runtime-only install drop the extra: `uv sync` / `pip install -e .`.
 
 ### Pre-built binary
 
@@ -64,14 +63,14 @@ Three console entry points are installed (Backend Spec §15.3):
 
 | Command | Role |
 |---|---|
-| `exlab-wizard` | The CLI alias an operator double-clicks; spawns or focuses the tray. Use this for normal startup. |
-| `exlab-wizard-tray` | The long-lived tray + FastAPI server process; what gets registered for OS autostart. |
-| `exlab-wizard-window` | The on-demand `pywebview` window subprocess; usually spawned by the tray, rarely invoked directly. |
+| `exlab-wizard` | CLI alias; prints a pointer to the tray / window entry points. |
+| `exlab-wizard-tray` | Long-lived tray + FastAPI server process; registered for OS autostart. |
+| `exlab-wizard-window` | On-demand `pywebview` window subprocess; spawned by the tray, rarely invoked directly. |
 
-Typical first run from a development checkout:
+Start the app with:
 
 ```bash
-uv run exlab-wizard          # or: source .venv/bin/activate && exlab-wizard
+uv run exlab-wizard-tray     # or: source .venv/bin/activate && exlab-wizard-tray
 ```
 
 The tray serves the FastAPI app on a free localhost port, opens a
@@ -79,14 +78,12 @@ NiceGUI window, and keeps a system-tray icon for quit/focus controls.
 On Linux without a working tray backend the window is opened directly
 and the process exits with it (Backend Spec §15.7.4).
 
-Useful flags (forwarded to the tray):
-
-- `--config <path>` — override the config-file location (default
-  is OS-specific: `~/.config/exlab-wizard/config.yaml` on Linux,
-  `~/Library/Application Support/...` on macOS,
-  `%APPDATA%\exlab-wizard\...` on Windows).
-- `--log-level <level>` — `DEBUG`, `INFO`, `WARNING`, `ERROR`. Logs
-  land in the platform cache directory.
+The tray accepts `--version` (print and exit), `--smoke` (server-only
+mode, no pystray; used by CI), and `--no-autostart-prompt`. The config
+file is resolved via OS-standard locations
+(`~/.config/exlab-wizard/config.yaml` on Linux,
+`~/Library/Application Support/...` on macOS,
+`%APPDATA%\exlab-wizard\...` on Windows).
 
 ## Building a distributable binary
 
