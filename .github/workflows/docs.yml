@@ -1,0 +1,91 @@
+# Documentation build + deploy.
+#
+# Triggers:
+#   - pull_request to main: build only (the result is uploaded as a
+#     plain artifact for inspection on the PR).
+#   - push to main: build + deploy to GitHub Pages.
+#   - workflow_dispatch: manual run from the Actions UI.
+#
+# IMPORTANT: GitHub Pages source must be set to "GitHub Actions" in the
+# repository's Settings -> Pages page before the first deploy will
+# succeed. Without this setting the deploy step's call to
+# actions/deploy-pages@v4 fails with a 404.
+
+name: docs
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Group every run of this workflow against the same ref under a single
+# concurrency key. PRs cancel earlier in-flight runs (cheap and safe);
+# pushes to main do NOT cancel because Pages deployments must not race
+# against each other.
+concurrency:
+  group: docs-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package and docs / test extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[docs,test]
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install chromium
+
+      - name: Generate user-guide screenshots
+        run: python scripts/generate_screenshots.py docs/_static/screenshots
+
+      - name: Build HTML site
+        run: python -m sphinx -W -b html docs docs/_build/html
+
+      # PRs upload the built site as a plain artifact so reviewers can
+      # download it; pushes to main upload the Pages-flavoured artifact
+      # consumed by the deploy job below.
+      - name: Upload built site (PR preview)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-html
+          path: docs/_build/html
+
+      - name: Upload Pages artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/_build/html
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
