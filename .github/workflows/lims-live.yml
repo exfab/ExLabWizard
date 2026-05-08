@@ -45,6 +45,14 @@ concurrency:
   group: lims-live-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# `pull-requests: write` lets the failure-diagnostic step post the
+# compose ps + app log dump as a PR comment, since the run summary
+# page requires GitHub auth and the orchestrating session can read
+# PR comments via the GitHub MCP API but not raw step logs.
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   live:
     name: live (upstream HEAD)
@@ -202,6 +210,43 @@ jobs:
         # never expose it. The ephemeral throwaway credentials live only
         # in this workflow file and are rotated by editing it.
         run: docker compose -f "${EXLAB_COMPOSE_FILE}" logs
+
+      # On PR runs, post the compose ps + app log dump as a PR
+      # comment. The run summary page requires GitHub auth to read,
+      # but PR comments are reachable via the GitHub MCP API the
+      # orchestrating session uses.
+      - name: Post diagnostics to PR on failure
+        if: failure() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "## lims-live diagnostic dump"
+            echo ""
+            echo "Run: [\`${GITHUB_RUN_ID}\`](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
+            echo "Commit: \`${GITHUB_SHA}\`"
+            echo ""
+            echo "### \`docker compose ps\`"
+            echo '```'
+            docker compose -f "${EXLAB_COMPOSE_FILE}" ps 2>&1 || true
+            echo '```'
+            echo ""
+            echo "### app container log (last 200 lines)"
+            echo '```'
+            docker compose -f "${EXLAB_COMPOSE_FILE}" logs app 2>&1 | tail -200 || true
+            echo '```'
+            echo ""
+            echo "### db container log (last 50 lines)"
+            echo '```'
+            docker compose -f "${EXLAB_COMPOSE_FILE}" logs --tail=50 db 2>&1 || true
+            echo '```'
+          } > /tmp/diag.md
+          jq -Rs '{body: .}' /tmp/diag.md > /tmp/diag.json
+          curl -fsS -X POST \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues/${{ github.event.number }}/comments" \
+            -d @/tmp/diag.json
 
       - name: Tear down compose stack
         if: always()
