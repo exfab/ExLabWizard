@@ -80,9 +80,12 @@ jobs:
           AUTO_POPULATE_TEST_DATA: "true"
         run: docker compose -f "${EXLAB_COMPOSE_FILE}" up -d --build
 
+      # 300 attempts * 2s = 10 minutes. Cold-runner Postgres + a fresh
+      # OCaml ``--build`` regularly exceeds 4 minutes on ubuntu-latest;
+      # the job-level ``timeout-minutes`` (25) is the real ceiling.
       - name: Wait for /api/v1/me (401 means server is up)
         run: |
-          for _ in $(seq 1 120); do
+          for _ in $(seq 1 300); do
             status="$(curl -fsS -o /dev/null -w '%{http_code}' http://localhost:8080/api/v1/me || true)"
             if [[ "${status}" == "401" ]]; then
               echo "exlab is up"
