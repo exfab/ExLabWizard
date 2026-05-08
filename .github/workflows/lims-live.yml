@@ -159,6 +159,29 @@ jobs:
             fi
             sleep 2
           done
+          # Render the failure context to $GITHUB_STEP_SUMMARY so it
+          # surfaces on the run summary page without needing to drill
+          # into the step log archive.
+          {
+            echo "## lims-live wait-loop timeout"
+            echo ""
+            echo "Last curl status: \`${status}\` against \`http://localhost:8080/api/v1/me\` after 300 attempts (~600s)."
+            echo ""
+            echo "### \`docker compose ps\`"
+            echo '```'
+            docker compose -f "${EXLAB_COMPOSE_FILE}" ps 2>&1 || true
+            echo '```'
+            echo ""
+            echo "### app container log (full)"
+            echo '```'
+            docker compose -f "${EXLAB_COMPOSE_FILE}" logs app 2>&1 | tail -200 || true
+            echo '```'
+            echo ""
+            echo "### db container log (last 50 lines)"
+            echo '```'
+            docker compose -f "${EXLAB_COMPOSE_FILE}" logs --tail=50 db 2>&1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
           echo "exlab failed to start within 600s; last status=${status}" >&2
           docker compose -f "${EXLAB_COMPOSE_FILE}" ps >&2 || true
           echo "---app log on timeout---" >&2
