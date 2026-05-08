@@ -278,9 +278,7 @@ async def _audit_loop(deps: AppDependencies, interval_seconds: float) -> None:
         while True:
             await asyncio.sleep(interval_seconds)
             try:
-                findings = await asyncio.to_thread(
-                    deps.validator.audit, {"kind": "all"}
-                )
+                findings = await asyncio.to_thread(deps.validator.audit, {"kind": "all"})
             except Exception as exc:
                 _log.warning("audit pass failed: %s", exc)
                 continue

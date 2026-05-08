@@ -38,6 +38,7 @@ from exlab_wizard.sync.nas_client import HandleState, NASSyncClient
 from exlab_wizard.sync.queue import SyncJobState
 from exlab_wizard.sync.transports import TransportErrorKind, TransportResult
 from exlab_wizard.validator.engine import Validator
+from tests.unit.sync._helpers import local_hashsum_factory
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -335,6 +336,10 @@ async def test_worker_drives_to_verified_and_marks_synced(
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_make_push_factory(ok=True),
+        # Spec §7.1.4 step 2: the remote SHA-256 walk is mandatory. We
+        # inject a hashsum factory that recomputes from the local subtree
+        # so the verify pass succeeds without a real rclone binary.
+        hashsum_callable_factory=local_hashsum_factory(),
         # Optimistic remote_stat default + low min_age_hours so cleanup
         # interlocks won't accidentally trigger for default config.
         worker_poll_interval_s=0.01,

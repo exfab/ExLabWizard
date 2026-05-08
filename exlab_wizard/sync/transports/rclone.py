@@ -115,3 +115,50 @@ class RcloneTransport:
             stdout=stdout,
             returncode=rc,
         )
+
+    async def hashsum(self, remote: str) -> dict[str, str]:
+        """Probe ``remote`` via ``rclone hashsum sha256`` and parse the manifest.
+
+        Returns a ``{relative-path: sha256-hex}`` dict mirroring the
+        on-disk manifest format on success (``rc == 0``). The dict may
+        legitimately be empty if the remote subtree contains no files.
+
+        Failure modes are surfaced as :class:`TransportError` with the
+        classified ``error_kind`` so the caller (the verifier / queue
+        worker) can route via the spec-correct §7.1.5 retry path:
+
+        - ``AUTH`` -- terminal FAILED.
+        - ``NETWORK`` / ``UNKNOWN`` -- backoff retry.
+
+        Spawn failure (binary missing) also raises :class:`TransportError`
+        but with ``error_kind=None`` so the worker treats it as a
+        non-terminal failure (operator can install the binary and the job
+        will retry rather than terminating).
+        """
+        from exlab_wizard.sync.verifier import parse_manifest
+
+        cmd: list[str] = [self._binary, "hashsum", "sha256", remote]
+        _log.debug("rclone hashsum cmd: %s", shlex.join(cmd))
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            msg = f"rclone binary not found: {self._binary!r}"
+            raise TransportError(msg) from exc
+
+        stdout_b, stderr_b = await proc.communicate()
+        stdout = stdout_b.decode("utf-8", errors="replace")
+        stderr = stderr_b.decode("utf-8", errors="replace")
+        rc = proc.returncode if proc.returncode is not None else -1
+
+        if rc != 0:
+            kind = _classify_failure(stderr, rc)
+            _log.warning("rclone hashsum failed rc=%d kind=%s", rc, kind.value)
+            msg = f"rclone hashsum failed rc={rc} kind={kind.value}: {stderr.strip()}"
+            raise TransportError(msg, error_kind=kind)
+
+        return parse_manifest(stdout)

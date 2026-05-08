@@ -342,9 +342,10 @@ async def test_get_tree_in_ready_state(ready_config: Config) -> None:
         response = await ac.get("/api/v1/tree")
         assert response.status_code == 200
         body = response.json()
-        assert body["equipment"] == [
-            {"id": "EQ1", "label": "Equipment 1", "path": "", "projects": []}
-        ] or len(body["equipment"]) == 1
+        assert (
+            body["equipment"] == [{"id": "EQ1", "label": "Equipment 1", "path": "", "projects": []}]
+            or len(body["equipment"]) == 1
+        )
 
 
 def test_websocket_streams_session_events_sync(ready_config: Config, tmp_path: Path) -> None:

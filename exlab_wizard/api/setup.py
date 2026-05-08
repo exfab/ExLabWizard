@@ -230,7 +230,7 @@ def build_setup_router() -> APIRouter:
         if isinstance(result, TestResult):
             return result
         if isinstance(result, dict):
-            return TestResult(**{k: result.get(k) for k in ("ok", "reason", "latency_ms")})
+            return _coerce_probe_dict(result)
         return TestResult(ok=bool(result))
 
     @router.post("/test-equipment", response_model=TestResult)
@@ -254,13 +254,11 @@ def build_setup_router() -> APIRouter:
         if isinstance(result, TestResult):
             return result
         if isinstance(result, dict):
-            return TestResult(**{k: result.get(k) for k in ("ok", "reason", "latency_ms")})
+            return _coerce_probe_dict(result)
         return TestResult(ok=bool(result))
 
     @router.post("/autostart", response_model=AutostartResult)
-    async def set_autostart(
-        request: Request, body: AutostartRequest
-    ) -> AutostartResult:
+    async def set_autostart(request: Request, body: AutostartRequest) -> AutostartResult:
         deps = _require_deps(request)
         toggle = getattr(deps, "autostart_toggle", None)
         if toggle is None:
@@ -280,6 +278,23 @@ def build_setup_router() -> APIRouter:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _coerce_probe_dict(payload: dict[str, Any]) -> ProbeResult:
+    """Build a ``ProbeResult`` from a probe's plain-dict return value.
+
+    Wired through a helper so the ``ok`` field gets coerced to ``bool``
+    explicitly (probes sometimes return truthy non-bool values such as
+    ``1`` or ``"yes"``); this keeps mypy happy and matches the field's
+    declared type.
+    """
+    reason = payload.get("reason")
+    latency_ms = payload.get("latency_ms")
+    return ProbeResult(
+        ok=bool(payload.get("ok")),
+        reason=str(reason) if reason is not None else None,
+        latency_ms=int(latency_ms) if latency_ms is not None else None,
+    )
 
 
 def _require_deps(request: Request) -> Any:

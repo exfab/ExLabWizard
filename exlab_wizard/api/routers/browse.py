@@ -35,7 +35,14 @@ from exlab_wizard.constants import (
 )
 from exlab_wizard.logging import get_logger
 
-__all__ = ["EquipmentNode", "ProjectNode", "RunDetail", "RunNode", "TreeResponse", "build_browse_router"]
+__all__ = [
+    "EquipmentNode",
+    "ProjectNode",
+    "RunDetail",
+    "RunNode",
+    "TreeResponse",
+    "build_browse_router",
+]
 
 _log = get_logger(__name__)
 
@@ -114,7 +121,10 @@ def build_browse_router() -> APIRouter:
         config = getattr(deps, "config", None)
         if config is None:
             return TreeResponse(equipment=[])
-        nodes = [_build_equipment_node(entry, Path(config.paths.local_root)) for entry in config.equipment]
+        nodes = [
+            _build_equipment_node(entry, Path(config.paths.local_root))
+            for entry in config.equipment
+        ]
         return TreeResponse(equipment=nodes)
 
     @router.get(
@@ -158,9 +168,7 @@ def build_browse_router() -> APIRouter:
             run_kind=payload.run_kind,
             sync_status=payload.sync_status,
             readme=readme_text,
-            plugins_applied=[
-                msgspec.to_builtins(applied) for applied in payload.plugins_applied
-            ],
+            plugins_applied=[msgspec.to_builtins(applied) for applied in payload.plugins_applied],
             validation_overrides=list(payload.validation_overrides),
         )
 

@@ -57,7 +57,9 @@ def test_walk_run_leaves_returns_empty_when_root_missing(tmp_path: Path) -> None
 
 def test_walk_run_leaves_finds_experimental_and_test_runs(tmp_path: Path) -> None:
     (tmp_path / "EQ1" / "PROJ-0001" / "Run_2026-04-17T14-32-00").mkdir(parents=True)
-    (tmp_path / "EQ1" / "PROJ-0001" / "TestRuns" / "TestRun_2026-04-17T09-12-00").mkdir(parents=True)
+    (tmp_path / "EQ1" / "PROJ-0001" / "TestRuns" / "TestRun_2026-04-17T09-12-00").mkdir(
+        parents=True
+    )
     # A directory NOT matching either prefix should be ignored.
     (tmp_path / "EQ1" / "PROJ-0001" / "_drafts").mkdir(parents=True)
     leaves = sorted(p.name for p in walk_run_leaves(tmp_path))

@@ -39,12 +39,11 @@ import json
 import os
 import re
 import resource
-import shutil
 import signal
 import sys
 import time
 from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -928,13 +927,4 @@ def applied_entry_as_json(entry: dict[str, Any]) -> dict[str, Any]:
     return json.loads(json.dumps(entry, default=str))
 
 
-# Keep ``asdict`` referenced even when callers don't import it; re-exporting
-# avoids a "imported but unused" lint warning in environments that elect
-# to expose the helper at the package boundary.
 __all__ = list({*__all__, "applied_entry_as_json", "build_test_registry"})
-
-# ``asdict`` is used implicitly when callers introspect dataclasses.
-_ = asdict
-# Recursive shutil keeps coverage hooks satisfied across platforms where
-# the test suite reaches for it through the host's snapshot helpers.
-_ = shutil

@@ -83,9 +83,20 @@ lint = [
     "pre-commit>=3.7",
 ]
 
+# Documentation toolchain (Sphinx + pydata-sphinx-theme; see docs/conf.py).
+docs = [
+    "sphinx>=7.3",
+    "pydata-sphinx-theme>=0.15",
+    "sphinx-autodoc-typehints>=2.0",
+    "sphinx-design>=0.6",
+    "myst-parser>=3.0",
+    "sphinx-copybutton>=0.5",
+    "sphinxext-opengraph>=0.9",
+]
+
 # Dev convenience: install everything for local development with `uv pip install -e .[dev]`.
 dev = [
-    "exlabwizard[plugin-examples,test,build,lint]",
+    "exlabwizard[plugin-examples,test,build,lint,docs]",
 ]
 
 [project.scripts]
@@ -148,6 +159,15 @@ omit = [
     "exlab_wizard/_worker.py",
     "*/tests/*",
 ]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]
+show_missing = true
 
 [tool.mypy]
 python_version = "3.12"

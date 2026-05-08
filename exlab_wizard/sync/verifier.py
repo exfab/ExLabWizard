@@ -18,9 +18,13 @@ import asyncio
 import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from exlab_wizard.constants import CACHE_DIR_NAME, CHECKSUMS_RELATIVE
 from exlab_wizard.logging import get_logger
+
+if TYPE_CHECKING:
+    from exlab_wizard.sync.transports import TransportErrorKind
 
 __all__ = [
     "Verifier",
@@ -40,6 +44,13 @@ class VerifyResult:
     lists relative paths whose hash differed; ``missing`` lists paths in
     the manifest that no longer exist on disk; ``extra`` lists files on
     disk that were not in the manifest (informational only).
+
+    ``error_kind`` is set when the remote-hash probe could not complete
+    (the underlying :class:`exlab_wizard.sync.transports.TransportError`
+    classified the failure as AUTH / NETWORK / UNKNOWN). The queue worker
+    keys off this field to route via the §7.1.5 retry policy: AUTH ->
+    terminal FAILED, NETWORK / UNKNOWN -> backoff retry. ``None`` for
+    every non-remote-probe outcome.
     """
 
     ok: bool
@@ -47,6 +58,7 @@ class VerifyResult:
     missing: tuple[str, ...] = ()
     extra: tuple[str, ...] = ()
     manifest: dict[str, str] = field(default_factory=dict)
+    error_kind: TransportErrorKind | None = None
 
 
 def _iter_files(run_path: Path) -> list[Path]:
@@ -203,4 +215,50 @@ class Verifier:
             missing=tuple(sorted(missing)),
             extra=tuple(sorted(extra)),
             manifest=observed,
+        )
+
+    def verify_against_remote(
+        self,
+        local_manifest: dict[str, str],
+        remote_manifest: dict[str, str],
+    ) -> VerifyResult:
+        """Compare a local manifest against a remote-derived manifest.
+
+        Pure dict comparison with no I/O. Use after the transport reports
+        success, with ``remote_manifest`` derived from a remote hash probe
+        (e.g. ``rclone hashsum sha256`` or ``ssh ... sha256sum``).
+
+        - ``mismatched``: keys present in both with differing hex digests.
+        - ``missing``: keys present locally but absent remotely; this is
+          the integrity-in-transit failure mode.
+        - ``extra``: keys present remotely but not locally; informational
+          only and does not flip ``ok``.
+        - ``ok = not mismatched and not missing``. An empty
+          ``remote_manifest`` therefore yields ``ok=False`` with every
+          local key listed in ``missing``.
+        """
+        # TODO Sec 7.1.4: streaming-download fallback (verify.max_stream_bytes) deferred
+        mismatched: list[str] = []
+        missing: list[str] = []
+        extra: list[str] = []
+
+        for rel_path, expected_hash in local_manifest.items():
+            remote_hash = remote_manifest.get(rel_path)
+            if remote_hash is None:
+                missing.append(rel_path)
+                continue
+            if remote_hash != expected_hash:
+                mismatched.append(rel_path)
+
+        for rel_path in remote_manifest:
+            if rel_path not in local_manifest:
+                extra.append(rel_path)
+
+        ok = not mismatched and not missing
+        return VerifyResult(
+            ok=ok,
+            mismatched=tuple(sorted(mismatched)),
+            missing=tuple(sorted(missing)),
+            extra=tuple(sorted(extra)),
+            manifest=dict(local_manifest),
         )

@@ -25,7 +25,7 @@ import socket
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from exlab_wizard.logging import get_logger
 
@@ -63,7 +63,9 @@ class ServerRunner:
         self._app = app
         self._state_dir = Path(state_dir)
         self._port: int | None = None
-        self._server: object | None = None
+        # uvicorn.Server is typed as ``Any`` here so call sites can use
+        # ``.run`` / ``.should_exit`` without per-attribute mypy ignores.
+        self._server: Any = None
         self._thread: threading.Thread | None = None
         self._state_file: Path = self._state_dir / SERVER_STATE_FILE
 
@@ -110,7 +112,7 @@ class ServerRunner:
         # polls; setting it triggers a clean shutdown that runs the
         # FastAPI lifespan teardown.
         with contextlib.suppress(AttributeError):
-            self._server.should_exit = True  # type: ignore[attr-defined]
+            self._server.should_exit = True
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=10.0)
         self._delete_state_file()
@@ -146,11 +148,13 @@ class ServerRunner:
     # Internals (split out so tests can monkeypatch around real uvicorn)
     # ------------------------------------------------------------------
 
-    def _build_uvicorn(self, port: int) -> tuple[object, object]:
+    def _build_uvicorn(self, port: int) -> tuple[Any, Any]:
         """Return ``(uvicorn.Config, uvicorn.Server)`` for the given port.
 
         Split out so unit tests can monkeypatch the import without
-        wrestling with the real uvicorn dependency in CI.
+        wrestling with the real uvicorn dependency in CI. Typed as
+        ``Any`` so the callers can use ``.run`` / ``.should_exit`` on
+        the returned objects without further mypy noise.
         """
         import uvicorn
 
