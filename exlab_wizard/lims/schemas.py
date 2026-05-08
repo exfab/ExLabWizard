@@ -63,12 +63,9 @@ class LIMSUser(
 ):
     """One LIMS user row. Backend Spec §7.2.3.
 
-    Mirrors the real ``safe_user`` contract from upstream
-    ``mcnaughtonadm/exlab``: ``GET /api/v1/me`` returns
-    ``{id, uid, email, role, created_at, updated_at}``. Only the fields
-    ExLab-Wizard surfaces are typed here; the unmodelled fields (``id``,
-    ``created_at``, ``updated_at``) are dropped silently by msgspec
-    because ``forbid_unknown_fields=False``.
+    Mirrors the upstream ``safe_user`` contract returned by
+    ``GET /api/v1/me``. Only the fields ExLab-Wizard surfaces are
+    typed; everything else is dropped by msgspec.
     """
 
     uid: str

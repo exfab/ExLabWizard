@@ -110,12 +110,12 @@ class LIMSClient:
         client side. Filtering happens after deserialization so the
         wire format stays uniform.
 
-        Wire envelope: upstream serves ``{"data": [...], "count": N}``
-        (real ``mcnaughtonadm/exlab``); the bare-list branch is retained
-        only for offline-catalogue test fixtures we own.
+        Wire envelope: upstream returns ``{"data": [...], "count": N}``;
+        a missing ``data`` key is treated as an empty list rather than
+        propagating a ``KeyError`` to the caller.
         """
         payload = await self._get_json(_PROJECTS_PATH)
-        rows = payload["data"] if isinstance(payload, dict) else payload
+        rows = payload.get("data", [])
         projects = [self._project_from_row(row) for row in rows]
         if status_filter:
             allowed = set(status_filter)
