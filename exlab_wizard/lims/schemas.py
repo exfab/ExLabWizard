@@ -63,13 +63,17 @@ class LIMSUser(
 ):
     """One LIMS user row. Backend Spec §7.2.3.
 
-    Only the three fields ExLab-Wizard reads via ``GET /me`` are typed
-    here; additional fields the LIMS may return are dropped by msgspec.
+    Mirrors the real ``safe_user`` contract from upstream
+    ``mcnaughtonadm/exlab``: ``GET /api/v1/me`` returns
+    ``{id, uid, email, role, created_at, updated_at}``. Only the fields
+    ExLab-Wizard surfaces are typed here; the unmodelled fields (``id``,
+    ``created_at``, ``updated_at``) are dropped silently by msgspec
+    because ``forbid_unknown_fields=False``.
     """
 
     uid: str
     email: str
-    name: str
+    role: str
 
 
 @dataclass(frozen=True)

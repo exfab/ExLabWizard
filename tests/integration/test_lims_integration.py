@@ -10,6 +10,7 @@ refresh against the live API.
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -24,6 +25,13 @@ pytestmark = pytest.mark.asyncio
 
 
 def _make_client(app) -> LIMSClient:
+    endpoint = os.environ.get("EXLAB_ENDPOINT")
+    if endpoint:
+        return LIMSClient(
+            endpoint=endpoint,
+            email=os.environ["EXLAB_EMAIL"],
+            keyring_password_provider=lambda: os.environ["EXLAB_PASSWORD"],
+        )
     client = LIMSClient(
         endpoint="http://lims.test",
         email="asmith@lab.example",

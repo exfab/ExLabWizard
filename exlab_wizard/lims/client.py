@@ -109,9 +109,13 @@ class LIMSClient:
         rows whose ``status`` is not in the set are dropped on the
         client side. Filtering happens after deserialization so the
         wire format stays uniform.
+
+        Wire envelope: upstream serves ``{"data": [...], "count": N}``
+        (real ``mcnaughtonadm/exlab``); the bare-list branch is retained
+        only for offline-catalogue test fixtures we own.
         """
         payload = await self._get_json(_PROJECTS_PATH)
-        rows = payload.get("projects", payload) if isinstance(payload, dict) else payload
+        rows = payload["data"] if isinstance(payload, dict) else payload
         projects = [self._project_from_row(row) for row in rows]
         if status_filter:
             allowed = set(status_filter)
