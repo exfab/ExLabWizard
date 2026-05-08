@@ -112,7 +112,16 @@ jobs:
           pip install -e .[test]
 
       - name: Install Playwright browsers
-        run: playwright install chromium
+        # ``--with-deps`` provisions the chromium-required system shared
+        # libraries (libnss3, libxkbcommon, libgbm, ...) via ``apt-get``
+        # on the runner. Without it, ``playwright install chromium``
+        # only fetches the browser binary and a launch can fail with
+        # missing-symbol errors that are hard to diagnose.
+        run: playwright install --with-deps chromium
 
       - name: pytest e2e
-        run: pytest tests/e2e -q
+        # Verbose output + long traceback so any per-test failure is
+        # diagnosable without re-running. ``-rA`` includes a summary
+        # of every test outcome (pass / fail / skip) in the tail of
+        # the log.
+        run: pytest tests/e2e -v --tb=long -rA
