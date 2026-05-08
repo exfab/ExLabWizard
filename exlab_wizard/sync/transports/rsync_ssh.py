@@ -64,6 +64,17 @@ def _classify_failure(stderr: str, returncode: int) -> TransportErrorKind:
     return TransportErrorKind.UNKNOWN
 
 
+def _ssh_command(key: Path) -> list[str]:
+    """Return the canonical ``ssh`` argv prefix used by both push and hashsum.
+
+    Centralises the ``-i <key> -o BatchMode=yes`` invocation so the push
+    path (which embeds it as a single ``-e`` value via ``shlex.join``) and
+    the hashsum path (which uses the list directly as the argv prefix)
+    cannot drift.
+    """
+    return ["ssh", "-i", str(key), "-o", "BatchMode=yes"]
+
+
 class RsyncSshTransport:
     """rsync-over-SSH transport driver. Backend Spec §7.1.3."""
 
@@ -88,7 +99,7 @@ class RsyncSshTransport:
         Returns a :class:`TransportResult`. Raises :class:`TransportError`
         when the rsync binary is missing (no retry will help).
         """
-        ssh_cmd = f"ssh -i {shlex.quote(str(ssh_key_path))} -o BatchMode=yes"
+        ssh_cmd = shlex.join(_ssh_command(ssh_key_path))
         cmd: list[str] = [
             self._binary,
             "-avz",
@@ -130,3 +141,72 @@ class RsyncSshTransport:
             stdout=stdout,
             returncode=rc,
         )
+
+    async def hashsum(
+        self,
+        ssh_target: str,
+        ssh_key_path: Path,
+        remote_path: str,
+    ) -> dict[str, str]:
+        """Probe ``remote_path`` via ``ssh ... find ... sha256sum`` and parse.
+
+        Returns a ``{relative-path: sha256-hex}`` dict whose keys are
+        stripped of the ``remote_path`` prefix so they match the local
+        manifest's relative-path convention (see
+        :meth:`exlab_wizard.sync.verifier.Verifier.compute_local_manifest`)
+        on success (``rc == 0``). The dict may legitimately be empty if
+        the remote subtree contains no files.
+
+        Failure modes are surfaced as :class:`TransportError` with the
+        classified ``error_kind`` so the caller (the verifier / queue
+        worker) can route via the spec-correct §7.1.5 retry path:
+
+        - ``AUTH`` -- terminal FAILED.
+        - ``NETWORK`` / ``UNKNOWN`` -- backoff retry.
+
+        Spawn failure (binary missing) also raises :class:`TransportError`
+        but with ``error_kind=None`` so the worker treats it as a
+        non-terminal failure (operator can install ssh and the job will
+        retry rather than terminating).
+        """
+        from exlab_wizard.sync.verifier import parse_manifest
+
+        remote_cmd = f"find {shlex.quote(remote_path)} -type f -exec sha256sum {{}} +"
+        cmd: list[str] = [*_ssh_command(ssh_key_path), ssh_target, remote_cmd]
+        _log.debug("rsync ssh hashsum cmd: %s", shlex.join(cmd))
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            msg = "ssh binary not found: ssh"
+            raise TransportError(msg) from exc
+
+        stdout_b, stderr_b = await proc.communicate()
+        stdout = stdout_b.decode("utf-8", errors="replace")
+        stderr = stderr_b.decode("utf-8", errors="replace")
+        rc = proc.returncode if proc.returncode is not None else -1
+
+        if rc != 0:
+            kind = _classify_failure(stderr, rc)
+            _log.warning("rsync ssh hashsum failed rc=%d kind=%s", rc, kind.value)
+            msg = f"rsync ssh hashsum failed rc={rc} kind={kind.value}: {stderr.strip()}"
+            raise TransportError(msg, error_kind=kind)
+
+        # Parse, then strip the remote_path prefix so keys are run-relative.
+        absolute_manifest = parse_manifest(stdout)
+        prefix = remote_path.rstrip("/") + "/"
+        relative: dict[str, str] = {}
+        for path_key, hex_digest in absolute_manifest.items():
+            if path_key.startswith(prefix):
+                relative[path_key[len(prefix) :]] = hex_digest
+            elif path_key == remote_path.rstrip("/"):
+                # A single-file remote target. Use the basename.
+                relative[Path(path_key).name] = hex_digest
+            else:
+                # Fallback: keep the original key.
+                relative[path_key] = hex_digest
+        return relative

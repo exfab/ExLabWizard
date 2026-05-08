@@ -158,3 +158,46 @@ def test_parse_manifest_tolerates_blank_and_malformed_lines() -> None:
     text = "abc123  hello\n\nbad-line\nffff  ok\n"
     parsed = parse_manifest(text)
     assert parsed == {"hello": "abc123", "ok": "ffff"}
+
+
+def test_verify_against_remote_matches() -> None:
+    """Identical manifests yield ``ok=True`` with empty diffs."""
+    local = {"a.txt": "deadbeef", "data/b.bin": "cafebabe"}
+    remote = dict(local)
+    result = Verifier().verify_against_remote(local, remote)
+    assert result.ok is True
+    assert result.mismatched == ()
+    assert result.missing == ()
+    assert result.extra == ()
+
+
+def test_verify_against_remote_detects_mismatch() -> None:
+    """A differing hex digest shows up in ``mismatched`` and flips ``ok``."""
+    local = {"a.txt": "deadbeef", "data/b.bin": "cafebabe"}
+    remote = {"a.txt": "deadbeef", "data/b.bin": "11111111"}
+    result = Verifier().verify_against_remote(local, remote)
+    assert result.ok is False
+    assert result.mismatched == ("data/b.bin",)
+    assert result.missing == ()
+    assert result.extra == ()
+
+
+def test_verify_against_remote_detects_remote_missing() -> None:
+    """A local key absent remotely is the integrity-in-transit case."""
+    local = {"a.txt": "deadbeef", "data/b.bin": "cafebabe"}
+    remote = {"a.txt": "deadbeef"}
+    result = Verifier().verify_against_remote(local, remote)
+    assert result.ok is False
+    assert result.missing == ("data/b.bin",)
+    assert result.mismatched == ()
+
+
+def test_verify_against_remote_detects_local_extra() -> None:
+    """A remote-only key is informational and does not flip ``ok``."""
+    local = {"a.txt": "deadbeef"}
+    remote = {"a.txt": "deadbeef", "leftover.tmp": "00ff"}
+    result = Verifier().verify_against_remote(local, remote)
+    assert result.ok is True
+    assert result.extra == ("leftover.tmp",)
+    assert result.mismatched == ()
+    assert result.missing == ()
