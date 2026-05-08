@@ -1,0 +1,113 @@
+# Live LIMS-contract verification against upstream `mcnaughtonadm/exlab`.
+#
+# The in-process FastAPI mock at ``tests/fixtures/mock_lims.py`` and the
+# vendored snapshots under ``tests/fixtures/lims/exlab_v1/`` keep PR CI
+# fast and hermetic, but they only catch drift the moment the snapshots
+# are re-grounded. This workflow is the re-grounding signal: it clones
+# upstream at HEAD, brings the bundled ``deploy/docker-compose.local.yml``
+# stack up with seeded admin credentials and ``AUTO_POPULATE_TEST_DATA``,
+# waits for the OCaml app to come up, and runs the LIMS integration +
+# contract suites against it via the ``EXLAB_ENDPOINT`` hook in
+# ``tests/integration/test_lims_integration.py::_make_client``.
+#
+# Triggers:
+#   * ``schedule`` -- weekly (Monday 06:00 UTC) so upstream drift surfaces
+#     even without local activity.
+#   * ``workflow_dispatch`` -- manual re-run from the Actions UI.
+#   * ``push`` to ``main`` -- every merge to main triggers a full live
+#     verification regardless of which paths were touched.
+#   * ``pull_request`` paths-filtered -- pre-merge runs only when the
+#     change touches the LIMS surface or this workflow itself, so most
+#     PRs do not pay the docker-compose cost.
+#
+# Upstream pin: none. The job clones ``mcnaughtonadm/exlab`` at HEAD so
+# the signal reflects the latest contract. If upstream main breaks, the
+# job goes red and we either bump our snapshots/decoders or skip the
+# offending day's run via the schedule.
+
+name: lims-live
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+  pull_request:
+    paths:
+      - "exlab_wizard/lims/**"
+      - "tests/integration/test_lims_integration.py"
+      - "tests/integration/test_lims_contract.py"
+      - "tests/fixtures/lims/**"
+      - ".github/workflows/lims-live.yml"
+
+concurrency:
+  group: lims-live-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live:
+    name: live (upstream HEAD)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      EXLAB_DEPLOY_DIR: /tmp/exlab
+      EXLAB_COMPOSE_FILE: /tmp/exlab/deploy/docker-compose.local.yml
+      EXLAB_ADMIN_EMAIL: admin@exlab.test
+      EXLAB_ADMIN_PASSWORD: ci-test-password
+    steps:
+      - name: Checkout (this repo)
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[test]
+
+      - name: Clone upstream exlab @ HEAD
+        run: git clone --depth=1 https://gitlab.com/mcnaughtonadm/exlab.git "${EXLAB_DEPLOY_DIR}"
+
+      - name: Boot exlab + postgres
+        env:
+          DEFAULT_ADMIN_EMAIL: ${{ env.EXLAB_ADMIN_EMAIL }}
+          DEFAULT_ADMIN_PASSWORD: ${{ env.EXLAB_ADMIN_PASSWORD }}
+          AUTO_POPULATE_TEST_DATA: "true"
+        run: docker compose -f "${EXLAB_COMPOSE_FILE}" up -d --build
+
+      - name: Wait for /api/v1/me (401 means server is up)
+        run: |
+          for _ in $(seq 1 120); do
+            status="$(curl -fsS -o /dev/null -w '%{http_code}' http://localhost:8080/api/v1/me || true)"
+            if [[ "${status}" == "401" ]]; then
+              echo "exlab is up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "exlab failed to start; last status=${status:-000}" >&2
+          exit 1
+
+      - name: Run LIMS integration + contract suites against live exlab
+        env:
+          EXLAB_ENDPOINT: http://localhost:8080
+          EXLAB_EMAIL: ${{ env.EXLAB_ADMIN_EMAIL }}
+          EXLAB_PASSWORD: ${{ env.EXLAB_ADMIN_PASSWORD }}
+        run: pytest -v tests/integration/test_lims_integration.py tests/integration/test_lims_contract.py
+
+      - name: Dump compose logs on failure
+        if: failure()
+        # Logs may include the seeded admin password through env-injection
+        # diagnostics; this dump is gated on failure so happy-path runs
+        # never expose it. The ephemeral throwaway credentials live only
+        # in this workflow file and are rotated by editing it.
+        run: docker compose -f "${EXLAB_COMPOSE_FILE}" logs
+
+      - name: Tear down compose stack
+        if: always()
+        run: docker compose -f "${EXLAB_COMPOSE_FILE}" down -v
