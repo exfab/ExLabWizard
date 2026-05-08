@@ -9,7 +9,9 @@ the snapshots are re-grounded against a changed upstream; the weekly
 ``lims-live`` workflow is what re-grounds them.
 
 No network is involved -- this test runs in the same fast PR pass as
-the unit tests.
+the unit tests. **If a test in this module fails after an upstream
+contract change, regenerate the snapshots with
+``./scripts/regen_lims_snapshots.sh``.**
 """
 
 from __future__ import annotations
@@ -50,7 +52,11 @@ def test_projects_list_snapshot_flows_through_list_projects_path() -> None:
     """``GET /api/v1/projects`` payload must yield ``LIMSProject`` rows.
 
     Mirrors the same envelope unwrap + per-row decode that
-    ``LIMSClient.list_projects`` runs (`client.py`).
+    ``LIMSClient.list_projects`` runs (`client.py`). Asserts that the
+    optional-null path (``description``/``contact_name`` returned as
+    JSON ``null``) round-trips through ``_project_from_row`` to
+    ``None`` on the typed struct, since that path is not exercised by
+    the in-memory mock.
     """
     payload = _load("projects_list.json")
     assert isinstance(payload, dict), "list endpoint must return a dict envelope"
@@ -62,6 +68,19 @@ def test_projects_list_snapshot_flows_through_list_projects_path() -> None:
         assert project.uid
         assert project.short_id
         assert project.name
+    archived = next((p for p in projects if p.status == "Archived"), None)
+    assert archived is not None, "snapshot must include an Archived row to exercise null optionals"
+    assert archived.description is None
+    assert archived.contact_name is None
+    assert archived.metadata == {}
+
+
+def test_empty_projects_envelope_decodes_to_empty_list() -> None:
+    """An empty ``data`` array must yield zero rows, not raise."""
+    payload: dict = {"data": [], "count": 0}
+    rows = payload.get("data", [])
+    projects = [LIMSClient._project_from_row(row) for row in rows]
+    assert projects == []
 
 
 def test_project_one_snapshot_decodes_into_lims_project() -> None:
@@ -71,6 +90,7 @@ def test_project_one_snapshot_decodes_into_lims_project() -> None:
     assert project.uid
     assert project.short_id == "PROJ-0001"
     assert project.status == "Active"
+    assert project.metadata == {"tier": "pilot", "site": "main"}
 
 
 @pytest.mark.parametrize(

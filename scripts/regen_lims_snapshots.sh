@@ -5,12 +5,23 @@
 #
 # Requires: docker (with compose plugin), git, curl, jq.
 # Usage:    ./scripts/regen_lims_snapshots.sh
+#
+# The admin credentials below seed an ephemeral local container that is
+# torn down on script exit; do NOT reuse them for a non-throwaway exlab.
+# Avoid `bash -x` while running this script -- the shell trace would
+# echo the password verbatim.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${REPO_ROOT}/tests/fixtures/lims/exlab_v1"
 WORK="$(mktemp -d)"
-trap 'cd "${WORK}/exlab" && docker compose -f deploy/docker-compose.local.yml down -v >/dev/null 2>&1 || true; rm -rf "${WORK}"' EXIT
+cleanup() {
+  if [[ -d "${WORK}/exlab" ]]; then
+    (cd "${WORK}/exlab" && docker compose -f deploy/docker-compose.local.yml down -v >/dev/null 2>&1) || true
+  fi
+  rm -rf "${WORK}"
+}
+trap cleanup EXIT
 
 ADMIN_EMAIL="admin@exlab.test"
 ADMIN_PASSWORD="ci-test-password"
@@ -26,7 +37,7 @@ AUTO_POPULATE_TEST_DATA=true \
   docker compose -f deploy/docker-compose.local.yml up -d --build
 
 echo "==> waiting for /api/v1/me to respond (401 means server is up)"
-for _ in $(seq 1 60); do
+for _ in $(seq 1 120); do
   status="$(curl -fsS -o /dev/null -w '%{http_code}' http://localhost:8080/api/v1/me || true)"
   if [[ "${status}" == "401" ]]; then
     break
@@ -35,7 +46,7 @@ for _ in $(seq 1 60); do
 done
 if [[ "${status:-000}" != "401" ]]; then
   echo "exlab failed to come up; last status=${status}" >&2
-  docker compose -f deploy/docker-compose.local.yml logs >&2
+  echo "to inspect: cd ${WORK}/exlab && docker compose -f deploy/docker-compose.local.yml logs" >&2
   exit 1
 fi
 
