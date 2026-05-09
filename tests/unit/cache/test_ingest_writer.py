@@ -263,7 +263,10 @@ async def test_append_state_transition_rejects_illegal_transitions(
     )
     await writer.write_ingest(path, payload)
 
-    with pytest.raises(ValueError, match="illegal state transition|Invalid ingest state transition"):
+    with pytest.raises(
+        ValueError,
+        match=r"illegal state transition|Invalid ingest state transition",
+    ):
         await writer.append_state_transition(path, bad_target, host=_HOST)
 
 

@@ -26,6 +26,7 @@ from exlab_wizard.cache.creation_writer import CreationWriter
 from exlab_wizard.config.models import Config, EquipmentConfig, RcloneTransport, RsyncSshTransport
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
+    SyncHandleState,
     SyncStatus,
 )
 from exlab_wizard.logging import get_logger
@@ -75,18 +76,9 @@ class SyncJobHandle:
     """
 
     job_id: str
-    state: str
+    state: SyncHandleState
     run_path: str
     blocking_findings: tuple[Finding, ...] = ()
-
-
-# Closed-set state alias kept distinct from the queue's StrEnum so the
-# Pre-Sync-Gate rejection has a name distinct from FAILED.
-class HandleState:
-    """String constants for :class:`SyncJobHandle.state`. Backend Spec §7.3."""
-
-    QUEUED = "queued"
-    BLOCKED = "blocked"
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +252,7 @@ class NASSyncClient:
         ``QUEUED`` row.
 
         Returns a :class:`SyncJobHandle`. The handle's ``state`` is
-        either :attr:`HandleState.BLOCKED` or :attr:`HandleState.QUEUED`.
+        either :attr:`SyncHandleState.BLOCKED` or :attr:`SyncHandleState.QUEUED`.
         """
         creation_path = creation_json_path(run_path)
         creation = await self._cache_creation.read_creation_snapshot(creation_path)
@@ -274,7 +266,7 @@ class NASSyncClient:
             await self._mark_blocked(creation_path)
             return SyncJobHandle(
                 job_id="",
-                state=HandleState.BLOCKED,
+                state=SyncHandleState.BLOCKED,
                 run_path=str(run_path),
                 blocking_findings=tuple(blocking),
             )
@@ -289,12 +281,12 @@ class NASSyncClient:
                 self._wake_event.set()
                 return SyncJobHandle(
                     job_id=row.id,
-                    state=HandleState.QUEUED,
+                    state=SyncHandleState.QUEUED,
                     run_path=str(run_path),
                 )
             return SyncJobHandle(
                 job_id=existing.id,
-                state=HandleState.QUEUED,
+                state=SyncHandleState.QUEUED,
                 run_path=str(run_path),
             )
 
@@ -304,7 +296,7 @@ class NASSyncClient:
             nas_path=self._compute_nas_path(creation),
         )
         self._wake_event.set()
-        return SyncJobHandle(job_id=row.id, state=HandleState.QUEUED, run_path=str(run_path))
+        return SyncJobHandle(job_id=row.id, state=SyncHandleState.QUEUED, run_path=str(run_path))
 
     async def status(self, run_path: Path) -> str:
         """Return the queue state of the job for ``run_path``.

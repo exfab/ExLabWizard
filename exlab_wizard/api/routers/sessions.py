@@ -23,7 +23,7 @@ from __future__ import annotations
 import contextlib
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from fastapi import (
     APIRouter,
@@ -50,6 +50,8 @@ from exlab_wizard.utils.time import parse_utc_iso
 __all__ = ["build_sessions_router"]
 
 _log = get_logger(__name__)
+
+TERMINAL_EVENT_KINDS: Final[frozenset[str]] = frozenset({"done", "failed"})
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +88,7 @@ class _RunSessionBody(BaseModel):
     equipment_id: str
     project_short_id: str
     template_path: str
-    run_kind: Literal["experimental", "test"]
+    run_kind: RunKind
     label: str
     operator: str
     objective: str
@@ -370,7 +372,7 @@ async def _stream_session_events(
             continue
         await websocket.send_bytes(encode_event(typed))
         kind = frame.get("kind")
-        if kind in ("done", "failed"):
+        if kind in TERMINAL_EVENT_KINDS:
             break
     with contextlib.suppress(Exception):
         await websocket.close()

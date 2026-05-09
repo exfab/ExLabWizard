@@ -40,6 +40,7 @@ from exlab_wizard.api.schemas import (
     tombstone_entry_to_dict,
 )
 from exlab_wizard.api.setup import setup_state_gate
+from exlab_wizard.constants import AuditScopeKind
 from exlab_wizard.logging import get_logger
 from exlab_wizard.paths import creation_json_path
 from exlab_wizard.utils.time import utc_now_iso
@@ -181,7 +182,7 @@ def build_problems_router() -> APIRouter:
     )
     async def refresh(request: Request) -> RefreshResponse:
         validator = _require_validator(request)
-        findings = validator.audit({"kind": "all"})
+        findings = validator.audit({"kind": AuditScopeKind.ALL})
         audit_at = utc_now_iso()
         deps = _require_deps(request)
         deps.last_audit_at = audit_at
@@ -273,7 +274,7 @@ def build_problems_router() -> APIRouter:
         await websocket.accept()
         validator = getattr(deps, "validator", None)
         if validator is not None:
-            findings = validator.audit({"kind": "all"})
+            findings = validator.audit({"kind": AuditScopeKind.ALL})
             audit_at = getattr(deps, "last_audit_at", None) or utc_now_iso()
             await websocket.send_bytes(
                 encode_event(

@@ -24,9 +24,9 @@ import uuid
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Any
 
-from exlab_wizard.constants import SESSION_GC_AFTER_SECONDS
+from exlab_wizard.constants import SESSION_GC_AFTER_SECONDS, NextAction, SessionKind
 from exlab_wizard.controller.state_machine import (
     Phase,
     SessionState,
@@ -39,9 +39,6 @@ __all__ = ["Session", "SessionStore"]
 
 
 _log = get_logger(__name__)
-
-
-SessionKind = Literal["project", "run"]
 
 
 @dataclass
@@ -80,7 +77,7 @@ class Session:
     created_at: datetime
     last_heartbeat: datetime
     current_phase: Phase | None = None
-    next_action: str = "none"
+    next_action: NextAction = NextAction.NONE
     event_queue: asyncio.Queue[dict[str, Any]] | None = None
     pending_input: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
@@ -115,7 +112,7 @@ class SessionStore:
             created_at=now,
             last_heartbeat=now,
             current_phase=None,
-            next_action="none",
+            next_action=NextAction.NONE,
         )
         self._sessions[session_id] = session
         _log.debug(
@@ -144,7 +141,7 @@ class SessionStore:
         session.state = new_state
         session.current_phase = state_to_phase(new_state)
         session.next_action = (
-            "awaiting_input" if new_state is SessionState.INPUT_REQUIRED else "none"
+            NextAction.AWAITING_INPUT if new_state is SessionState.INPUT_REQUIRED else NextAction.NONE
         )
 
     def attach_event_queue(self, session_id: str, queue: asyncio.Queue[dict[str, Any]]) -> None:

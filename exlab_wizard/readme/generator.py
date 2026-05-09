@@ -42,7 +42,7 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import yaml
 from msgspec import json as msgspec_json
@@ -56,6 +56,8 @@ from exlab_wizard.constants import (
     README_FIELDS_JSON_VERSION,
     README_FILE_NAME,
     README_FRONT_MATTER_SCHEMA_VERSION,
+    CreationLevel,
+    FieldType,
 )
 from exlab_wizard.errors import TemplateCoreFieldRedeclaredError
 from exlab_wizard.io import atomic_write_bytes
@@ -82,7 +84,7 @@ _log = get_logger(__name__)
 CORE_FIELD_IDS: frozenset[str] = frozenset({"label", "operator", "objective"})
 
 # Allowed values for ``TemplateFieldDecl.type``. Backend Spec §10.3.
-_FIELD_TYPES: frozenset[str] = frozenset({"string", "text", "choice", "date", "boolean"})
+_FIELD_TYPES: frozenset[str] = frozenset(m.value for m in FieldType)
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +117,7 @@ class TemplateFieldDecl:
 
     id: str
     label: str
-    type: Literal["string", "text", "choice", "date", "boolean"]
+    type: FieldType
     required: bool = False
     default: Any = ""
     options: list[str] | None = None
@@ -156,7 +158,7 @@ class ReadmeContext:
     generator's job is to validate, render, and persist.
     """
 
-    level: Literal["project", "run"]
+    level: CreationLevel
     core: CoreFields
     template_fields: dict[str, Any]
     config_fields: dict[str, Any]
@@ -337,13 +339,13 @@ def _check_value_type(decl: TemplateFieldDecl, value: Any, *, layer: str) -> Non
             f"{layer}_fields[{decl.id!r}] has unknown type {decl.type!r}; "
             f"allowed: {sorted(_FIELD_TYPES)}"
         )
-    if decl.type in {"string", "text"}:
+    if decl.type in {FieldType.STRING, FieldType.TEXT}:
         if not isinstance(value, str):
             raise ValueError(
                 f"{layer}_fields[{decl.id!r}] expects {decl.type}, got {type(value).__name__}"
             )
         return
-    if decl.type == "choice":
+    if decl.type == FieldType.CHOICE:
         if not isinstance(value, str):
             raise ValueError(
                 f"{layer}_fields[{decl.id!r}] expects choice (string), got {type(value).__name__}"
@@ -355,7 +357,7 @@ def _check_value_type(decl: TemplateFieldDecl, value: Any, *, layer: str) -> Non
                 f"{layer}_fields[{decl.id!r}] value {value!r} is not in options {decl.options!r}"
             )
         return
-    if decl.type == "date":
+    if decl.type == FieldType.DATE:
         if not isinstance(value, str):
             raise ValueError(
                 f"{layer}_fields[{decl.id!r}] expects ISO 8601 date string, "
@@ -370,7 +372,7 @@ def _check_value_type(decl: TemplateFieldDecl, value: Any, *, layer: str) -> Non
         return
     # ``isinstance(True, int)`` is True in Python, so reject ints/strings
     # explicitly. ``bool`` is the only accepted shape for type=boolean.
-    if decl.type == "boolean" and not isinstance(value, bool):
+    if decl.type == FieldType.BOOLEAN and not isinstance(value, bool):
         raise ValueError(f"{layer}_fields[{decl.id!r}] expects bool, got {type(value).__name__}")
 
 

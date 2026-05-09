@@ -53,6 +53,7 @@ from exlab_wizard.constants import (
     INGEST_JSON_VERSION,
     CompletenessSignal,
     IngestState,
+    OrchestratorTransportType,
 )
 from exlab_wizard.logging import get_logger
 from exlab_wizard.orchestrator._scan import (
@@ -61,6 +62,7 @@ from exlab_wizard.orchestrator._scan import (
 )
 from exlab_wizard.orchestrator.cleanup import cleanup_eligible, clear_run
 from exlab_wizard.paths import is_run_dir, is_test_run_dir
+from exlab_wizard.sync.queue import SyncJobState
 from exlab_wizard.utils.time import utc_now_iso
 
 __all__ = ["NASSyncLike", "StagingWatcher"]
@@ -91,12 +93,14 @@ class CreationCacheLike(Protocol):
 
 
 # Verified statuses reported by NASSyncClient.status() (see Backend Spec §7.1.2).
-# Anything in this set means the NAS copy is durably present.
+# Anything in this set means the NAS copy is durably present. Derived from the
+# queue-internal SyncJobState rather than a separate string set so the status
+# values stay in sync with the queue's state machine (Backend Spec §7.1.2).
 _VERIFIED_STATUSES: frozenset[str] = frozenset(
     {
-        "verified",
-        "cleanup_eligible",
-        "cleaned",
+        SyncJobState.VERIFIED.value,
+        SyncJobState.CLEANUP_ELIGIBLE.value,
+        SyncJobState.CLEANED.value,
     },
 )
 
@@ -354,7 +358,7 @@ class StagingWatcher:
     def _infer_transport(self, equipment: EquipmentConfig | None) -> str:
         """Return the configured staging transport, or a sensible default."""
         if equipment is None or equipment.orchestrator_staging_transport is None:
-            return "smb_mount"
+            return OrchestratorTransportType.SMB_MOUNT.value
         return equipment.orchestrator_staging_transport.type
 
     # ------------------------------------------------------------------ helpers

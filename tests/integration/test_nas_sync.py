@@ -44,7 +44,8 @@ from exlab_wizard.constants import (
     CREATION_JSON_NAME,
     CREATION_JSON_VERSION,
 )
-from exlab_wizard.sync.nas_client import HandleState, NASSyncClient
+from exlab_wizard.constants import SyncHandleState as HandleState
+from exlab_wizard.sync.nas_client import NASSyncClient
 from exlab_wizard.sync.queue import SyncJobRow, SyncJobState
 from exlab_wizard.validator.engine import Validator
 

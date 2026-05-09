@@ -35,6 +35,7 @@ from exlab_wizard.constants import (
     PLUGIN_NAME_PATTERN,
     PLUGIN_SUPPORTED_API_VERSIONS,
     PLUGIN_TIMEOUT_MAX_SECONDS,
+    PluginSourceRoot,
 )
 from exlab_wizard.logging import get_logger
 
@@ -83,7 +84,7 @@ class PluginRecord:
     """One plugin in the registry.
 
     Carries the parsed manifest, the source-on-disk plugin directory, and
-    the source root identifier (``"bundled"`` or ``"lab"``) so the
+    the source root identifier (``BUNDLED`` or ``LAB``) so the
     Settings UI can show where each plugin came from.
 
     ``plugin_class`` is ``None`` in the production path (the host doesn't
@@ -95,7 +96,7 @@ class PluginRecord:
     manifest: PluginManifest
     plugin_class: type | None
     source_path: Path
-    source_root: str
+    source_root: PluginSourceRoot
 
 
 @dataclass(frozen=True)
@@ -169,10 +170,10 @@ class PluginRegistry:
         self._records = {}
 
         # Bundled root first so lab can override it.
-        for record, reason in self._iter_root(self._bundled_dir, "bundled"):
+        for record, reason in self._iter_root(self._bundled_dir, PluginSourceRoot.BUNDLED):
             self._absorb(record, reason, report)
 
-        for record, reason in self._iter_root(self._lab_dir, "lab"):
+        for record, reason in self._iter_root(self._lab_dir, PluginSourceRoot.LAB):
             self._absorb(record, reason, report)
 
         return report
@@ -192,8 +193,8 @@ class PluginRegistry:
         existing = self._records.get(name)
         if (
             existing is not None
-            and existing.source_root == "bundled"
-            and record.source_root == "lab"
+            and existing.source_root == PluginSourceRoot.BUNDLED
+            and record.source_root == PluginSourceRoot.LAB
         ):
             _log.info(
                 "plugin '%s' v%s from %s overrides bundled v%s",
@@ -209,7 +210,7 @@ class PluginRegistry:
     def _iter_root(
         self,
         root: Path | None,
-        source_root: str,
+        source_root: PluginSourceRoot,
     ) -> list[tuple[PluginRecord | None, tuple[str, str] | None]]:
         """Walk one plugin root and yield ``(record_or_None, reason_or_None)`` pairs.
 
@@ -229,7 +230,7 @@ class PluginRegistry:
     def _load_plugin(
         self,
         plugin_dir: Path,
-        source_root: str,
+        source_root: PluginSourceRoot,
     ) -> tuple[PluginRecord | None, tuple[str, str] | None]:
         """Parse one plugin directory. Returns ``(record, None)`` or ``(None, (name, reason))``."""
         # Use the directory name as the fallback identifier in the
