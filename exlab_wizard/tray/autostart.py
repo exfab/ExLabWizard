@@ -26,8 +26,9 @@ import contextlib
 import os
 import sys
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
+from exlab_wizard.constants import Platform
 from exlab_wizard.logging import get_logger
 
 __all__ = [
@@ -39,9 +40,6 @@ __all__ = [
 ]
 
 _log = get_logger(__name__)
-
-
-_Platform = Literal["macos", "windows", "linux"]
 
 
 # Public constants -- referenced in tests and in §15.7's table.
@@ -73,7 +71,7 @@ class AutostartManager:
         *,
         executable_path: str | Path | None = None,
         filesystem_root: Path | None = None,
-        platform: _Platform | None = None,
+        platform: Platform | str | None = None,
     ) -> None:
         self._executable = str(
             Path(executable_path) if executable_path is not None else Path(sys.executable)
@@ -85,7 +83,7 @@ class AutostartManager:
             self._fs_root = Path(filesystem_root)
         else:
             self._fs_root = Path.home()
-        self._platform = platform or _detect_platform()
+        self._platform = Platform(platform) if platform is not None else _detect_platform()
 
     # ------------------------------------------------------------------
     # Public API
@@ -94,31 +92,31 @@ class AutostartManager:
     def is_registered(self) -> bool:
         """Return True iff a per-platform autostart record exists."""
         match self._platform:
-            case "macos":
+            case Platform.MACOS:
                 return self._plist_path().exists()
-            case "windows":
+            case Platform.WINDOWS:
                 return self._win_reg_value() is not None
-            case "linux":
+            case Platform.LINUX:
                 return self._systemd_path().exists() or self._desktop_path().exists()
 
     def register(self) -> None:
         """Create the per-platform autostart record. Idempotent."""
         match self._platform:
-            case "macos":
+            case Platform.MACOS:
                 self._write_plist()
-            case "windows":
+            case Platform.WINDOWS:
                 self._set_win_reg_value()
-            case "linux":
+            case Platform.LINUX:
                 self._register_linux()
 
     def unregister(self) -> None:
         """Remove the per-platform autostart record. Idempotent."""
         match self._platform:
-            case "macos":
+            case Platform.MACOS:
                 _silently_unlink(self._plist_path())
-            case "windows":
+            case Platform.WINDOWS:
                 self._delete_win_reg_value()
-            case "linux":
+            case Platform.LINUX:
                 _silently_unlink(self._systemd_path())
                 _silently_unlink(self._desktop_path())
 
@@ -128,7 +126,7 @@ class AutostartManager:
         return self._executable
 
     @property
-    def platform(self) -> _Platform:
+    def platform(self) -> Platform:
         """Return the platform dispatch this manager is configured for."""
         return self._platform
 
@@ -266,12 +264,12 @@ def _render_desktop_file(executable: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _detect_platform() -> _Platform:
+def _detect_platform() -> Platform:
     if sys.platform == "darwin":
-        return "macos"
+        return Platform.MACOS
     if sys.platform == "win32":
-        return "windows"
-    return "linux"
+        return Platform.WINDOWS
+    return Platform.LINUX
 
 
 def _silently_unlink(path: Path) -> None:
