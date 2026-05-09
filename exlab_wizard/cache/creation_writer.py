@@ -45,9 +45,8 @@ from msgspec import json as msgspec_json
 
 from exlab_wizard.api.schemas import CreationJson
 from exlab_wizard.cache import lock_path_for
-from exlab_wizard.cache.equipment import require_schema_major
 from exlab_wizard.constants import CREATION_JSON_VERSION, LIMSProjectSource, RunKind
-from exlab_wizard.io import atomic_write_bytes
+from exlab_wizard.io import atomic_write_bytes, read_msgspec_json_raw, require_schema_major
 from exlab_wizard.logging import get_logger
 from exlab_wizard.utils.time import parse_utc_iso_or_none
 
@@ -254,7 +253,6 @@ class CreationWriter:
         lock = FileLock(lock_path_for(path), timeout=self._lock_timeout)
         with lock:
             raw = self._decode_raw(path)
-            self._reject_major_mismatch(raw)
             _apply_migration_defaults(raw)
 
             payload = msgspec.convert(raw, type=CreationJson)
@@ -270,7 +268,6 @@ class CreationWriter:
         rwlock = ReadWriteLock(lock_path_for(path), timeout=self._lock_timeout)
         with rwlock.read_lock():
             raw = self._decode_raw(path)
-            self._reject_major_mismatch(raw)
             _apply_migration_defaults(raw)
             return msgspec.convert(raw, type=CreationJson)
 
@@ -283,14 +280,22 @@ class CreationWriter:
         :func:`_apply_migration_defaults` can backfill old-minor fields
         BEFORE the struct decoder runs (otherwise the missing fields
         would surface as required-field errors).
-        """
-        return msgspec_json.decode(path.read_bytes(), type=dict[str, Any])
 
-    def _reject_major_mismatch(self, raw: dict[str, Any]) -> None:
+        Raises :class:`SchemaMajorMismatchError` (§11.9.2) when the file's
+        ``schema_version`` is at a different major than the reader OR is
+        absent (a reader cannot tell what version a file claims to be).
+        """
+        raw = read_msgspec_json_raw(path, expected_major=_READER_MAJOR)
+        # ``read_msgspec_json_raw`` deliberately skips the major check when
+        # ``schema_version`` is missing -- the typed decoder downstream
+        # would surface the validation error. ``creation.json`` uses the
+        # stricter §11.9.2 reading: a missing version IS a major mismatch.
         version = raw.get("schema_version")
-        if not isinstance(version, str):
-            version = str(version) if version is not None else ""
-        require_schema_major(version, expected_major=_READER_MAJOR)
+        require_schema_major(
+            str(version) if isinstance(version, str) else "",
+            expected_major=_READER_MAJOR,
+        )
+        return raw
 
     def _encode_and_replace(self, path: Path, payload: dict[str, Any]) -> None:
         """Encode ``payload`` to bytes, write atomically via atomic_write_bytes.

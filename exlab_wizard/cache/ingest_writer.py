@@ -30,9 +30,8 @@ from filelock import FileLock
 
 from exlab_wizard.api.schemas import IngestJson
 from exlab_wizard.cache import lock_path_for
-from exlab_wizard.cache.equipment import require_schema_major
 from exlab_wizard.constants import INGEST_JSON_VERSION, IngestState
-from exlab_wizard.io import atomic_write_bytes
+from exlab_wizard.io import atomic_write_bytes, read_msgspec_json
 from exlab_wizard.logging import get_logger
 from exlab_wizard.utils.state import assert_forward_transition
 from exlab_wizard.utils.time import utc_now_iso
@@ -140,15 +139,15 @@ class IngestWriter:
 
     def _read_ingest_blocking(self, path: Path) -> IngestJson:
         with FileLock(lock_path_for(path)):
-            raw = path.read_bytes()
-        # First decode loosely to inspect ``schema_version``: a major
-        # mismatch must surface a structured error rather than be swallowed
-        # by msgspec's typed decode (which would either succeed silently on
-        # a future-major file with a compatible shape or raise a generic
-        # validation error). Per §11.9.2 we explicitly check the major.
-        meta: dict[str, Any] = msgspec.json.decode(raw)
-        require_schema_major(str(meta.get("schema_version", "")), expected_major=_EXPECTED_MAJOR)
-        return msgspec.json.decode(raw, type=IngestJson)
+            return self._decode_ingest_locked(path)
+
+    @staticmethod
+    def _decode_ingest_locked(path: Path) -> IngestJson:
+        """Decode ``ingest.json`` with the §11.9.2 schema-major gate.
+
+        Caller MUST already hold the per-file ``FileLock``.
+        """
+        return read_msgspec_json(path, IngestJson, expected_major=_EXPECTED_MAJOR)
 
     def _append_state_transition_blocking(
         self,
@@ -161,12 +160,7 @@ class IngestWriter:
         checksum_file: str | None,
     ) -> IngestJson:
         with FileLock(lock_path_for(path)):
-            raw = path.read_bytes()
-            meta: dict[str, Any] = msgspec.json.decode(raw)
-            require_schema_major(
-                str(meta.get("schema_version", "")), expected_major=_EXPECTED_MAJOR
-            )
-            payload = msgspec.json.decode(raw, type=IngestJson)
+            payload = self._decode_ingest_locked(path)
 
             current = IngestState(payload.current_state)
             assert_forward_transition(current, new_state, _FORWARD_TRANSITIONS)

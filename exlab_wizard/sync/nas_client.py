@@ -17,7 +17,7 @@ import contextlib
 import shutil
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +47,7 @@ from exlab_wizard.sync.transports import (
 from exlab_wizard.sync.transports.rclone import RcloneTransport as RcloneDriver
 from exlab_wizard.sync.transports.rsync_ssh import RsyncSshTransport as RsyncDriver
 from exlab_wizard.sync.verifier import Verifier, VerifyResult
-from exlab_wizard.utils.time import utc_now_iso
+from exlab_wizard.utils.time import utc_now, utc_now_iso
 from exlab_wizard.validator.engine import Validator
 from exlab_wizard.validator.findings import Finding
 
@@ -605,7 +605,7 @@ class NASSyncClient:
         overrides = list(creation.validation_overrides) if creation else []
 
         remote_ok = self._remote_stat_callable(job)
-        now_utc = datetime.now(tz=UTC)
+        now_utc = utc_now()
         if not cleanup_interlocks_satisfied(
             job=job,
             run_path=run_path,

@@ -23,7 +23,7 @@ import asyncio
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from exlab_wizard.constants import SESSION_GC_AFTER_SECONDS, NextAction, SessionKind
@@ -34,6 +34,7 @@ from exlab_wizard.controller.state_machine import (
     state_to_phase,
 )
 from exlab_wizard.logging import get_logger
+from exlab_wizard.utils.time import utc_now
 
 __all__ = ["Session", "SessionStore"]
 
@@ -103,7 +104,7 @@ class SessionStore:
     def open(self, kind: SessionKind, req: Any) -> Session:
         """Create a fresh session in :data:`SessionState.PENDING` state."""
         session_id = str(uuid.uuid4())
-        now = datetime.now(tz=UTC)
+        now = utc_now()
         session = Session(
             session_id=session_id,
             kind=kind,
@@ -141,7 +142,9 @@ class SessionStore:
         session.state = new_state
         session.current_phase = state_to_phase(new_state)
         session.next_action = (
-            NextAction.AWAITING_INPUT if new_state is SessionState.INPUT_REQUIRED else NextAction.NONE
+            NextAction.AWAITING_INPUT
+            if new_state is SessionState.INPUT_REQUIRED
+            else NextAction.NONE
         )
 
     def attach_event_queue(self, session_id: str, queue: asyncio.Queue[dict[str, Any]]) -> None:
@@ -165,7 +168,7 @@ class SessionStore:
         session = self._sessions.get(session_id)
         if session is None:
             return
-        session.last_heartbeat = datetime.now(tz=UTC)
+        session.last_heartbeat = utc_now()
 
     def close(self, session_id: str, outcome: dict[str, Any]) -> None:
         """Stamp a terminal-state session with the outcome envelope.
@@ -196,7 +199,7 @@ class SessionStore:
         ``INPUT_REQUIRED`` sessions are eligible -- transient states
         are owned by the controller and finish on their own.
         """
-        threshold = datetime.now(tz=UTC) - age
+        threshold = utc_now() - age
         return [
             sid
             for sid, session in self._sessions.items()

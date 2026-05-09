@@ -401,8 +401,10 @@ def test_resolve_empty_copier_yml_treats_manifest_as_empty_and_rejects_missing_t
 
 
 def test_resolve_non_mapping_yaml_raises_template_load_error(tmp_path: Path) -> None:
-    # safe_load returns a list for a top-level YAML sequence. The driver
-    # must reject this -- copier.yml MUST be a mapping (§5.2).
+    # ``safe_load`` returns a list for a top-level YAML sequence. The
+    # shared ``load_yaml_manifest`` helper coerces non-dicts to ``{}``,
+    # so the driver surfaces the missing ``_exlab_type`` instead -- the
+    # net effect is still a ``TemplateLoadError`` rejecting the file.
     template_dir = tmp_path / "list_yaml"
     template_dir.mkdir()
     (template_dir / "copier.yml").write_text(
@@ -413,7 +415,7 @@ def test_resolve_non_mapping_yaml_raises_template_load_error(tmp_path: Path) -> 
     engine = TemplateEngine()
     with pytest.raises(TemplateLoadError) as info:
         engine.resolve(template_dir, TemplateType.PROJECT)
-    assert "did not parse to a mapping" in str(info.value)
+    assert "_exlab_type" in str(info.value)
 
 
 def test_resolve_missing_exlab_type_raises_template_load_error(tmp_path: Path) -> None:

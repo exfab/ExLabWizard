@@ -16,11 +16,34 @@ __all__ = [
     "dt_to_iso",
     "parse_utc_iso",
     "parse_utc_iso_or_none",
+    "utc_now",
     "utc_now_iso",
+    "utc_now_or",
 ]
 
 
 _ISO_FORMAT: Final[str] = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def utc_now() -> datetime:
+    """Return the current UTC time as a timezone-aware ``datetime``.
+
+    Use this when callers need a ``datetime`` object (e.g. to compute a
+    cutoff via :func:`timedelta`); use :func:`utc_now_iso` when callers
+    need the formatted string. Centralizing the call keeps the test
+    monkey-patching surface narrow.
+    """
+    return datetime.now(tz=UTC)
+
+
+def utc_now_or(dt: datetime | None) -> datetime:
+    """Return ``dt`` when supplied, otherwise the current UTC time.
+
+    Mirrors the ``now = now or datetime.now(tz=UTC)`` idiom that recurs
+    throughout the codebase whenever a function accepts an optional
+    ``now=...`` parameter for deterministic tests.
+    """
+    return dt if dt is not None else datetime.now(tz=UTC)
 
 
 def utc_now_iso() -> str:

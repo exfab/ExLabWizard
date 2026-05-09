@@ -30,6 +30,5 @@ def assert_forward_transition[S](
     if new_state not in allowed:
         allowed_repr = sorted(str(s) for s in allowed) or "[terminal]"
         raise ValueError(
-            f"illegal state transition {current!r} -> {new_state!r} "
-            f"(allowed: {allowed_repr})"
+            f"illegal state transition {current!r} -> {new_state!r} (allowed: {allowed_repr})"
         )

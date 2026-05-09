@@ -63,7 +63,6 @@ import msgspec
 from exlab_wizard.api.schemas import (
     CreationJson,
     ReadmeFieldsJson,
-    msgspec_json,
 )
 from exlab_wizard.cache.creation_writer import select_active_overrides
 from exlab_wizard.config.models import ValidatorConfig
@@ -78,6 +77,7 @@ from exlab_wizard.constants import (
     SyncStatus,
     Tier,
 )
+from exlab_wizard.io import read_msgspec_json, read_msgspec_json_raw
 from exlab_wizard.logging import get_logger
 from exlab_wizard.paths import (
     creation_json_path,
@@ -774,8 +774,8 @@ class Validator:
         if not readme_path.exists():
             return
         try:
-            readme_payload = msgspec_json.decode(readme_path.read_bytes(), type=ReadmeFieldsJson)
-        except (msgspec.DecodeError, msgspec.ValidationError):
+            readme_payload = read_msgspec_json(readme_path, ReadmeFieldsJson)
+        except (msgspec.DecodeError, msgspec.ValidationError, OSError):
             _log.debug("readme_fields.json failed typed decode: %s", readme_path)
             return
 
@@ -967,12 +967,8 @@ class Validator:
         if not path.exists():
             return None, None
         try:
-            blob = path.read_bytes()
-        except OSError:
-            return None, None
-        try:
-            raw = msgspec_json.decode(blob, type=dict[str, Any])
-        except (msgspec.DecodeError, msgspec.ValidationError):
+            raw = read_msgspec_json_raw(path)
+        except (msgspec.DecodeError, msgspec.ValidationError, OSError):
             _log.debug("creation.json failed raw decode: %s", path)
             return None, None
         try:
@@ -1085,16 +1081,17 @@ def _finding_sort_key(finding: Finding) -> tuple[int, str, str]:
 # ---------------------------------------------------------------------------
 
 
-def _level_for_orphan(level: DirectoryLevel) -> str | None:
+def _level_for_orphan(level: DirectoryLevel) -> DirectoryLevel | None:
     """Translate the engine-level enum into the rules.check_orphan input.
 
     The orphan rule only applies at project / run level (§8.1.4);
     equipment, test-runs marker, and "other" levels return ``None``.
-    Test-run leafs are treated as ``"run"`` for orphan purposes (the
-    spec wires the rule to project / run; a test run is a kind of run).
+    Test-run leafs are treated as ``DirectoryLevel.RUN`` for orphan
+    purposes (the spec wires the rule to project / run; a test run is a
+    kind of run).
     """
     if level == DirectoryLevel.PROJECT:
-        return "project"
+        return DirectoryLevel.PROJECT
     if level in {DirectoryLevel.RUN, DirectoryLevel.TEST_RUN}:
-        return "run"
+        return DirectoryLevel.RUN
     return None

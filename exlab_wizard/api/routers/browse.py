@@ -23,6 +23,7 @@ import msgspec
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
+from exlab_wizard.api._dependencies import require_deps
 from exlab_wizard.api.schemas import CreationJson
 from exlab_wizard.api.setup import setup_state_gate
 from exlab_wizard.constants import (
@@ -116,7 +117,7 @@ def build_browse_router() -> APIRouter:
         dependencies=[Depends(setup_state_gate)],
     )
     async def get_tree(request: Request) -> TreeResponse:
-        deps = _require_deps(request)
+        deps = require_deps(request)
         config = getattr(deps, "config", None)
         if config is None:
             return TreeResponse(equipment=[])
@@ -190,35 +191,41 @@ def _build_equipment_node(entry: Any, local_root: Path) -> EquipmentNode:
     )
 
 
-def _scan_projects(equipment_dir: Path) -> list[ProjectNode]:
-    """Return a sorted list of project nodes under an equipment dir."""
-    nodes: list[ProjectNode] = []
+def _iter_run_or_project_subdirs(parent: Path) -> list[os.DirEntry[str]]:
+    """Return name-sorted real subdirectories of ``parent``, sans the cache.
+
+    Hides the ``.exlab-wizard/`` cache directory and silently swallows
+    ``FileNotFoundError`` / ``PermissionError`` so callers can iterate
+    without per-call ``try``/``except`` blocks. The returned list is
+    sorted lexicographically by entry name so the on-wire tree order is
+    stable across runs.
+    """
     try:
-        entries = list(os.scandir(equipment_dir))
+        entries = list(os.scandir(parent))
     except (FileNotFoundError, PermissionError):
         return []
+    out: list[os.DirEntry[str]] = []
     for entry in sorted(entries, key=lambda e: e.name):
         if not entry.is_dir(follow_symlinks=False):
             continue
         if entry.name == CACHE_DIR_NAME:
             continue
-        path = Path(entry.path)
-        nodes.append(_build_project_node(path))
-    return nodes
+        out.append(entry)
+    return out
+
+
+def _scan_projects(equipment_dir: Path) -> list[ProjectNode]:
+    """Return a sorted list of project nodes under an equipment dir."""
+    return [
+        _build_project_node(Path(entry.path))
+        for entry in _iter_run_or_project_subdirs(equipment_dir)
+    ]
 
 
 def _build_project_node(project_dir: Path) -> ProjectNode:
     runs: list[RunNode] = []
     test_runs: list[RunNode] = []
-    try:
-        entries = list(os.scandir(project_dir))
-    except (FileNotFoundError, PermissionError):
-        entries = []
-    for entry in sorted(entries, key=lambda e: e.name):
-        if not entry.is_dir(follow_symlinks=False):
-            continue
-        if entry.name == CACHE_DIR_NAME:
-            continue
+    for entry in _iter_run_or_project_subdirs(project_dir):
         if entry.name == TEST_RUNS_DIR_NAME:
             test_runs.extend(_scan_run_children(Path(entry.path), kind="test"))
             continue
@@ -235,20 +242,11 @@ def _build_project_node(project_dir: Path) -> ProjectNode:
 
 
 def _scan_run_children(test_runs_dir: Path, *, kind: str) -> list[RunNode]:
-    out: list[RunNode] = []
-    try:
-        entries = list(os.scandir(test_runs_dir))
-    except (FileNotFoundError, PermissionError):
-        return out
-    for entry in sorted(entries, key=lambda e: e.name):
-        if not entry.is_dir(follow_symlinks=False):
-            continue
-        if entry.name == CACHE_DIR_NAME:
-            continue
-        if not is_test_run_dir(entry.name):
-            continue
-        out.append(_build_run_node(Path(entry.path), kind=kind))
-    return out
+    return [
+        _build_run_node(Path(entry.path), kind=kind)
+        for entry in _iter_run_or_project_subdirs(test_runs_dir)
+        if is_test_run_dir(entry.name)
+    ]
 
 
 def _build_run_node(run_dir: Path, *, kind: str) -> RunNode:
@@ -284,16 +282,3 @@ def _read_readme(run_dir: Path) -> str | None:
         return readme_path.read_text(encoding="utf-8")
     except OSError:
         return None
-
-
-def _require_deps(request: Request) -> Any:
-    deps = getattr(request.app.state, "dependencies", None)
-    if deps is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "internal_error",
-                "message": "app dependencies are not initialized",
-            },
-        )
-    return deps

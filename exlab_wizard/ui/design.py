@@ -13,6 +13,8 @@ Update discipline: keep ``design.py`` and DESIGN.md in lock-step
 
 from __future__ import annotations
 
+from typing import Final
+
 # Primary palette -- UI only (DESIGN.md §01).
 # Never used for chart series; UI chrome only.
 COLOR_NAVY: str = "#003660"
@@ -92,7 +94,7 @@ SHADOW_LG: str = "0 16px 40px rgba(0,54,96,0.12), 0 4px 12px rgba(0,54,96,0.07)"
 
 # Motion (DESIGN.md §07).
 EASE_OUT: str = "cubic-bezier(0.22, 1, 0.36, 1)"
-TRANSITION: str = f"180ms {EASE_OUT}"
+TRANSITION: Final[str] = f"180ms {EASE_OUT}"
 
 # Categorical series order (DESIGN.md §06).
 # Fixed; never reorder. Vermilion is reserved for error/alert series.

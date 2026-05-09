@@ -47,21 +47,24 @@ from exlab_wizard.api.schemas import CreationJson, IngestJson
 from exlab_wizard.cache.ingest_writer import IngestWriter, default_host
 from exlab_wizard.config.models import Config, EquipmentConfig
 from exlab_wizard.constants import (
-    CACHE_DIR_NAME,
-    CREATION_JSON_NAME,
-    INGEST_JSON_NAME,
     INGEST_JSON_VERSION,
     CompletenessSignal,
     IngestState,
     OrchestratorTransportType,
 )
+from exlab_wizard.io import read_msgspec_json_raw
 from exlab_wizard.logging import get_logger
 from exlab_wizard.orchestrator._scan import (
     count_files_and_bytes,
     walk_run_leaves,
 )
 from exlab_wizard.orchestrator.cleanup import cleanup_eligible, clear_run
-from exlab_wizard.paths import is_run_dir, is_test_run_dir
+from exlab_wizard.paths import (
+    creation_json_path,
+    ingest_json_path,
+    is_run_dir,
+    is_test_run_dir,
+)
 from exlab_wizard.sync.queue import SyncJobState
 from exlab_wizard.utils.time import utc_now_iso
 
@@ -327,7 +330,7 @@ class StagingWatcher:
             run_kind=run_kind,
             run_path=run_relative,
             transport=transport,
-            current_state=IngestState.STAGING.value,
+            current_state=IngestState.STAGING,
             history=[
                 {
                     "state": IngestState.STAGING.value,
@@ -444,12 +447,12 @@ class StagingWatcher:
             run_kind = "experimental"
         else:
             return None
-        cache_dir = run_path / CACHE_DIR_NAME
+        creation_path = creation_json_path(run_path)
         return _RunLocator(
             run_path=run_path,
-            cache_dir=cache_dir,
-            creation_path=cache_dir / CREATION_JSON_NAME,
-            ingest_path=cache_dir / INGEST_JSON_NAME,
+            cache_dir=creation_path.parent,
+            creation_path=creation_path,
+            ingest_path=ingest_json_path(run_path),
             equipment_id=equipment_id,
             project_name=project_name,
             run_kind=run_kind,
@@ -480,7 +483,7 @@ def _manifest_satisfied(manifest_path: Path, run_path: Path) -> bool:
     if not manifest_path.is_file():
         return False
     try:
-        data = msgspec.json.decode(manifest_path.read_bytes())
+        data = read_msgspec_json_raw(manifest_path)
     except (msgspec.DecodeError, OSError):
         return False
     if not isinstance(data, dict):
@@ -505,5 +508,3 @@ def _manifest_satisfied(manifest_path: Path, run_path: Path) -> bool:
             except OSError:
                 return False
     return True
-
-

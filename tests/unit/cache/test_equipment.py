@@ -342,5 +342,3 @@ async def test_read_equipment_skips_check_when_schema_version_missing(
     # the precise validation error.
     with pytest.raises(msgspec.ValidationError):
         await writer.read_equipment(path)
-
-

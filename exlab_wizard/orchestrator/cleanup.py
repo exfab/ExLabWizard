@@ -20,7 +20,7 @@ filesystem effect.
 from __future__ import annotations
 
 import shutil
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from exlab_wizard.api.schemas import IngestJson
@@ -32,7 +32,7 @@ from exlab_wizard.constants import (
 )
 from exlab_wizard.logging import get_logger
 from exlab_wizard.paths import ingest_json_path
-from exlab_wizard.utils.time import parse_utc_iso_or_none
+from exlab_wizard.utils.time import parse_utc_iso_or_none, utc_now_or
 
 __all__ = ["cleanup_eligible", "clear_run", "freed_bytes_and_count"]
 
@@ -71,7 +71,7 @@ def cleanup_eligible(
     verified_at = _find_state_timestamp(ingest, IngestState.SYNC_VERIFIED)
     if verified_at is None:
         return False
-    now = now_utc if now_utc is not None else datetime.now(tz=UTC)
+    now = utc_now_or(now_utc)
     retain_hours = config.orchestrator.staging_cleanup.retain_hours
     return verified_at + timedelta(hours=retain_hours) <= now
 
@@ -153,5 +153,3 @@ def _find_state_timestamp(ingest: IngestJson, target: IngestState) -> datetime |
             continue
         return parse_utc_iso_or_none(entry.get("at"))
     return None
-
-

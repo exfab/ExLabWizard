@@ -47,6 +47,7 @@ from filelock import FileLock
 
 from exlab_wizard.api.schemas import EquipmentJson, TestRunsJson
 from exlab_wizard.cache import lock_path_for
+from exlab_wizard.errors import SchemaMajorMismatchError
 from exlab_wizard.io import atomic_write_bytes, read_msgspec_json, require_schema_major
 from exlab_wizard.logging import get_logger
 from exlab_wizard.utils.time import utc_now_iso
@@ -192,8 +193,13 @@ def _read_existing_first_seen_at(path: Path) -> str | None:
     if not path.exists():
         return None
     try:
-        existing = msgspec.json.decode(path.read_bytes(), type=EquipmentJson)
-    except (msgspec.DecodeError, msgspec.ValidationError, OSError) as exc:
+        existing = read_msgspec_json(path, EquipmentJson, expected_major=1)
+    except (
+        msgspec.DecodeError,
+        msgspec.ValidationError,
+        OSError,
+        SchemaMajorMismatchError,
+    ) as exc:
         logger.warning(
             "equipment.json at %s could not be decoded; treating as fresh write: %s",
             path,
@@ -201,5 +207,3 @@ def _read_existing_first_seen_at(path: Path) -> str | None:
         )
         return None
     return existing.first_seen_at
-
-

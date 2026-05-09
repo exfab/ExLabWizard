@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from exlab_wizard.constants import Platform
+from exlab_wizard.io import atomic_write_bytes
 from exlab_wizard.logging import get_logger
 
 __all__ = [
@@ -140,7 +141,7 @@ class AutostartManager:
     def _write_plist(self) -> None:
         path = self._plist_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_render_plist(self._executable), encoding="utf-8")
+        atomic_write_bytes(path, _render_plist(self._executable).encode("utf-8"))
         _log.info("registered macOS LaunchAgent at %s", path)
 
     # ------------------------------------------------------------------
@@ -162,12 +163,12 @@ class AutostartManager:
     def _write_systemd_unit(self) -> None:
         path = self._systemd_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_render_systemd_unit(self._executable), encoding="utf-8")
+        atomic_write_bytes(path, _render_systemd_unit(self._executable).encode("utf-8"))
 
     def _write_desktop_file(self) -> None:
         path = self._desktop_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_render_desktop_file(self._executable), encoding="utf-8")
+        atomic_write_bytes(path, _render_desktop_file(self._executable).encode("utf-8"))
 
     # ------------------------------------------------------------------
     # Windows registry

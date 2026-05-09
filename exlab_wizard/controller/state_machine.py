@@ -31,6 +31,8 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from exlab_wizard.utils.state import assert_forward_transition
+
 __all__ = [
     "VALID_TRANSITIONS",
     "Phase",
@@ -160,13 +162,7 @@ def assert_transition(current: SessionState, new_state: SessionState) -> None:
     Defensive guard used by :class:`SessionStore.transition` and the
     controller's pipeline. Backend Spec §4.7 / §4.7.1 are the source of
     truth for the legal edges; this function consults
-    :data:`VALID_TRANSITIONS`.
+    :data:`VALID_TRANSITIONS` via the shared
+    :func:`exlab_wizard.utils.state.assert_forward_transition` helper.
     """
-    allowed = VALID_TRANSITIONS.get(current)
-    if allowed is None:
-        raise ValueError(f"unknown source state {current!r}")
-    if new_state not in allowed:
-        raise ValueError(
-            f"illegal state transition {current.value!r} -> {new_state.value!r} "
-            f"(allowed: {sorted(s.value for s in allowed) or '[terminal]'})"
-        )
+    assert_forward_transition(current, new_state, VALID_TRANSITIONS)

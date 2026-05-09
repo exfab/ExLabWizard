@@ -592,7 +592,7 @@ class PluginHost:
                         outcome,
                         modified_files=[],
                         violations=[],
-                        status_override="failed",
+                        status_override=PluginStatus.FAILED,
                         aborted=True,
                     )
                 extra_inputs = dict(response)
@@ -609,7 +609,7 @@ class PluginHost:
                 last_outcome,
                 modified_files=violations,
                 violations=violations,
-                status_override="policy_violation",
+                status_override=PluginStatus.POLICY_VIOLATION,
             )
 
         return _build_applied_entry(
@@ -838,13 +838,13 @@ def _build_applied_entry(
     *,
     modified_files: Iterable[str],
     violations: Iterable[str],
-    status_override: str | None = None,
+    status_override: PluginStatus | None = None,
     aborted: bool = False,
 ) -> dict[str, Any]:
     """Shape one ``plugins_applied[]`` entry for ``creation.json``."""
     files_list = sorted({str(p) for p in modified_files})
     if status_override is not None:
-        status = status_override
+        status = status_override.value
     else:
         status = _exit_code_to_status(outcome.exit_code, files_list)
     if violations:

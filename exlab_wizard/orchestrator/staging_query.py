@@ -31,7 +31,12 @@ from exlab_wizard.io import read_msgspec_json
 from exlab_wizard.logging import get_logger
 from exlab_wizard.orchestrator._scan import count_files_and_bytes, walk_run_leaves
 from exlab_wizard.paths import ingest_json_path
-from exlab_wizard.utils.time import dt_to_iso, parse_utc_iso_or_none, utc_now_iso
+from exlab_wizard.utils.time import (
+    dt_to_iso,
+    parse_utc_iso_or_none,
+    utc_now_iso,
+    utc_now_or,
+)
 
 __all__ = ["StagedRunSummary", "list_staged_runs"]
 
@@ -87,7 +92,7 @@ def list_staged_runs(
     root = staging_root if staging_root is not None else Path(config.orchestrator.staging_root)
     if not root.exists():
         return []
-    now = now_utc if now_utc is not None else datetime.now(tz=UTC)
+    now = utc_now_or(now_utc)
     rows = [
         summary
         for run_path in walk_run_leaves(root)

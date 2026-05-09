@@ -32,6 +32,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, ConfigDict, Field
 
+from exlab_wizard.api._dependencies import require_deps
 from exlab_wizard.api.events import encode_event, event_from_dict
 from exlab_wizard.api.schemas import (
     OverrideEntry,
@@ -184,7 +185,7 @@ def build_problems_router() -> APIRouter:
         validator = _require_validator(request)
         findings = validator.audit({"kind": AuditScopeKind.ALL})
         audit_at = utc_now_iso()
-        deps = _require_deps(request)
+        deps = require_deps(request)
         deps.last_audit_at = audit_at
         # Publish an audit-pass snapshot if a channel is wired.
         channel = getattr(deps, "audit_channel", None)
@@ -203,15 +204,7 @@ def build_problems_router() -> APIRouter:
         request: Request, run_path: str, body: OverrideRequest
     ) -> OverrideResponse:
         cache_writer = _require_cache_writer(request)
-        path = creation_json_path(Path(run_path))
-        if not path.exists():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "code": "session_not_found",
-                    "message": f"creation.json not found at {path}",
-                },
-            )
+        path = _require_creation_json(run_path)
         entry = OverrideEntry(
             id=str(uuid.uuid4()),
             problem_class=body.problem_class,
@@ -239,15 +232,7 @@ def build_problems_router() -> APIRouter:
         request: Request, run_path: str, body: RevokeRequest
     ) -> TombstoneResponse:
         cache_writer = _require_cache_writer(request)
-        path = creation_json_path(Path(run_path))
-        if not path.exists():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "code": "session_not_found",
-                    "message": f"creation.json not found at {path}",
-                },
-            )
+        path = _require_creation_json(run_path)
         entry = TombstoneEntry(
             id=str(uuid.uuid4()),
             revokes=body.revokes,
@@ -304,13 +289,25 @@ def build_problems_router() -> APIRouter:
 # ---------------------------------------------------------------------------
 
 
-def _build_scope(scope: str, scope_value: str | None) -> dict[str, Any]:
-    if scope == "all":
-        return {"kind": "all"}
-    if scope == "equipment_id":
-        return {"kind": "equipment_id", "value": scope_value or ""}
-    if scope == "project_path":
-        return {"kind": "project_path", "value": scope_value or ""}
+def _build_scope(scope: AuditScopeKind | str, scope_value: str | None) -> dict[str, Any]:
+    try:
+        kind = AuditScopeKind(scope) if not isinstance(scope, AuditScopeKind) else scope
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "validation_failed",
+                "message": f"unknown scope {scope!r}",
+                "field": "scope",
+            },
+        ) from exc
+    if kind is AuditScopeKind.ALL:
+        return {"kind": kind.value}
+    if kind is AuditScopeKind.EQUIPMENT_ID:
+        return {"kind": kind.value, "value": scope_value or ""}
+    if kind is AuditScopeKind.PROJECT_PATH:
+        return {"kind": kind.value, "value": scope_value or ""}
+    # Unreachable: AuditScopeKind has only the three members above.
     raise HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         detail={
@@ -335,7 +332,7 @@ def _last_audit_at(request: Request) -> str:
 
 
 def _require_validator(request: Request) -> Any:
-    deps = _require_deps(request)
+    deps = require_deps(request)
     validator = getattr(deps, "validator", None)
     if validator is None:
         raise HTTPException(
@@ -349,7 +346,7 @@ def _require_validator(request: Request) -> Any:
 
 
 def _require_cache_writer(request: Request) -> Any:
-    deps = _require_deps(request)
+    deps = require_deps(request)
     writer = getattr(deps, "cache_creation", None)
     if writer is None:
         raise HTTPException(
@@ -362,17 +359,23 @@ def _require_cache_writer(request: Request) -> Any:
     return writer
 
 
-def _require_deps(request: Request) -> Any:
-    deps = getattr(request.app.state, "dependencies", None)
-    if deps is None:
+def _require_creation_json(run_path: str) -> Path:
+    """Resolve a ``run_path`` to its ``creation.json`` or raise 404.
+
+    Used by the override-append and override-revoke routes; both need
+    the same "the run directory must exist on disk and have a
+    ``creation.json`` cache file" gate before they can mutate the file.
+    """
+    path = creation_json_path(Path(run_path))
+    if not path.exists():
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail={
-                "code": "internal_error",
-                "message": "app dependencies are not initialized",
+                "code": "session_not_found",
+                "message": f"creation.json not found at {path}",
             },
         )
-    return deps
+    return path
 
 
 async def _stream_audit_channel(websocket: WebSocket, channel: Any) -> None:

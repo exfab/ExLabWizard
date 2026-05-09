@@ -33,6 +33,7 @@ from urllib.parse import parse_qs
 from fastapi import FastAPI
 
 from exlab_wizard.api import create_app
+from exlab_wizard.constants import Tier
 from exlab_wizard.ui import notifications
 from exlab_wizard.ui.notifications import BannerId, ContainerId, Severity
 from exlab_wizard.ui.pages import (
@@ -313,7 +314,7 @@ def build_test_app() -> FastAPI:
                 test_state.findings = [
                     problems_page.Finding(
                         finding_id="F-1",
-                        severity=problems_page.TIER_HARD,
+                        severity=Tier.HARD,
                         rule_class="Placeholder",
                         path="/data/EQ1/LIMS-001/Run_2026-05-07",
                         matched_token="<placeholder>",
@@ -327,7 +328,7 @@ def build_test_app() -> FastAPI:
                 test_state.findings = [
                     problems_page.Finding(
                         finding_id="F-2",
-                        severity=problems_page.TIER_HARD,
+                        severity=Tier.HARD,
                         rule_class="Missing field",
                         path="/data/EQ1/LIMS-001/Run_2026-05-07/.exlab-wizard/creation.json",
                         matched_token="schema_version=2.0",
@@ -341,7 +342,7 @@ def build_test_app() -> FastAPI:
                 test_state.findings = [
                     problems_page.Finding(
                         finding_id="F-3",
-                        severity=problems_page.TIER_HARD,
+                        severity=Tier.HARD,
                         rule_class="Orphan",
                         path="/data/EQ1/LIMS-001/Run_2026-05-07-orphan",
                         matched_token="missing creation.json",

@@ -25,7 +25,7 @@ the JSON column ``metadata_json``.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +34,7 @@ import msgspec
 
 from exlab_wizard.lims.schemas import LIMSProject
 from exlab_wizard.logging import get_logger
-from exlab_wizard.utils.time import parse_utc_iso
+from exlab_wizard.utils.time import parse_utc_iso, utc_now
 
 __all__ = ["LIMSCache"]
 
@@ -192,7 +192,7 @@ class LIMSCache:
         except ValueError:
             logger.warning("lims_cache.invalid_timestamp", extra={"value": row[0]})
             return False
-        cutoff = datetime.now(UTC) - timedelta(hours=self._ttl_hours)
+        cutoff = utc_now() - timedelta(hours=self._ttl_hours)
         return most_recent >= cutoff
 
     # ------------------------------------------------------------------
@@ -230,5 +230,3 @@ class LIMSCache:
             metadata=metadata,
             fetched_at=last_refreshed,
         )
-
-

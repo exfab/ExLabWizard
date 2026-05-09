@@ -13,7 +13,9 @@ from exlab_wizard.utils.time import (
     dt_to_iso,
     parse_utc_iso,
     parse_utc_iso_or_none,
+    utc_now,
     utc_now_iso,
+    utc_now_or,
 )
 
 __all__ = [
@@ -21,5 +23,7 @@ __all__ = [
     "dt_to_iso",
     "parse_utc_iso",
     "parse_utc_iso_or_none",
+    "utc_now",
     "utc_now_iso",
+    "utc_now_or",
 ]

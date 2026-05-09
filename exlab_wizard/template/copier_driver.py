@@ -39,6 +39,7 @@ import yaml
 
 from exlab_wizard.constants import COPIER_MANIFEST_NAME, RunScope, TemplateType
 from exlab_wizard.errors import TemplateCoreFieldRedeclaredError, TemplateLoadError
+from exlab_wizard.io import load_yaml_manifest
 from exlab_wizard.logging import get_logger
 
 __all__ = [
@@ -81,9 +82,9 @@ class ResolvedTemplate:
 
     name: str
     path: Path
-    exlab_type: str
+    exlab_type: TemplateType
     exlab_version: str
-    run_scope: str | None = None
+    run_scope: RunScope | None = None
     description: str = ""
     plugin_order: list[str] = field(default_factory=list)
     extra_readme_fields: list[dict[str, Any]] = field(default_factory=list)
@@ -138,25 +139,15 @@ class TemplateEngine:
             )
 
         try:
-            raw_text = manifest_path.read_text(encoding="utf-8")
+            manifest = load_yaml_manifest(manifest_path)
         except OSError as exc:
             raise TemplateLoadError(
                 f"failed to read {manifest_path}: {exc}",
             ) from exc
-
-        try:
-            manifest = yaml.safe_load(raw_text)
         except yaml.YAMLError as exc:
             raise TemplateLoadError(
                 f"failed to parse {manifest_path}: {exc}",
             ) from exc
-
-        if manifest is None:
-            manifest = {}
-        if not isinstance(manifest, dict):
-            raise TemplateLoadError(
-                f"{manifest_path} did not parse to a mapping",
-            )
 
         # _exlab_type: must be present, valid, and match the caller scope.
         raw_type = manifest.get("_exlab_type")
@@ -186,7 +177,7 @@ class TemplateEngine:
             )
 
         # _exlab_run_scope: required for run templates, optional otherwise.
-        run_scope: str | None = None
+        run_scope: RunScope | None = None
         if parsed_type is TemplateType.RUN:
             raw_scope = manifest.get("_exlab_run_scope")
             if not isinstance(raw_scope, str) or not raw_scope:
@@ -196,7 +187,7 @@ class TemplateEngine:
                     f"{sorted(s.value for s in RunScope)}",
                 )
             try:
-                run_scope = RunScope(raw_scope).value
+                run_scope = RunScope(raw_scope)
             except ValueError as exc:
                 raise TemplateLoadError(
                     f"{manifest_path}: _exlab_run_scope must be one of "
@@ -224,7 +215,7 @@ class TemplateEngine:
         return ResolvedTemplate(
             name=template_path.name,
             path=template_path,
-            exlab_type=parsed_type.value,
+            exlab_type=parsed_type,
             exlab_version=exlab_version,
             run_scope=run_scope,
             description=description,

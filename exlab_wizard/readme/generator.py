@@ -47,12 +47,11 @@ from typing import Any
 import yaml
 from msgspec import json as msgspec_json
 
+from exlab_wizard import paths
 from exlab_wizard.api.schemas import ReadmeFieldsJson
 from exlab_wizard.constants import (
-    CACHE_DIR_NAME,
     LABEL_MAX_LENGTH,
     OBJECTIVE_MAX_LENGTH,
-    README_FIELDS_JSON_NAME,
     README_FIELDS_JSON_VERSION,
     README_FILE_NAME,
     README_FRONT_MATTER_SCHEMA_VERSION,
@@ -62,6 +61,7 @@ from exlab_wizard.constants import (
 from exlab_wizard.errors import TemplateCoreFieldRedeclaredError
 from exlab_wizard.io import atomic_write_bytes
 from exlab_wizard.logging import get_logger
+from exlab_wizard.paths import readme_fields_json_path
 from exlab_wizard.utils.time import dt_to_iso, parse_utc_iso
 
 __all__ = [
@@ -198,9 +198,8 @@ class ReadmeGenerator:
         _validate(ctx)
 
         readme_path = dst / README_FILE_NAME
-        cache_dir = dst / CACHE_DIR_NAME
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_path = cache_dir / README_FIELDS_JSON_NAME
+        paths.cache_dir(dst).mkdir(parents=True, exist_ok=True)
+        cache_path = readme_fields_json_path(dst)
 
         generated_at = dt_to_iso(ctx.system.created)
 
@@ -494,5 +493,3 @@ def _build_readme_fields(
 # ---------------------------------------------------------------------------
 # I/O helpers
 # ---------------------------------------------------------------------------
-
-

@@ -22,7 +22,6 @@ manifest + source path and lets the worker do the import.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -37,6 +36,7 @@ from exlab_wizard.constants import (
     PLUGIN_TIMEOUT_MAX_SECONDS,
     PluginSourceRoot,
 )
+from exlab_wizard.io import load_yaml_manifest
 from exlab_wizard.logging import get_logger
 
 __all__ = [
@@ -243,14 +243,10 @@ class PluginRegistry:
             return (None, (fallback_name, f"missing {PLUGIN_MANIFEST_NAME}"))
 
         try:
-            raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+            raw = load_yaml_manifest(manifest_path)
         except yaml.YAMLError as exc:
             _log.warning("plugin '%s' manifest is malformed YAML: %s", fallback_name, exc)
             return (None, (fallback_name, f"malformed manifest: {exc}"))
-
-        if not isinstance(raw, dict):
-            _log.warning("plugin '%s' manifest is not a mapping", fallback_name)
-            return (None, (fallback_name, "manifest is not a mapping"))
 
         for f in _REQUIRED_MANIFEST_FIELDS:
             if f not in raw:
@@ -412,4 +408,4 @@ def _suffix_or_full(path: Path) -> str:
 # want the raw form (e.g. lint output). The pattern itself is what the
 # registry uses to validate plugin names.
 _PLUGIN_NAME_REGEX_RAW: str = PLUGIN_NAME_PATTERN.pattern
-assert re.match(_PLUGIN_NAME_REGEX_RAW, "valid_name-1") is not None  # sanity guard
+assert PLUGIN_NAME_PATTERN.match("valid_name-1") is not None  # sanity guard

@@ -61,8 +61,11 @@ from exlab_wizard.constants import (
     LOG_FILE_TEMPLATE,
     OBJECTIVE_MAX_LENGTH,
     README_FILE_NAME,
+    CreationLevel,
+    LIMSProjectSource,
     PluginStatus,
     RunKind,
+    SessionKind,
     SyncStatus,
     TemplateType,
     Tier,
@@ -95,7 +98,7 @@ from exlab_wizard.template.copier_driver import (
     ResolvedTemplate,
     TemplateEngine,
 )
-from exlab_wizard.utils.time import utc_now_iso
+from exlab_wizard.utils.time import utc_now, utc_now_iso
 from exlab_wizard.validator.engine import CreationValidationInput, Validator
 from exlab_wizard.validator.findings import Finding
 
@@ -293,12 +296,12 @@ class CreationController:
         ``FAILED`` synchronously before returning -- so the caller can
         detect them on the very first response.
         """
-        session = self._sessions.open("project", req)
+        session = self._sessions.open(SessionKind.PROJECT, req)
         return await self._launch(session)
 
     async def create_run(self, req: RunCreateRequest) -> SessionHandle:
         """Open a run-creation session and start the pipeline."""
-        session = self._sessions.open("run", req)
+        session = self._sessions.open(SessionKind.RUN, req)
         return await self._launch(session)
 
     async def resume(self, session_id: str, extra_inputs: dict[str, Any]) -> SessionHandle:
@@ -642,11 +645,11 @@ class CreationController:
             cache_path = creation_json_path(dst)
 
             def _gate(payload: CreationJson) -> CreationJson:
-                payload.sync_status = SyncStatus.BLOCKED_BY_VALIDATION.value
+                payload.sync_status = SyncStatus.BLOCKED_BY_VALIDATION
                 return payload
 
             await self._cache_creation.update_creation_atomic(cache_path, _gate)
-            creation_payload.sync_status = SyncStatus.BLOCKED_BY_VALIDATION.value
+            creation_payload.sync_status = SyncStatus.BLOCKED_BY_VALIDATION
             await self._publish(
                 session,
                 {
@@ -836,18 +839,20 @@ class CreationController:
                 "uid": "",
                 "short_id": self._short_id_for(req),
                 "name_at_creation": req.label,
-                "source": "live",
+                "source": LIMSProjectSource.LIVE.value,
             }
         lims_block = LimsProjectBlock(
             uid=str(lims_block_dict.get("uid", "")),
             short_id=str(lims_block_dict.get("short_id", "")),
             name_at_creation=str(lims_block_dict.get("name_at_creation", req.label)),
-            source=str(lims_block_dict.get("source", "live")),
+            source=str(lims_block_dict.get("source", LIMSProjectSource.LIVE.value)),
             cache_freshness_at_use=lims_block_dict.get("cache_freshness_at_use"),
         )
 
         run_kind_value = self._run_kind_value_for(req)
-        level_value = "run" if isinstance(req, RunCreateRequest) else "project"
+        level_value = (
+            CreationLevel.RUN if isinstance(req, RunCreateRequest) else CreationLevel.PROJECT
+        )
 
         nas_root = ""
         for entry in self._config.equipment:
@@ -860,7 +865,7 @@ class CreationController:
                 plugin=entry["plugin"],
                 version=entry["version"],
                 files_affected=list(entry.get("files_affected", [])),
-                status=entry.get("status", PluginStatus.SUCCESS.value),
+                status=entry.get("status", PluginStatus.SUCCESS),
                 isolation=PluginIsolation(
                     duration_ms=int(entry.get("isolation", {}).get("duration_ms", 0)),
                     exit_code=int(entry.get("isolation", {}).get("exit_code", 0)),
@@ -877,7 +882,7 @@ class CreationController:
             created_at=utc_now_iso(),
             created_by=req.operator,
             level=level_value,
-            run_kind=run_kind_value,
+            run_kind=RunKind(run_kind_value),
             lims_project=lims_block,
             template=TemplateBlock(
                 name=resolved.name,
@@ -891,7 +896,7 @@ class CreationController:
                 nas=str(Path(nas_root) / req.equipment_id) if nas_root else "",
             ),
             plugins_applied=plugins_applied,
-            sync_status=SyncStatus.PENDING.value,
+            sync_status=SyncStatus.PENDING,
         )
         await self._cache_creation.write_creation(cache_path, payload)
 
@@ -1067,7 +1072,7 @@ class CreationController:
         log_name = LOG_FILE_TEMPLATE.format(hostname="local")
         log_path = equipment_dir / CACHE_DIR_NAME / log_name
         line = format_log_line(
-            timestamp_utc=datetime.now(tz=UTC),
+            timestamp_utc=utc_now(),
             level="INFO",
             message=message,
             equipment_id=session.request.equipment_id,

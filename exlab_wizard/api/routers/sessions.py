@@ -36,6 +36,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, ConfigDict, Field
 
+from exlab_wizard.api._dependencies import require_controller
 from exlab_wizard.api.events import encode_event, event_from_dict
 from exlab_wizard.api.setup import setup_state_gate
 from exlab_wizard.constants import RunKind
@@ -155,7 +156,7 @@ def build_sessions_router() -> APIRouter:
         request: Request,
         body: SessionCreateRequest,
     ) -> SessionHandleResponse:
-        controller = _require_controller(request)
+        controller = require_controller(request)
         if isinstance(body, _ProjectSessionBody):
             handle = await controller.create_project(_build_project_request(body))
         else:
@@ -165,7 +166,7 @@ def build_sessions_router() -> APIRouter:
 
     @router.get("/{session_id}", response_model=SessionHandleResponse)
     async def get_session(request: Request, session_id: str) -> SessionHandleResponse:
-        controller = _require_controller(request)
+        controller = require_controller(request)
         session = controller.session_store.get(session_id)
         if session is None:
             raise HTTPException(
@@ -197,7 +198,7 @@ def build_sessions_router() -> APIRouter:
         session_id: str,
         body: _ResumeBody,
     ) -> SessionHandleResponse:
-        controller = _require_controller(request)
+        controller = require_controller(request)
         session = controller.session_store.get(session_id)
         if session is None:
             raise HTTPException(
@@ -228,7 +229,7 @@ def build_sessions_router() -> APIRouter:
         session_id: str,
         body: _CancelBody,
     ) -> SessionHandleResponse:
-        controller = _require_controller(request)
+        controller = require_controller(request)
         session = controller.session_store.get(session_id)
         if session is None:
             raise HTTPException(
@@ -278,25 +279,6 @@ def build_sessions_router() -> APIRouter:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _require_controller(request: Request) -> Any:
-    """Pluck the controller out of the bound :class:`AppDependencies`.
-
-    503 if the lifespan handler did not initialize dependencies; callers
-    that need this on every route get a clear error.
-    """
-    deps = getattr(request.app.state, "dependencies", None)
-    controller = getattr(deps, "controller", None) if deps else None
-    if controller is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "internal_error",
-                "message": "controller is not initialized",
-            },
-        )
-    return controller
 
 
 def _build_project_request(body: _ProjectSessionBody) -> ProjectCreateRequest:

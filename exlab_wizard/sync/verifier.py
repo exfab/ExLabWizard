@@ -20,7 +20,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from exlab_wizard import paths
 from exlab_wizard.constants import CACHE_DIR_NAME, CHECKSUMS_RELATIVE
+from exlab_wizard.io import atomic_write_bytes
 from exlab_wizard.logging import get_logger
 
 if TYPE_CHECKING:
@@ -163,10 +165,9 @@ class Verifier:
             manifest[str(rel.as_posix())] = await _compute_sha256(file_path)
 
         # Persist to .exlab-wizard/checksums.sha256.
-        cache_dir = run_path / CACHE_DIR_NAME
-        cache_dir.mkdir(parents=True, exist_ok=True)
+        paths.cache_dir(run_path).mkdir(parents=True, exist_ok=True)
         checksums_path = run_path / CHECKSUMS_RELATIVE
-        checksums_path.write_text(format_manifest(manifest), encoding="utf-8")
+        atomic_write_bytes(checksums_path, format_manifest(manifest).encode("utf-8"))
         return manifest
 
     async def verify_against_local(self, run_path: Path, manifest: dict[str, str]) -> VerifyResult:

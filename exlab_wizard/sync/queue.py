@@ -39,14 +39,14 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 
 import aiosqlite
 
 from exlab_wizard.logging import get_logger
-from exlab_wizard.utils.time import utc_now_iso
+from exlab_wizard.utils.time import dt_to_iso, utc_now_iso, utc_now_or
 
 __all__ = [
     "BACKOFF_SCHEDULE_SECONDS",
@@ -151,8 +151,8 @@ def compute_next_attempt_at(*, attempts_after: int, now: datetime | None = None)
     if attempts_after < 1 or attempts_after > MAX_ATTEMPTS:
         return None
     delay_seconds = BACKOFF_SCHEDULE_SECONDS[attempts_after - 1]
-    moment = (now or datetime.now(tz=UTC)) + timedelta(seconds=delay_seconds)
-    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+    moment = utc_now_or(now) + timedelta(seconds=delay_seconds)
+    return dt_to_iso(moment)
 
 
 class SyncQueue:
@@ -205,6 +205,19 @@ class SyncQueue:
             msg = "SyncQueue.init() must be called before use"
             raise RuntimeError(msg)
         return self._conn
+
+    async def _require_job(self, job_id: str) -> SyncJobRow:
+        """Return the row for ``job_id`` or raise ``ValueError``.
+
+        Centralizes the "look up a job by id, raise on miss" pattern that
+        :meth:`transition`, :meth:`record_failure`, and
+        :meth:`reset_to_queued` all need.
+        """
+        existing = await self.get_by_id(job_id)
+        if existing is None:
+            msg = f"unknown job_id {job_id!r}"
+            raise ValueError(msg)
+        return existing
 
     # ----------------------------------------------------------- CRUD
 
@@ -321,10 +334,7 @@ class SyncQueue:
         The patch is one ``UPDATE`` statement so either every column moves
         or none do. Raises :class:`ValueError` if the job is missing.
         """
-        existing = await self.get_by_id(job_id)
-        if existing is None:
-            msg = f"unknown job_id {job_id!r}"
-            raise ValueError(msg)
+        existing = await self._require_job(job_id)
 
         new_attempts = existing.attempts + (1 if increment_attempts else 0)
         new_verify_passes = existing.verify_passes + (1 if increment_verify_passes else 0)
@@ -391,13 +401,10 @@ class SyncQueue:
         - if ``attempts >= MAX_ATTEMPTS``: terminal ``FAILED``.
         - else: stay in ``QUEUED`` with ``next_attempt_at`` per backoff.
         """
-        existing = await self.get_by_id(job_id)
-        if existing is None:
-            msg = f"unknown job_id {job_id!r}"
-            raise ValueError(msg)
+        existing = await self._require_job(job_id)
 
-        now = now or datetime.now(tz=UTC)
-        last_attempt_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        now = utc_now_or(now)
+        last_attempt_iso = dt_to_iso(now)
         if terminal:
             return await self.transition(
                 job_id,
@@ -434,10 +441,8 @@ class SyncQueue:
         ``attempts`` and ``last_error`` are cleared so the backoff schedule
         starts fresh.
         """
-        existing = await self.get_by_id(job_id)
-        if existing is None:
-            msg = f"unknown job_id {job_id!r}"
-            raise ValueError(msg)
+        # Side-effect: raises ``ValueError`` if the job id is unknown.
+        await self._require_job(job_id)
         conn = self._require_conn()
         await conn.execute(
             """

@@ -18,16 +18,16 @@ guard is kept here so a misconfigured deployment surfaces a clear error.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
+from exlab_wizard.api._dependencies import require_deps
 from exlab_wizard.cache.ingest_writer import IngestWriter
 from exlab_wizard.config.models import Config
-from exlab_wizard.constants import IngestState
+from exlab_wizard.constants import IngestState, SyncHandleState
 from exlab_wizard.logging import get_logger
 from exlab_wizard.orchestrator.cleanup import clear_run
 from exlab_wizard.orchestrator.staging_query import (
@@ -35,6 +35,7 @@ from exlab_wizard.orchestrator.staging_query import (
     list_staged_runs,
 )
 from exlab_wizard.paths import ingest_json_path
+from exlab_wizard.utils.time import utc_now
 
 __all__ = [
     "ClearResponse",
@@ -107,9 +108,9 @@ def build_staging_router() -> APIRouter:
 
     @router.get("/staging", response_model=StagingListResponse)
     async def get_staging(request: Request) -> StagingListResponse:
-        deps = _require_deps(request)
+        deps = require_deps(request)
         config = _require_orchestrator_enabled(deps)
-        rows = list_staged_runs(config=config, now_utc=datetime.now(tz=UTC))
+        rows = list_staged_runs(config=config, now_utc=utc_now())
         return StagingListResponse(runs=[_row_from_summary(s) for s in rows])
 
     @router.post(
@@ -117,13 +118,13 @@ def build_staging_router() -> APIRouter:
         response_model=ForceSyncResponse,
     )
     async def post_force_sync(request: Request, run_path: str) -> ForceSyncResponse:
-        deps = _require_deps(request)
+        deps = require_deps(request)
         _require_orchestrator_enabled(deps)
         nas_sync = _require_nas_sync(deps)
         path = Path(run_path)
         handle = await nas_sync.enqueue(path)
         # ``handle`` is a SyncJobHandle-like object exposing .state / .job_id.
-        state_value = getattr(handle, "state", "queued")
+        state_value = getattr(handle, "state", SyncHandleState.QUEUED)
         job_id_value = getattr(handle, "job_id", None) or None
         _log.info(
             "force-sync requested via API: path=%s state=%s job_id=%s",
@@ -142,7 +143,7 @@ def build_staging_router() -> APIRouter:
         response_model=ClearResponse,
     )
     async def post_clear(request: Request, run_path: str) -> ClearResponse:
-        deps = _require_deps(request)
+        deps = require_deps(request)
         config = _require_orchestrator_enabled(deps)
         ingest_writer = _require_ingest_writer(deps)
         path = Path(run_path)
@@ -156,7 +157,7 @@ def build_staging_router() -> APIRouter:
                 payload = await ingest_writer.read_ingest(ingest_path)
             except Exception:
                 payload = None
-            if payload is not None and payload.current_state != IngestState.SYNC_VERIFIED.value:
+            if payload is not None and payload.current_state != IngestState.SYNC_VERIFIED:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail={
@@ -198,19 +199,6 @@ def _row_from_summary(summary: StagedRunSummary) -> StagedRunRow:
         elapsed_seconds_since_last_activity=summary.elapsed_seconds_since_last_activity,
         last_activity_at=summary.last_activity_at,
     )
-
-
-def _require_deps(request: Request) -> Any:
-    deps = getattr(request.app.state, "dependencies", None)
-    if deps is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "code": "internal_error",
-                "message": "app dependencies are not initialized",
-            },
-        )
-    return deps
 
 
 def _require_orchestrator_enabled(deps: Any) -> Config:

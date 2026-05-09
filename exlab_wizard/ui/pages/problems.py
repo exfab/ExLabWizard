@@ -15,15 +15,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from exlab_wizard.constants import Tier
 from exlab_wizard.logging import get_logger
 from exlab_wizard.ui.components import filter_chips
 
 _log = get_logger(__name__)
-
-
-# Severity tiers per Backend §8.1.
-TIER_HARD = "hard"
-TIER_SOFT = "soft"
 
 # Problem classes per Backend §8.1.1-§8.1.5.
 PROBLEM_CLASSES: tuple[str, ...] = (
@@ -241,7 +237,7 @@ def render_problems_page(
             )
         else:
             for idx, finding in enumerate(visible):
-                color_var = "--color-warning" if finding.severity == TIER_HARD else "--color-muted"
+                color_var = "--color-warning" if finding.severity == Tier.HARD else "--color-muted"
                 with (
                     ui.row()
                     .classes("items-center w-full")
@@ -266,7 +262,7 @@ def render_problems_page(
                         "color: var(--color-muted);"
                     )
                     if (
-                        finding.severity == TIER_HARD
+                        finding.severity == Tier.HARD
                         and finding.state == "Active"
                         and on_override is not None
                     ):

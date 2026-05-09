@@ -92,9 +92,7 @@ BEARER_PATTERN: re.Pattern[str] = re.compile(BEARER_REGEX)
 # to end-of-line or the next comma (in case the header is embedded in a
 # request log). The keyword is matched case-insensitively to mirror HTTP
 # header semantics. Backend Spec §16.10.
-AUTHORIZATION_HEADER_REGEX: str = (
-    r"(?P<keyword>(?i:Authorization)\s*:\s*)(?P<value>[^\r\n,]+)"
-)
+AUTHORIZATION_HEADER_REGEX: str = r"(?P<keyword>(?i:Authorization)\s*:\s*)(?P<value>[^\r\n,]+)"
 AUTHORIZATION_HEADER_PATTERN: re.Pattern[str] = re.compile(AUTHORIZATION_HEADER_REGEX)
 
 # Run-id sanitisation regex used by the plugin host. Matches every run of

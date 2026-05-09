@@ -683,9 +683,7 @@ def test_lims_project_block_source_round_trip(
         ("both", RunScope.BOTH),
     ],
 )
-def test_template_block_run_scope_round_trip(
-    raw_value: str, enum_member: RunScope
-) -> None:
+def test_template_block_run_scope_round_trip(raw_value: str, enum_member: RunScope) -> None:
     raw_bytes = msgspec_json.encode(
         {
             "name": "x",
@@ -711,9 +709,7 @@ def test_template_block_run_scope_round_trip(
         ("policy_violation", PluginStatus.POLICY_VIOLATION),
     ],
 )
-def test_plugin_applied_status_round_trip(
-    raw_value: str, enum_member: PluginStatus
-) -> None:
+def test_plugin_applied_status_round_trip(raw_value: str, enum_member: PluginStatus) -> None:
     raw_bytes = msgspec_json.encode(
         {
             "plugin": "p",
