@@ -110,15 +110,16 @@ jobs:
           DEFAULT_ADMIN_EMAIL: ${{ env.EXLAB_ADMIN_EMAIL }}
           DEFAULT_ADMIN_PASSWORD: ${{ env.EXLAB_ADMIN_PASSWORD }}
           AUTO_POPULATE_TEST_DATA: "true"
-        # The override does two jobs on top of the upstream compose
+        # The override does three jobs on top of the upstream compose
         # file: (a) point the ``app`` service at the GHA-cached image
-        # so we skip rebuild, and (b) add a postgres healthcheck so
-        # compose waits for the DB to actually accept connections
-        # before starting the app. Upstream's ``depends_on: db`` only
-        # gates on container *start*, and the OCaml app's own
-        # wait_for_db retries 15 x 2s = 30s before exiting -- on a
-        # cold CI runner postgres init can exceed that, the app dies,
-        # and ``restart: always`` hides the repeated crash.
+        # so we skip rebuild, (b) forward DEFAULT_ADMIN_EMAIL /
+        # DEFAULT_ADMIN_PASSWORD into the container so the seeded
+        # admin user matches the credentials our pytest run sends
+        # (upstream's compose file does not reference these vars, so
+        # job-level shell env alone never reaches the OCaml process),
+        # and (c) gate ``app`` on a postgres healthcheck so the OCaml
+        # ``wait_for_db`` retry budget does not race the cold-runner
+        # postgres init.
         run: |
           cat > "${EXLAB_DEPLOY_DIR}/deploy/docker-compose.override.yml" <<YAML
           services:
@@ -130,6 +131,9 @@ jobs:
                 retries: 30
             app:
               image: ${EXLAB_APP_IMAGE}
+              environment:
+                - DEFAULT_ADMIN_EMAIL=${EXLAB_ADMIN_EMAIL}
+                - DEFAULT_ADMIN_PASSWORD=${EXLAB_ADMIN_PASSWORD}
               depends_on:
                 db:
                   condition: service_healthy
