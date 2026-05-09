@@ -170,3 +170,146 @@ class PluginStatus(StrEnum):
     SKIPPED = "skipped"
     TIMEOUT = "timeout"
     POLICY_VIOLATION = "policy_violation"
+
+
+class CreationLevel(StrEnum):
+    """Whether a creation.json describes a project root or a run directory.
+
+    Stored under ``level`` in creation.json. Backend Spec §11.3.
+    """
+
+    PROJECT = "project"
+    RUN = "run"
+
+
+class OrchestratorTransportType(StrEnum):
+    """How the orchestrator delivered run data to the staging area.
+
+    Distinct from :class:`TransportType` (which describes the NAS sync
+    transport). Stored under ``transport`` in ingest.json. Backend Spec §13.3.
+    """
+
+    SMB_MOUNT = "smb_mount"
+    FILE_TRANSFER = "file_transfer"
+
+
+class FieldType(StrEnum):
+    """Allowed input types for README field declarations. Backend Spec §10."""
+
+    STRING = "string"
+    TEXT = "text"
+    CHOICE = "choice"
+    DATE = "date"
+    BOOLEAN = "boolean"
+
+
+class BandwidthDay(StrEnum):
+    """Day-of-week values for NAS sync bandwidth windows. Backend Spec §7.1."""
+
+    MON = "mon"
+    TUE = "tue"
+    WED = "wed"
+    THU = "thu"
+    FRI = "fri"
+    SAT = "sat"
+    SUN = "sun"
+
+
+class SessionKind(StrEnum):
+    """Whether a wizard session creates a project root or a run directory.
+
+    Mirrors :class:`CreationLevel` -- the set of values is identical, but the
+    two names appear in different contexts (session control flow vs cache
+    schema), so they are kept distinct. Backend Spec §4.7.
+    """
+
+    PROJECT = "project"
+    RUN = "run"
+
+
+class NextAction(StrEnum):
+    """Outcome of a session-store transition. Backend Spec §4.7."""
+
+    NONE = "none"
+    AWAITING_INPUT = "awaiting_input"
+
+
+class AuditScopeKind(StrEnum):
+    """Kind discriminator for validator audit scopes. Backend Spec §8.1.
+
+    Values match the ``kind`` field of the AuditScope* TypedDicts; the
+    TypedDicts themselves keep ``Literal[...]`` annotations because
+    ``TypedDict`` does not accept ``StrEnum`` field types.
+    """
+
+    EQUIPMENT_ID = "equipment_id"
+    PROJECT_PATH = "project_path"
+    ALL = "all"
+
+
+class DirectoryLevel(StrEnum):
+    """Result of classifying a directory in the validator engine.
+
+    Used internally by the validator scope walk; not persisted. Backend
+    Spec §8.1.
+    """
+
+    EQUIPMENT = "equipment"
+    PROJECT = "project"
+    RUN = "run"
+    TEST_RUN = "test_run"
+    TEST_RUNS = "test_runs"
+    OTHER = "other"
+
+
+class Platform(StrEnum):
+    """Normalized platform tag used for OS-conditional path dispatch."""
+
+    MACOS = "macos"
+    WINDOWS = "windows"
+    LINUX = "linux"
+
+
+class SetupNextAction(StrEnum):
+    """Next action returned by ``paths.setup_state_next_action``.
+
+    Backend Spec §4.9.1. ``None`` is also a valid return when the setup
+    state is :class:`SetupState.READY`.
+    """
+
+    SET_PATHS = "set_paths"
+    ADD_EQUIPMENT = "add_equipment"
+    CONFIGURE_LIMS = "configure_lims"
+    TEST_LIMS = "test_lims"
+
+
+class SyncHandleState(StrEnum):
+    """In-process state of a NAS sync job handle as observed by callers.
+
+    Distinct from :class:`SyncStatus` (which is persisted in creation.json)
+    and from the queue's internal ``SyncJobState`` (which tracks the row in
+    sync_queue.db). Backend Spec §7.1.
+    """
+
+    QUEUED = "queued"
+    BLOCKED = "blocked"
+
+
+class PluginSourceRoot(StrEnum):
+    """Origin of a plugin record. Backend Spec §6.1.1."""
+
+    BUNDLED = "bundled"
+    LAB = "lab"
+
+
+class TreeProjectStatus(StrEnum):
+    """UI-layer project status displayed in the tree view.
+
+    Distinct from :class:`LIMSProjectStatus` (PascalCase wire values from
+    the LIMS API) -- the tree adds a ``DELETED`` sentinel for projects
+    removed from LIMS but still present locally.
+    """
+
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+    DELETED = "deleted"
