@@ -24,6 +24,8 @@ from dataclasses import dataclass
 
 from msgspec import Struct
 
+from exlab_wizard.constants import LIMSProjectStatus
+
 __all__ = [
     "HealthStatus",
     "LIMSProject",
@@ -47,7 +49,7 @@ class LIMSProject(
     uid: str
     short_id: str
     name: str
-    status: str
+    status: LIMSProjectStatus
     owner: str
     fetched_at: str
     description: str | None = None

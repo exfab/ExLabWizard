@@ -883,7 +883,7 @@ class CreationController:
                 name=resolved.name,
                 version=resolved.exlab_version,
                 source_path=str(resolved.path),
-                run_scope=resolved.run_scope or "",
+                run_scope=resolved.run_scope,
             ),
             variables=dict(req.variables),
             paths=PathsBlock(
