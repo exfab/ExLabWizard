@@ -38,7 +38,7 @@ AUTO_POPULATE_TEST_DATA=true \
 
 echo "==> waiting for /api/v1/me to respond (401 means server is up)"
 for _ in $(seq 1 120); do
-  status="$(curl -fsS -o /dev/null -w '%{http_code}' http://localhost:8080/api/v1/me || true)"
+  status="$(curl -sS -o /dev/null -w '%{http_code}' http://localhost:8080/api/v1/me || true)"
   if [[ "${status}" == "401" ]]; then
     break
   fi
