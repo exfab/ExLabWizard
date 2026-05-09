@@ -63,13 +63,14 @@ class LIMSUser(
 ):
     """One LIMS user row. Backend Spec §7.2.3.
 
-    Only the three fields ExLab-Wizard reads via ``GET /me`` are typed
-    here; additional fields the LIMS may return are dropped by msgspec.
+    Mirrors the upstream ``safe_user`` contract returned by
+    ``GET /api/v1/me``. Only the fields ExLab-Wizard surfaces are
+    typed; everything else is dropped by msgspec.
     """
 
     uid: str
     email: str
-    name: str
+    role: str
 
 
 @dataclass(frozen=True)

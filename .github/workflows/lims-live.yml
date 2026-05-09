@@ -1,0 +1,257 @@
+# Live LIMS-contract verification against upstream `mcnaughtonadm/exlab`.
+#
+# The in-process FastAPI mock at ``tests/fixtures/mock_lims.py`` and the
+# vendored snapshots under ``tests/fixtures/lims/exlab_v1/`` keep PR CI
+# fast and hermetic, but they only catch drift the moment the snapshots
+# are re-grounded. This workflow is the re-grounding signal: it clones
+# upstream at HEAD, brings the bundled ``deploy/docker-compose.local.yml``
+# stack up with seeded admin credentials and ``AUTO_POPULATE_TEST_DATA``,
+# waits for the OCaml app to come up, and runs the LIMS integration +
+# contract suites against it via the ``EXLAB_ENDPOINT`` hook in
+# ``tests/integration/test_lims_integration.py::_make_client``.
+#
+# Triggers:
+#   * ``schedule`` -- weekly (Monday 06:00 UTC) so upstream drift surfaces
+#     even without local activity.
+#   * ``workflow_dispatch`` -- manual re-run from the Actions UI.
+#   * ``push`` to ``main`` -- every merge to main triggers a full live
+#     verification regardless of which paths were touched.
+#   * ``pull_request`` paths-filtered -- pre-merge runs only when the
+#     change touches the LIMS surface or this workflow itself, so most
+#     PRs do not pay the docker-compose cost.
+#
+# Upstream pin: none. The job clones ``mcnaughtonadm/exlab`` at HEAD so
+# the signal reflects the latest contract. If upstream main breaks, the
+# job goes red and we either bump our snapshots/decoders or skip the
+# offending day's run via the schedule.
+
+name: lims-live
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+  pull_request:
+    paths:
+      - "exlab_wizard/lims/**"
+      - "tests/integration/test_lims_integration.py"
+      - "tests/integration/test_lims_contract.py"
+      - "tests/fixtures/lims/**"
+      - ".github/workflows/lims-live.yml"
+
+concurrency:
+  group: lims-live-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# `pull-requests: write` lets the failure-diagnostic step post the
+# compose ps + app log dump as a PR comment, since the run summary
+# page requires GitHub auth and the orchestrating session can read
+# PR comments via the GitHub MCP API but not raw step logs.
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  live:
+    name: live (upstream HEAD)
+    runs-on: ubuntu-latest
+    # First run with a cold GHA cache rebuilds the OCaml deps layer
+    # from scratch (~15 min); subsequent runs hit the cache and the
+    # image build collapses to ~1 min. 40 min covers both cases plus
+    # a 10-min wait window and the pytest run with comfortable margin.
+    timeout-minutes: 40
+    env:
+      EXLAB_DEPLOY_DIR: /tmp/exlab
+      EXLAB_COMPOSE_FILE: /tmp/exlab/deploy/docker-compose.local.yml
+      EXLAB_ADMIN_EMAIL: admin@exlab.test
+      EXLAB_ADMIN_PASSWORD: ci-test-password
+      EXLAB_APP_IMAGE: exlab-app-cached:latest
+    steps:
+      - name: Checkout (this repo)
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[test]
+
+      - name: Clone upstream exlab @ HEAD
+        run: git clone --depth=1 https://gitlab.com/mcnaughtonadm/exlab.git "${EXLAB_DEPLOY_DIR}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build the OCaml app image with the GHA cache backend so the
+      # `opam install . --deps-only` layer (the long pole, ~15 min on
+      # a cold runner) is cached between workflow runs. The compose
+      # `app` service has both ``image`` (set via the override file
+      # in the next step) and ``build``; with ``compose up`` *not*
+      # passing ``--build``, compose reuses the pre-built image.
+      - name: Build exlab app image (cached via GHA)
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ env.EXLAB_DEPLOY_DIR }}
+          file: ${{ env.EXLAB_DEPLOY_DIR }}/Dockerfile
+          tags: ${{ env.EXLAB_APP_IMAGE }}
+          load: true
+          cache-from: type=gha,scope=lims-live-app
+          cache-to: type=gha,scope=lims-live-app,mode=max
+
+      - name: Boot exlab + postgres (pre-built app image)
+        env:
+          DEFAULT_ADMIN_EMAIL: ${{ env.EXLAB_ADMIN_EMAIL }}
+          DEFAULT_ADMIN_PASSWORD: ${{ env.EXLAB_ADMIN_PASSWORD }}
+          AUTO_POPULATE_TEST_DATA: "true"
+        # The override does three jobs on top of the upstream compose
+        # file: (a) point the ``app`` service at the GHA-cached image
+        # so we skip rebuild, (b) forward DEFAULT_ADMIN_EMAIL /
+        # DEFAULT_ADMIN_PASSWORD into the container so the seeded
+        # admin user matches the credentials our pytest run sends
+        # (upstream's compose file does not reference these vars, so
+        # job-level shell env alone never reaches the OCaml process),
+        # and (c) gate ``app`` on a postgres healthcheck so the OCaml
+        # ``wait_for_db`` retry budget does not race the cold-runner
+        # postgres init.
+        run: |
+          cat > "${EXLAB_DEPLOY_DIR}/deploy/docker-compose.override.yml" <<YAML
+          services:
+            db:
+              healthcheck:
+                test: ["CMD-SHELL", "pg_isready -U user -d exlab_dev"]
+                interval: 2s
+                timeout: 5s
+                retries: 30
+            app:
+              image: ${EXLAB_APP_IMAGE}
+              environment:
+                - DEFAULT_ADMIN_EMAIL=${EXLAB_ADMIN_EMAIL}
+                - DEFAULT_ADMIN_PASSWORD=${EXLAB_ADMIN_PASSWORD}
+              depends_on:
+                db:
+                  condition: service_healthy
+          YAML
+          docker compose \
+            -f "${EXLAB_COMPOSE_FILE}" \
+            -f "${EXLAB_DEPLOY_DIR}/deploy/docker-compose.override.yml" \
+            up -d
+          docker compose -f "${EXLAB_COMPOSE_FILE}" ps
+          echo "---app startup logs (first 50 lines)---"
+          docker compose -f "${EXLAB_COMPOSE_FILE}" logs --tail=50 app || true
+
+      # 300 attempts * 2s = 10 minutes. Cold-runner Postgres + a fresh
+      # OCaml ``--build`` regularly exceeds 4 minutes on ubuntu-latest;
+      # the job-level ``timeout-minutes`` (40) is the real ceiling.
+      # We accept *any* HTTP response from ``/api/v1/me`` (not just
+      # 401): the marker is "the port is bound and the OCaml app is
+      # serving requests"; pytest immediately afterwards is the real
+      # contract check, so a 200/403/404 here still produces a useful
+      # downstream signal instead of a silent loop timeout.
+      - name: Wait for /api/v1/me to respond
+        run: |
+          status="000"
+          for i in $(seq 1 300); do
+            status="$(curl -sS -o /dev/null -w '%{http_code}' http://localhost:8080/api/v1/me || echo 000)"
+            if [[ "${status}" =~ ^[1-5][0-9][0-9]$ ]]; then
+              echo "exlab responded HTTP ${status} after $((i * 2))s"
+              exit 0
+            fi
+            if (( i % 30 == 0 )); then
+              echo "[wait] ${i}/300 attempts; last status=${status}; container state:"
+              docker compose -f "${EXLAB_COMPOSE_FILE}" ps || true
+              echo "[wait] last 20 lines of app log:"
+              docker compose -f "${EXLAB_COMPOSE_FILE}" logs --tail=20 app || true
+            fi
+            sleep 2
+          done
+          # Render the failure context to $GITHUB_STEP_SUMMARY so it
+          # surfaces on the run summary page without needing to drill
+          # into the step log archive.
+          {
+            echo "## lims-live wait-loop timeout"
+            echo ""
+            echo "Last curl status: \`${status}\` against \`http://localhost:8080/api/v1/me\` after 300 attempts (~600s)."
+            echo ""
+            echo "### \`docker compose ps\`"
+            echo '```'
+            docker compose -f "${EXLAB_COMPOSE_FILE}" ps 2>&1 || true
+            echo '```'
+            echo ""
+            echo "### app container log (full)"
+            echo '```'
+            docker compose -f "${EXLAB_COMPOSE_FILE}" logs app 2>&1 | tail -200 || true
+            echo '```'
+            echo ""
+            echo "### db container log (last 50 lines)"
+            echo '```'
+            docker compose -f "${EXLAB_COMPOSE_FILE}" logs --tail=50 db 2>&1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "exlab failed to start within 600s; last status=${status}" >&2
+          docker compose -f "${EXLAB_COMPOSE_FILE}" ps >&2 || true
+          echo "---app log on timeout---" >&2
+          docker compose -f "${EXLAB_COMPOSE_FILE}" logs app >&2 || true
+          exit 1
+
+      - name: Run LIMS integration + contract suites against live exlab
+        env:
+          EXLAB_ENDPOINT: http://localhost:8080
+          EXLAB_EMAIL: ${{ env.EXLAB_ADMIN_EMAIL }}
+          EXLAB_PASSWORD: ${{ env.EXLAB_ADMIN_PASSWORD }}
+        run: pytest -v tests/integration/test_lims_integration.py tests/integration/test_lims_contract.py
+
+      - name: Dump compose logs on failure
+        if: failure()
+        # Logs may include the seeded admin password through env-injection
+        # diagnostics; this dump is gated on failure so happy-path runs
+        # never expose it. The ephemeral throwaway credentials live only
+        # in this workflow file and are rotated by editing it.
+        run: docker compose -f "${EXLAB_COMPOSE_FILE}" logs
+
+      # On PR runs, post the compose ps + app log dump as a PR
+      # comment. The run summary page requires GitHub auth to read,
+      # but PR comments are reachable via the GitHub MCP API the
+      # orchestrating session uses.
+      - name: Post diagnostics to PR on failure
+        if: failure() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "## lims-live diagnostic dump"
+            echo ""
+            echo "Run: [\`${GITHUB_RUN_ID}\`](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
+            echo "Commit: \`${GITHUB_SHA}\`"
+            echo ""
+            echo "### \`docker compose ps\`"
+            echo '```'
+            docker compose -f "${EXLAB_COMPOSE_FILE}" ps 2>&1 || true
+            echo '```'
+            echo ""
+            echo "### app container log (last 200 lines)"
+            echo '```'
+            docker compose -f "${EXLAB_COMPOSE_FILE}" logs app 2>&1 | tail -200 || true
+            echo '```'
+            echo ""
+            echo "### db container log (last 50 lines)"
+            echo '```'
+            docker compose -f "${EXLAB_COMPOSE_FILE}" logs --tail=50 db 2>&1 || true
+            echo '```'
+          } > /tmp/diag.md
+          jq -Rs '{body: .}' /tmp/diag.md > /tmp/diag.json
+          curl -fsS -X POST \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues/${{ github.event.number }}/comments" \
+            -d @/tmp/diag.json
+
+      - name: Tear down compose stack
+        if: always()
+        run: docker compose -f "${EXLAB_COMPOSE_FILE}" down -v

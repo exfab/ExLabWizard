@@ -1,12 +1,15 @@
 """In-memory FastAPI fixture LIMS server used by the LIMS-client tests.
 
-The fixture reproduces the v1 LIMS surface ExLab-Wizard reads against
-in :class:`exlab_wizard.lims.client.LIMSClient` (Backend Spec §7.2):
+The fixture mirrors the real upstream contract from
+``gitlab.com/mcnaughtonadm/exlab`` (Backend Spec §7.2):
 
 - ``POST /api/v1/login`` -- email/password login. Sets a session
   cookie on success, returns 401 otherwise.
-- ``GET /api/v1/me`` -- current user. Cookie required.
-- ``GET /api/v1/projects`` -- project list. Cookie required.
+- ``GET /api/v1/me`` -- current user, returning the upstream
+  ``safe_user`` shape (``{id, uid, email, role, created_at,
+  updated_at}``). Cookie required.
+- ``GET /api/v1/projects`` -- project list wrapped in the upstream
+  envelope ``{"data": [...], "count": N}``. Cookie required.
 - ``GET /api/v1/projects/{uid_or_short_id}`` -- one project. Cookie
   required.
 
@@ -39,22 +42,12 @@ class MockLimsState:
     fixture's ``POST /login`` accepts. ``projects`` is a list of dict
     rows -- the wire format the client decodes. ``users`` maps email
     to user dict.
-
-    Two response shapes are supported for the project list to mirror
-    real-world LIMS variation:
-
-    - Bare list:    ``[ {project}, ... ]``
-    - Wrapped dict: ``{"projects": [ ... ]}``
-
-    The default is the wrapped dict (matching the v1 LIMS docs).
-    Tests that need the bare-list path set ``wrap_projects=False``.
     """
 
     valid_email: str
     valid_password: str
     projects: list[dict[str, Any]] = field(default_factory=list)
     users: dict[str, dict[str, Any]] = field(default_factory=dict)
-    wrap_projects: bool = True
     issued_sessions: set[str] = field(default_factory=set)
 
     def issue_session(self) -> str:
@@ -77,7 +70,7 @@ def _default_user(email: str) -> dict[str, Any]:
     return {
         "uid": "user-uid-1",
         "email": email,
-        "name": "Asha Smith",
+        "role": "Admin",
     }
 
 
@@ -100,7 +93,6 @@ def make_mock_lims_app(
     valid_password: str = "secret",
     projects: list[dict[str, Any]] | None = None,
     users: dict[str, dict[str, Any]] | None = None,
-    wrap_projects: bool = True,
 ) -> FastAPI:
     """Build a FastAPI app implementing the v1 LIMS read surface.
 
@@ -115,7 +107,6 @@ def make_mock_lims_app(
         valid_password=valid_password,
         projects=list(projects) if projects is not None else [_default_project()],
         users=dict(users) if users is not None else {valid_email: _default_user(valid_email)},
-        wrap_projects=wrap_projects,
     )
     app.state.mock_state = state
 
@@ -142,11 +133,9 @@ def make_mock_lims_app(
     @app.get("/api/v1/projects")
     async def list_projects(
         session: str | None = Cookie(default=None),
-    ) -> dict[str, Any] | list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         _require_session(session)
-        if state.wrap_projects:
-            return {"projects": state.projects}
-        return state.projects
+        return {"data": state.projects, "count": len(state.projects)}
 
     @app.get("/api/v1/projects/{ident}")
     async def get_project(

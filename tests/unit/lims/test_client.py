@@ -119,28 +119,6 @@ async def test_list_projects_status_filter() -> None:
         await client.close()
 
 
-async def test_list_projects_bare_list_payload() -> None:
-    """The client tolerates LIMS responses that return a bare list."""
-    rows = [
-        {
-            "uid": "u1",
-            "short_id": "PROJ-0001",
-            "name": "x",
-            "status": "Active",
-            "owner": "x",
-            "metadata": {},
-        }
-    ]
-    app = make_mock_lims_app(projects=rows, wrap_projects=False)
-    client = _make_client(app)
-    try:
-        await client.login()
-        projects = await client.list_projects()
-        assert len(projects) == 1
-    finally:
-        await client.close()
-
-
 async def test_get_project_by_uid() -> None:
     app = make_mock_lims_app()
     client = _make_client(app)
@@ -183,7 +161,7 @@ async def test_get_me() -> None:
         await client.login()
         user = await client.get_me()
         assert user.uid == "user-uid-1"
-        assert user.name == "Asha Smith"
+        assert user.role == "Admin"
     finally:
         await client.close()
 

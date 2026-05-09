@@ -109,9 +109,13 @@ class LIMSClient:
         rows whose ``status`` is not in the set are dropped on the
         client side. Filtering happens after deserialization so the
         wire format stays uniform.
+
+        Wire envelope: upstream returns ``{"data": [...], "count": N}``;
+        a missing ``data`` key is treated as an empty list rather than
+        propagating a ``KeyError`` to the caller.
         """
         payload = await self._get_json(_PROJECTS_PATH)
-        rows = payload.get("projects", payload) if isinstance(payload, dict) else payload
+        rows = payload.get("data", [])
         projects = [self._project_from_row(row) for row in rows]
         if status_filter:
             allowed = set(status_filter)

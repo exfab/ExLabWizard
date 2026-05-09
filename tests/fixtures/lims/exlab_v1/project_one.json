@@ -1,0 +1,13 @@
+{
+  "id": 1,
+  "uid": "11111111-1111-1111-1111-111111111111",
+  "short_id": "PROJ-0001",
+  "name": "Cortex Q3 Pilot",
+  "description": "Auto-populated example project from AUTO_POPULATE_TEST_DATA.",
+  "status": "Active",
+  "contact_name": "Lab Lead",
+  "owner": "admin@exlab.test",
+  "metadata": {"tier": "pilot", "site": "main"},
+  "created_at": 1715000000.0,
+  "updated_at": 1715000000.0
+}
