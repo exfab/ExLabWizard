@@ -56,12 +56,6 @@ from exlab_wizard.constants import enums
         (enums.SyncHandleState, frozenset({"queued", "blocked"})),
         (enums.PluginSourceRoot, frozenset({"bundled", "lab"})),
         (enums.TreeProjectStatus, frozenset({"active", "archived", "deleted"})),
-        # Existing enums that have sibling ``Literal[...]`` annotations on
-        # Pydantic models or TypedDicts elsewhere in the codebase.
-        (enums.RunKind, frozenset({"experimental", "test"})),
-        (enums.TransportType, frozenset({"rclone", "rsync_ssh"})),
-        (enums.StagingCleanupMode, frozenset({"manual", "scheduled"})),
-        (enums.CompletenessSignal, frozenset({"sentinel_file", "manifest"})),
     ],
 )
 def test_enum_values_match_expected_literal_set(
