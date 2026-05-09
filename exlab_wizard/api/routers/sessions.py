@@ -45,6 +45,7 @@ from exlab_wizard.controller import (
     SessionState,
 )
 from exlab_wizard.logging import get_logger
+from exlab_wizard.utils.time import parse_utc_iso
 
 __all__ = ["build_sessions_router"]
 
@@ -312,7 +313,7 @@ def _build_project_request(body: _ProjectSessionBody) -> ProjectCreateRequest:
 def _build_run_request(body: _RunSessionBody) -> RunCreateRequest:
     run_date: datetime | None = None
     if body.run_date:
-        run_date = datetime.fromisoformat(body.run_date.replace("Z", "+00:00"))
+        run_date = parse_utc_iso(body.run_date)
     return RunCreateRequest(
         equipment_id=body.equipment_id,
         project_short_id=body.project_short_id,

@@ -9,7 +9,6 @@ edit cycles.
 from __future__ import annotations
 
 import io
-import os
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +17,7 @@ from ruamel.yaml import YAML
 
 from exlab_wizard.config.models import Config
 from exlab_wizard.errors import ConfigError
+from exlab_wizard.io import atomic_write_bytes
 from exlab_wizard.logging import get_logger
 
 _log = get_logger(__name__)
@@ -87,13 +87,11 @@ def save_config(path: Path, config: Config, *, original_text: str | None = None)
     else:
         out = new_dict
 
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    text_buf = io.StringIO()
+    yaml.dump(out, text_buf)
+    encoded = text_buf.getvalue().encode("utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tmp.open("w", encoding="utf-8") as fh:
-        yaml.dump(out, fh)
-        fh.flush()
-        os.fsync(fh.fileno())
-    tmp.replace(path)
+    atomic_write_bytes(path, encoded)
     _log.info("saved config.yaml [path=%s] [keys=%d]", str(path), len(out))
 
 

@@ -27,12 +27,11 @@ import msgspec
 
 from exlab_wizard.api.schemas import IngestJson
 from exlab_wizard.config.models import Config
-from exlab_wizard.constants import (
-    CACHE_DIR_NAME,
-    INGEST_JSON_NAME,
-)
+from exlab_wizard.io import read_msgspec_json
 from exlab_wizard.logging import get_logger
 from exlab_wizard.orchestrator._scan import count_files_and_bytes, walk_run_leaves
+from exlab_wizard.paths import ingest_json_path
+from exlab_wizard.utils.time import dt_to_iso, parse_utc_iso_or_none, utc_now_iso
 
 __all__ = ["StagedRunSummary", "list_staged_runs"]
 
@@ -112,11 +111,11 @@ def _summarize_run(run_path: Path, now: datetime) -> StagedRunSummary | None:
     written its initial ingest yet) are silently omitted -- the watcher
     will catch up on the next pass.
     """
-    ingest_path = run_path / CACHE_DIR_NAME / INGEST_JSON_NAME
+    ingest_path = ingest_json_path(run_path)
     if not ingest_path.exists():
         return None
     try:
-        ingest = msgspec.json.decode(ingest_path.read_bytes(), type=IngestJson)
+        ingest = read_msgspec_json(ingest_path, IngestJson)
     except (msgspec.DecodeError, msgspec.ValidationError) as exc:
         _log.warning("ingest.json at %s could not be decoded: %s", ingest_path, exc)
         return None
@@ -154,30 +153,17 @@ def _last_activity_at(ingest: IngestJson, run_path: Path) -> str:
     try:
         mtime = run_path.stat().st_mtime
     except OSError:
-        return datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return datetime.fromtimestamp(mtime, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return utc_now_iso()
+    return dt_to_iso(datetime.fromtimestamp(mtime, tz=UTC))
 
 
 def _parse_iso(value: str, *, fallback: datetime) -> datetime:
     """Parse an ISO-8601 ``Z``-suffixed timestamp; fall back on error."""
-    if not value:
-        return fallback
-    try:
-        normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return fallback
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed
+    result = parse_utc_iso_or_none(value)
+    return result if result is not None else fallback
 
 
 def _iso_to_epoch(value: str) -> float:
     """Sort key helper -- returns 0.0 if ``value`` cannot be parsed."""
-    if not value:
-        return 0.0
-    try:
-        normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
-        return datetime.fromisoformat(normalized).timestamp()
-    except ValueError:
-        return 0.0
+    result = parse_utc_iso_or_none(value)
+    return result.timestamp() if result is not None else 0.0

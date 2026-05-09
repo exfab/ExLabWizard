@@ -34,6 +34,7 @@ from exlab_wizard.orchestrator.staging_query import (
     StagedRunSummary,
     list_staged_runs,
 )
+from exlab_wizard.paths import ingest_json_path
 
 __all__ = [
     "ClearResponse",
@@ -149,7 +150,7 @@ def build_staging_router() -> APIRouter:
         # runs (manual mode). The watcher would never call this on
         # earlier states, but the API is operator-facing so we enforce
         # the rule here too.
-        ingest_path = path / ".exlab-wizard" / "ingest.json"
+        ingest_path = ingest_json_path(path)
         if ingest_path.exists():
             try:
                 payload = await ingest_writer.read_ingest(ingest_path)

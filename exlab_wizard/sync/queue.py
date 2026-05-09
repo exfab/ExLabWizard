@@ -46,6 +46,7 @@ from pathlib import Path
 import aiosqlite
 
 from exlab_wizard.logging import get_logger
+from exlab_wizard.utils.time import utc_now_iso
 
 __all__ = [
     "BACKOFF_SCHEDULE_SECONDS",
@@ -119,11 +120,6 @@ class SyncJobRow:
     verified_at: str | None = None
     enqueued_at: str = ""
     nas_path: str | None = None
-
-
-def _utc_now_iso() -> str:
-    """Return the current UTC time as an ISO-8601 string."""
-    return datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _row_to_job(row: aiosqlite.Row | tuple) -> SyncJobRow:
@@ -231,7 +227,7 @@ class SyncQueue:
             run_path=str(run_path),
             equipment_id=equipment_id,
             state=SyncJobState.QUEUED,
-            enqueued_at=_utc_now_iso(),
+            enqueued_at=utc_now_iso(),
             nas_path=nas_path,
         )
         await conn.execute(

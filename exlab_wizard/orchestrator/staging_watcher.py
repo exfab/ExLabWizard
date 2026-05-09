@@ -38,7 +38,6 @@ import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -52,8 +51,6 @@ from exlab_wizard.constants import (
     CREATION_JSON_NAME,
     INGEST_JSON_NAME,
     INGEST_JSON_VERSION,
-    RUN_DIR_PREFIX,
-    TEST_RUN_DIR_PREFIX,
     CompletenessSignal,
     IngestState,
 )
@@ -63,6 +60,8 @@ from exlab_wizard.orchestrator._scan import (
     walk_run_leaves,
 )
 from exlab_wizard.orchestrator.cleanup import cleanup_eligible, clear_run
+from exlab_wizard.paths import is_run_dir, is_test_run_dir
+from exlab_wizard.utils.time import utc_now_iso
 
 __all__ = ["NASSyncLike", "StagingWatcher"]
 
@@ -328,7 +327,7 @@ class StagingWatcher:
             history=[
                 {
                     "state": IngestState.STAGING.value,
-                    "at": _now_iso(),
+                    "at": utc_now_iso(),
                     "host": host,
                 },
             ],
@@ -435,9 +434,9 @@ class StagingWatcher:
         # The project name sits at parts[1] and the run leaf is parts[-1].
         project_name = parts[1] if len(parts) >= 2 else ""
         run_name = run_path.name
-        if run_name.startswith(TEST_RUN_DIR_PREFIX):
+        if is_test_run_dir(run_name):
             run_kind = "test"
-        elif run_name.startswith(RUN_DIR_PREFIX):
+        elif is_run_dir(run_name):
             run_kind = "experimental"
         else:
             return None
@@ -504,6 +503,3 @@ def _manifest_satisfied(manifest_path: Path, run_path: Path) -> bool:
     return True
 
 
-def _now_iso() -> str:
-    """Return current UTC time as ISO 8601 with the trailing ``Z`` per §13.4."""
-    return datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

@@ -39,9 +39,8 @@ msgspec).
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -59,7 +58,9 @@ from exlab_wizard.constants import (
     README_FRONT_MATTER_SCHEMA_VERSION,
 )
 from exlab_wizard.errors import TemplateCoreFieldRedeclaredError
+from exlab_wizard.io import atomic_write_bytes
 from exlab_wizard.logging import get_logger
+from exlab_wizard.utils.time import dt_to_iso, parse_utc_iso
 
 __all__ = [
     "CORE_FIELD_IDS",
@@ -199,15 +200,15 @@ class ReadmeGenerator:
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_path = cache_dir / README_FIELDS_JSON_NAME
 
-        generated_at = _format_utc(ctx.system.created)
+        generated_at = dt_to_iso(ctx.system.created)
 
         front_matter = _build_front_matter(ctx, generated_at=generated_at)
         readme_bytes = _render_readme_bytes(ctx, front_matter)
         cache_payload = _build_readme_fields(ctx, generated_at=generated_at)
         cache_bytes = msgspec_json.encode(cache_payload)
 
-        _atomic_write_bytes(readme_path, readme_bytes)
-        _atomic_write_bytes(cache_path, cache_bytes)
+        atomic_write_bytes(readme_path, readme_bytes)
+        atomic_write_bytes(cache_path, cache_bytes)
 
         _log.info(
             "README written: %s (level=%s, run_kind=%s)",
@@ -361,7 +362,7 @@ def _check_value_type(decl: TemplateFieldDecl, value: Any, *, layer: str) -> Non
                 f"got {type(value).__name__}"
             )
         try:
-            datetime.fromisoformat(value.replace("Z", "+00:00"))
+            parse_utc_iso(value)
         except ValueError as exc:
             raise ValueError(
                 f"{layer}_fields[{decl.id!r}] is not a valid ISO 8601 date: {value!r}"
@@ -423,7 +424,7 @@ def _custom_fields_list(custom: list[CustomField]) -> list[dict[str, str]]:
 
 def _system_fields_dict(system: SystemFields) -> dict[str, Any]:
     return {
-        "created": _format_utc(system.created),
+        "created": dt_to_iso(system.created),
         "created_by": system.created_by,
         "equipment": dict(system.equipment),
         "template": dict(system.template),
@@ -493,27 +494,3 @@ def _build_readme_fields(
 # ---------------------------------------------------------------------------
 
 
-def _format_utc(dt: datetime) -> str:
-    """Render ``dt`` as UTC ISO 8601 with the trailing ``Z`` per §10.6.
-
-    Matches the on-disk timestamp shape used by every cache file in
-    §11.3 / §11.4 and the example in §10.7. Naive datetimes are treated
-    as already-UTC so a controller may pass ``datetime.utcnow()``
-    without timezone gymnastics.
-    """
-    if dt.tzinfo is not None:
-        # Convert to UTC, then drop the offset for a clean Z suffix.
-        dt = dt.astimezone(UTC).replace(tzinfo=None)
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _atomic_write_bytes(path: Path, data: bytes) -> None:
-    """Write ``data`` to ``path`` atomically (tempfile + ``os.replace``).
-
-    Mirrors the recipe used elsewhere in the cache package (§4.4.5):
-    the temp file is a sibling so the rename stays on the same volume.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_bytes(data)
-    os.replace(tmp, path)

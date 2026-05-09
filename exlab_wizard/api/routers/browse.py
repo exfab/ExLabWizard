@@ -23,17 +23,16 @@ import msgspec
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
-from exlab_wizard.api.schemas import CreationJson, msgspec_json
+from exlab_wizard.api.schemas import CreationJson
 from exlab_wizard.api.setup import setup_state_gate
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
-    CREATION_JSON_NAME,
     README_FILE_NAME,
-    RUN_DIR_PREFIX,
-    TEST_RUN_DIR_PREFIX,
     TEST_RUNS_DIR_NAME,
 )
+from exlab_wizard.io import read_msgspec_json
 from exlab_wizard.logging import get_logger
+from exlab_wizard.paths import creation_json_path, is_run_dir, is_test_run_dir
 
 __all__ = [
     "EquipmentNode",
@@ -134,7 +133,7 @@ def build_browse_router() -> APIRouter:
     )
     async def get_run(run_path: str) -> RunDetail:
         path = Path(run_path)
-        cache_path = path / CACHE_DIR_NAME / CREATION_JSON_NAME
+        cache_path = creation_json_path(path)
         if not cache_path.exists():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -144,7 +143,7 @@ def build_browse_router() -> APIRouter:
                 },
             )
         try:
-            payload = msgspec_json.decode(cache_path.read_bytes(), type=CreationJson)
+            payload = read_msgspec_json(cache_path, CreationJson)
         except (msgspec.DecodeError, msgspec.ValidationError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -223,9 +222,9 @@ def _build_project_node(project_dir: Path) -> ProjectNode:
         if entry.name == TEST_RUNS_DIR_NAME:
             test_runs.extend(_scan_run_children(Path(entry.path), kind="test"))
             continue
-        if entry.name.startswith(RUN_DIR_PREFIX):
+        if is_run_dir(entry.name):
             runs.append(_build_run_node(Path(entry.path), kind="experimental"))
-    has_cache = (project_dir / CACHE_DIR_NAME / CREATION_JSON_NAME).exists()
+    has_cache = creation_json_path(project_dir).exists()
     return ProjectNode(
         short_id=project_dir.name,
         path=str(project_dir),
@@ -246,19 +245,19 @@ def _scan_run_children(test_runs_dir: Path, *, kind: str) -> list[RunNode]:
             continue
         if entry.name == CACHE_DIR_NAME:
             continue
-        if not entry.name.startswith(TEST_RUN_DIR_PREFIX):
+        if not is_test_run_dir(entry.name):
             continue
         out.append(_build_run_node(Path(entry.path), kind=kind))
     return out
 
 
 def _build_run_node(run_dir: Path, *, kind: str) -> RunNode:
-    cache_path = run_dir / CACHE_DIR_NAME / CREATION_JSON_NAME
+    cache_path = creation_json_path(run_dir)
     sync_status: str | None = None
     has_cache = cache_path.exists()
     if has_cache:
         try:
-            payload = msgspec_json.decode(cache_path.read_bytes(), type=CreationJson)
+            payload = read_msgspec_json(cache_path, CreationJson)
             sync_status = payload.sync_status
         except (msgspec.DecodeError, msgspec.ValidationError):
             sync_status = None

@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from exlab_wizard.logging import get_logger
+from exlab_wizard.paths import run_dir_stem
 from exlab_wizard.ui.components import mode_badge, session_progress
 
 _log = get_logger(__name__)
@@ -92,7 +93,7 @@ def preview_path_segments(state: RunWizardState, *, run_date: str) -> dict[str, 
                 state.selected_equipment or "<equipment>",
                 state.selected_project_short_id or "<project>",
                 "TestRuns",
-                f"TestRun_{run_date}",
+                run_dir_stem(run_date, test=True),
             ],
             "warning_indices": (2, 3),
         }
@@ -100,7 +101,7 @@ def preview_path_segments(state: RunWizardState, *, run_date: str) -> dict[str, 
         "segments": [
             state.selected_equipment or "<equipment>",
             state.selected_project_short_id or "<project>",
-            f"Run_{run_date}",
+            run_dir_stem(run_date),
         ],
         "warning_indices": (),
     }

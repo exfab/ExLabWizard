@@ -69,11 +69,7 @@ from exlab_wizard.cache.creation_writer import select_active_overrides
 from exlab_wizard.config.models import ValidatorConfig
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
-    CREATION_JSON_NAME,
-    README_FIELDS_JSON_NAME,
     README_FILE_NAME,
-    RUN_DIR_PREFIX,
-    TEST_RUN_DIR_PREFIX,
     TEST_RUNS_DIR_NAME,
     VALIDATOR_BINARY_DETECT_BYTES,
     RunKind,
@@ -81,6 +77,12 @@ from exlab_wizard.constants import (
     Tier,
 )
 from exlab_wizard.logging import get_logger
+from exlab_wizard.paths import (
+    creation_json_path,
+    is_run_dir,
+    is_test_run_dir,
+    readme_fields_json_path,
+)
 from exlab_wizard.validator import rules
 from exlab_wizard.validator.findings import Finding
 
@@ -597,11 +599,11 @@ class Validator:
             name = parts[1]
             if name == TEST_RUNS_DIR_NAME:
                 return "test_runs"
-            if name.startswith(RUN_DIR_PREFIX):
+            if is_run_dir(name):
                 return "run"
             return "other"
         if len(parts) == 3 and parts[1] == TEST_RUNS_DIR_NAME:
-            if parts[2].startswith(TEST_RUN_DIR_PREFIX):
+            if is_test_run_dir(parts[2]):
                 return "test_run"
             return "other"
         return "other"
@@ -632,7 +634,7 @@ class Validator:
         parts = rel.parts
         if len(parts) >= 3 and parts[1] == TEST_RUNS_DIR_NAME:
             return str(Path(equipment_root_abs) / Path(*parts[:3]))
-        if len(parts) >= 2 and parts[1].startswith(RUN_DIR_PREFIX):
+        if len(parts) >= 2 and is_run_dir(parts[1]):
             return str(Path(equipment_root_abs) / Path(*parts[:2]))
         if len(parts) >= 1:
             return str(Path(equipment_root_abs) / parts[0])
@@ -761,7 +763,7 @@ class Validator:
         findings). The rule itself is soft-tier so an absent layer is
         not a bug.
         """
-        readme_path = current / CACHE_DIR_NAME / README_FIELDS_JSON_NAME
+        readme_path = readme_fields_json_path(current)
         if not readme_path.exists():
             return
         try:
@@ -954,7 +956,7 @@ class Validator:
         missing-required-field rule can pick up extra IDs the typed
         Struct discards.
         """
-        path = directory / CACHE_DIR_NAME / CREATION_JSON_NAME
+        path = creation_json_path(directory)
         if not path.exists():
             return None, None
         try:

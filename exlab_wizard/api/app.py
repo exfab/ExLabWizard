@@ -28,7 +28,6 @@ import contextlib
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, FastAPI
@@ -46,6 +45,7 @@ from exlab_wizard.api.setup import build_setup_router
 from exlab_wizard.config.models import Config
 from exlab_wizard.constants import AUDIT_REFRESH_SECONDS
 from exlab_wizard.logging import get_logger
+from exlab_wizard.utils.time import utc_now_iso
 
 __all__ = ["AppDependencies", "AuditChannel", "create_app"]
 
@@ -282,7 +282,7 @@ async def _audit_loop(deps: AppDependencies, interval_seconds: float) -> None:
             except Exception as exc:
                 _log.warning("audit pass failed: %s", exc)
                 continue
-            audit_at = datetime.now(tz=UTC).isoformat()
+            audit_at = utc_now_iso()
             deps.last_audit_at = audit_at
             added, removed, changed = _diff_findings(last, findings)
             if deps.audit_channel is not None:

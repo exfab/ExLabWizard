@@ -55,14 +55,12 @@ from exlab_wizard.config.models import Config
 from exlab_wizard.constants import (
     ANSWERS_FILE_NAME,
     CACHE_DIR_NAME,
-    CREATION_JSON_NAME,
     CREATION_JSON_VERSION,
-    EQUIPMENT_JSON_NAME,
     EQUIPMENT_JSON_VERSION,
     LABEL_MAX_LENGTH,
     LOG_FILE_TEMPLATE,
     OBJECTIVE_MAX_LENGTH,
-    PROJECT_SHORT_ID_PATTERN,
+    README_FILE_NAME,
     PluginStatus,
     RunKind,
     SyncStatus,
@@ -75,9 +73,19 @@ from exlab_wizard.controller.state_machine import (
     SessionState,
     state_to_phase,
 )
-from exlab_wizard.errors import ValidationError
+from exlab_wizard.errors import ConfigError, ValidationError
 from exlab_wizard.logging import get_logger
-from exlab_wizard.paths import canonicalize_equipment_id, compose_project_path, compose_run_path
+from exlab_wizard.paths import (
+    cache_dir as get_cache_dir,
+)
+from exlab_wizard.paths import (
+    canonicalize_equipment_id,
+    compose_project_path,
+    compose_run_path,
+    creation_json_path,
+    equipment_json_path,
+    validate_project_short_id,
+)
 from exlab_wizard.plugins.base import PluginContext
 from exlab_wizard.plugins.host import InputRequiredPayload, PluginHost, PluginPassResult
 from exlab_wizard.plugins.logger import HostPluginLogger
@@ -87,6 +95,7 @@ from exlab_wizard.template.copier_driver import (
     ResolvedTemplate,
     TemplateEngine,
 )
+from exlab_wizard.utils.time import utc_now_iso
 from exlab_wizard.validator.engine import CreationValidationInput, Validator
 from exlab_wizard.validator.findings import Finding
 
@@ -196,7 +205,7 @@ class NoOpReadmeGenerator:
     """
 
     async def generate(self, dst: Path, ctx: ReadmeContext) -> Path:
-        readme = dst / "README.md"
+        readme = dst / README_FILE_NAME
         body = f"# {ctx.label}\n\nOperator: {ctx.operator}\n\n{ctx.objective}\n"
         readme.write_text(body, encoding="utf-8")
         return readme
@@ -519,19 +528,17 @@ class CreationController:
             )
 
         # Run-specific gates.
-        if isinstance(req, RunCreateRequest) and not PROJECT_SHORT_ID_PATTERN.fullmatch(
-            req.project_short_id
-        ):
-            raise ValidationError(
-                {
-                    "code": "validation_failed",
-                    "message": (
-                        f"project_short_id {req.project_short_id!r} does not match "
-                        f"pattern {PROJECT_SHORT_ID_PATTERN.pattern}"
-                    ),
-                    "field": "project_short_id",
-                }
-            )
+        if isinstance(req, RunCreateRequest):
+            try:
+                validate_project_short_id(req.project_short_id)
+            except ConfigError as exc:
+                raise ValidationError(
+                    {
+                        "code": "validation_failed",
+                        "message": str(exc),
+                        "field": "project_short_id",
+                    }
+                ) from exc
 
         # Resolve the template so we can read its required-field ids
         # and store the resolved object on the session for downstream
@@ -632,7 +639,7 @@ class CreationController:
                 await self._nas_sync.enqueue(dst)
         else:
             # Mutate the on-disk creation.json to reflect the gated state.
-            cache_path = dst / CACHE_DIR_NAME / CREATION_JSON_NAME
+            cache_path = creation_json_path(dst)
 
             def _gate(payload: CreationJson) -> CreationJson:
                 payload.sync_status = SyncStatus.BLOCKED_BY_VALIDATION.value
@@ -817,9 +824,8 @@ class CreationController:
         await self._readme_generator.generate(dst, readme_ctx)
 
         # Build the CreationJson payload.
-        cache_dir = dst / CACHE_DIR_NAME
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_path = cache_dir / CREATION_JSON_NAME
+        get_cache_dir(dst).mkdir(parents=True, exist_ok=True)
+        cache_path = creation_json_path(dst)
 
         lims_block_dict = req.lims_project if req.lims_project else {}
         if not lims_block_dict:
@@ -868,7 +874,7 @@ class CreationController:
 
         payload = CreationJson(
             schema_version=CREATION_JSON_VERSION,
-            created_at=datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            created_at=utc_now_iso(),
             created_by=req.operator,
             level=level_value,
             run_kind=run_kind_value,
@@ -915,12 +921,12 @@ class CreationController:
 
         local_root = Path(self._config.paths.local_root)
         equipment_dir = local_root / req.equipment_id
-        equipment_cache_path = equipment_dir / CACHE_DIR_NAME / EQUIPMENT_JSON_NAME
+        equipment_cache_path = equipment_json_path(equipment_dir)
 
         # The ``first_seen_at`` / ``last_modified_at`` fields are
         # stamped by the writer; the values supplied here are
         # placeholders that the writer overwrites.
-        now_iso = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = utc_now_iso()
         equipment_payload = EquipmentJson(
             schema_version=EQUIPMENT_JSON_VERSION,
             id=req.equipment_id,
@@ -997,7 +1003,7 @@ class CreationController:
             {
                 "kind": "phase",
                 "phase": phase.value,
-                "at": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "at": utc_now_iso(),
             },
         )
 

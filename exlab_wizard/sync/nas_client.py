@@ -26,10 +26,10 @@ from exlab_wizard.cache.creation_writer import CreationWriter
 from exlab_wizard.config.models import Config, EquipmentConfig, RcloneTransport, RsyncSshTransport
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
-    CREATION_JSON_NAME,
     SyncStatus,
 )
 from exlab_wizard.logging import get_logger
+from exlab_wizard.paths import creation_json_path
 from exlab_wizard.sync.bandwidth import effective_bandwidth_limit_kibps
 from exlab_wizard.sync.cleanup import cleanup_interlocks_satisfied
 from exlab_wizard.sync.pre_sync_gate import is_eligible
@@ -46,6 +46,7 @@ from exlab_wizard.sync.transports import (
 from exlab_wizard.sync.transports.rclone import RcloneTransport as RcloneDriver
 from exlab_wizard.sync.transports.rsync_ssh import RsyncSshTransport as RsyncDriver
 from exlab_wizard.sync.verifier import Verifier, VerifyResult
+from exlab_wizard.utils.time import utc_now_iso
 from exlab_wizard.validator.engine import Validator
 from exlab_wizard.validator.findings import Finding
 
@@ -261,7 +262,7 @@ class NASSyncClient:
         Returns a :class:`SyncJobHandle`. The handle's ``state`` is
         either :attr:`HandleState.BLOCKED` or :attr:`HandleState.QUEUED`.
         """
-        creation_path = run_path / CACHE_DIR_NAME / CREATION_JSON_NAME
+        creation_path = creation_json_path(run_path)
         creation = await self._cache_creation.read_creation_snapshot(creation_path)
 
         eligible, blocking = is_eligible(
@@ -355,7 +356,7 @@ class NASSyncClient:
     async def _next_due_job(self) -> SyncJobRow | None:
         """Return the next QUEUED row whose backoff has passed (or None)."""
         rows = await self._queue.list_in_state(SyncJobState.QUEUED)
-        now_iso = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = utc_now_iso()
         for row in rows:
             if not row.next_attempt_at:
                 return row
@@ -498,7 +499,7 @@ class NASSyncClient:
             return
 
         # Promote to VERIFIED and record one verify pass.
-        verified_iso = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        verified_iso = utc_now_iso()
         await self._queue.transition(
             job.id,
             SyncJobState.VERIFIED,
@@ -604,7 +605,7 @@ class NASSyncClient:
         job = await self._queue.get_by_id(job_id)
         if job is None or job.state != SyncJobState.VERIFIED:
             return
-        creation_path = run_path / CACHE_DIR_NAME / CREATION_JSON_NAME
+        creation_path = creation_json_path(run_path)
         creation: CreationJson | None = None
         if creation_path.exists():
             with contextlib.suppress(Exception):
@@ -692,7 +693,7 @@ class NASSyncClient:
 
     async def _mark_synced(self, run_path: Path) -> None:
         """Mutate ``creation.json`` ``sync_status`` to ``synced``. Backend Spec §7.1.4."""
-        creation_path = run_path / CACHE_DIR_NAME / CREATION_JSON_NAME
+        creation_path = creation_json_path(run_path)
         if not creation_path.exists():
             return
 
@@ -710,7 +711,7 @@ class NASSyncClient:
         ``retain_cache=False`` path removes the cache directory along with
         the data files).
         """
-        creation_path = run_path / CACHE_DIR_NAME / CREATION_JSON_NAME
+        creation_path = creation_json_path(run_path)
         if not creation_path.exists():
             return
 

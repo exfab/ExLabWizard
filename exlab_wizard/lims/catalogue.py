@@ -31,7 +31,6 @@ each rename is atomic; the last writer wins.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,6 +38,7 @@ import msgspec
 
 from exlab_wizard.constants import OFFLINE_CATALOGUE_VERSION
 from exlab_wizard.errors import ConfigError
+from exlab_wizard.io import atomic_write_bytes
 from exlab_wizard.lims.schemas import LIMSProject
 from exlab_wizard.logging import get_logger
 
@@ -142,12 +142,7 @@ def write_catalogue(path: Path, catalogue: OfflineCatalogue) -> None:
         "projects": [_project_to_dict(p) for p in catalogue.projects],
     }
     encoded = msgspec.json.encode(payload)
-    tmp = target.with_name(f"{target.name}.tmp.{os.getpid()}")
-    with tmp.open("wb") as handle:
-        handle.write(encoded)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, target)
+    atomic_write_bytes(target, encoded)
 
 
 def _project_to_dict(project: LIMSProject) -> dict:

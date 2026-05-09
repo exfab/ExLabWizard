@@ -34,6 +34,7 @@ import msgspec
 
 from exlab_wizard.lims.schemas import LIMSProject
 from exlab_wizard.logging import get_logger
+from exlab_wizard.utils.time import parse_utc_iso
 
 __all__ = ["LIMSCache"]
 
@@ -187,7 +188,7 @@ class LIMSCache:
         if row is None or row[0] is None:
             return False
         try:
-            most_recent = _parse_iso8601(row[0])
+            most_recent = parse_utc_iso(row[0])
         except ValueError:
             logger.warning("lims_cache.invalid_timestamp", extra={"value": row[0]})
             return False
@@ -231,12 +232,3 @@ class LIMSCache:
         )
 
 
-def _parse_iso8601(value: str) -> datetime:
-    """Parse a UTC-stamped ISO 8601 string. Accepts trailing ``Z`` or
-    ``+00:00`` and returns a timezone-aware datetime.
-    """
-    text = value.replace("Z", "+00:00") if value.endswith("Z") else value
-    parsed = datetime.fromisoformat(text)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed

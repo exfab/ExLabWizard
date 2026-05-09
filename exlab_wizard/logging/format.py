@@ -30,6 +30,7 @@ import re
 from datetime import UTC, datetime
 
 from exlab_wizard.logging.context import get_run_context
+from exlab_wizard.utils.time import dt_to_iso
 
 __all__ = [
     "StructuredTagFormatter",
@@ -104,7 +105,7 @@ def _format_utc_timestamp(epoch_seconds: float) -> str:
     parsers downstream of the spec rely on it.
     """
     dt = datetime.fromtimestamp(epoch_seconds, tz=UTC)
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return dt_to_iso(dt)
 
 
 def _render_tags() -> str:

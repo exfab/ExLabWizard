@@ -40,30 +40,23 @@ file at major ``M != R``).
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import os
-import tempfile
-from datetime import UTC, datetime
 from pathlib import Path
 
 import msgspec
 from filelock import FileLock
 
 from exlab_wizard.api.schemas import EquipmentJson, TestRunsJson
-from exlab_wizard.errors import SchemaMajorMismatchError
+from exlab_wizard.cache import lock_path_for
+from exlab_wizard.io import atomic_write_bytes, read_msgspec_json, require_schema_major
 from exlab_wizard.logging import get_logger
+from exlab_wizard.utils.time import utc_now_iso
 
 logger = get_logger(__name__)
 
+# Re-exported for backward compatibility with downstream importers that
+# previously got ``require_schema_major`` from this module. The canonical
+# location is now ``exlab_wizard.io``.
 __all__ = ["EquipmentCacheWriter", "require_schema_major"]
-
-
-# Suffix used for the per-file advisory lock that ``filelock`` creates
-# alongside the protected file. Matches the convention in §4.4.5.
-_LOCK_SUFFIX: str = ".lock"
-
-# Suffix used for the temp file written before atomic ``os.replace``.
-_TMP_SUFFIX: str = ".tmp"
 
 
 class EquipmentCacheWriter:
@@ -132,9 +125,8 @@ class EquipmentCacheWriter:
     @staticmethod
     def _write_equipment_sync(path: Path, payload: EquipmentJson) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        lock_path = str(path) + _LOCK_SUFFIX
-        with FileLock(lock_path):
-            now = _utc_now_iso()
+        with FileLock(lock_path_for(path)):
+            now = utc_now_iso()
             existing_first_seen = _read_existing_first_seen_at(path)
             if existing_first_seen is not None:
                 # Preserve original first_seen_at; refresh last_modified_at.
@@ -152,13 +144,11 @@ class EquipmentCacheWriter:
                     first_seen_at=now,
                     last_modified_at=now,
                 )
-            _atomic_write_bytes(path, msgspec.json.encode(stamped))
+            atomic_write_bytes(path, msgspec.json.encode(stamped))
 
     @staticmethod
     def _read_equipment_sync(path: Path) -> EquipmentJson:
-        data = path.read_bytes()
-        _check_schema_major_from_bytes(data, expected_major=1)
-        return msgspec.json.decode(data, type=EquipmentJson)
+        return read_msgspec_json(path, EquipmentJson, expected_major=1)
 
     async def read_test_runs_marker(self, path: Path) -> TestRunsJson:
         """Read and decode a ``test_runs.json`` marker file.
@@ -170,80 +160,23 @@ class EquipmentCacheWriter:
 
     @staticmethod
     def _read_test_runs_marker_sync(path: Path) -> TestRunsJson:
-        data = path.read_bytes()
-        _check_schema_major_from_bytes(data, expected_major=1)
-        return msgspec.json.decode(data, type=TestRunsJson)
+        return read_msgspec_json(path, TestRunsJson, expected_major=1)
 
     @staticmethod
     def _write_test_runs_marker_sync(path: Path, payload: TestRunsJson) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        lock_path = str(path) + _LOCK_SUFFIX
-        with FileLock(lock_path):
+        with FileLock(lock_path_for(path)):
             if path.exists():
                 # Idempotent: the marker is written once and never
                 # rewritten, even if subsequent payloads differ. This
                 # matches §11.4.2 verbatim.
                 return
-            _atomic_write_bytes(path, msgspec.json.encode(payload))
+            atomic_write_bytes(path, msgspec.json.encode(payload))
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def require_schema_major(version: str | None, *, expected_major: int) -> None:
-    """Raise ``SchemaMajorMismatchError`` when ``version`` is a different major.
-
-    Shared schema-major gate for every cache writer in the package
-    (Backend Spec §11.9.2 rule 3): a reader at major ``R`` MUST refuse any
-    file at major ``M != R`` with a structured error. We surface the error
-    as :class:`SchemaMajorMismatchError` carrying ``expected_major`` and
-    ``found`` so the caller can report it via the §4.6.3 error envelope.
-
-    A ``None``, empty, or non-``MAJOR.MINOR`` version string is treated as
-    a major mismatch (the reader cannot tell what version the file claims
-    to be). Callers that want to be lenient about a missing version (e.g.
-    a partially-written or corrupt registry file that should be recovered
-    by rewriting) check that condition themselves before invoking this
-    helper.
-    """
-    if version is None or not version:
-        raise SchemaMajorMismatchError(expected_major=expected_major, found=str(version))
-    try:
-        found_major = int(version.split(".", 1)[0])
-    except ValueError as exc:
-        raise SchemaMajorMismatchError(expected_major=expected_major, found=version) from exc
-    if found_major != expected_major:
-        raise SchemaMajorMismatchError(expected_major=expected_major, found=version)
-
-
-def _check_schema_major_from_bytes(data: bytes, *, expected_major: int) -> None:
-    """Convenience wrapper: peek ``schema_version`` from ``data`` then check.
-
-    Used by readers that already have the file bytes in hand and want a
-    one-liner schema-major gate. Malformed JSON or an absent
-    ``schema_version`` are silently passed through; the typed decoder
-    downstream surfaces the precise validation error.
-    """
-    try:
-        head = msgspec.json.decode(data, type=dict)
-    except (msgspec.DecodeError, msgspec.ValidationError):
-        return
-    version = str(head.get("schema_version", ""))
-    if not version:
-        return
-    require_schema_major(version, expected_major=expected_major)
-
-
-def _utc_now_iso() -> str:
-    """Return the current UTC time as an ISO 8601 string with ``Z`` suffix.
-
-    Matches the timestamp format used by the cache schemas (§11.3, §11.4.1,
-    §11.4.2). Seconds-resolution is sufficient -- subsecond precision is
-    not part of any cross-component contract.
-    """
-    return datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _read_existing_first_seen_at(path: Path) -> str | None:
@@ -270,38 +203,3 @@ def _read_existing_first_seen_at(path: Path) -> str | None:
     return existing.first_seen_at
 
 
-def _atomic_write_bytes(path: Path, data: bytes) -> None:
-    """Write ``data`` to ``path`` atomically.
-
-    Implementation follows the §4.4.5 recipe: write to a sibling temp
-    file in the same directory, ``fsync`` so the bytes are durable on
-    disk, then ``os.replace`` for the atomic rename. Same-directory
-    placement guarantees the rename is a single inode-table update on
-    every supported filesystem (POSIX rename(2); Windows MoveFileEx with
-    MOVEFILE_REPLACE_EXISTING).
-
-    The temp file uses a ``.tmp`` suffix on the target name so audit
-    tools that walk the cache directory can recognize the transient
-    artifact if a process crashes mid-write.
-    """
-    parent = path.parent
-    # NamedTemporaryFile gives us a unique name; we still write to it
-    # ourselves so we can fsync before replace.
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(parent),
-        prefix=path.name + ".",
-        suffix=_TMP_SUFFIX,
-    )
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(data)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp_path, path)
-    except BaseException:
-        # Best-effort cleanup; ignore any error so the original failure
-        # surfaces.
-        with contextlib.suppress(OSError):
-            tmp_path.unlink()
-        raise

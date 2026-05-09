@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import contextlib
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -41,8 +40,9 @@ from exlab_wizard.api.schemas import (
     tombstone_entry_to_dict,
 )
 from exlab_wizard.api.setup import setup_state_gate
-from exlab_wizard.constants import CACHE_DIR_NAME, CREATION_JSON_NAME
 from exlab_wizard.logging import get_logger
+from exlab_wizard.paths import creation_json_path
+from exlab_wizard.utils.time import utc_now_iso
 
 __all__ = [
     "FindingResponse",
@@ -182,7 +182,7 @@ def build_problems_router() -> APIRouter:
     async def refresh(request: Request) -> RefreshResponse:
         validator = _require_validator(request)
         findings = validator.audit({"kind": "all"})
-        audit_at = datetime.now(tz=UTC).isoformat()
+        audit_at = utc_now_iso()
         deps = _require_deps(request)
         deps.last_audit_at = audit_at
         # Publish an audit-pass snapshot if a channel is wired.
@@ -202,7 +202,7 @@ def build_problems_router() -> APIRouter:
         request: Request, run_path: str, body: OverrideRequest
     ) -> OverrideResponse:
         cache_writer = _require_cache_writer(request)
-        path = Path(run_path) / CACHE_DIR_NAME / CREATION_JSON_NAME
+        path = creation_json_path(Path(run_path))
         if not path.exists():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -215,7 +215,7 @@ def build_problems_router() -> APIRouter:
             id=str(uuid.uuid4()),
             problem_class=body.problem_class,
             operator=body.operator,
-            recorded_at=datetime.now(tz=UTC).isoformat(),
+            recorded_at=utc_now_iso(),
             reason=body.reason,
             expires_at=body.expires_at,
         )
@@ -238,7 +238,7 @@ def build_problems_router() -> APIRouter:
         request: Request, run_path: str, body: RevokeRequest
     ) -> TombstoneResponse:
         cache_writer = _require_cache_writer(request)
-        path = Path(run_path) / CACHE_DIR_NAME / CREATION_JSON_NAME
+        path = creation_json_path(Path(run_path))
         if not path.exists():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -251,7 +251,7 @@ def build_problems_router() -> APIRouter:
             id=str(uuid.uuid4()),
             revokes=body.revokes,
             operator=body.operator,
-            recorded_at=datetime.now(tz=UTC).isoformat(),
+            recorded_at=utc_now_iso(),
             reason=body.reason,
         )
         entry_dict = tombstone_entry_to_dict(entry)
@@ -274,7 +274,7 @@ def build_problems_router() -> APIRouter:
         validator = getattr(deps, "validator", None)
         if validator is not None:
             findings = validator.audit({"kind": "all"})
-            audit_at = getattr(deps, "last_audit_at", None) or datetime.now(tz=UTC).isoformat()
+            audit_at = getattr(deps, "last_audit_at", None) or utc_now_iso()
             await websocket.send_bytes(
                 encode_event(
                     event_from_dict(
@@ -329,8 +329,8 @@ def _matches_filters(finding: Any, *, severity: str | None, problem_class: str |
 def _last_audit_at(request: Request) -> str:
     deps = getattr(request.app.state, "dependencies", None)
     if deps is None:
-        return datetime.now(tz=UTC).isoformat()
-    return getattr(deps, "last_audit_at", None) or datetime.now(tz=UTC).isoformat()
+        return utc_now_iso()
+    return getattr(deps, "last_audit_at", None) or utc_now_iso()
 
 
 def _require_validator(request: Request) -> Any:

@@ -14,7 +14,6 @@ driver's.
 
 from __future__ import annotations
 
-import asyncio
 import shlex
 from pathlib import Path
 
@@ -24,6 +23,7 @@ from exlab_wizard.sync.transports import (
     TransportErrorKind,
     TransportResult,
 )
+from exlab_wizard.sync.transports._run import run_subprocess
 
 __all__ = ["RcloneTransport"]
 
@@ -89,19 +89,10 @@ class RcloneTransport:
         _log.debug("rclone cmd: %s", shlex.join(cmd))
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+            rc, stdout, stderr = await run_subprocess(cmd)
         except FileNotFoundError as exc:
             msg = f"rclone binary not found: {self._binary!r}"
             raise TransportError(msg) from exc
-
-        stdout_b, stderr_b = await proc.communicate()
-        stdout = stdout_b.decode("utf-8", errors="replace")
-        stderr = stderr_b.decode("utf-8", errors="replace")
-        rc = proc.returncode if proc.returncode is not None else -1
 
         if rc == 0:
             return TransportResult(ok=True, returncode=0, stdout=stdout, stderr=stderr)
@@ -141,19 +132,10 @@ class RcloneTransport:
         _log.debug("rclone hashsum cmd: %s", shlex.join(cmd))
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+            rc, stdout, stderr = await run_subprocess(cmd)
         except FileNotFoundError as exc:
             msg = f"rclone binary not found: {self._binary!r}"
             raise TransportError(msg) from exc
-
-        stdout_b, stderr_b = await proc.communicate()
-        stdout = stdout_b.decode("utf-8", errors="replace")
-        stderr = stderr_b.decode("utf-8", errors="replace")
-        rc = proc.returncode if proc.returncode is not None else -1
 
         if rc != 0:
             kind = _classify_failure(stderr, rc)

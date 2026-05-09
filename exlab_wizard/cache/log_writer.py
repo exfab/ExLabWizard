@@ -35,10 +35,11 @@ writes.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
 from exlab_wizard.constants import LOG_LINE_MAX_BYTES
+from exlab_wizard.utils.time import dt_to_iso
 
 __all__ = [
     "append_log_line",
@@ -97,7 +98,7 @@ def format_log_line(
     Returns the line WITHOUT a trailing newline; the writer adds the
     newline at append time.
     """
-    timestamp = _format_utc_timestamp(timestamp_utc)
+    timestamp = dt_to_iso(timestamp_utc)
     level_padded = f"{level:<5}"
     tags = _render_tags(
         host=host,
@@ -109,21 +110,6 @@ def format_log_line(
     prefix = f"{timestamp} [{level_padded}] {tags} " if tags else f"{timestamp} [{level_padded}] "
     line = f"{prefix}{message}"
     return _truncate_if_needed(line, prefix=prefix)
-
-
-def _format_utc_timestamp(dt: datetime) -> str:
-    """Render ``dt`` as UTC ISO 8601 with a trailing ``Z``.
-
-    Naive datetimes are interpreted as already-UTC; aware datetimes are
-    converted to UTC. The trailing ``Z`` is preferred over ``+00:00``
-    because the example log lines in §11.5 use that form, and parsers
-    downstream of the spec rely on it. Output is zero-padded so ``April``
-    renders as ``04`` and so on.
-    """
-    if dt.tzinfo is not None:
-        # Convert to UTC then drop the offset for a clean Z suffix.
-        dt = dt.astimezone(UTC).replace(tzinfo=None)
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _render_tags(

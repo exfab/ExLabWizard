@@ -22,18 +22,17 @@ from __future__ import annotations
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 from exlab_wizard.api.schemas import IngestJson
 from exlab_wizard.cache.ingest_writer import IngestWriter, default_host
 from exlab_wizard.config.models import Config
 from exlab_wizard.constants import (
-    CACHE_DIR_NAME,
-    INGEST_JSON_NAME,
     IngestState,
     StagingCleanupMode,
 )
 from exlab_wizard.logging import get_logger
+from exlab_wizard.paths import ingest_json_path
+from exlab_wizard.utils.time import parse_utc_iso_or_none
 
 __all__ = ["cleanup_eligible", "clear_run", "freed_bytes_and_count"]
 
@@ -98,7 +97,7 @@ async def clear_run(
     if not run_path.exists():  # noqa: ASYNC240 -- one-shot stat, sync filelock cycle below
         return 0, 0
     file_count, bytes_freed = freed_bytes_and_count(run_path)
-    ingest_path = run_path / CACHE_DIR_NAME / INGEST_JSON_NAME
+    ingest_path = ingest_json_path(run_path)
     host_label = host or default_host()
     if ingest_path.exists():
         await ingest_writer.append_state_transition(
@@ -152,19 +151,7 @@ def _find_state_timestamp(ingest: IngestJson, target: IngestState) -> datetime |
     for entry in reversed(ingest.history):
         if entry.get("state") != target.value:
             continue
-        return _parse_iso(entry.get("at"))
+        return parse_utc_iso_or_none(entry.get("at"))
     return None
 
 
-def _parse_iso(value: Any) -> datetime | None:
-    """Parse a ``Z``-suffixed ISO-8601 string; return ``None`` on failure."""
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed
