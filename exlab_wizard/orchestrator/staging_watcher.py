@@ -51,6 +51,7 @@ from exlab_wizard.constants import (
     CompletenessSignal,
     IngestState,
     OrchestratorTransportType,
+    RunKind,
 )
 from exlab_wizard.io import read_msgspec_json_raw
 from exlab_wizard.logging import get_logger
@@ -118,7 +119,7 @@ class _RunLocator:
     ingest_path: Path
     equipment_id: str
     project_name: str
-    run_kind: str
+    run_kind: RunKind
 
 
 class StagingWatcher:
@@ -358,10 +359,10 @@ class StagingWatcher:
             return None
         return creation.lims_project.name_at_creation or creation.lims_project.short_id or None
 
-    def _infer_transport(self, equipment: EquipmentConfig | None) -> str:
+    def _infer_transport(self, equipment: EquipmentConfig | None) -> OrchestratorTransportType:
         """Return the configured staging transport, or a sensible default."""
         if equipment is None or equipment.orchestrator_staging_transport is None:
-            return OrchestratorTransportType.SMB_MOUNT.value
+            return OrchestratorTransportType.SMB_MOUNT
         return equipment.orchestrator_staging_transport.type
 
     # ------------------------------------------------------------------ helpers
@@ -442,9 +443,9 @@ class StagingWatcher:
         project_name = parts[1] if len(parts) >= 2 else ""
         run_name = run_path.name
         if is_test_run_dir(run_name):
-            run_kind = "test"
+            run_kind = RunKind.TEST
         elif is_run_dir(run_name):
-            run_kind = "experimental"
+            run_kind = RunKind.EXPERIMENTAL
         else:
             return None
         creation_path = creation_json_path(run_path)

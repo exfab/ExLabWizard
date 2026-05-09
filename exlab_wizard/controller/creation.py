@@ -845,7 +845,7 @@ class CreationController:
             uid=str(lims_block_dict.get("uid", "")),
             short_id=str(lims_block_dict.get("short_id", "")),
             name_at_creation=str(lims_block_dict.get("name_at_creation", req.label)),
-            source=str(lims_block_dict.get("source", LIMSProjectSource.LIVE.value)),
+            source=LIMSProjectSource(lims_block_dict.get("source", LIMSProjectSource.LIVE)),
             cache_freshness_at_use=lims_block_dict.get("cache_freshness_at_use"),
         )
 

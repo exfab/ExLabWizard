@@ -678,7 +678,7 @@ class NASSyncClient:
         """Mutate ``creation.json`` ``sync_status`` to ``blocked_by_validation``."""
 
         def _gate(payload: CreationJson) -> CreationJson:
-            payload.sync_status = SyncStatus.BLOCKED_BY_VALIDATION.value
+            payload.sync_status = SyncStatus.BLOCKED_BY_VALIDATION
             return payload
 
         await self._cache_creation.update_creation_atomic(creation_path, _gate)
@@ -690,7 +690,7 @@ class NASSyncClient:
             return
 
         def _flip(payload: CreationJson) -> CreationJson:
-            payload.sync_status = SyncStatus.SYNCED.value
+            payload.sync_status = SyncStatus.SYNCED
             return payload
 
         with contextlib.suppress(Exception):
@@ -708,7 +708,7 @@ class NASSyncClient:
             return
 
         def _flip(payload: CreationJson) -> CreationJson:
-            payload.sync_status = SyncStatus.CLEANED.value
+            payload.sync_status = SyncStatus.CLEANED
             return payload
 
         with contextlib.suppress(Exception):
