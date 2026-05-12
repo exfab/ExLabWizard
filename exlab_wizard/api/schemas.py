@@ -42,6 +42,17 @@ from msgspec import Struct
 from msgspec import json as msgspec_json
 from msgspec import structs as msgspec_structs
 
+from exlab_wizard.constants import (
+    CreationLevel,
+    IngestState,
+    LIMSProjectSource,
+    OrchestratorTransportType,
+    PluginStatus,
+    RunKind,
+    RunScope,
+    SyncStatus,
+)
+
 __all__ = [
     "CreationJson",
     "EquipmentJson",
@@ -84,7 +95,7 @@ class LimsProjectBlock(
     uid: str
     short_id: str
     name_at_creation: str
-    source: str = "live"
+    source: LIMSProjectSource = LIMSProjectSource.LIVE
     cache_freshness_at_use: str | None = None
 
 
@@ -98,7 +109,10 @@ class TemplateBlock(
     name: str
     version: str
     source_path: str
-    run_scope: str
+    # ``None`` when the source template did not declare ``_exlab_run_scope``
+    # (legal for project / equipment templates per Spec §5.2). Persisted as
+    # an omitted field thanks to ``omit_defaults=True``.
+    run_scope: RunScope | None = None
 
 
 class PluginIsolation(
@@ -127,7 +141,7 @@ class PluginApplied(
     plugin: str
     version: str
     files_affected: list[str]
-    status: str
+    status: PluginStatus
     isolation: PluginIsolation | None = None
 
 
@@ -267,15 +281,15 @@ class CreationJson(
     schema_version: str
     created_at: str
     created_by: str
-    level: str
-    run_kind: str
+    level: CreationLevel
+    run_kind: RunKind
     lims_project: LimsProjectBlock
     template: TemplateBlock
     variables: dict[str, Any]
     paths: PathsBlock
     plugins_applied: list[PluginApplied] = []
     orchestrator: OrchestratorBlock | None = None
-    sync_status: str = "pending"
+    sync_status: SyncStatus = SyncStatus.PENDING
     validation_overrides: list[dict[str, Any]] = []
 
 
@@ -341,7 +355,7 @@ class TestRunsJson(
     created_at: str
     project: str
     equipment: str
-    run_kind: str = "test"
+    run_kind: RunKind = RunKind.TEST
 
 
 # ---------------------------------------------------------------------------
@@ -370,8 +384,8 @@ class IngestJson(
     schema_version: str
     project_name: str
     equipment_id: str
-    run_kind: str
+    run_kind: RunKind
     run_path: str
-    transport: str
-    current_state: str
+    transport: OrchestratorTransportType
+    current_state: IngestState
     history: list[dict[str, Any]] = []

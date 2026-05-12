@@ -11,8 +11,10 @@ input (for instance the ``password``-key rejection in
 Style:
 - ``model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)`` on
   every model so unknown keys raise a clear validation error.
-- ``StrEnum`` values are accepted in either string or enum form via the
-  ``Literal[...]`` annotations; the spec stores the string value verbatim.
+- ``StrEnum`` values are accepted in either string or enum form; Pydantic v2
+  lax mode coerces raw strings to enum members, and the spec stores the
+  string value verbatim on dump (via ``StrEnum.value`` or explicit
+  ``field_serializer``).
 - All cross-field invariants from §9 are encoded as ``model_validator``s.
 """
 
@@ -21,9 +23,23 @@ from __future__ import annotations
 from datetime import time
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
-from exlab_wizard.constants import TEMPLATE_QUESTION_ID_PATTERN
+from exlab_wizard.constants import (
+    TEMPLATE_QUESTION_ID_PATTERN,
+    BandwidthDay,
+    CompletenessSignal,
+    FieldType,
+    OrchestratorTransportType,
+    StagingCleanupMode,
+)
 from exlab_wizard.errors import ConfigError
 
 __all__ = [
@@ -52,9 +68,6 @@ __all__ = [
 
 # Allowed log levels (case-insensitive on input, normalized to upper-case).
 _ALLOWED_LOG_LEVELS: frozenset[str] = frozenset({"DEBUG", "INFO", "WARN", "ERROR"})
-
-# Strict day-of-week vocabulary used by ``BandwidthWindow.days``.
-_BandwidthDay = Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 
 def _parse_hhmm(value: str, field_name: str) -> time:
@@ -119,7 +132,7 @@ class READMEDefaultField(BaseModel):
 
     id: str
     label: str = Field(min_length=1)
-    type: Literal["string", "text", "choice", "date", "boolean"]
+    type: FieldType
     required: bool = False
     default: Any = ""
     options: list[str] | None = None
@@ -136,10 +149,15 @@ class READMEDefaultField(BaseModel):
             raise ValueError(msg)
         return value
 
+    @field_serializer("type")
+    def _serialize_type(self, value: FieldType) -> str:
+        # Emit the bare string so YAML/JSON dumps round-trip the wire format.
+        return value.value
+
     @model_validator(mode="after")
     def _choice_requires_non_empty_options(self) -> READMEDefaultField:
         match self.type:
-            case "choice":
+            case FieldType.CHOICE:
                 if not self.options:
                     msg = "readme.defaults[].options must be a non-empty list when type == 'choice'"
                     raise ValueError(msg)
@@ -166,9 +184,13 @@ class BandwidthWindow(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, populate_by_name=True)
 
-    days: list[_BandwidthDay] = Field(min_length=1)
+    days: list[BandwidthDay] = Field(min_length=1)
     from_: str = Field(alias="from")
     to: str
+
+    @field_serializer("days")
+    def _serialize_days(self, value: list[BandwidthDay]) -> list[str]:
+        return [day.value for day in value]
 
     @model_validator(mode="after")
     def _from_must_precede_to(self) -> BandwidthWindow:
@@ -255,9 +277,13 @@ class OrchestratorStagingTransport(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    type: Literal["smb_mount", "file_transfer"]
+    type: OrchestratorTransportType
     mount_point: str = Field(min_length=1)
     staging_subpath: str = Field(min_length=1)
+
+    @field_serializer("type")
+    def _serialize_type(self, value: OrchestratorTransportType) -> str:
+        return value.value
 
 
 # ---------------------------------------------------------------------------
@@ -274,11 +300,16 @@ class EquipmentConfig(BaseModel):
     label: str = Field(min_length=1)
     local_root: str = Field(min_length=1)
     nas_root: str = Field(min_length=1)
-    completeness_signal: Literal["sentinel_file", "manifest"]
+    completeness_signal: CompletenessSignal
     sentinel_filename: str | None = None
     manifest_filename: str | None = None
     transport: EquipmentTransport
     orchestrator_staging_transport: OrchestratorStagingTransport | None = None
+
+    @field_serializer("completeness_signal")
+    def _serialize_completeness_signal(self, value: CompletenessSignal) -> str:
+        # Emit the bare string so YAML/JSON dumps round-trip the wire format.
+        return value.value
 
     @field_validator("id")
     @classmethod
@@ -295,14 +326,14 @@ class EquipmentConfig(BaseModel):
     @model_validator(mode="after")
     def _completeness_signal_requires_matching_filename(self) -> EquipmentConfig:
         match self.completeness_signal:
-            case "sentinel_file":
+            case CompletenessSignal.SENTINEL_FILE:
                 if not self.sentinel_filename:
                     msg = (
                         "equipment.completeness_signal == 'sentinel_file' "
                         "requires a non-empty sentinel_filename"
                     )
                     raise ValueError(msg)
-            case "manifest":
+            case CompletenessSignal.MANIFEST:
                 if not self.manifest_filename:
                     msg = (
                         "equipment.completeness_signal == 'manifest' "
@@ -453,10 +484,15 @@ class OrchestratorStagingCleanup(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    mode: Literal["manual", "scheduled"] = "manual"
+    mode: StagingCleanupMode = StagingCleanupMode.MANUAL
     # ``ge=1`` enforces the §13.7 "retain_hours > 0 when mode == 'scheduled'"
     # rule at the field level for both modes (manual ignores the value).
     retain_hours: int = Field(default=24, ge=1)
+
+    @field_serializer("mode")
+    def _serialize_mode(self, value: StagingCleanupMode) -> str:
+        # Emit the bare string so YAML/JSON dumps round-trip the wire format.
+        return value.value
 
 
 class OrchestratorConfig(BaseModel):

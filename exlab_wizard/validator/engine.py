@@ -63,24 +63,28 @@ import msgspec
 from exlab_wizard.api.schemas import (
     CreationJson,
     ReadmeFieldsJson,
-    msgspec_json,
 )
 from exlab_wizard.cache.creation_writer import select_active_overrides
 from exlab_wizard.config.models import ValidatorConfig
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
-    CREATION_JSON_NAME,
-    README_FIELDS_JSON_NAME,
     README_FILE_NAME,
-    RUN_DIR_PREFIX,
-    TEST_RUN_DIR_PREFIX,
     TEST_RUNS_DIR_NAME,
     VALIDATOR_BINARY_DETECT_BYTES,
+    AuditScopeKind,
+    DirectoryLevel,
     RunKind,
     SyncStatus,
     Tier,
 )
+from exlab_wizard.io import read_msgspec_json, read_msgspec_json_raw
 from exlab_wizard.logging import get_logger
+from exlab_wizard.paths import (
+    creation_json_path,
+    is_run_dir,
+    is_test_run_dir,
+    readme_fields_json_path,
+)
 from exlab_wizard.validator import rules
 from exlab_wizard.validator.findings import Finding
 
@@ -463,13 +467,13 @@ class Validator:
     def _resolve_scope_roots(self, scope: AuditScope) -> list[Path]:
         """Map an :class:`AuditScope` onto the directory roots to walk."""
         kind = scope["kind"]
-        if kind == "equipment_id":
+        if kind == AuditScopeKind.EQUIPMENT_ID:
             equipment_id = scope["value"]  # type: ignore[typeddict-item]
             root = self._equipment_roots.get(equipment_id)
             return [root] if root is not None else []
-        if kind == "project_path":
+        if kind == AuditScopeKind.PROJECT_PATH:
             return [Path(scope["value"])]  # type: ignore[typeddict-item]
-        if kind == "all":
+        if kind == AuditScopeKind.ALL:
             roots = list(self._equipment_roots.values())
             if self._staging_root is not None:
                 roots.append(self._staging_root)
@@ -524,7 +528,7 @@ class Validator:
         creation_payload, creation_raw = self._read_creation_for(current)
         run_path_str = self._compute_run_path(current, level, equipment_root_abs)
 
-        if level in {"project", "run", "test_run"}:
+        if level in {DirectoryLevel.PROJECT, DirectoryLevel.RUN, DirectoryLevel.TEST_RUN}:
             self._apply_directory_rules(
                 current=current,
                 level=level,
@@ -572,44 +576,44 @@ class Validator:
         self,
         directory: Path,
         equipment_root_abs: str,
-    ) -> Literal["equipment", "project", "run", "test_run", "test_runs", "other"]:
+    ) -> DirectoryLevel:
         """Classify a directory's role in an equipment subtree.
 
         Equipment root is depth 0; first child is the project (depth 1);
         the next level depends on the shape:
 
-        - ``Run_*`` -> ``"run"``
-        - ``TestRuns`` -> ``"test_runs"`` (the marker folder)
-        - ``TestRuns/TestRun_*`` -> ``"test_run"``
+        - ``Run_*`` -> ``DirectoryLevel.RUN``
+        - ``TestRuns`` -> ``DirectoryLevel.TEST_RUNS`` (the marker folder)
+        - ``TestRuns/TestRun_*`` -> ``DirectoryLevel.TEST_RUN``
         - anything else (depth >= 2 not matching the patterns) ->
-          ``"other"`` (unmanaged sub-folder under a project / run)
+          ``DirectoryLevel.OTHER`` (unmanaged sub-folder under a project / run)
         """
         try:
             rel = directory.resolve().relative_to(equipment_root_abs)
         except ValueError:
-            return "other"
+            return DirectoryLevel.OTHER
         parts = rel.parts
         if len(parts) == 0:
-            return "equipment"
+            return DirectoryLevel.EQUIPMENT
         if len(parts) == 1:
-            return "project"
+            return DirectoryLevel.PROJECT
         if len(parts) == 2:
             name = parts[1]
             if name == TEST_RUNS_DIR_NAME:
-                return "test_runs"
-            if name.startswith(RUN_DIR_PREFIX):
-                return "run"
-            return "other"
+                return DirectoryLevel.TEST_RUNS
+            if is_run_dir(name):
+                return DirectoryLevel.RUN
+            return DirectoryLevel.OTHER
         if len(parts) == 3 and parts[1] == TEST_RUNS_DIR_NAME:
-            if parts[2].startswith(TEST_RUN_DIR_PREFIX):
-                return "test_run"
-            return "other"
-        return "other"
+            if is_test_run_dir(parts[2]):
+                return DirectoryLevel.TEST_RUN
+            return DirectoryLevel.OTHER
+        return DirectoryLevel.OTHER
 
     def _compute_run_path(
         self,
         directory: Path,
-        level: str,
+        level: DirectoryLevel,
         equipment_root_abs: str,
     ) -> str:
         """Return the §11.8 ``run_path`` for findings at ``directory``.
@@ -620,9 +624,14 @@ class Validator:
         nested ``"other"`` sub-folders the closest run / project
         ancestor on the way down is returned.
         """
-        if level in {"run", "test_run", "test_runs", "project"}:
+        if level in {
+            DirectoryLevel.RUN,
+            DirectoryLevel.TEST_RUN,
+            DirectoryLevel.TEST_RUNS,
+            DirectoryLevel.PROJECT,
+        }:
             return str(directory)
-        if level == "equipment":
+        if level == DirectoryLevel.EQUIPMENT:
             return equipment_root_abs
         # ``other``: resolve up to the nearest run / project segment.
         try:
@@ -632,7 +641,7 @@ class Validator:
         parts = rel.parts
         if len(parts) >= 3 and parts[1] == TEST_RUNS_DIR_NAME:
             return str(Path(equipment_root_abs) / Path(*parts[:3]))
-        if len(parts) >= 2 and parts[1].startswith(RUN_DIR_PREFIX):
+        if len(parts) >= 2 and is_run_dir(parts[1]):
             return str(Path(equipment_root_abs) / Path(*parts[:2]))
         if len(parts) >= 1:
             return str(Path(equipment_root_abs) / parts[0])
@@ -644,7 +653,7 @@ class Validator:
         self,
         *,
         current: Path,
-        level: str,
+        level: DirectoryLevel,
         creation_payload: CreationJson | None,
         creation_raw: dict[str, Any] | None,
         run_path_str: str,
@@ -682,7 +691,7 @@ class Validator:
                 sync_status=sync_status,
             )
 
-        if level in {"run", "test_run"} and creation_payload is not None:
+        if level in {DirectoryLevel.RUN, DirectoryLevel.TEST_RUN} and creation_payload is not None:
             parent_name = current.parent.name if current.parent != current else None
             self._extend_findings(
                 rules.check_mode_prefix_mismatch(
@@ -697,7 +706,7 @@ class Validator:
                 sync_status=sync_status,
             )
 
-        if level in {"run", "test_run", "project"}:
+        if level in {DirectoryLevel.RUN, DirectoryLevel.TEST_RUN, DirectoryLevel.PROJECT}:
             self._apply_missing_required_field_rule(
                 current=current,
                 creation_raw=creation_raw,
@@ -761,12 +770,12 @@ class Validator:
         findings). The rule itself is soft-tier so an absent layer is
         not a bug.
         """
-        readme_path = current / CACHE_DIR_NAME / README_FIELDS_JSON_NAME
+        readme_path = readme_fields_json_path(current)
         if not readme_path.exists():
             return
         try:
-            readme_payload = msgspec_json.decode(readme_path.read_bytes(), type=ReadmeFieldsJson)
-        except (msgspec.DecodeError, msgspec.ValidationError):
+            readme_payload = read_msgspec_json(readme_path, ReadmeFieldsJson)
+        except (msgspec.DecodeError, msgspec.ValidationError, OSError):
             _log.debug("readme_fields.json failed typed decode: %s", readme_path)
             return
 
@@ -954,16 +963,12 @@ class Validator:
         missing-required-field rule can pick up extra IDs the typed
         Struct discards.
         """
-        path = directory / CACHE_DIR_NAME / CREATION_JSON_NAME
+        path = creation_json_path(directory)
         if not path.exists():
             return None, None
         try:
-            blob = path.read_bytes()
-        except OSError:
-            return None, None
-        try:
-            raw = msgspec_json.decode(blob, type=dict[str, Any])
-        except (msgspec.DecodeError, msgspec.ValidationError):
+            raw = read_msgspec_json_raw(path)
+        except (msgspec.DecodeError, msgspec.ValidationError, OSError):
             _log.debug("creation.json failed raw decode: %s", path)
             return None, None
         try:
@@ -1076,16 +1081,17 @@ def _finding_sort_key(finding: Finding) -> tuple[int, str, str]:
 # ---------------------------------------------------------------------------
 
 
-def _level_for_orphan(level: str) -> str | None:
+def _level_for_orphan(level: DirectoryLevel) -> DirectoryLevel | None:
     """Translate the engine-level enum into the rules.check_orphan input.
 
     The orphan rule only applies at project / run level (§8.1.4);
     equipment, test-runs marker, and "other" levels return ``None``.
-    Test-run leafs are treated as ``"run"`` for orphan purposes (the
-    spec wires the rule to project / run; a test run is a kind of run).
+    Test-run leafs are treated as ``DirectoryLevel.RUN`` for orphan
+    purposes (the spec wires the rule to project / run; a test run is a
+    kind of run).
     """
-    if level == "project":
-        return "project"
-    if level in {"run", "test_run"}:
-        return "run"
+    if level == DirectoryLevel.PROJECT:
+        return DirectoryLevel.PROJECT
+    if level in {DirectoryLevel.RUN, DirectoryLevel.TEST_RUN}:
+        return DirectoryLevel.RUN
     return None

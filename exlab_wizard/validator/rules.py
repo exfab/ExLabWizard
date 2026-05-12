@@ -39,12 +39,14 @@ from exlab_wizard.constants import (
     TEST_RUNS_DIR_NAME,
     WINDOWS_ILLEGAL_CHARS,
     WINDOWS_RESERVED_NAMES,
+    DirectoryLevel,
     FindingKind,
     ProblemClass,
     RunKind,
     Tier,
 )
 from exlab_wizard.logging import get_logger
+from exlab_wizard.paths import is_run_dir, is_test_run_dir
 
 __all__ = [
     "check_illegal_filesystem_character",
@@ -321,8 +323,8 @@ def check_mode_prefix_mismatch(
     if creation_run_kind is None:
         return findings
 
-    leaf_says_test = leaf_dir_name.startswith(TEST_RUN_DIR_PREFIX)
-    leaf_says_experimental = leaf_dir_name.startswith(RUN_DIR_PREFIX) and not leaf_says_test
+    leaf_says_test = is_test_run_dir(leaf_dir_name)
+    leaf_says_experimental = is_run_dir(leaf_dir_name) and not leaf_says_test
     parent_is_test_runs = parent_dir_name == TEST_RUNS_DIR_NAME
 
     def _make_finding(matched_token: str, detail: str) -> dict[str, Any]:
@@ -378,23 +380,28 @@ def check_mode_prefix_mismatch(
 # ---------------------------------------------------------------------------
 
 
-def check_orphan(*, level: str, has_creation_json: bool) -> list[dict[str, Any]]:
+def check_orphan(*, level: DirectoryLevel | None, has_creation_json: bool) -> list[dict[str, Any]]:
     """§8.1.4: detect missing ``creation.json`` at project / run level
     (NOT equipment).
 
-    Soft-tier. Returns one rule ``orphan`` finding when ``level`` is in
-    ``("project", "run")`` and ``has_creation_json`` is ``False``.
+    Soft-tier. Returns one rule ``orphan`` finding when ``level`` is
+    :data:`DirectoryLevel.PROJECT` or :data:`DirectoryLevel.RUN` and
+    ``has_creation_json`` is ``False``.
     """
-    if level not in ("project", "run") or has_creation_json:
+    if level not in (DirectoryLevel.PROJECT, DirectoryLevel.RUN) or has_creation_json:
         return []
 
+    # ``level`` is either a DirectoryLevel enum member or a raw string
+    # (StrEnum equality is used above so both forms reach this branch);
+    # cast through ``str`` so the message uses the wire form either way.
+    level_str = str(level.value if isinstance(level, DirectoryLevel) else level)
     return [
         {
             "rule": ProblemClass.ORPHAN.value,
             "tier": Tier.SOFT.value,
             "matched_token": None,
             "rule_detail": (
-                f"{level.capitalize()}-level directory has no "
+                f"{level_str.capitalize()}-level directory has no "
                 f"creation.json -- the cache file is expected at this "
                 f"level but is missing."
             ),

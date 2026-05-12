@@ -51,6 +51,7 @@ from exlab_wizard.constants import (
     PLUGIN_FORBIDDEN_PATH_PREFIXES,
     PLUGIN_IPC_FRAME_CAP_BYTES,
     PLUGIN_RLIMIT_NOFILE,
+    RUN_ID_SANITIZE_PATTERN,
     WORKER_TIMEOUT_GRACE_SECONDS,
 )
 from exlab_wizard.constants.enums import PluginStatus
@@ -465,17 +466,14 @@ def _emit_forwarded_log(
 # ---------------------------------------------------------------------------
 
 
-_RUN_ID_RE = re.compile(r"[^A-Za-z0-9._-]+")
-
-
 def _resolve_run_id(ctx: PluginContext) -> str:
     """Return a filesystem-safe run identifier for stderr capture paths."""
     for candidate_attr in ("run_id", "project", "template_name"):
         value = getattr(ctx, candidate_attr, None)
         if value:
-            return _RUN_ID_RE.sub("-", str(value))
+            return RUN_ID_SANITIZE_PATTERN.sub("-", str(value))
     # Fall back to the dst_root basename so we always get *something*.
-    return _RUN_ID_RE.sub("-", ctx.dst_root.name) or "run"
+    return RUN_ID_SANITIZE_PATTERN.sub("-", ctx.dst_root.name) or "run"
 
 
 # ---------------------------------------------------------------------------
@@ -594,7 +592,7 @@ class PluginHost:
                         outcome,
                         modified_files=[],
                         violations=[],
-                        status_override="failed",
+                        status_override=PluginStatus.FAILED,
                         aborted=True,
                     )
                 extra_inputs = dict(response)
@@ -611,7 +609,7 @@ class PluginHost:
                 last_outcome,
                 modified_files=violations,
                 violations=violations,
-                status_override="policy_violation",
+                status_override=PluginStatus.POLICY_VIOLATION,
             )
 
         return _build_applied_entry(
@@ -840,13 +838,13 @@ def _build_applied_entry(
     *,
     modified_files: Iterable[str],
     violations: Iterable[str],
-    status_override: str | None = None,
+    status_override: PluginStatus | None = None,
     aborted: bool = False,
 ) -> dict[str, Any]:
     """Shape one ``plugins_applied[]`` entry for ``creation.json``."""
     files_list = sorted({str(p) for p in modified_files})
     if status_override is not None:
-        status = status_override
+        status = status_override.value
     else:
         status = _exit_code_to_status(outcome.exit_code, files_list)
     if violations:

@@ -20,14 +20,15 @@ from __future__ import annotations
 
 import contextlib
 import json
-import os
 import socket
 import threading
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from exlab_wizard.constants import SERVER_STATE_FILE
+from exlab_wizard.io import atomic_write_bytes
 from exlab_wizard.logging import get_logger
+from exlab_wizard.utils.time import utc_now_iso
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -35,8 +36,6 @@ if TYPE_CHECKING:
 __all__ = ["SERVER_STATE_FILE", "ServerRunner", "pick_free_port"]
 
 _log = get_logger(__name__)
-
-SERVER_STATE_FILE = "server.json"
 
 
 def pick_free_port() -> int:
@@ -170,22 +169,16 @@ class ServerRunner:
 
     def _write_state_file(self, port: int) -> None:
         """Atomically write ``server.json``. Backend Spec §4.4.5 idiom."""
+        import os
+
         self._state_dir.mkdir(parents=True, exist_ok=True)
         payload = {
             "port": port,
             "pid": os.getpid(),
-            "started_at": datetime.now(tz=UTC).isoformat(),
+            "started_at": utc_now_iso(),
         }
-        tmp = self._state_file.with_suffix(".json.tmp")
         data = json.dumps(payload).encode("utf-8")
-        # Open with O_RDWR|O_CREAT so we can fsync before the rename.
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-        try:
-            os.write(fd, data)
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        os.replace(tmp, self._state_file)
+        atomic_write_bytes(self._state_file, data)
 
     def _delete_state_file(self) -> None:
         """Best-effort delete; missing file is fine."""

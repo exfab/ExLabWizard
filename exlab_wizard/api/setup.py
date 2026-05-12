@@ -28,6 +28,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from exlab_wizard.api._dependencies import require_deps
 from exlab_wizard.config.models import (
     EquipmentConfig,
     EquipmentTransport,
@@ -205,7 +206,7 @@ def build_setup_router() -> APIRouter:
 
     @router.get("/status", response_model=SetupStatusResponse)
     async def get_setup_status(request: Request) -> SetupStatusResponse:
-        deps = _require_deps(request)
+        deps = require_deps(request)
         state = compute_setup_state(deps)
         return SetupStatusResponse(
             state=state.value,
@@ -216,7 +217,7 @@ def build_setup_router() -> APIRouter:
 
     @router.post("/test-lims", response_model=TestResult)
     async def test_lims(request: Request, body: TestLIMSRequest | None = None) -> TestResult:
-        deps = _require_deps(request)
+        deps = require_deps(request)
         probe = getattr(deps, "lims_probe", None)
         if probe is None:
             return TestResult(
@@ -237,7 +238,7 @@ def build_setup_router() -> APIRouter:
     async def test_equipment(
         request: Request, body: TestEquipmentRequest | None = None
     ) -> TestResult:
-        deps = _require_deps(request)
+        deps = require_deps(request)
         probe = getattr(deps, "equipment_probe", None)
         if probe is None:
             return TestResult(
@@ -259,7 +260,7 @@ def build_setup_router() -> APIRouter:
 
     @router.post("/autostart", response_model=AutostartResult)
     async def set_autostart(request: Request, body: AutostartRequest) -> AutostartResult:
-        deps = _require_deps(request)
+        deps = require_deps(request)
         toggle = getattr(deps, "autostart_toggle", None)
         if toggle is None:
             # No tray module wired (e.g. integration tests). Echo the
@@ -295,26 +296,6 @@ def _coerce_probe_dict(payload: dict[str, Any]) -> ProbeResult:
         reason=str(reason) if reason is not None else None,
         latency_ms=int(latency_ms) if latency_ms is not None else None,
     )
-
-
-def _require_deps(request: Request) -> Any:
-    """Return the app's dependencies, or raise a clear 503.
-
-    The ``/setup/*`` endpoints assume the lifespan handler ran; if
-    ``app.state.dependencies`` is missing it indicates a wiring bug
-    (test fixture forgot to attach deps), not an operator-correctable
-    state, so we surface it as 500.
-    """
-    deps = getattr(request.app.state, "dependencies", None)
-    if deps is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "code": "internal_error",
-                "message": "app dependencies not initialized",
-            },
-        )
-    return deps
 
 
 def _resolve_equipment(deps: Any, body: TestEquipmentRequest | None) -> EquipmentConfig | None:

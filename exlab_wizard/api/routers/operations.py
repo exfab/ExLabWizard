@@ -16,11 +16,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
+from exlab_wizard.api._dependencies import require_controller
 from exlab_wizard.api.setup import setup_state_gate
 from exlab_wizard.controller import SessionState
+from exlab_wizard.utils.time import dt_to_iso
 
 __all__ = ["OperationEntry", "OperationsResponse", "build_operations_router"]
 
@@ -58,7 +60,7 @@ def build_operations_router() -> APIRouter:
         dependencies=[Depends(setup_state_gate)],
     )
     async def list_operations(request: Request) -> OperationsResponse:
-        controller = _require_controller(request)
+        controller = require_controller(request)
         sessions = controller.session_store
         operations: list[OperationEntry] = []
         # SessionStore exposes a private ``_sessions`` dict; iterate
@@ -79,20 +81,6 @@ def build_operations_router() -> APIRouter:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _require_controller(request: Request) -> Any:
-    deps = getattr(request.app.state, "dependencies", None)
-    controller = getattr(deps, "controller", None) if deps else None
-    if controller is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "internal_error",
-                "message": "controller is not initialized",
-            },
-        )
-    return controller
 
 
 def _iter_sessions(store: Any) -> list[tuple[str, Any]]:
@@ -124,7 +112,7 @@ def _session_to_entry(session_id: str, session: Any) -> OperationEntry:
         state=session.state.value
         if isinstance(session.state, SessionState)
         else str(session.state),
-        started_at=session.created_at.isoformat() if session.created_at is not None else "",
+        started_at=dt_to_iso(session.created_at) if session.created_at is not None else "",
         equipment_id=getattr(request, "equipment_id", None),
         project_short_id=_project_short_id(request),
         run_label=getattr(request, "label", None),

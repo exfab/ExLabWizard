@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -28,6 +27,7 @@ import msgspec
 from exlab_wizard.errors import ConfigError
 from exlab_wizard.lims.schemas import HealthStatus, LIMSProject, LIMSUser
 from exlab_wizard.logging import get_logger
+from exlab_wizard.utils.time import utc_now_iso
 
 __all__ = ["LIMSClient"]
 
@@ -202,10 +202,5 @@ class LIMSClient:
             contact_name=row.get("contact_name"),
             owner=row["owner"],
             metadata=row.get("metadata", {}),
-            fetched_at=_utc_now_iso(),
+            fetched_at=utc_now_iso(),
         )
-
-
-def _utc_now_iso() -> str:
-    """Return the current UTC time as an ISO 8601 string with seconds precision."""
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")

@@ -28,8 +28,7 @@ import contextlib
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Final
 
 from fastapi import APIRouter, FastAPI
 
@@ -44,12 +43,29 @@ from exlab_wizard.api.routers.sessions import build_sessions_router
 from exlab_wizard.api.routers.staging import build_staging_router
 from exlab_wizard.api.setup import build_setup_router
 from exlab_wizard.config.models import Config
-from exlab_wizard.constants import AUDIT_REFRESH_SECONDS
+from exlab_wizard.constants import AUDIT_REFRESH_SECONDS, AuditScopeKind
 from exlab_wizard.logging import get_logger
+from exlab_wizard.utils.time import utc_now_iso
 
 __all__ = ["AppDependencies", "AuditChannel", "create_app"]
 
 _log = get_logger(__name__)
+
+
+# Wire-format ``kind`` discriminators for the Problems pub-sub channel.
+# These are the public discriminator strings on the Problems WebSocket
+# frames (Backend Spec §4.6.2). They mirror the ``tag`` values on the
+# :class:`SnapshotEvent` / :class:`DeltaEvent` Structs in
+# :mod:`exlab_wizard.api.events`; keeping them as ``Final[str]`` here
+# lets the dict-frame builders in :class:`AuditChannel` reuse the
+# same discriminator without repeating the literal.
+SNAPSHOT_KIND: Final[str] = "snapshot"
+DELTA_KIND: Final[str] = "delta"
+
+# Private end-of-stream sentinel pushed onto subscriber queues by
+# :meth:`AuditChannel.close`. Not a wire value -- the iterator drains
+# the sentinel and returns rather than yielding it to subscribers.
+CLOSED_SENTINEL: Final[str] = "__closed__"
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +95,7 @@ class AuditChannel:
 
     async def publish_snapshot(self, findings: list[Any], audit_at: str) -> None:
         frame = {
-            "kind": "snapshot",
+            "kind": SNAPSHOT_KIND,
             "findings": [_finding_to_dict(f) for f in findings],
             "audit_at": audit_at,
         }
@@ -95,7 +111,7 @@ class AuditChannel:
         audit_at: str,
     ) -> None:
         frame = {
-            "kind": "delta",
+            "kind": DELTA_KIND,
             "added": [_finding_to_dict(f) for f in added],
             "removed": [_finding_to_dict(f) for f in removed],
             "changed": [_finding_to_dict(f) for f in changed],
@@ -112,7 +128,7 @@ class AuditChannel:
         """Close every subscriber's queue. Idempotent."""
         for q in self._subscribers:
             with contextlib.suppress(Exception):
-                q.put_nowait({"kind": "__closed__"})
+                q.put_nowait({"kind": CLOSED_SENTINEL})
         self._subscribers.clear()
 
 
@@ -124,7 +140,7 @@ async def _drain(
     try:
         while True:
             frame = await queue.get()
-            if frame.get("kind") == "__closed__":
+            if frame.get("kind") == CLOSED_SENTINEL:
                 return
             yield frame
     finally:
@@ -278,11 +294,13 @@ async def _audit_loop(deps: AppDependencies, interval_seconds: float) -> None:
         while True:
             await asyncio.sleep(interval_seconds)
             try:
-                findings = await asyncio.to_thread(deps.validator.audit, {"kind": "all"})
+                findings = await asyncio.to_thread(
+                    deps.validator.audit, {"kind": AuditScopeKind.ALL}
+                )
             except Exception as exc:
                 _log.warning("audit pass failed: %s", exc)
                 continue
-            audit_at = datetime.now(tz=UTC).isoformat()
+            audit_at = utc_now_iso()
             deps.last_audit_at = audit_at
             added, removed, changed = _diff_findings(last, findings)
             if deps.audit_channel is not None:

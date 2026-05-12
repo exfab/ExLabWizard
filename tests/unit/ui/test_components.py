@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 
+from exlab_wizard.constants import TreeProjectStatus
 from exlab_wizard.ui.components import (
     bandwidth_schedule_editor,
     banner_stack,
@@ -511,7 +512,7 @@ def test_tree_filter_archived_default_off_hides_archived() -> None:
     archived = tree.ProjectNode(
         short_id="PROJ-2",
         name="Old",
-        status=tree.PROJECT_ARCHIVED,
+        status=TreeProjectStatus.ARCHIVED,
     )
     assert tree.filter_project(archived, tree.TreeFilters()) is False
 
@@ -520,7 +521,7 @@ def test_tree_filter_archived_chip_on_shows_archived() -> None:
     archived = tree.ProjectNode(
         short_id="PROJ-2",
         name="Old",
-        status=tree.PROJECT_ARCHIVED,
+        status=TreeProjectStatus.ARCHIVED,
     )
     assert tree.filter_project(archived, tree.TreeFilters(archived=True)) is True
 
@@ -531,7 +532,7 @@ def test_tree_filter_deleted_always_shown() -> None:
     deleted = tree.ProjectNode(
         short_id="PROJ-3",
         name="Gone",
-        status=tree.PROJECT_DELETED,
+        status=TreeProjectStatus.DELETED,
     )
     assert tree.filter_project(deleted, tree.TreeFilters()) is True
 

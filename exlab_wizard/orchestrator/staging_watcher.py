@@ -38,7 +38,6 @@ import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -48,21 +47,27 @@ from exlab_wizard.api.schemas import CreationJson, IngestJson
 from exlab_wizard.cache.ingest_writer import IngestWriter, default_host
 from exlab_wizard.config.models import Config, EquipmentConfig
 from exlab_wizard.constants import (
-    CACHE_DIR_NAME,
-    CREATION_JSON_NAME,
-    INGEST_JSON_NAME,
     INGEST_JSON_VERSION,
-    RUN_DIR_PREFIX,
-    TEST_RUN_DIR_PREFIX,
     CompletenessSignal,
     IngestState,
+    OrchestratorTransportType,
+    RunKind,
 )
+from exlab_wizard.io import read_msgspec_json_raw
 from exlab_wizard.logging import get_logger
 from exlab_wizard.orchestrator._scan import (
     count_files_and_bytes,
     walk_run_leaves,
 )
 from exlab_wizard.orchestrator.cleanup import cleanup_eligible, clear_run
+from exlab_wizard.paths import (
+    creation_json_path,
+    ingest_json_path,
+    is_run_dir,
+    is_test_run_dir,
+)
+from exlab_wizard.sync.queue import SyncJobState
+from exlab_wizard.utils.time import utc_now_iso
 
 __all__ = ["NASSyncLike", "StagingWatcher"]
 
@@ -92,12 +97,14 @@ class CreationCacheLike(Protocol):
 
 
 # Verified statuses reported by NASSyncClient.status() (see Backend Spec §7.1.2).
-# Anything in this set means the NAS copy is durably present.
+# Anything in this set means the NAS copy is durably present. Derived from the
+# queue-internal SyncJobState rather than a separate string set so the status
+# values stay in sync with the queue's state machine (Backend Spec §7.1.2).
 _VERIFIED_STATUSES: frozenset[str] = frozenset(
     {
-        "verified",
-        "cleanup_eligible",
-        "cleaned",
+        SyncJobState.VERIFIED.value,
+        SyncJobState.CLEANUP_ELIGIBLE.value,
+        SyncJobState.CLEANED.value,
     },
 )
 
@@ -112,7 +119,7 @@ class _RunLocator:
     ingest_path: Path
     equipment_id: str
     project_name: str
-    run_kind: str
+    run_kind: RunKind
 
 
 class StagingWatcher:
@@ -324,11 +331,11 @@ class StagingWatcher:
             run_kind=run_kind,
             run_path=run_relative,
             transport=transport,
-            current_state=IngestState.STAGING.value,
+            current_state=IngestState.STAGING,
             history=[
                 {
                     "state": IngestState.STAGING.value,
-                    "at": _now_iso(),
+                    "at": utc_now_iso(),
                     "host": host,
                 },
             ],
@@ -352,10 +359,10 @@ class StagingWatcher:
             return None
         return creation.lims_project.name_at_creation or creation.lims_project.short_id or None
 
-    def _infer_transport(self, equipment: EquipmentConfig | None) -> str:
+    def _infer_transport(self, equipment: EquipmentConfig | None) -> OrchestratorTransportType:
         """Return the configured staging transport, or a sensible default."""
         if equipment is None or equipment.orchestrator_staging_transport is None:
-            return "smb_mount"
+            return OrchestratorTransportType.SMB_MOUNT
         return equipment.orchestrator_staging_transport.type
 
     # ------------------------------------------------------------------ helpers
@@ -435,18 +442,18 @@ class StagingWatcher:
         # The project name sits at parts[1] and the run leaf is parts[-1].
         project_name = parts[1] if len(parts) >= 2 else ""
         run_name = run_path.name
-        if run_name.startswith(TEST_RUN_DIR_PREFIX):
-            run_kind = "test"
-        elif run_name.startswith(RUN_DIR_PREFIX):
-            run_kind = "experimental"
+        if is_test_run_dir(run_name):
+            run_kind = RunKind.TEST
+        elif is_run_dir(run_name):
+            run_kind = RunKind.EXPERIMENTAL
         else:
             return None
-        cache_dir = run_path / CACHE_DIR_NAME
+        creation_path = creation_json_path(run_path)
         return _RunLocator(
             run_path=run_path,
-            cache_dir=cache_dir,
-            creation_path=cache_dir / CREATION_JSON_NAME,
-            ingest_path=cache_dir / INGEST_JSON_NAME,
+            cache_dir=creation_path.parent,
+            creation_path=creation_path,
+            ingest_path=ingest_json_path(run_path),
             equipment_id=equipment_id,
             project_name=project_name,
             run_kind=run_kind,
@@ -477,7 +484,7 @@ def _manifest_satisfied(manifest_path: Path, run_path: Path) -> bool:
     if not manifest_path.is_file():
         return False
     try:
-        data = msgspec.json.decode(manifest_path.read_bytes())
+        data = read_msgspec_json_raw(manifest_path)
     except (msgspec.DecodeError, OSError):
         return False
     if not isinstance(data, dict):
@@ -502,8 +509,3 @@ def _manifest_satisfied(manifest_path: Path, run_path: Path) -> bool:
             except OSError:
                 return False
     return True
-
-
-def _now_iso() -> str:
-    """Return current UTC time as ISO 8601 with the trailing ``Z`` per §13.4."""
-    return datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

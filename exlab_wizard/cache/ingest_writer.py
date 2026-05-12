@@ -21,9 +21,7 @@ across major boundaries).
 from __future__ import annotations
 
 import asyncio
-import os
 import socket
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,9 +29,12 @@ import msgspec
 from filelock import FileLock
 
 from exlab_wizard.api.schemas import IngestJson
-from exlab_wizard.cache.equipment import require_schema_major
+from exlab_wizard.cache import lock_path_for
 from exlab_wizard.constants import INGEST_JSON_VERSION, IngestState
+from exlab_wizard.io import atomic_write_bytes, read_msgspec_json
 from exlab_wizard.logging import get_logger
+from exlab_wizard.utils.state import assert_forward_transition
+from exlab_wizard.utils.time import utc_now_iso
 
 __all__ = ["IngestWriter"]
 
@@ -52,29 +53,6 @@ _FORWARD_TRANSITIONS: dict[IngestState, frozenset[IngestState]] = {
 
 # Reader's expected major version (every writer always emits this major).
 _EXPECTED_MAJOR: int = int(INGEST_JSON_VERSION.split(".", 1)[0])
-
-
-def _now_iso() -> str:
-    """Return current UTC time as ISO 8601 with the trailing ``Z`` per §13.4."""
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _atomic_write_bytes(path: Path, data: bytes) -> None:
-    """Write ``data`` to ``path`` atomically.
-
-    Per §4.4.5: tmp file + ``fsync`` + ``os.replace``. The ``.tmp`` sibling
-    sits next to the target so the rename is on the same volume (atomic on
-    POSIX, atomic-on-same-volume on Windows).
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-    try:
-        os.write(fd, data)
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    os.replace(tmp, path)
 
 
 class IngestWriter:
@@ -151,8 +129,8 @@ class IngestWriter:
     # ---- Blocking helpers (run via asyncio.to_thread) ---------------------
 
     def _write_ingest_blocking(self, path: Path, payload: IngestJson) -> None:
-        with FileLock(str(path) + ".lock"):
-            _atomic_write_bytes(path, msgspec.json.encode(payload))
+        with FileLock(lock_path_for(path)):
+            atomic_write_bytes(path, msgspec.json.encode(payload))
         _logger.info(
             "ingest.json written: %s (current_state=%s)",
             path,
@@ -160,16 +138,16 @@ class IngestWriter:
         )
 
     def _read_ingest_blocking(self, path: Path) -> IngestJson:
-        with FileLock(str(path) + ".lock"):
-            raw = path.read_bytes()
-        # First decode loosely to inspect ``schema_version``: a major
-        # mismatch must surface a structured error rather than be swallowed
-        # by msgspec's typed decode (which would either succeed silently on
-        # a future-major file with a compatible shape or raise a generic
-        # validation error). Per §11.9.2 we explicitly check the major.
-        meta: dict[str, Any] = msgspec.json.decode(raw)
-        require_schema_major(str(meta.get("schema_version", "")), expected_major=_EXPECTED_MAJOR)
-        return msgspec.json.decode(raw, type=IngestJson)
+        with FileLock(lock_path_for(path)):
+            return self._decode_ingest_locked(path)
+
+    @staticmethod
+    def _decode_ingest_locked(path: Path) -> IngestJson:
+        """Decode ``ingest.json`` with the §11.9.2 schema-major gate.
+
+        Caller MUST already hold the per-file ``FileLock``.
+        """
+        return read_msgspec_json(path, IngestJson, expected_major=_EXPECTED_MAJOR)
 
     def _append_state_transition_blocking(
         self,
@@ -181,26 +159,15 @@ class IngestWriter:
         nas_path: str | None,
         checksum_file: str | None,
     ) -> IngestJson:
-        with FileLock(str(path) + ".lock"):
-            raw = path.read_bytes()
-            meta: dict[str, Any] = msgspec.json.decode(raw)
-            require_schema_major(
-                str(meta.get("schema_version", "")), expected_major=_EXPECTED_MAJOR
-            )
-            payload = msgspec.json.decode(raw, type=IngestJson)
+        with FileLock(lock_path_for(path)):
+            payload = self._decode_ingest_locked(path)
 
             current = IngestState(payload.current_state)
-            allowed = _FORWARD_TRANSITIONS[current]
-            if new_state not in allowed:
-                raise ValueError(
-                    f"Invalid ingest state transition: {current.value} -> {new_state.value}. "
-                    f"Allowed forward transitions from {current.value}: "
-                    f"{sorted(s.value for s in allowed)}",
-                )
+            assert_forward_transition(current, new_state, _FORWARD_TRANSITIONS)
 
             entry: dict[str, Any] = {
                 "state": new_state.value,
-                "at": _now_iso(),
+                "at": utc_now_iso(),
                 "host": host,
             }
             if new_state is IngestState.COMPLETE:
@@ -220,7 +187,7 @@ class IngestWriter:
                 current_state=new_state.value,
                 history=new_history,
             )
-            _atomic_write_bytes(path, msgspec.json.encode(new_payload))
+            atomic_write_bytes(path, msgspec.json.encode(new_payload))
 
         _logger.info(
             "ingest.json transition: %s -> %s (host=%s, path=%s)",

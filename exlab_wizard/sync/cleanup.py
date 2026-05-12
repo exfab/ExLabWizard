@@ -20,12 +20,13 @@ issuing a delete.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from exlab_wizard.config.models import NASCleanupConfig
 from exlab_wizard.logging import get_logger
 from exlab_wizard.sync.queue import SyncJobRow
+from exlab_wizard.utils.time import parse_utc_iso_or_none
 
 __all__ = [
     "cleanup_interlocks_satisfied",
@@ -33,24 +34,6 @@ __all__ = [
 ]
 
 _log = get_logger(__name__)
-
-
-def _parse_iso(timestamp: str | None) -> datetime | None:
-    """Parse an ISO-8601 timestamp; return ``None`` on error or if missing.
-
-    Accepts the ``Z`` suffix and the explicit ``+00:00`` offset. Returns
-    a tz-aware :class:`datetime` (UTC) on success.
-    """
-    if not timestamp:
-        return None
-    try:
-        normalized = timestamp.replace("Z", "+00:00") if timestamp.endswith("Z") else timestamp
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed
 
 
 def has_recent_revocation(
@@ -70,7 +53,7 @@ def has_recent_revocation(
     for entry in overrides:
         if not entry.get("revoked", False):
             continue
-        recorded = _parse_iso(entry.get("recorded_at"))
+        recorded = parse_utc_iso_or_none(entry.get("recorded_at"))
         if recorded is None:
             # Malformed timestamp: be conservative.
             return True
@@ -108,7 +91,7 @@ def cleanup_interlocks_satisfied(
         return False
 
     # 2. min_age_hours since verified_at.
-    verified_dt = _parse_iso(job.verified_at)
+    verified_dt = parse_utc_iso_or_none(job.verified_at)
     if verified_dt is None:
         _log.debug("cleanup blocked: verified_at missing/malformed for job %s", job.id)
         return False

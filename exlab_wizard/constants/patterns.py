@@ -74,3 +74,29 @@ WINDOWS_RESERVED_NAMES: frozenset[str] = frozenset(
 
 # Characters that are illegal in Windows filenames. Backend Spec §8.1.2.
 WINDOWS_ILLEGAL_CHARS: str = '<>:"/\\|?*'
+
+# URL ``://user:password@`` segment captured for redaction. Captures the
+# scheme + user up to the colon (named ``prefix``) and the password
+# until the ``@`` (named ``password``). Backend Spec §16.10.
+URL_USERINFO_REGEX: str = (
+    r"(?P<prefix>[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s/:@]+):(?P<password>[^\s/@]*)@"
+)
+URL_USERINFO_PATTERN: re.Pattern[str] = re.compile(URL_USERINFO_REGEX)
+
+# ``Bearer <token>`` capture for redaction. Word-boundary anchored on the
+# left so we don't mangle words ending in "bearer". Backend Spec §16.10.
+BEARER_REGEX: str = r"(?P<keyword>\b[Bb]earer\s+)(?P<token>\S+)"
+BEARER_PATTERN: re.Pattern[str] = re.compile(BEARER_REGEX)
+
+# ``Authorization: <value>`` header capture for redaction. The value runs
+# to end-of-line or the next comma (in case the header is embedded in a
+# request log). The keyword is matched case-insensitively to mirror HTTP
+# header semantics. Backend Spec §16.10.
+AUTHORIZATION_HEADER_REGEX: str = r"(?P<keyword>(?i:Authorization)\s*:\s*)(?P<value>[^\r\n,]+)"
+AUTHORIZATION_HEADER_PATTERN: re.Pattern[str] = re.compile(AUTHORIZATION_HEADER_REGEX)
+
+# Run-id sanitisation regex used by the plugin host. Matches every run of
+# characters that are NOT in ``[A-Za-z0-9._-]``; callers replace the
+# match with a single underscore. Backend Spec §6.
+RUN_ID_SANITIZE_REGEX: str = r"[^A-Za-z0-9._-]+"
+RUN_ID_SANITIZE_PATTERN: re.Pattern[str] = re.compile(RUN_ID_SANITIZE_REGEX)

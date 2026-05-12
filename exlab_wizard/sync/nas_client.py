@@ -17,7 +17,7 @@ import contextlib
 import shutil
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,10 +26,11 @@ from exlab_wizard.cache.creation_writer import CreationWriter
 from exlab_wizard.config.models import Config, EquipmentConfig, RcloneTransport, RsyncSshTransport
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
-    CREATION_JSON_NAME,
+    SyncHandleState,
     SyncStatus,
 )
 from exlab_wizard.logging import get_logger
+from exlab_wizard.paths import creation_json_path
 from exlab_wizard.sync.bandwidth import effective_bandwidth_limit_kibps
 from exlab_wizard.sync.cleanup import cleanup_interlocks_satisfied
 from exlab_wizard.sync.pre_sync_gate import is_eligible
@@ -46,6 +47,7 @@ from exlab_wizard.sync.transports import (
 from exlab_wizard.sync.transports.rclone import RcloneTransport as RcloneDriver
 from exlab_wizard.sync.transports.rsync_ssh import RsyncSshTransport as RsyncDriver
 from exlab_wizard.sync.verifier import Verifier, VerifyResult
+from exlab_wizard.utils.time import utc_now, utc_now_iso
 from exlab_wizard.validator.engine import Validator
 from exlab_wizard.validator.findings import Finding
 
@@ -74,18 +76,9 @@ class SyncJobHandle:
     """
 
     job_id: str
-    state: str
+    state: SyncHandleState
     run_path: str
     blocking_findings: tuple[Finding, ...] = ()
-
-
-# Closed-set state alias kept distinct from the queue's StrEnum so the
-# Pre-Sync-Gate rejection has a name distinct from FAILED.
-class HandleState:
-    """String constants for :class:`SyncJobHandle.state`. Backend Spec §7.3."""
-
-    QUEUED = "queued"
-    BLOCKED = "blocked"
 
 
 # ---------------------------------------------------------------------------
@@ -259,9 +252,9 @@ class NASSyncClient:
         ``QUEUED`` row.
 
         Returns a :class:`SyncJobHandle`. The handle's ``state`` is
-        either :attr:`HandleState.BLOCKED` or :attr:`HandleState.QUEUED`.
+        either :attr:`SyncHandleState.BLOCKED` or :attr:`SyncHandleState.QUEUED`.
         """
-        creation_path = run_path / CACHE_DIR_NAME / CREATION_JSON_NAME
+        creation_path = creation_json_path(run_path)
         creation = await self._cache_creation.read_creation_snapshot(creation_path)
 
         eligible, blocking = is_eligible(
@@ -273,7 +266,7 @@ class NASSyncClient:
             await self._mark_blocked(creation_path)
             return SyncJobHandle(
                 job_id="",
-                state=HandleState.BLOCKED,
+                state=SyncHandleState.BLOCKED,
                 run_path=str(run_path),
                 blocking_findings=tuple(blocking),
             )
@@ -288,12 +281,12 @@ class NASSyncClient:
                 self._wake_event.set()
                 return SyncJobHandle(
                     job_id=row.id,
-                    state=HandleState.QUEUED,
+                    state=SyncHandleState.QUEUED,
                     run_path=str(run_path),
                 )
             return SyncJobHandle(
                 job_id=existing.id,
-                state=HandleState.QUEUED,
+                state=SyncHandleState.QUEUED,
                 run_path=str(run_path),
             )
 
@@ -303,7 +296,7 @@ class NASSyncClient:
             nas_path=self._compute_nas_path(creation),
         )
         self._wake_event.set()
-        return SyncJobHandle(job_id=row.id, state=HandleState.QUEUED, run_path=str(run_path))
+        return SyncJobHandle(job_id=row.id, state=SyncHandleState.QUEUED, run_path=str(run_path))
 
     async def status(self, run_path: Path) -> str:
         """Return the queue state of the job for ``run_path``.
@@ -355,7 +348,7 @@ class NASSyncClient:
     async def _next_due_job(self) -> SyncJobRow | None:
         """Return the next QUEUED row whose backoff has passed (or None)."""
         rows = await self._queue.list_in_state(SyncJobState.QUEUED)
-        now_iso = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = utc_now_iso()
         for row in rows:
             if not row.next_attempt_at:
                 return row
@@ -498,7 +491,7 @@ class NASSyncClient:
             return
 
         # Promote to VERIFIED and record one verify pass.
-        verified_iso = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        verified_iso = utc_now_iso()
         await self._queue.transition(
             job.id,
             SyncJobState.VERIFIED,
@@ -604,7 +597,7 @@ class NASSyncClient:
         job = await self._queue.get_by_id(job_id)
         if job is None or job.state != SyncJobState.VERIFIED:
             return
-        creation_path = run_path / CACHE_DIR_NAME / CREATION_JSON_NAME
+        creation_path = creation_json_path(run_path)
         creation: CreationJson | None = None
         if creation_path.exists():
             with contextlib.suppress(Exception):
@@ -612,7 +605,7 @@ class NASSyncClient:
         overrides = list(creation.validation_overrides) if creation else []
 
         remote_ok = self._remote_stat_callable(job)
-        now_utc = datetime.now(tz=UTC)
+        now_utc = utc_now()
         if not cleanup_interlocks_satisfied(
             job=job,
             run_path=run_path,
@@ -685,19 +678,19 @@ class NASSyncClient:
         """Mutate ``creation.json`` ``sync_status`` to ``blocked_by_validation``."""
 
         def _gate(payload: CreationJson) -> CreationJson:
-            payload.sync_status = SyncStatus.BLOCKED_BY_VALIDATION.value
+            payload.sync_status = SyncStatus.BLOCKED_BY_VALIDATION
             return payload
 
         await self._cache_creation.update_creation_atomic(creation_path, _gate)
 
     async def _mark_synced(self, run_path: Path) -> None:
         """Mutate ``creation.json`` ``sync_status`` to ``synced``. Backend Spec §7.1.4."""
-        creation_path = run_path / CACHE_DIR_NAME / CREATION_JSON_NAME
+        creation_path = creation_json_path(run_path)
         if not creation_path.exists():
             return
 
         def _flip(payload: CreationJson) -> CreationJson:
-            payload.sync_status = SyncStatus.SYNCED.value
+            payload.sync_status = SyncStatus.SYNCED
             return payload
 
         with contextlib.suppress(Exception):
@@ -710,12 +703,12 @@ class NASSyncClient:
         ``retain_cache=False`` path removes the cache directory along with
         the data files).
         """
-        creation_path = run_path / CACHE_DIR_NAME / CREATION_JSON_NAME
+        creation_path = creation_json_path(run_path)
         if not creation_path.exists():
             return
 
         def _flip(payload: CreationJson) -> CreationJson:
-            payload.sync_status = SyncStatus.CLEANED.value
+            payload.sync_status = SyncStatus.CLEANED
             return payload
 
         with contextlib.suppress(Exception):

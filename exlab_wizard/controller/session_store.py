@@ -23,10 +23,10 @@ import asyncio
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from datetime import datetime, timedelta
+from typing import Any
 
-from exlab_wizard.constants import SESSION_GC_AFTER_SECONDS
+from exlab_wizard.constants import SESSION_GC_AFTER_SECONDS, NextAction, SessionKind
 from exlab_wizard.controller.state_machine import (
     Phase,
     SessionState,
@@ -34,14 +34,12 @@ from exlab_wizard.controller.state_machine import (
     state_to_phase,
 )
 from exlab_wizard.logging import get_logger
+from exlab_wizard.utils.time import utc_now
 
 __all__ = ["Session", "SessionStore"]
 
 
 _log = get_logger(__name__)
-
-
-SessionKind = Literal["project", "run"]
 
 
 @dataclass
@@ -80,7 +78,7 @@ class Session:
     created_at: datetime
     last_heartbeat: datetime
     current_phase: Phase | None = None
-    next_action: str = "none"
+    next_action: NextAction = NextAction.NONE
     event_queue: asyncio.Queue[dict[str, Any]] | None = None
     pending_input: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
@@ -106,7 +104,7 @@ class SessionStore:
     def open(self, kind: SessionKind, req: Any) -> Session:
         """Create a fresh session in :data:`SessionState.PENDING` state."""
         session_id = str(uuid.uuid4())
-        now = datetime.now(tz=UTC)
+        now = utc_now()
         session = Session(
             session_id=session_id,
             kind=kind,
@@ -115,7 +113,7 @@ class SessionStore:
             created_at=now,
             last_heartbeat=now,
             current_phase=None,
-            next_action="none",
+            next_action=NextAction.NONE,
         )
         self._sessions[session_id] = session
         _log.debug(
@@ -144,7 +142,9 @@ class SessionStore:
         session.state = new_state
         session.current_phase = state_to_phase(new_state)
         session.next_action = (
-            "awaiting_input" if new_state is SessionState.INPUT_REQUIRED else "none"
+            NextAction.AWAITING_INPUT
+            if new_state is SessionState.INPUT_REQUIRED
+            else NextAction.NONE
         )
 
     def attach_event_queue(self, session_id: str, queue: asyncio.Queue[dict[str, Any]]) -> None:
@@ -168,7 +168,7 @@ class SessionStore:
         session = self._sessions.get(session_id)
         if session is None:
             return
-        session.last_heartbeat = datetime.now(tz=UTC)
+        session.last_heartbeat = utc_now()
 
     def close(self, session_id: str, outcome: dict[str, Any]) -> None:
         """Stamp a terminal-state session with the outcome envelope.
@@ -199,7 +199,7 @@ class SessionStore:
         ``INPUT_REQUIRED`` sessions are eligible -- transient states
         are owned by the controller and finish on their own.
         """
-        threshold = datetime.now(tz=UTC) - age
+        threshold = utc_now() - age
         return [
             sid
             for sid, session in self._sessions.items()

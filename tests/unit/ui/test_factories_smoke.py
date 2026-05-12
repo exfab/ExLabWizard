@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from nicegui import ui
 
+from exlab_wizard.constants import TreeProjectStatus
 from exlab_wizard.ui import keyboard, theme
 from exlab_wizard.ui.components import (
     bandwidth_schedule_editor,
@@ -265,8 +266,8 @@ def test_smoke_validation_summary_renders() -> None:
 def test_smoke_tree_renders() -> None:
     equipment = tree.EquipmentNode(equipment_id="EQUIP_01")
     project = tree.ProjectNode(short_id="PROJ-1", name="Foo")
-    archived = tree.ProjectNode(short_id="PROJ-2", name="Old", status=tree.PROJECT_ARCHIVED)
-    deleted = tree.ProjectNode(short_id="PROJ-3", name="Gone", status=tree.PROJECT_DELETED)
+    archived = tree.ProjectNode(short_id="PROJ-2", name="Old", status=TreeProjectStatus.ARCHIVED)
+    deleted = tree.ProjectNode(short_id="PROJ-3", name="Gone", status=TreeProjectStatus.DELETED)
     runs_for_proj = [
         tree.RunNode(directory_name="Run_2026-05-07", run_kind="experimental", label="cal sweep"),
         tree.RunNode(directory_name="TestRun_2026-05-07", run_kind="test"),

@@ -17,6 +17,7 @@ import pytest
 from exlab_wizard.api.schemas import (
     CreationJson,
     EquipmentJson,
+    IngestJson,
     LimsProjectBlock,
     OrchestratorBlock,
     OverrideEntry,
@@ -36,6 +37,16 @@ from exlab_wizard.api.schemas import (
 # with ``Test`` as a test container and tries to instantiate it. The alias
 # keeps the class available under a name pytest does not collect.
 from exlab_wizard.api.schemas import TestRunsJson as RunsTestMarkerJson
+from exlab_wizard.constants import (
+    CreationLevel,
+    IngestState,
+    LIMSProjectSource,
+    OrchestratorTransportType,
+    PluginStatus,
+    RunKind,
+    RunScope,
+    SyncStatus,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -424,3 +435,384 @@ def test_test_runs_json_missing_required_field_raises() -> None:
 
     with pytest.raises(msgspec.ValidationError):
         msgspec_json.decode(b'{"schema_version": "1.0"}', type=RunsTestMarkerJson)
+
+
+# ---------------------------------------------------------------------------
+# StrEnum field round-trip: every (Struct, field) pair that switched from
+# bare ``str`` to a canonical ``StrEnum`` must decode old-format JSON (raw
+# string values) into the enum member, and re-encode to byte-identical JSON.
+# Spec §11.3 / §13.4: the on-disk wire format is committed; the type-level
+# refactor MUST NOT change the bytes.
+# ---------------------------------------------------------------------------
+
+
+def _ingest_json_payload(**overrides: object) -> bytes:
+    """Build a minimal valid ingest.json JSON document for round-trip tests."""
+    base: dict[str, object] = {
+        "schema_version": "1.1",
+        "project_name": "PROJ-0042",
+        "equipment_id": "CONFOCAL_01",
+        "run_kind": "experimental",
+        "run_path": "/staging/Run_2026-04-17",
+        "transport": "smb_mount",
+        "current_state": "staging",
+        "history": [],
+    }
+    base.update(overrides)
+    return msgspec_json.encode(base)
+
+
+def _creation_json_payload(**overrides: object) -> bytes:
+    """Build a minimal valid creation.json JSON document for round-trip tests."""
+    base: dict[str, object] = {
+        "schema_version": "1.9",
+        "created_at": "2026-04-17T14:32:00Z",
+        "created_by": "asmith",
+        "level": "run",
+        "run_kind": "experimental",
+        "lims_project": {
+            "uid": "x",
+            "short_id": "PROJ-0001",
+            "name_at_creation": "X",
+            "source": "live",
+        },
+        "template": {
+            "name": "x",
+            "version": "1",
+            "source_path": "x",
+            "run_scope": "both",
+        },
+        "variables": {},
+        "paths": {"local": "/x", "nas": "//y"},
+        "sync_status": "pending",
+    }
+    base.update(overrides)
+    return msgspec_json.encode(base)
+
+
+@pytest.mark.parametrize(
+    ("struct_cls", "field", "raw_value", "enum_member", "build_payload"),
+    [
+        # CreationJson.level
+        (
+            CreationJson,
+            "level",
+            "project",
+            CreationLevel.PROJECT,
+            lambda: _creation_json_payload(level="project"),
+        ),
+        (
+            CreationJson,
+            "level",
+            "run",
+            CreationLevel.RUN,
+            lambda: _creation_json_payload(level="run"),
+        ),
+        # CreationJson.run_kind
+        (
+            CreationJson,
+            "run_kind",
+            "experimental",
+            RunKind.EXPERIMENTAL,
+            lambda: _creation_json_payload(run_kind="experimental"),
+        ),
+        (
+            CreationJson,
+            "run_kind",
+            "test",
+            RunKind.TEST,
+            lambda: _creation_json_payload(run_kind="test"),
+        ),
+        # CreationJson.sync_status (default = pending; round-trip a non-default value)
+        (
+            CreationJson,
+            "sync_status",
+            "synced",
+            SyncStatus.SYNCED,
+            lambda: _creation_json_payload(sync_status="synced"),
+        ),
+        (
+            CreationJson,
+            "sync_status",
+            "blocked_by_validation",
+            SyncStatus.BLOCKED_BY_VALIDATION,
+            lambda: _creation_json_payload(sync_status="blocked_by_validation"),
+        ),
+        # IngestJson.run_kind
+        (
+            IngestJson,
+            "run_kind",
+            "experimental",
+            RunKind.EXPERIMENTAL,
+            lambda: _ingest_json_payload(run_kind="experimental"),
+        ),
+        (
+            IngestJson,
+            "run_kind",
+            "test",
+            RunKind.TEST,
+            lambda: _ingest_json_payload(run_kind="test"),
+        ),
+        # IngestJson.transport
+        (
+            IngestJson,
+            "transport",
+            "smb_mount",
+            OrchestratorTransportType.SMB_MOUNT,
+            lambda: _ingest_json_payload(transport="smb_mount"),
+        ),
+        (
+            IngestJson,
+            "transport",
+            "file_transfer",
+            OrchestratorTransportType.FILE_TRANSFER,
+            lambda: _ingest_json_payload(transport="file_transfer"),
+        ),
+        # IngestJson.current_state
+        (
+            IngestJson,
+            "current_state",
+            "staging",
+            IngestState.STAGING,
+            lambda: _ingest_json_payload(current_state="staging"),
+        ),
+        (
+            IngestJson,
+            "current_state",
+            "complete",
+            IngestState.COMPLETE,
+            lambda: _ingest_json_payload(current_state="complete"),
+        ),
+        (
+            IngestJson,
+            "current_state",
+            "sync_queued",
+            IngestState.SYNC_QUEUED,
+            lambda: _ingest_json_payload(current_state="sync_queued"),
+        ),
+        (
+            IngestJson,
+            "current_state",
+            "sync_verified",
+            IngestState.SYNC_VERIFIED,
+            lambda: _ingest_json_payload(current_state="sync_verified"),
+        ),
+        (
+            IngestJson,
+            "current_state",
+            "cleared",
+            IngestState.CLEARED,
+            lambda: _ingest_json_payload(current_state="cleared"),
+        ),
+    ],
+)
+def test_strenum_field_round_trip_preserves_wire_format(
+    struct_cls: type,
+    field: str,
+    raw_value: str,
+    enum_member: object,
+    build_payload: object,
+) -> None:
+    """Decode an old-format JSON document (bare string at ``field``) into the
+    typed Struct; the field must be the canonical enum member, equal to the
+    raw string, and re-encoding must place the same raw string back on the
+    wire."""
+    raw_bytes = build_payload()  # type: ignore[operator]
+    decoded = msgspec_json.decode(raw_bytes, type=struct_cls)
+    value = getattr(decoded, field)
+    assert value is enum_member
+    assert value == raw_value
+    re_encoded = msgspec_json.encode(decoded)
+    needle = f'"{field}":"{raw_value}"'.encode()
+    assert needle in re_encoded
+
+
+@pytest.mark.parametrize(
+    ("field", "raw_value", "enum_member", "json_segment"),
+    [
+        # LimsProjectBlock.source
+        (
+            "source",
+            "live",
+            LIMSProjectSource.LIVE,
+            b'"source":"live"',
+        ),
+        (
+            "source",
+            "cache",
+            LIMSProjectSource.CACHE,
+            b'"source":"cache"',
+        ),
+        (
+            "source",
+            "offline_catalogue",
+            LIMSProjectSource.OFFLINE_CATALOGUE,
+            b'"source":"offline_catalogue"',
+        ),
+    ],
+)
+def test_lims_project_block_source_round_trip(
+    field: str, raw_value: str, enum_member: LIMSProjectSource, json_segment: bytes
+) -> None:
+    raw_bytes = msgspec_json.encode(
+        {
+            "uid": "x",
+            "short_id": "PROJ-0001",
+            "name_at_creation": "X",
+            "source": raw_value,
+        }
+    )
+    decoded = msgspec_json.decode(raw_bytes, type=LimsProjectBlock)
+    assert decoded.source is enum_member
+    assert decoded.source == raw_value
+    re_encoded = msgspec_json.encode(decoded)
+    if enum_member is LIMSProjectSource.LIVE:
+        # ``LIVE`` is the declared default; ``omit_defaults=True`` drops it
+        # from the encoded bytes. The default still encodes to the historical
+        # wire form: any non-default LimsProjectBlock includes ``source``.
+        assert json_segment not in re_encoded
+    else:
+        assert json_segment in re_encoded
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "enum_member"),
+    [
+        ("experimental", RunScope.EXPERIMENTAL),
+        ("test", RunScope.TEST),
+        ("both", RunScope.BOTH),
+    ],
+)
+def test_template_block_run_scope_round_trip(raw_value: str, enum_member: RunScope) -> None:
+    raw_bytes = msgspec_json.encode(
+        {
+            "name": "x",
+            "version": "1",
+            "source_path": "x",
+            "run_scope": raw_value,
+        }
+    )
+    decoded = msgspec_json.decode(raw_bytes, type=TemplateBlock)
+    assert decoded.run_scope is enum_member
+    assert decoded.run_scope == raw_value
+    re_encoded = msgspec_json.encode(decoded)
+    assert f'"run_scope":"{raw_value}"'.encode() in re_encoded
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "enum_member"),
+    [
+        ("success", PluginStatus.SUCCESS),
+        ("failed", PluginStatus.FAILED),
+        ("skipped", PluginStatus.SKIPPED),
+        ("timeout", PluginStatus.TIMEOUT),
+        ("policy_violation", PluginStatus.POLICY_VIOLATION),
+    ],
+)
+def test_plugin_applied_status_round_trip(raw_value: str, enum_member: PluginStatus) -> None:
+    raw_bytes = msgspec_json.encode(
+        {
+            "plugin": "p",
+            "version": "1",
+            "files_affected": ["x"],
+            "status": raw_value,
+        }
+    )
+    decoded = msgspec_json.decode(raw_bytes, type=PluginApplied)
+    assert decoded.status is enum_member
+    assert decoded.status == raw_value
+    re_encoded = msgspec_json.encode(decoded)
+    assert f'"status":"{raw_value}"'.encode() in re_encoded
+
+
+def test_test_runs_json_default_run_kind_serializes_as_test() -> None:
+    """The ``run_kind`` default switched from bare ``"test"`` to
+    ``RunKind.TEST``; ``omit_defaults=True`` should still drop it from the
+    encoded bytes (and decoding a payload without the field must yield
+    ``RunKind.TEST``)."""
+    payload = RunsTestMarkerJson(
+        schema_version="1.0",
+        created_at="2026-04-17T14:00:00Z",
+        project="PROJ-0042",
+        equipment="CONFOCAL_01",
+    )
+    encoded = msgspec_json.encode(payload)
+    assert b'"run_kind"' not in encoded
+    decoded = msgspec_json.decode(encoded, type=RunsTestMarkerJson)
+    assert decoded.run_kind is RunKind.TEST
+
+
+def test_test_runs_json_explicit_run_kind_round_trips() -> None:
+    raw_bytes = msgspec_json.encode(
+        {
+            "schema_version": "1.0",
+            "created_at": "2026-04-17T14:00:00Z",
+            "project": "PROJ-0042",
+            "equipment": "CONFOCAL_01",
+            "run_kind": "experimental",
+        }
+    )
+    decoded = msgspec_json.decode(raw_bytes, type=RunsTestMarkerJson)
+    assert decoded.run_kind is RunKind.EXPERIMENTAL
+
+
+def test_creation_json_default_sync_status_omitted_on_encode() -> None:
+    """``SyncStatus.PENDING`` is the declared default; ``omit_defaults=True``
+    drops it from encoded bytes, matching the pre-enum wire format."""
+    payload = _minimal_creation_json()
+    encoded = msgspec_json.encode(payload)
+    assert b'"sync_status"' not in encoded
+    decoded = msgspec_json.decode(encoded, type=CreationJson)
+    assert decoded.sync_status is SyncStatus.PENDING
+
+
+def test_lims_project_block_default_source_omitted_on_encode() -> None:
+    """``LIMSProjectSource.LIVE`` is the declared default; ``omit_defaults=True``
+    drops it from encoded bytes, matching the pre-enum wire format."""
+    block = LimsProjectBlock(
+        uid="x",
+        short_id="PROJ-0001",
+        name_at_creation="X",
+    )
+    encoded = msgspec_json.encode(block)
+    assert b'"source"' not in encoded
+    decoded = msgspec_json.decode(encoded, type=LimsProjectBlock)
+    assert decoded.source is LIMSProjectSource.LIVE
+
+
+# ---------------------------------------------------------------------------
+# lims/schemas.py LIMSProject.status -- enum round-trip. Wire format is
+# PascalCase per LIMS REST convention (Backend Spec §7.2). Lives here next
+# to the other Phase E1 round-trip tests so a single test module pins every
+# Struct.field that switched to a StrEnum.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "enum_member"),
+    [
+        ("Pending", "PENDING"),
+        ("Active", "ACTIVE"),
+        ("Completed", "COMPLETED"),
+        ("Archived", "ARCHIVED"),
+    ],
+)
+def test_lims_project_status_round_trip(raw_value: str, enum_member: str) -> None:
+    from exlab_wizard.constants import LIMSProjectStatus
+    from exlab_wizard.lims.schemas import LIMSProject
+
+    raw_bytes = msgspec_json.encode(
+        {
+            "uid": "u",
+            "short_id": "PROJ-0001",
+            "name": "X",
+            "status": raw_value,
+            "owner": "asmith",
+            "fetched_at": "2026-04-17T14:00:00Z",
+        }
+    )
+    decoded = msgspec_json.decode(raw_bytes, type=LIMSProject)
+    assert decoded.status is LIMSProjectStatus[enum_member]
+    assert decoded.status == raw_value
+    re_encoded = msgspec_json.encode(decoded)
+    assert f'"status":"{raw_value}"'.encode() in re_encoded

@@ -211,6 +211,114 @@ def test_plugin_status_values() -> None:
     }
 
 
+def test_creation_level_values() -> None:
+    # Backend Spec §11.3 -- creation.json discriminator.
+    # Full set coverage is in test_enum_literal_alignment.py.
+    assert issubclass(enums.CreationLevel, StrEnum)
+    assert enums.CreationLevel.PROJECT.value == "project"
+    assert enums.CreationLevel.RUN.value == "run"
+
+
+def test_orchestrator_transport_type_values() -> None:
+    # Backend Spec §13.3 -- ingest.json transport field.
+    # Full set coverage is in test_enum_literal_alignment.py.
+    assert issubclass(enums.OrchestratorTransportType, StrEnum)
+    assert enums.OrchestratorTransportType.SMB_MOUNT.value == "smb_mount"
+    assert enums.OrchestratorTransportType.FILE_TRANSFER.value == "file_transfer"
+
+
+def test_field_type_values() -> None:
+    # Backend Spec §10 -- README field declarations.
+    # Full set coverage is in test_enum_literal_alignment.py.
+    assert issubclass(enums.FieldType, StrEnum)
+    assert enums.FieldType.STRING.value == "string"
+    assert enums.FieldType.TEXT.value == "text"
+    assert enums.FieldType.CHOICE.value == "choice"
+    assert enums.FieldType.DATE.value == "date"
+    assert enums.FieldType.BOOLEAN.value == "boolean"
+
+
+def test_bandwidth_day_values() -> None:
+    # Backend Spec §7.1 -- NAS sync bandwidth windows.
+    # Full set coverage is in test_enum_literal_alignment.py.
+    assert issubclass(enums.BandwidthDay, StrEnum)
+    assert enums.BandwidthDay.MON.value == "mon"
+    assert enums.BandwidthDay.SUN.value == "sun"
+
+
+def test_session_kind_values() -> None:
+    # Backend Spec §4.7.
+    # Full set coverage is in test_enum_literal_alignment.py.
+    assert issubclass(enums.SessionKind, StrEnum)
+    assert enums.SessionKind.PROJECT.value == "project"
+    assert enums.SessionKind.RUN.value == "run"
+
+
+def test_next_action_values() -> None:
+    # Backend Spec §4.7.
+    # Full set coverage is in test_enum_literal_alignment.py.
+    assert issubclass(enums.NextAction, StrEnum)
+    assert enums.NextAction.NONE.value == "none"
+    assert enums.NextAction.AWAITING_INPUT.value == "awaiting_input"
+
+
+def test_audit_scope_kind_values() -> None:
+    # Backend Spec §8.1 -- validator scope discriminator.
+    # Full set coverage is in test_enum_literal_alignment.py.
+    assert issubclass(enums.AuditScopeKind, StrEnum)
+    assert enums.AuditScopeKind.EQUIPMENT_ID.value == "equipment_id"
+    assert enums.AuditScopeKind.PROJECT_PATH.value == "project_path"
+    assert enums.AuditScopeKind.ALL.value == "all"
+
+
+def test_directory_level_values() -> None:
+    # Backend Spec §8.1 -- validator engine directory classification.
+    # Full set coverage is in test_enum_literal_alignment.py.
+    assert issubclass(enums.DirectoryLevel, StrEnum)
+    assert enums.DirectoryLevel.EQUIPMENT.value == "equipment"
+    assert enums.DirectoryLevel.OTHER.value == "other"
+
+
+def test_platform_values() -> None:
+    # Full set coverage is in test_enum_literal_alignment.py.
+    assert issubclass(enums.Platform, StrEnum)
+    assert enums.Platform.MACOS.value == "macos"
+    assert enums.Platform.WINDOWS.value == "windows"
+    assert enums.Platform.LINUX.value == "linux"
+
+
+def test_setup_next_action_values() -> None:
+    # Backend Spec §4.9.1.
+    # Full set coverage is in test_enum_literal_alignment.py.
+    assert issubclass(enums.SetupNextAction, StrEnum)
+    assert enums.SetupNextAction.SET_PATHS.value == "set_paths"
+    assert enums.SetupNextAction.TEST_LIMS.value == "test_lims"
+
+
+def test_sync_handle_state_values() -> None:
+    # Backend Spec §7.1 -- in-process sync handle state.
+    # Full set coverage is in test_enum_literal_alignment.py.
+    assert issubclass(enums.SyncHandleState, StrEnum)
+    assert enums.SyncHandleState.QUEUED.value == "queued"
+    assert enums.SyncHandleState.BLOCKED.value == "blocked"
+
+
+def test_plugin_source_root_values() -> None:
+    # Backend Spec §6.1.1.
+    # Full set coverage is in test_enum_literal_alignment.py.
+    assert issubclass(enums.PluginSourceRoot, StrEnum)
+    assert enums.PluginSourceRoot.BUNDLED.value == "bundled"
+    assert enums.PluginSourceRoot.LAB.value == "lab"
+
+
+def test_tree_project_status_values() -> None:
+    # Full set coverage is in test_enum_literal_alignment.py.
+    assert issubclass(enums.TreeProjectStatus, StrEnum)
+    assert enums.TreeProjectStatus.ACTIVE.value == "active"
+    assert enums.TreeProjectStatus.ARCHIVED.value == "archived"
+    assert enums.TreeProjectStatus.DELETED.value == "deleted"
+
+
 def test_enums_re_exported_from_package() -> None:
     # All enum classes must be re-exported from ``exlab_wizard.constants``.
     from exlab_wizard import constants
@@ -230,3 +338,16 @@ def test_enums_re_exported_from_package() -> None:
     assert constants.CompletenessSignal is enums.CompletenessSignal
     assert constants.StagingCleanupMode is enums.StagingCleanupMode
     assert constants.PluginStatus is enums.PluginStatus
+    assert constants.CreationLevel is enums.CreationLevel
+    assert constants.OrchestratorTransportType is enums.OrchestratorTransportType
+    assert constants.FieldType is enums.FieldType
+    assert constants.BandwidthDay is enums.BandwidthDay
+    assert constants.SessionKind is enums.SessionKind
+    assert constants.NextAction is enums.NextAction
+    assert constants.AuditScopeKind is enums.AuditScopeKind
+    assert constants.DirectoryLevel is enums.DirectoryLevel
+    assert constants.Platform is enums.Platform
+    assert constants.SetupNextAction is enums.SetupNextAction
+    assert constants.SyncHandleState is enums.SyncHandleState
+    assert constants.PluginSourceRoot is enums.PluginSourceRoot
+    assert constants.TreeProjectStatus is enums.TreeProjectStatus

@@ -16,6 +16,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from exlab_wizard.constants import SERVER_STATE_FILE
 from exlab_wizard.logging import get_logger
 
 __all__ = [
@@ -53,7 +54,7 @@ def read_server_handshake(state_dir: Path) -> ServerHandshake | None:
     exists, the PID is alive, and the port parses, we proceed; deeper
     health checks happen on the first HTTP call inside pywebview.
     """
-    state_path = Path(state_dir) / "server.json"
+    state_path = Path(state_dir) / SERVER_STATE_FILE
     if not state_path.exists():
         return None
     try:

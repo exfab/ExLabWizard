@@ -26,10 +26,15 @@ Two public surfaces:
 from __future__ import annotations
 
 import logging
-import re
 from datetime import UTC, datetime
 
+from exlab_wizard.constants import (
+    AUTHORIZATION_HEADER_PATTERN,
+    BEARER_PATTERN,
+    URL_USERINFO_PATTERN,
+)
 from exlab_wizard.logging.context import get_run_context
+from exlab_wizard.utils.time import dt_to_iso
 
 __all__ = [
     "StructuredTagFormatter",
@@ -104,7 +109,7 @@ def _format_utc_timestamp(epoch_seconds: float) -> str:
     parsers downstream of the spec rely on it.
     """
     dt = datetime.fromtimestamp(epoch_seconds, tz=UTC)
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return dt_to_iso(dt)
 
 
 def _render_tags() -> str:
@@ -125,22 +130,6 @@ def _render_tags() -> str:
 # ---------------------------------------------------------------------------
 # redact_secret
 # ---------------------------------------------------------------------------
-
-
-# URL ``://user:password@`` segment. Captures the scheme + user up to the
-# colon, then the password until the ``@``. We replace the password only.
-_URL_USERINFO_RE = re.compile(
-    r"(?P<prefix>[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s/:@]+):(?P<password>[^\s/@]*)@",
-)
-
-# ``Bearer <token>`` -- the token runs to the next whitespace. Word-boundary
-# anchored on the left so we don't mangle words ending in "bearer".
-_BEARER_RE = re.compile(r"(?P<keyword>\b[Bb]earer\s+)(?P<token>\S+)")
-
-# ``Authorization: <value>`` headers -- value runs to end-of-line or the
-# next comma (in case the header is embedded in a request log). The keyword
-# is matched case-insensitively to mirror HTTP header semantics.
-_AUTHORIZATION_RE = re.compile(r"(?P<keyword>(?i:Authorization)\s*:\s*)(?P<value>[^\r\n,]+)")
 
 
 def redact_secret(value: str) -> str:
@@ -164,10 +153,10 @@ def redact_secret(value: str) -> str:
         # Defensive: callers occasionally pass non-strings (e.g. a Path).
         # Coerce so we still scrub a stringified secret.
         value = str(value)
-    redacted = _URL_USERINFO_RE.sub(r"\g<prefix>:***@", value)
+    redacted = URL_USERINFO_PATTERN.sub(r"\g<prefix>:***@", value)
     # Order matters: scrub the explicit ``Authorization:`` header first so
     # that an ``Authorization: Bearer ...`` line collapses to a single
     # ``Authorization: ***`` rather than ``Authorization: Bearer ***``.
-    redacted = _AUTHORIZATION_RE.sub(r"\g<keyword>***", redacted)
-    redacted = _BEARER_RE.sub(r"\g<keyword>***", redacted)
+    redacted = AUTHORIZATION_HEADER_PATTERN.sub(r"\g<keyword>***", redacted)
+    redacted = BEARER_PATTERN.sub(r"\g<keyword>***", redacted)
     return redacted

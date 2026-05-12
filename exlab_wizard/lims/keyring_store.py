@@ -42,6 +42,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from exlab_wizard.constants import KEYRING_SERVICE, SECRETS_FILE
 from exlab_wizard.errors import KeyringUnavailableError
+from exlab_wizard.io import atomic_write_bytes
 from exlab_wizard.logging import get_logger
 
 __all__ = ["KeyringStore"]
@@ -238,12 +239,7 @@ class KeyringStore:
             "ciphertext": ciphertext,
         }
         encoded = msgspec.json.encode(envelope)
-        tmp = self._secrets_path.with_name(f"{self._secrets_path.name}.tmp.{os.getpid()}")
-        with tmp.open("wb") as handle:
-            handle.write(encoded)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, self._secrets_path)
+        atomic_write_bytes(self._secrets_path, encoded)
 
     def _existing_salt(self) -> bytes | None:
         if not self._secrets_path.exists():

@@ -33,8 +33,15 @@ from exlab_wizard.config.models import (
     PathsConfig,
     RcloneTransport,
 )
-from exlab_wizard.constants import CACHE_DIR_NAME, CREATION_JSON_NAME, CREATION_JSON_VERSION
-from exlab_wizard.sync.nas_client import HandleState, NASSyncClient
+from exlab_wizard.constants import (
+    CACHE_DIR_NAME,
+    CREATION_JSON_NAME,
+    CREATION_JSON_VERSION,
+)
+from exlab_wizard.constants import (
+    SyncHandleState as HandleState,
+)
+from exlab_wizard.sync.nas_client import NASSyncClient
 from exlab_wizard.sync.queue import SyncJobState
 from exlab_wizard.sync.transports import TransportErrorKind, TransportResult
 from exlab_wizard.validator.engine import Validator

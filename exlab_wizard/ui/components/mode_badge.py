@@ -8,16 +8,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from exlab_wizard.constants import RunKind
 from exlab_wizard.logging import get_logger
 
 _log = get_logger(__name__)
 
-# Run kind values from Backend §3.
-RUN_KIND_EXPERIMENTAL = "experimental"
-RUN_KIND_TEST = "test"
 
-
-def mode_badge_props(run_kind: str | None, *, label: str | None = None) -> dict[str, Any]:
+def mode_badge_props(run_kind: RunKind | None, *, label: str | None = None) -> dict[str, Any]:
     """Compute the badge styling props for a run kind.
 
     Returns a dict that wizards can spread onto a NiceGUI badge factory:
@@ -33,15 +30,15 @@ def mode_badge_props(run_kind: str | None, *, label: str | None = None) -> dict[
     has something to display before the operator picks a mode.
     """
 
-    if run_kind == RUN_KIND_TEST:
+    if run_kind == RunKind.TEST:
         return {
-            "run_kind": RUN_KIND_TEST,
+            "run_kind": RunKind.TEST.value,
             "label": label or "Test",
             "color_var": "--color-warning",
         }
-    if run_kind == RUN_KIND_EXPERIMENTAL:
+    if run_kind == RunKind.EXPERIMENTAL:
         return {
-            "run_kind": RUN_KIND_EXPERIMENTAL,
+            "run_kind": RunKind.EXPERIMENTAL.value,
             "label": label or "Experimental",
             "color_var": "--color-navy",
         }
@@ -52,7 +49,7 @@ def mode_badge_props(run_kind: str | None, *, label: str | None = None) -> dict[
     }
 
 
-def mode_badge(run_kind: str | None, *, label: str | None = None) -> Any:
+def mode_badge(run_kind: RunKind | None, *, label: str | None = None) -> Any:
     """Build a NiceGUI badge element for the given run kind.
 
     Lazy NiceGUI import keeps this module unit-testable; the returned

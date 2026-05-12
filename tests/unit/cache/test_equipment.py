@@ -342,28 +342,3 @@ async def test_read_equipment_skips_check_when_schema_version_missing(
     # the precise validation error.
     with pytest.raises(msgspec.ValidationError):
         await writer.read_equipment(path)
-
-
-# ---------------------------------------------------------------------------
-# _atomic_write_bytes cleanup-on-exception
-# ---------------------------------------------------------------------------
-
-
-def test_atomic_write_bytes_cleans_up_tmp_on_exception(tmp_path: Path) -> None:
-    """If ``os.replace`` raises mid-write, the leftover temp file is cleaned up."""
-    from unittest import mock
-
-    from exlab_wizard.cache.equipment import _atomic_write_bytes
-
-    target = tmp_path / "equipment.json"
-    with (
-        mock.patch(
-            "exlab_wizard.cache.equipment.os.replace",
-            side_effect=OSError("simulated rename failure"),
-        ),
-        pytest.raises(OSError),
-    ):
-        _atomic_write_bytes(target, b'{"x": 1}')
-    # No leftover .tmp files.
-    leftover = list(tmp_path.glob("*.tmp"))
-    assert leftover == []

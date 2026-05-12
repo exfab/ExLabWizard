@@ -31,7 +31,6 @@ each rename is atomic; the last writer wins.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,6 +38,7 @@ import msgspec
 
 from exlab_wizard.constants import OFFLINE_CATALOGUE_VERSION
 from exlab_wizard.errors import ConfigError
+from exlab_wizard.io import atomic_write_bytes, read_msgspec_json_raw
 from exlab_wizard.lims.schemas import LIMSProject
 from exlab_wizard.logging import get_logger
 
@@ -82,21 +82,18 @@ def read_catalogue(path: Path, *, expected_endpoint: str) -> OfflineCatalogue:
       configuration; cross-lab leakage is rejected, not warned).
     """
     try:
-        raw = Path(path).read_bytes()
+        decoded = read_msgspec_json_raw(Path(path))
     except OSError as exc:
         msg = f"offline catalogue not readable at {path}: {exc}"
         raise ConfigError(msg) from exc
-
-    try:
-        decoded = msgspec.json.decode(raw)
     except msgspec.DecodeError as exc:
         msg = f"offline catalogue at {path} is not valid JSON: {exc}"
         raise ConfigError(msg) from exc
 
-    if not isinstance(decoded, dict):
-        msg = f"offline catalogue at {path} is not a JSON object"
-        raise ConfigError(msg)
-
+    # TODO(spec): the OFFLINE_CATALOGUE_VERSION check below is an
+    # exact-match (major+minor); this is intentionally stricter than the
+    # §11.9.2 major-only gate used for cache files. Revisit once the spec
+    # clarifies whether offline catalogues should follow the same policy.
     schema_version = decoded.get("schema_version")
     if schema_version != OFFLINE_CATALOGUE_VERSION:
         msg = (
@@ -142,12 +139,7 @@ def write_catalogue(path: Path, catalogue: OfflineCatalogue) -> None:
         "projects": [_project_to_dict(p) for p in catalogue.projects],
     }
     encoded = msgspec.json.encode(payload)
-    tmp = target.with_name(f"{target.name}.tmp.{os.getpid()}")
-    with tmp.open("wb") as handle:
-        handle.write(encoded)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, target)
+    atomic_write_bytes(target, encoded)
 
 
 def _project_to_dict(project: LIMSProject) -> dict:

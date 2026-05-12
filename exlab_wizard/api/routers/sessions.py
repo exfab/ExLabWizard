@@ -23,7 +23,7 @@ from __future__ import annotations
 import contextlib
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from fastapi import (
     APIRouter,
@@ -36,6 +36,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, ConfigDict, Field
 
+from exlab_wizard.api._dependencies import require_controller
 from exlab_wizard.api.events import encode_event, event_from_dict
 from exlab_wizard.api.setup import setup_state_gate
 from exlab_wizard.constants import RunKind
@@ -45,10 +46,13 @@ from exlab_wizard.controller import (
     SessionState,
 )
 from exlab_wizard.logging import get_logger
+from exlab_wizard.utils.time import parse_utc_iso
 
 __all__ = ["build_sessions_router"]
 
 _log = get_logger(__name__)
+
+TERMINAL_EVENT_KINDS: Final[frozenset[str]] = frozenset({"done", "failed"})
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +89,7 @@ class _RunSessionBody(BaseModel):
     equipment_id: str
     project_short_id: str
     template_path: str
-    run_kind: Literal["experimental", "test"]
+    run_kind: RunKind
     label: str
     operator: str
     objective: str
@@ -152,7 +156,7 @@ def build_sessions_router() -> APIRouter:
         request: Request,
         body: SessionCreateRequest,
     ) -> SessionHandleResponse:
-        controller = _require_controller(request)
+        controller = require_controller(request)
         if isinstance(body, _ProjectSessionBody):
             handle = await controller.create_project(_build_project_request(body))
         else:
@@ -162,7 +166,7 @@ def build_sessions_router() -> APIRouter:
 
     @router.get("/{session_id}", response_model=SessionHandleResponse)
     async def get_session(request: Request, session_id: str) -> SessionHandleResponse:
-        controller = _require_controller(request)
+        controller = require_controller(request)
         session = controller.session_store.get(session_id)
         if session is None:
             raise HTTPException(
@@ -194,7 +198,7 @@ def build_sessions_router() -> APIRouter:
         session_id: str,
         body: _ResumeBody,
     ) -> SessionHandleResponse:
-        controller = _require_controller(request)
+        controller = require_controller(request)
         session = controller.session_store.get(session_id)
         if session is None:
             raise HTTPException(
@@ -225,7 +229,7 @@ def build_sessions_router() -> APIRouter:
         session_id: str,
         body: _CancelBody,
     ) -> SessionHandleResponse:
-        controller = _require_controller(request)
+        controller = require_controller(request)
         session = controller.session_store.get(session_id)
         if session is None:
             raise HTTPException(
@@ -277,25 +281,6 @@ def build_sessions_router() -> APIRouter:
 # ---------------------------------------------------------------------------
 
 
-def _require_controller(request: Request) -> Any:
-    """Pluck the controller out of the bound :class:`AppDependencies`.
-
-    503 if the lifespan handler did not initialize dependencies; callers
-    that need this on every route get a clear error.
-    """
-    deps = getattr(request.app.state, "dependencies", None)
-    controller = getattr(deps, "controller", None) if deps else None
-    if controller is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "internal_error",
-                "message": "controller is not initialized",
-            },
-        )
-    return controller
-
-
 def _build_project_request(body: _ProjectSessionBody) -> ProjectCreateRequest:
     return ProjectCreateRequest(
         equipment_id=body.equipment_id,
@@ -312,7 +297,7 @@ def _build_project_request(body: _ProjectSessionBody) -> ProjectCreateRequest:
 def _build_run_request(body: _RunSessionBody) -> RunCreateRequest:
     run_date: datetime | None = None
     if body.run_date:
-        run_date = datetime.fromisoformat(body.run_date.replace("Z", "+00:00"))
+        run_date = parse_utc_iso(body.run_date)
     return RunCreateRequest(
         equipment_id=body.equipment_id,
         project_short_id=body.project_short_id,
@@ -369,7 +354,7 @@ async def _stream_session_events(
             continue
         await websocket.send_bytes(encode_event(typed))
         kind = frame.get("kind")
-        if kind in ("done", "failed"):
+        if kind in TERMINAL_EVENT_KINDS:
             break
     with contextlib.suppress(Exception):
         await websocket.close()

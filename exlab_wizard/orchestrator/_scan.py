@@ -13,10 +13,9 @@ from pathlib import Path
 
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
-    RUN_DIR_PREFIX,
-    TEST_RUN_DIR_PREFIX,
     TEST_RUNS_DIR_NAME,
 )
+from exlab_wizard.paths import is_run_dir, is_test_run_dir
 
 __all__ = [
     "count_files_and_bytes",
@@ -67,9 +66,9 @@ def walk_run_leaves(staging_root: Path) -> list[Path]:
             for child in iter_subdirs(project_dir):
                 if child.name == TEST_RUNS_DIR_NAME:
                     for run_dir in iter_subdirs(child):
-                        if run_dir.name.startswith(TEST_RUN_DIR_PREFIX):
+                        if is_test_run_dir(run_dir.name):
                             leaves.append(run_dir)
-                elif child.name.startswith(RUN_DIR_PREFIX):
+                elif is_run_dir(child.name):
                     leaves.append(child)
     return leaves
 

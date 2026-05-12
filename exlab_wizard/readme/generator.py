@@ -39,27 +39,30 @@ msgspec).
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import yaml
 from msgspec import json as msgspec_json
 
+from exlab_wizard import paths
 from exlab_wizard.api.schemas import ReadmeFieldsJson
 from exlab_wizard.constants import (
-    CACHE_DIR_NAME,
     LABEL_MAX_LENGTH,
     OBJECTIVE_MAX_LENGTH,
-    README_FIELDS_JSON_NAME,
     README_FIELDS_JSON_VERSION,
     README_FILE_NAME,
     README_FRONT_MATTER_SCHEMA_VERSION,
+    CreationLevel,
+    FieldType,
 )
 from exlab_wizard.errors import TemplateCoreFieldRedeclaredError
+from exlab_wizard.io import atomic_write_bytes
 from exlab_wizard.logging import get_logger
+from exlab_wizard.paths import readme_fields_json_path
+from exlab_wizard.utils.time import dt_to_iso, parse_utc_iso
 
 __all__ = [
     "CORE_FIELD_IDS",
@@ -81,7 +84,7 @@ _log = get_logger(__name__)
 CORE_FIELD_IDS: frozenset[str] = frozenset({"label", "operator", "objective"})
 
 # Allowed values for ``TemplateFieldDecl.type``. Backend Spec §10.3.
-_FIELD_TYPES: frozenset[str] = frozenset({"string", "text", "choice", "date", "boolean"})
+_FIELD_TYPES: frozenset[str] = frozenset(m.value for m in FieldType)
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +117,7 @@ class TemplateFieldDecl:
 
     id: str
     label: str
-    type: Literal["string", "text", "choice", "date", "boolean"]
+    type: FieldType
     required: bool = False
     default: Any = ""
     options: list[str] | None = None
@@ -155,7 +158,7 @@ class ReadmeContext:
     generator's job is to validate, render, and persist.
     """
 
-    level: Literal["project", "run"]
+    level: CreationLevel
     core: CoreFields
     template_fields: dict[str, Any]
     config_fields: dict[str, Any]
@@ -195,19 +198,18 @@ class ReadmeGenerator:
         _validate(ctx)
 
         readme_path = dst / README_FILE_NAME
-        cache_dir = dst / CACHE_DIR_NAME
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_path = cache_dir / README_FIELDS_JSON_NAME
+        paths.cache_dir(dst).mkdir(parents=True, exist_ok=True)
+        cache_path = readme_fields_json_path(dst)
 
-        generated_at = _format_utc(ctx.system.created)
+        generated_at = dt_to_iso(ctx.system.created)
 
         front_matter = _build_front_matter(ctx, generated_at=generated_at)
         readme_bytes = _render_readme_bytes(ctx, front_matter)
         cache_payload = _build_readme_fields(ctx, generated_at=generated_at)
         cache_bytes = msgspec_json.encode(cache_payload)
 
-        _atomic_write_bytes(readme_path, readme_bytes)
-        _atomic_write_bytes(cache_path, cache_bytes)
+        atomic_write_bytes(readme_path, readme_bytes)
+        atomic_write_bytes(cache_path, cache_bytes)
 
         _log.info(
             "README written: %s (level=%s, run_kind=%s)",
@@ -336,13 +338,13 @@ def _check_value_type(decl: TemplateFieldDecl, value: Any, *, layer: str) -> Non
             f"{layer}_fields[{decl.id!r}] has unknown type {decl.type!r}; "
             f"allowed: {sorted(_FIELD_TYPES)}"
         )
-    if decl.type in {"string", "text"}:
+    if decl.type in {FieldType.STRING, FieldType.TEXT}:
         if not isinstance(value, str):
             raise ValueError(
                 f"{layer}_fields[{decl.id!r}] expects {decl.type}, got {type(value).__name__}"
             )
         return
-    if decl.type == "choice":
+    if decl.type == FieldType.CHOICE:
         if not isinstance(value, str):
             raise ValueError(
                 f"{layer}_fields[{decl.id!r}] expects choice (string), got {type(value).__name__}"
@@ -354,14 +356,14 @@ def _check_value_type(decl: TemplateFieldDecl, value: Any, *, layer: str) -> Non
                 f"{layer}_fields[{decl.id!r}] value {value!r} is not in options {decl.options!r}"
             )
         return
-    if decl.type == "date":
+    if decl.type == FieldType.DATE:
         if not isinstance(value, str):
             raise ValueError(
                 f"{layer}_fields[{decl.id!r}] expects ISO 8601 date string, "
                 f"got {type(value).__name__}"
             )
         try:
-            datetime.fromisoformat(value.replace("Z", "+00:00"))
+            parse_utc_iso(value)
         except ValueError as exc:
             raise ValueError(
                 f"{layer}_fields[{decl.id!r}] is not a valid ISO 8601 date: {value!r}"
@@ -369,7 +371,7 @@ def _check_value_type(decl: TemplateFieldDecl, value: Any, *, layer: str) -> Non
         return
     # ``isinstance(True, int)`` is True in Python, so reject ints/strings
     # explicitly. ``bool`` is the only accepted shape for type=boolean.
-    if decl.type == "boolean" and not isinstance(value, bool):
+    if decl.type == FieldType.BOOLEAN and not isinstance(value, bool):
         raise ValueError(f"{layer}_fields[{decl.id!r}] expects bool, got {type(value).__name__}")
 
 
@@ -423,7 +425,7 @@ def _custom_fields_list(custom: list[CustomField]) -> list[dict[str, str]]:
 
 def _system_fields_dict(system: SystemFields) -> dict[str, Any]:
     return {
-        "created": _format_utc(system.created),
+        "created": dt_to_iso(system.created),
         "created_by": system.created_by,
         "equipment": dict(system.equipment),
         "template": dict(system.template),
@@ -491,29 +493,3 @@ def _build_readme_fields(
 # ---------------------------------------------------------------------------
 # I/O helpers
 # ---------------------------------------------------------------------------
-
-
-def _format_utc(dt: datetime) -> str:
-    """Render ``dt`` as UTC ISO 8601 with the trailing ``Z`` per §10.6.
-
-    Matches the on-disk timestamp shape used by every cache file in
-    §11.3 / §11.4 and the example in §10.7. Naive datetimes are treated
-    as already-UTC so a controller may pass ``datetime.utcnow()``
-    without timezone gymnastics.
-    """
-    if dt.tzinfo is not None:
-        # Convert to UTC, then drop the offset for a clean Z suffix.
-        dt = dt.astimezone(UTC).replace(tzinfo=None)
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _atomic_write_bytes(path: Path, data: bytes) -> None:
-    """Write ``data`` to ``path`` atomically (tempfile + ``os.replace``).
-
-    Mirrors the recipe used elsewhere in the cache package (§4.4.5):
-    the temp file is a sibling so the rename stays on the same volume.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_bytes(data)
-    os.replace(tmp, path)

@@ -31,7 +31,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from exlab_wizard.constants.enums import SyncStatus
+from exlab_wizard.constants.enums import RunKind, SyncStatus, TreeProjectStatus
 from exlab_wizard.logging import get_logger
 
 _log = get_logger(__name__)
@@ -48,12 +48,6 @@ _RUN_KINDS: frozenset[str] = frozenset({KIND_RUN_EXPERIMENTAL, KIND_RUN_TEST})
 # Static URLs served by ``ui/theme.py:register_static_assets``.
 SYNC_ICON_LOCAL_URL = "/assets/sync_local.svg"
 SYNC_ICON_CLOUD_URL = "/assets/sync_cloud.svg"
-
-
-# LIMS-side project status.
-PROJECT_ACTIVE = "active"
-PROJECT_ARCHIVED = "archived"
-PROJECT_DELETED = "deleted"
 
 
 @dataclass(frozen=True)
@@ -75,13 +69,13 @@ class EquipmentNode:
 class ProjectNode:
     short_id: str
     name: str
-    status: str = PROJECT_ACTIVE
+    status: TreeProjectStatus = TreeProjectStatus.ACTIVE
 
 
 @dataclass(frozen=True)
 class RunNode:
     directory_name: str
-    run_kind: str  # "experimental" | "test"
+    run_kind: RunKind
     label: str | None = None
     sync_status: str | None = None  # one of SyncStatus values; None when unknown
 
@@ -114,11 +108,11 @@ def filter_project(project: ProjectNode, filters: TreeFilters) -> bool:
     always render (Frontend §3.5.3).
     """
 
-    if project.status == PROJECT_DELETED:
+    if project.status == TreeProjectStatus.DELETED:
         return True
-    if project.status == PROJECT_ACTIVE and not filters.active:
+    if project.status == TreeProjectStatus.ACTIVE and not filters.active:
         return False
-    return not (project.status == PROJECT_ARCHIVED and not filters.archived)
+    return not (project.status == TreeProjectStatus.ARCHIVED and not filters.archived)
 
 
 def filter_run(run: RunNode, filters: TreeFilters) -> bool:
@@ -127,7 +121,7 @@ def filter_run(run: RunNode, filters: TreeFilters) -> bool:
     Test runs default-on; toggling the chip off hides them.
     """
 
-    return not (run.run_kind == "test" and not filters.test_runs)
+    return not (run.run_kind == RunKind.TEST and not filters.test_runs)
 
 
 def build_nodes(
@@ -162,7 +156,7 @@ def build_nodes(
                 ):
                     continue
                 badges: tuple[str, ...]
-                if run.run_kind == "test":
+                if run.run_kind == RunKind.TEST:
                     style_hints = {"variant": "dim", "prefix_color": "--color-warning"}
                     badges = ("Test",)
                     kind = KIND_RUN_TEST
@@ -187,10 +181,10 @@ def build_nodes(
 
             project_style: dict[str, str] = {}
             project_badges: tuple[str, ...] = ()
-            if project.status == PROJECT_ARCHIVED:
+            if project.status == TreeProjectStatus.ARCHIVED:
                 project_style["text_decoration"] = "line-through"
                 project_badges = ("(archived)",)
-            elif project.status == PROJECT_DELETED:
+            elif project.status == TreeProjectStatus.DELETED:
                 project_style["text_color"] = "var(--color-warning)"
                 project_badges = ("(LIMS project removed)",)
 

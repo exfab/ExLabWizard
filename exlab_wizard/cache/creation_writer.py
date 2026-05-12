@@ -33,7 +33,6 @@ per §11.9.2 rule 3.
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
@@ -45,9 +44,11 @@ from filelock import FileLock, ReadWriteLock
 from msgspec import json as msgspec_json
 
 from exlab_wizard.api.schemas import CreationJson
-from exlab_wizard.cache.equipment import require_schema_major
+from exlab_wizard.cache import lock_path_for
 from exlab_wizard.constants import CREATION_JSON_VERSION, LIMSProjectSource, RunKind
+from exlab_wizard.io import atomic_write_bytes, read_msgspec_json_raw, require_schema_major
 from exlab_wizard.logging import get_logger
+from exlab_wizard.utils.time import parse_utc_iso_or_none
 
 __all__ = [
     "CreationWriter",
@@ -127,15 +128,10 @@ def _is_future(expires_at: str, now: datetime) -> bool:
     ``+00:00`` offset) and reject anything else as "expired now" so a
     malformed value re-engages the gate (fail-safe).
     """
-    try:
-        # Normalize the trailing 'Z' to '+00:00' so fromisoformat accepts it.
-        normalized = expires_at.replace("Z", "+00:00") if expires_at.endswith("Z") else expires_at
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
+    parsed = parse_utc_iso_or_none(expires_at)
+    if parsed is None:
         _log.warning("override expires_at is malformed; treating as expired: %r", expires_at)
         return False
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
     return parsed > now
 
 
@@ -245,7 +241,7 @@ class CreationWriter:
     # -- Synchronous core ---------------------------------------------------
 
     def _write_creation_sync(self, path: Path, payload: CreationJson) -> None:
-        lock = FileLock(str(path) + ".lock", timeout=self._lock_timeout)
+        lock = FileLock(lock_path_for(path), timeout=self._lock_timeout)
         with lock:
             self._encode_and_replace(path, _payload_to_dict(payload))
 
@@ -254,10 +250,9 @@ class CreationWriter:
         path: Path,
         mutator: Callable[[CreationJson], CreationJson],
     ) -> CreationJson:
-        lock = FileLock(str(path) + ".lock", timeout=self._lock_timeout)
+        lock = FileLock(lock_path_for(path), timeout=self._lock_timeout)
         with lock:
             raw = self._decode_raw(path)
-            self._reject_major_mismatch(raw)
             _apply_migration_defaults(raw)
 
             payload = msgspec.convert(raw, type=CreationJson)
@@ -270,10 +265,9 @@ class CreationWriter:
             return new_payload
 
     def _read_creation_sync(self, path: Path) -> CreationJson:
-        rwlock = ReadWriteLock(str(path) + ".lock", timeout=self._lock_timeout)
+        rwlock = ReadWriteLock(lock_path_for(path), timeout=self._lock_timeout)
         with rwlock.read_lock():
             raw = self._decode_raw(path)
-            self._reject_major_mismatch(raw)
             _apply_migration_defaults(raw)
             return msgspec.convert(raw, type=CreationJson)
 
@@ -286,26 +280,32 @@ class CreationWriter:
         :func:`_apply_migration_defaults` can backfill old-minor fields
         BEFORE the struct decoder runs (otherwise the missing fields
         would surface as required-field errors).
-        """
-        return msgspec_json.decode(path.read_bytes(), type=dict[str, Any])
 
-    def _reject_major_mismatch(self, raw: dict[str, Any]) -> None:
+        Raises :class:`SchemaMajorMismatchError` (§11.9.2) when the file's
+        ``schema_version`` is at a different major than the reader OR is
+        absent (a reader cannot tell what version a file claims to be).
+        """
+        raw = read_msgspec_json_raw(path, expected_major=_READER_MAJOR)
+        # ``read_msgspec_json_raw`` deliberately skips the major check when
+        # ``schema_version`` is missing -- the typed decoder downstream
+        # would surface the validation error. ``creation.json`` uses the
+        # stricter §11.9.2 reading: a missing version IS a major mismatch.
         version = raw.get("schema_version")
-        if not isinstance(version, str):
-            version = str(version) if version is not None else ""
-        require_schema_major(version, expected_major=_READER_MAJOR)
+        require_schema_major(
+            str(version) if isinstance(version, str) else "",
+            expected_major=_READER_MAJOR,
+        )
+        return raw
 
     def _encode_and_replace(self, path: Path, payload: dict[str, Any]) -> None:
-        """Encode ``payload`` to bytes, write to a tempfile, ``os.replace``.
+        """Encode ``payload`` to bytes, write atomically via atomic_write_bytes.
 
         The writer pins ``schema_version`` to the current
         :data:`CREATION_JSON_VERSION` on every write -- §11.9.3 rule 3.
         """
         payload["schema_version"] = CREATION_JSON_VERSION
         encoded = msgspec_json.encode(payload)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_bytes(encoded)
-        os.replace(tmp, path)
+        atomic_write_bytes(path, encoded)
 
 
 # ---------------------------------------------------------------------------

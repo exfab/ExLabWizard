@@ -18,25 +18,25 @@ staging-panel row identically.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Final, Literal
 
+from exlab_wizard.constants import SyncStatus
 from exlab_wizard.logging import get_logger
 
 _log = get_logger(__name__)
 
 
-# Backend §3 / §4 enum values for sync status.
-STATUS_PENDING = "pending"
-STATUS_RETRYING = "retrying"
-STATUS_SYNCED = "synced"
-STATUS_CLEANED = "cleaned"
-STATUS_FAILED = "failed"
-STATUS_BLOCKED = "blocked_by_validation"
-STATUS_OVERRIDE = "override_active"
+# UI-only icon kinds: ``retrying`` and ``override_active`` are derived
+# in the UI from the SyncStatus + sync-job state, not wire enum values.
+type SyncStatusIconExtraKind = Literal["retrying", "override_active"]
+type SyncStatusOrIcon = SyncStatus | SyncStatusIconExtraKind | str
+
+STATUS_RETRYING: Final[str] = "retrying"
+STATUS_OVERRIDE: Final[str] = "override_active"
 
 
 _STATUS_TO_PROPS: dict[str, dict[str, str]] = {
-    STATUS_PENDING: {
+    SyncStatus.PENDING.value: {
         "icon_name": "schedule",
         "color_var": "--color-muted",
         "tooltip": "Queued for sync",
@@ -46,22 +46,22 @@ _STATUS_TO_PROPS: dict[str, dict[str, str]] = {
         "color_var": "--color-info",
         "tooltip": "Retrying with backoff",
     },
-    STATUS_SYNCED: {
+    SyncStatus.SYNCED.value: {
         "icon_name": "check_circle",
         "color_var": "--color-success",
         "tooltip": "Synced and verified at NAS",
     },
-    STATUS_CLEANED: {
+    SyncStatus.CLEANED.value: {
         "icon_name": "cloud_done",
         "color_var": "--color-success",
         "tooltip": "Synced and locally cleaned; data on NAS only",
     },
-    STATUS_FAILED: {
+    SyncStatus.FAILED.value: {
         "icon_name": "error",
         "color_var": "--color-danger",
         "tooltip": "Sync failed; retry budget exhausted",
     },
-    STATUS_BLOCKED: {
+    SyncStatus.BLOCKED_BY_VALIDATION.value: {
         "icon_name": "warning",
         "color_var": "--color-warning",
         "tooltip": "Hard-tier validation finding gates sync",
@@ -75,7 +75,7 @@ _STATUS_TO_PROPS: dict[str, dict[str, str]] = {
 
 
 def sync_status_props(
-    status: str,
+    status: SyncStatusOrIcon,
     *,
     retry_n: int | None = None,
     retry_m: int | None = None,
@@ -86,13 +86,14 @@ def sync_status_props(
     ``status == "retrying"`` (Frontend §10.5.1).
     """
 
-    if status not in _STATUS_TO_PROPS:
+    key = status.value if isinstance(status, SyncStatus) else str(status)
+    if key not in _STATUS_TO_PROPS:
         raise ValueError(
             f"unknown sync status {status!r}: must be one of {sorted(_STATUS_TO_PROPS)}",
         )
-    base = dict(_STATUS_TO_PROPS[status])
-    base["status"] = status
-    if status == STATUS_RETRYING and retry_n is not None and retry_m is not None:
+    base = dict(_STATUS_TO_PROPS[key])
+    base["status"] = key
+    if key == STATUS_RETRYING and retry_n is not None and retry_m is not None:
         base["retry_label"] = f"({retry_n}/{retry_m})"
         base["tooltip"] = f"Retry {retry_n} of {retry_m}, awaiting backoff"
     else:
@@ -101,7 +102,7 @@ def sync_status_props(
 
 
 def sync_status_icon(
-    status: str,
+    status: SyncStatusOrIcon,
     *,
     retry_n: int | None = None,
     retry_m: int | None = None,

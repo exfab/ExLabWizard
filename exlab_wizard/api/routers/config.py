@@ -16,9 +16,10 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict
 
+from exlab_wizard.api._dependencies import require_deps
 from exlab_wizard.config.models import Config
 from exlab_wizard.constants import SetupState
 from exlab_wizard.logging import get_logger
@@ -56,7 +57,7 @@ def build_config_router() -> APIRouter:
 
     @router.get("/config", response_model=Config)
     async def get_config(request: Request) -> Config:
-        deps = _require_deps(request)
+        deps = require_deps(request)
         config = getattr(deps, "config", None)
         if config is None:
             # Empty default config is the right shape when no config.yaml
@@ -67,7 +68,7 @@ def build_config_router() -> APIRouter:
 
     @router.put("/config", response_model=ConfigUpdateResponse)
     async def put_config(request: Request, body: Config) -> ConfigUpdateResponse:
-        deps = _require_deps(request)
+        deps = require_deps(request)
         # Persist via the host-supplied saver (loader.save_config in
         # production). Tests can substitute a no-op.
         saver = getattr(deps, "save_config", None)
@@ -93,19 +94,6 @@ def build_config_router() -> APIRouter:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _require_deps(request: Request) -> Any:
-    deps = getattr(request.app.state, "dependencies", None)
-    if deps is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "code": "internal_error",
-                "message": "app dependencies not initialized",
-            },
-        )
-    return deps
 
 
 def _redact(config: Config) -> Config:

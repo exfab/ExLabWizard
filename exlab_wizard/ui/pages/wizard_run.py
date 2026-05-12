@@ -20,7 +20,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from exlab_wizard.constants import RunKind
 from exlab_wizard.logging import get_logger
+from exlab_wizard.paths import run_dir_stem
 from exlab_wizard.ui.components import mode_badge, session_progress
 
 _log = get_logger(__name__)
@@ -49,7 +51,7 @@ RUN_STEP_TITLES: dict[str, str] = {
 class RunWizardState:
     """Mutable state for the in-flight run wizard."""
 
-    run_kind: str  # "experimental" | "test" -- bound at construction
+    run_kind: RunKind  # bound at construction
     active_step: str = RUN_WIZARD_STEPS[0]
     selected_project_short_id: str | None = None
     selected_equipment: str | None = None
@@ -62,7 +64,7 @@ class RunWizardState:
 def title_text(state: RunWizardState) -> str:
     """Title-bar text per Frontend §5.1."""
 
-    if state.run_kind == "test":
+    if state.run_kind == RunKind.TEST:
         return "New Test Run"
     return "New Run -- Experimental"
 
@@ -70,13 +72,13 @@ def title_text(state: RunWizardState) -> str:
 def primary_button_label(state: RunWizardState) -> str:
     """Primary button label on the Confirm & Create step (Frontend §5.2)."""
 
-    return "Create test run" if state.run_kind == "test" else "Create run"
+    return "Create test run" if state.run_kind == RunKind.TEST else "Create run"
 
 
 def primary_button_color(state: RunWizardState) -> str:
     """Primary button color hint per Frontend §5.3."""
 
-    return "warning" if state.run_kind == "test" else "primary"
+    return "warning" if state.run_kind == RunKind.TEST else "primary"
 
 
 def preview_path_segments(state: RunWizardState, *, run_date: str) -> dict[str, Any]:
@@ -86,13 +88,13 @@ def preview_path_segments(state: RunWizardState, *, run_date: str) -> dict[str, 
     ``TestRun_`` leaf prefix that is highlighted in warning-tier color.
     """
 
-    if state.run_kind == "test":
+    if state.run_kind == RunKind.TEST:
         return {
             "segments": [
                 state.selected_equipment or "<equipment>",
                 state.selected_project_short_id or "<project>",
                 "TestRuns",
-                f"TestRun_{run_date}",
+                run_dir_stem(run_date, test=True),
             ],
             "warning_indices": (2, 3),
         }
@@ -100,7 +102,7 @@ def preview_path_segments(state: RunWizardState, *, run_date: str) -> dict[str, 
         "segments": [
             state.selected_equipment or "<equipment>",
             state.selected_project_short_id or "<project>",
-            f"Run_{run_date}",
+            run_dir_stem(run_date),
         ],
         "warning_indices": (),
     }
@@ -216,7 +218,7 @@ def _step_helper_text(step_id: str, state: RunWizardState) -> str:
     if step_id == "readme":
         return "Fill in label, operator, and objective."
     if step_id == "preview":
-        if state.run_kind == "test":
+        if state.run_kind == RunKind.TEST:
             return (
                 "TestRuns/ and TestRun_ are highlighted; this run is excluded "
                 "from automated analysis."

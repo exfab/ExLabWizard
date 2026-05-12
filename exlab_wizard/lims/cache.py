@@ -25,7 +25,7 @@ the JSON column ``metadata_json``.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +34,7 @@ import msgspec
 
 from exlab_wizard.lims.schemas import LIMSProject
 from exlab_wizard.logging import get_logger
+from exlab_wizard.utils.time import parse_utc_iso, utc_now
 
 __all__ = ["LIMSCache"]
 
@@ -187,11 +188,11 @@ class LIMSCache:
         if row is None or row[0] is None:
             return False
         try:
-            most_recent = _parse_iso8601(row[0])
+            most_recent = parse_utc_iso(row[0])
         except ValueError:
             logger.warning("lims_cache.invalid_timestamp", extra={"value": row[0]})
             return False
-        cutoff = datetime.now(UTC) - timedelta(hours=self._ttl_hours)
+        cutoff = utc_now() - timedelta(hours=self._ttl_hours)
         return most_recent >= cutoff
 
     # ------------------------------------------------------------------
@@ -229,14 +230,3 @@ class LIMSCache:
             metadata=metadata,
             fetched_at=last_refreshed,
         )
-
-
-def _parse_iso8601(value: str) -> datetime:
-    """Parse a UTC-stamped ISO 8601 string. Accepts trailing ``Z`` or
-    ``+00:00`` and returns a timezone-aware datetime.
-    """
-    text = value.replace("Z", "+00:00") if value.endswith("Z") else value
-    parsed = datetime.fromisoformat(text)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed

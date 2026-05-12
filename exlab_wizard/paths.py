@@ -15,19 +15,26 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from exlab_wizard.constants import (
     APP_NAME,
+    CACHE_DIR_NAME,
     CENTRAL_LOG_FILE,
+    CREATION_JSON_NAME,
     EQUIPMENT_ID_MAX_LENGTH,
     EQUIPMENT_ID_PATTERN,
+    EQUIPMENT_JSON_NAME,
+    INGEST_JSON_NAME,
     PROJECT_SHORT_ID_PATTERN,
+    README_FIELDS_JSON_NAME,
     RUN_DATE_STRFTIME,
     RUN_DIR_PREFIX,
     TEST_RUN_DIR_PREFIX,
     TEST_RUNS_DIR_NAME,
+    Platform,
     RunKind,
+    SetupNextAction,
     SetupState,
 )
 from exlab_wizard.errors import ConfigError
@@ -36,20 +43,29 @@ if TYPE_CHECKING:
     from exlab_wizard.config.models import Config
 
 __all__ = [
+    "cache_dir",
     "canonicalize_equipment_id",
     "compose_project_path",
     "compose_run_path",
+    "creation_json_path",
     "default_orchestrator_staging_root",
     "ensure_central_log_dir",
     "ensure_dir",
     "ensure_state_dir",
+    "equipment_json_path",
     "evaluate_setup_state",
+    "ingest_json_path",
+    "is_run_dir",
+    "is_test_run_dir",
     "os_cache_path",
     "os_central_log_path",
     "os_config_path",
     "os_state_path",
+    "readme_fields_json_path",
+    "run_dir_stem",
     "setup_state_missing",
     "setup_state_next_action",
+    "validate_project_short_id",
 ]
 
 
@@ -58,18 +74,15 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-_Platform = Literal["macos", "windows", "linux"]
-
-
-def _platform() -> _Platform:
+def _platform() -> Platform:
     """Return a normalized platform tag for OS-conditional path dispatch."""
     match sys.platform:
         case "darwin":
-            return "macos"
+            return Platform.MACOS
         case "win32":
-            return "windows"
+            return Platform.WINDOWS
         case _:
-            return "linux"
+            return Platform.LINUX
 
 
 def _home() -> Path:
@@ -90,49 +103,49 @@ def _env_path(var: str, fallback: Path) -> Path:
 def os_config_path() -> Path:
     """Return the OS-appropriate path of ``config.yaml``. Backend Spec §9."""
     match _platform():
-        case "macos":
+        case Platform.MACOS:
             return _home() / "Library" / "Application Support" / APP_NAME / "config.yaml"
-        case "windows":
+        case Platform.WINDOWS:
             return _env_path("APPDATA", _home() / "AppData" / "Roaming") / APP_NAME / "config.yaml"
-        case "linux":
+        case Platform.LINUX:
             return _env_path("XDG_CONFIG_HOME", _home() / ".config") / APP_NAME / "config.yaml"
 
 
 def os_state_path() -> Path:
     """Return the OS-appropriate state directory. Backend Spec §15.7."""
     match _platform():
-        case "macos":
+        case Platform.MACOS:
             return _home() / "Library" / "Application Support" / APP_NAME / "state"
-        case "windows":
+        case Platform.WINDOWS:
             return _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / APP_NAME / "state"
-        case "linux":
+        case Platform.LINUX:
             return _env_path("XDG_STATE_HOME", _home() / ".local" / "state") / APP_NAME
 
 
 def os_cache_path() -> Path:
     """Return the OS-appropriate cache directory. Backend Spec §7.2.4."""
     match _platform():
-        case "macos":
+        case Platform.MACOS:
             return _home() / "Library" / "Caches" / APP_NAME
-        case "windows":
+        case Platform.WINDOWS:
             return _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / APP_NAME / "Cache"
-        case "linux":
+        case Platform.LINUX:
             return _env_path("XDG_CACHE_HOME", _home() / ".cache") / APP_NAME
 
 
 def os_central_log_path() -> Path:
     """Return the OS-appropriate central log file. Backend Spec §16.3."""
     match _platform():
-        case "macos":
+        case Platform.MACOS:
             return _home() / "Library" / "Logs" / APP_NAME / CENTRAL_LOG_FILE
-        case "windows":
+        case Platform.WINDOWS:
             return (
                 _env_path("LOCALAPPDATA", _home() / "AppData" / "Local")
                 / APP_NAME
                 / "Logs"
                 / CENTRAL_LOG_FILE
             )
-        case "linux":
+        case Platform.LINUX:
             return (
                 _env_path("XDG_STATE_HOME", _home() / ".local" / "state")
                 / APP_NAME
@@ -142,7 +155,7 @@ def os_central_log_path() -> Path:
 
 def default_orchestrator_staging_root() -> Path:
     """OS-conditional default for ``orchestrator.staging_root``. Backend Spec §9, §13."""
-    if _platform() == "windows":
+    if _platform() is Platform.WINDOWS:
         return _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / APP_NAME / "staging"
     return Path("/staging")
 
@@ -204,7 +217,7 @@ def canonicalize_equipment_id(value: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _validate_project_short_id(value: str) -> str:
+def validate_project_short_id(value: str) -> str:
     """Validate ``value`` against ``PROJECT_SHORT_ID_PATTERN``.
 
     Returns the input unchanged. Raises ``ConfigError`` on mismatch.
@@ -239,7 +252,7 @@ def compose_run_path(
     ISO 8601 leaf with colons replaced by hyphens.
     """
     canonicalize_equipment_id(equipment_id)
-    _validate_project_short_id(project_short_id)
+    validate_project_short_id(project_short_id)
     stamp = run_date.strftime(RUN_DATE_STRFTIME)
     project_dir = Path(local_root) / equipment_id / project_short_id
     if run_kind is RunKind.TEST:
@@ -261,7 +274,7 @@ def compose_project_path(
     :func:`compose_run_path` does.
     """
     canonicalize_equipment_id(equipment_id)
-    _validate_project_short_id(project_short_id)
+    validate_project_short_id(project_short_id)
     return Path(local_root) / equipment_id / project_short_id
 
 
@@ -387,24 +400,76 @@ def _missing_lims_fields(config: Config | None) -> list[dict[str, str]]:
     return missing
 
 
-def setup_state_next_action(state: SetupState) -> str | None:
-    """Map a state to the §4.9.3 ``next_action`` string.
+def setup_state_next_action(state: SetupState) -> SetupNextAction | None:
+    """Map a state to the §4.9.3 next-action enum member.
 
-    - ``INCOMPLETE_NO_CONFIG`` -> ``"set_paths"``
-    - ``INCOMPLETE_MISSING_PATHS`` -> ``"set_paths"``
-    - ``INCOMPLETE_NO_EQUIPMENT`` -> ``"add_equipment"``
-    - ``INCOMPLETE_NO_LIMS`` -> ``"configure_lims"``
-    - ``INCOMPLETE_LIMS_UNREACHABLE`` -> ``"test_lims"``
-    - ``READY`` -> ``None``
+    Returns ``None`` when the state is :class:`SetupState.READY`
+    (no further action required).
     """
     match state:
         case SetupState.INCOMPLETE_NO_CONFIG | SetupState.INCOMPLETE_MISSING_PATHS:
-            return "set_paths"
+            return SetupNextAction.SET_PATHS
         case SetupState.INCOMPLETE_NO_EQUIPMENT:
-            return "add_equipment"
+            return SetupNextAction.ADD_EQUIPMENT
         case SetupState.INCOMPLETE_NO_LIMS:
-            return "configure_lims"
+            return SetupNextAction.CONFIGURE_LIMS
         case SetupState.INCOMPLETE_LIMS_UNREACHABLE:
-            return "test_lims"
+            return SetupNextAction.TEST_LIMS
         case SetupState.READY:
             return None
+
+
+# ---------------------------------------------------------------------------
+# Run-/project-cache subpath helpers (Backend Spec §11.3, §11.4, §13.4)
+# ---------------------------------------------------------------------------
+
+
+def cache_dir(run_or_project_dir: Path) -> Path:
+    """Return the ``.exlab-wizard/`` subdirectory for a run or project root."""
+    return run_or_project_dir / CACHE_DIR_NAME
+
+
+def creation_json_path(run_or_project_dir: Path) -> Path:
+    """Return the ``creation.json`` path under a run or project directory."""
+    return cache_dir(run_or_project_dir) / CREATION_JSON_NAME
+
+
+def ingest_json_path(run_dir: Path) -> Path:
+    """Return the ``ingest.json`` path under a run directory."""
+    return cache_dir(run_dir) / INGEST_JSON_NAME
+
+
+def equipment_json_path(equipment_dir: Path) -> Path:
+    """Return the ``equipment.json`` path under an equipment directory."""
+    return cache_dir(equipment_dir) / EQUIPMENT_JSON_NAME
+
+
+def readme_fields_json_path(run_or_project_dir: Path) -> Path:
+    """Return the ``readme_fields.json`` path under a run or project directory."""
+    return cache_dir(run_or_project_dir) / README_FIELDS_JSON_NAME
+
+
+# ---------------------------------------------------------------------------
+# Run-directory name classifiers
+# ---------------------------------------------------------------------------
+
+
+def is_run_dir(name: str) -> bool:
+    """True if ``name`` is an experimental-run directory.
+
+    Note: ``RUN_DIR_PREFIX`` is ``Run_`` and ``TEST_RUN_DIR_PREFIX`` is
+    ``TestRun_``; ``"TestRun_X"`` does NOT start with ``"Run_"``, so the
+    two classifiers are mutually exclusive.
+    """
+    return name.startswith(RUN_DIR_PREFIX)
+
+
+def is_test_run_dir(name: str) -> bool:
+    """True if ``name`` is a test-run directory."""
+    return name.startswith(TEST_RUN_DIR_PREFIX)
+
+
+def run_dir_stem(stamp: str, *, test: bool = False) -> str:
+    """Return ``Run_<stamp>`` or ``TestRun_<stamp>``."""
+    prefix = TEST_RUN_DIR_PREFIX if test else RUN_DIR_PREFIX
+    return f"{prefix}{stamp}"
