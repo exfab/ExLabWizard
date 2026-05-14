@@ -337,6 +337,56 @@ right-clicking an owned-equipment tree node offers "Edit equipment…" /
 | `ui/pages/welcome.py` | Reword bullets; `on_get_started` unchanged (still opens Settings in setup-incomplete mode). |
 | Specs/docs | Update Design Spec §3, §12, §13 and Frontend Spec §3, §7, §8. |
 
+### 9.1 GUI wiring
+
+The components in §9 are render functions kept free of session-store / API
+dependencies (the existing pattern — `render_main_page` takes injected `on_*`
+callbacks). The wiring layer that connects them is **in scope** and is
+enumerated here so the implementation plan breaks it out as concrete steps
+rather than hand-waving it.
+
+- **Mount point (`ui/mount.py`)** — updated for the new `render_main_page`
+  signature, the new Add-Equipment wizard route, and the removed staging-dock
+  render path. It owns construction of the callback set below.
+- **Callback set for the main page** — beyond today's creation / settings /
+  refresh callbacks, the rebuilt main page is wired with: `on_select_node`,
+  `on_navigate_breadcrumb`, `on_toggle_right_pane`, `on_open_add_equipment`,
+  `on_tree_context_action` (edit/remove deep-link), `on_file_context_action`
+  (open in OS, copy path), `on_run_staging_action` (force sync / clear / view
+  log), `on_problems_row_action`, `on_clear_verified`.
+- **Selection-state propagation** — a single `on_select_node` handler updates
+  `MainPageState.selected_node`, which drives three consumers: the centre file
+  list (starts a new folder feed), the right Metadata/Problems pane (re-renders
+  for the node type), and creation-button enablement (disabled on
+  received-equipment nodes). The breadcrumb is rendered from `selected_node` and
+  its segment clicks route back through the same `on_select_node` handler.
+- **Folder-feed lifecycle** — `on_select_node` calls `stop()` on the previous
+  feed and `start(path, on_update)` on the new one; the feed object owns the
+  ~2–3 s poll timer and is the single place the `GET /folder/{path}` call is
+  made. The 30 s `GET /tree` refresh and the folder feed are coalesced by a
+  shared refresh coordinator so they don't both walk the FS in the same tick.
+  The feed is paused/resumed on window background/foreground.
+- **API client calls** — frontend → `GET /tree`, `GET /folder/{path}`; the
+  Add-Equipment wizard → the config router (persist `EquipmentConfig`); staging
+  actions → the staging router; problems-row actions → the problems/operations
+  routers (reused).
+- **Event subscriptions** — the Problems tab re-subscribes to the existing
+  `WS /api/v1/problems/events` snapshot/delta channel; the snapshot/delta
+  findings feed both the scoped Problems tab content and the travelling-badge
+  computation in the tree.
+- **Add-Equipment wizard wiring** — per-step form state → `build_equipment_config()`
+  (shared module) → config-router persist → tree refresh on success; validation
+  errors surface inline per step / on confirm.
+- **Settings wiring** — the Orchestrator section is unwired and removed;
+  `staging_root` / `label` move to an early section; the equipment section gains
+  the `sync_mode` field and its conditional transport sub-forms; the equipment
+  "add" button is wired to launch the Add-Equipment wizard.
+- **Context menus** — tree right-click (owned-equipment → edit/remove
+  deep-link into Settings), file-list right-click (open in OS, copy path),
+  run-node actions (force sync / clear verified / view log) — all routed
+  through the callback set above into the reused `pages/staging.py` handlers and
+  the operations router.
+
 ---
 
 ## 10. Error handling
