@@ -86,12 +86,13 @@ A device's tree shows two kinds of equipment:
   registry. This device acquires runs for them. Sync mode is `nas` or `stage`.
 - **Received equipment** — equipment that *another* machine relays into *this*
   device's `staging_root`. **Auto-discovered**: the always-on `StagingWatcher`
-  reads the pushed `creation.json` (equipment id, label, run kind, and
-  completeness-signal info all travel with the push) and surfaces the equipment
-  as a tree node. It is **not** added to this device's config registry, and
-  completeness-signal config is **not** duplicated onto the orchestrator. An
-  operator who only ever touches the orchestrator can still watch relayed data
-  sync `staging → NAS`.
+  reads the pushed `creation.json` — **extended** to carry the equipment's
+  `label` and completeness-signal info (signal type + filename) so the
+  orchestrator needs no per-equipment config of its own — and surfaces the
+  equipment as a tree node. It is **not** added to this device's config
+  registry, and completeness-signal config is **not** duplicated onto the
+  orchestrator. An operator who only ever touches the orchestrator can still
+  watch relayed data sync `staging → NAS`.
 
 The tree is still strictly **local** — it shows what this device acquires or
 relays-onward, never a NAS-wide aggregate.
@@ -327,6 +328,9 @@ right-clicking an owned-equipment tree node offers "Edit equipment…" /
 | `paths.py`, `controller/creation.py` | Add the `Runs/` segment to experimental-run path composition. |
 | `validator/engine.py` | Update mode/location checks for `Runs/`; `creation.json` always carries the orchestrator block. |
 | `api/routers/browse.py` | New `GET /folder/{path}`; extend `GET /tree` with sync-mode, received-equipment, and badge-finding data. |
+| `api/routers/config.py` | Endpoint to append/persist an `EquipmentConfig` from the Add-Equipment wizard. |
+| `api/routers/staging.py` | Extend the staging-state query to surface auto-discovered received equipment. |
+| `api/schemas.py` | Extend `CreationJson` with the equipment `label` + completeness-signal fields that travel with the push; add the `GET /folder` response shape. |
 | `orchestrator/staging_watcher.py` | Auto-discover received equipment from pushed `creation.json` and surface it into the tree feed. |
 | `ui/pages/main.py` | Rebuilt to the three-region layout; `MainPageState` loses `orchestrator_enabled` / `staging_dock`, gains right-pane + folder-feed state. |
 | `ui/components/` | New `file_list.py`, `breadcrumb.py`, `metadata_pane.py`; `tree.py` extended (travelling badge, `Runs/` grouping, sync badges, `relay` styling). |
@@ -335,7 +339,7 @@ right-clicking an owned-equipment tree node offers "Edit equipment…" /
 | `ui/pages/wizard_run.py`, `wizard_project.py` | Add the pre-fillable equipment+project picker step (decision 1). |
 | `ui/pages/settings.py` | Drop the Orchestrator section; fold `staging_root`/`label` into an early section; equipment section gains `sync_mode`; `build_equipment_config()` moved to a shared module. |
 | `ui/pages/welcome.py` | Reword bullets; `on_get_started` unchanged (still opens Settings in setup-incomplete mode). |
-| Specs/docs | Update Design Spec §3, §12, §13 and Frontend Spec §3, §7, §8. |
+| Specs/docs | Design Spec §3 (`Runs/`), §9 (config schema), §11 (`creation.json` carries the orchestrator block + the relay fields; logging format), §12 (always-orchestrator), §13 (staging layout); User Interaction Spec §3.4 / §3.7 (drop the "Orchestrator Mode Only" qualifier); Frontend Spec §3 (main window), §4 / §5 (wizard picker step), §7 (Settings), §8 (orchestrator surfaces). |
 
 ### 9.1 GUI wiring
 
