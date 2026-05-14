@@ -28,7 +28,11 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 
+from exlab_wizard.constants import LIMSProjectStatus
+from exlab_wizard.lims.catalogue import OfflineCatalogue, write_catalogue
+from exlab_wizard.lims.schemas import LIMSProject
 from tests.e2e._prod_server import ProdServer
 from tests.e2e.conftest import PLAYWRIGHT_AVAILABLE
 
@@ -50,13 +54,22 @@ def _fill(page, testid: str, value: str, *, timeout: int = 8_000) -> None:
     field.fill(value)
 
 
-def _select(page, testid: str, value: str, *, timeout: int = 8_000) -> None:
+def _select(
+    page,
+    testid: str,
+    value: str,
+    *,
+    exact: bool = True,
+    timeout: int = 8_000,
+) -> None:
     """Pick ``value`` from a NiceGUI/Quasar ``ui.select`` by ``data-testid``.
 
     NiceGUI lands the ``data-testid`` on the select's inner
     ``q-field__native`` div, which is zero-size (and so "not visible"
     to Playwright) while the select is empty. Click the enclosing
     ``q-select`` ancestor to open the dropdown, then pick the option.
+    ``exact=False`` matches an option label by substring -- useful for
+    dict-option selects whose label is richer than the stored value.
     """
     native = page.get_by_test_id(testid)
     native.wait_for(state="attached", timeout=timeout)
@@ -65,9 +78,16 @@ def _select(page, testid: str, value: str, *, timeout: int = 8_000) -> None:
         " ' q-select ')][1]"
     )
     select.click()
-    option = page.get_by_role("option", name=value, exact=True)
+    option = page.get_by_role("option", name=value, exact=exact)
     option.wait_for(state="visible", timeout=timeout)
     option.click()
+
+
+def _pick_radio(page, group_testid: str, option_label: str, *, timeout: int = 8_000) -> None:
+    """Select a Quasar ``ui.radio`` option by its label within the group."""
+    group = page.get_by_test_id(group_testid)
+    group.wait_for(state="attached", timeout=timeout)
+    group.get_by_text(option_label, exact=True).click()
 
 
 def _step_button(
@@ -155,6 +175,29 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
     for folder in (templates_dir, plugin_dir, data_root):
         folder.mkdir()
 
+    # An offline LIMS catalogue backs the project wizard's LIMS picker.
+    lims_endpoint = "https://lims.example.test"
+    catalogue_path = tmp_path / "lims_catalogue.json"
+    write_catalogue(
+        catalogue_path,
+        OfflineCatalogue(
+            schema_version="1.0",
+            produced_by="E2E-FIXTURE",
+            produced_at="2026-01-01T00:00:00Z",
+            lims_endpoint=lims_endpoint,
+            projects=[
+                LIMSProject(
+                    uid="uid-proj-1001",
+                    short_id="PROJ-1001",
+                    name="Cortex Mapping Study",
+                    status=LIMSProjectStatus.ACTIVE,
+                    owner="operator@example.test",
+                    fetched_at="2026-01-01T00:00:00Z",
+                ),
+            ],
+        ),
+    )
+
     context = browser.new_context()
     page = context.new_page()
     try:
@@ -174,10 +217,12 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         _fill(page, "settings-paths-local-root", str(data_root))
 
         page.get_by_test_id("settings-nav-lims").click()
-        _fill(page, "settings-lims-endpoint", "https://lims.example.test")
+        _fill(page, "settings-lims-endpoint", lims_endpoint)
         _fill(page, "settings-lims-email", "operator@example.test")
+        _fill(page, "settings-lims-offline-path", str(catalogue_path))
 
-        # ---- Phase 4: add an equipment ---------------------------------
+        # ---- Phase 4: add equipment ------------------------------------
+        # 4a. rclone transport + sentinel_file signal (the default radios).
         page.get_by_test_id("settings-nav-equipment").click()
         _fill(page, "settings-equipment-id", "MICROSCOPE1")
         _fill(page, "settings-equipment-label", "Confocal Microscope 1")
@@ -187,7 +232,27 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         _fill(page, "settings-equipment-rclone-remote", "lab-nas")
         _fill(page, "settings-equipment-rclone-path", "lab/microscope1")
         page.get_by_test_id("settings-equipment-add").click()
-        page.get_by_test_id("settings-equipment-row").wait_for(state="visible", timeout=8_000)
+        page.get_by_test_id("settings-equipment-row").first.wait_for(
+            state="visible", timeout=8_000
+        )
+
+        # 4b. rsync_ssh transport + manifest signal -- exercises the
+        #     completeness-signal and transport radios swapping fields.
+        _fill(page, "settings-equipment-id", "SPECTROMETER1")
+        _fill(page, "settings-equipment-label", "Mass Spectrometer 1")
+        _fill(page, "settings-equipment-local-root", str(data_root))
+        _fill(page, "settings-equipment-nas-root", "/srv/nas/spectrometer1")
+        _pick_radio(page, "settings-equipment-signal", "manifest")
+        _fill(page, "settings-equipment-manifest", "manifest.json")
+        _pick_radio(page, "settings-equipment-transport", "rsync_ssh")
+        _fill(page, "settings-equipment-ssh-target", "operator@nas.example.test")
+        _fill(page, "settings-equipment-rsync-path", "/srv/nas/spectrometer1/incoming")
+        page.get_by_test_id("settings-equipment-add").click()
+        # Two equipment rows now present.
+        page.wait_for_function(
+            "document.querySelectorAll('[data-testid=\"settings-equipment-row\"]')"
+            ".length === 2"
+        )
 
         # ---- Phase 5: save -> restart-required gate --------------------
         page.get_by_test_id("settings-save").click()
@@ -196,6 +261,9 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         assert config_path.exists(), "Save must persist config.yaml"
         config_text = config_path.read_text(encoding="utf-8")
         assert "MICROSCOPE1" in config_text
+        assert "SPECTROMETER1" in config_text
+        assert "rsync_ssh" in config_text
+        assert "manifest.json" in config_text
         assert str(data_root) in config_text
 
         # ---- Phase 6: restart so the controller picks up the config ----
@@ -237,12 +305,25 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         page.wait_for_load_state("networkidle")
         assert (templates_dir / "run_test" / "copier.yml").is_file()
 
+        # ---- Phase 8b: add Copier variables to the scaffolded templates -
+        # An operator scaffolds a template, then edits copier.yml to
+        # declare variables; the wizards' dynamic Variables step then
+        # renders a field per question.
+        for tname, question in (
+            ("proj_basic", {"sample_id": {"type": "str", "default": "S-001"}}),
+            ("run_exp", {"gain": {"type": "int", "default": 5}}),
+            ("run_test", {"gain": {"type": "int", "default": 1}}),
+        ):
+            manifest = templates_dir / tname / "copier.yml"
+            data = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+            data.update(question)
+            manifest.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
         # ---- Phase 9: New Project wizard -------------------------------
         _goto(page, f"{server.base_url}/wizard/project")
         page.get_by_test_id("wizard-project-card").wait_for(state="visible", timeout=10_000)
-        # Step: LIMS project.
-        _fill(page, "wizard-project-lims-id", "PROJ-1001")
-        _fill(page, "wizard-project-lims-name", "Cortex Mapping Study")
+        # Step: LIMS project -- pick from the offline-catalogue-backed picker.
+        _select(page, "wizard-project-lims-picker", "PROJ-1001", exact=False)
         _project_next(page, "lims_project")
         # Step: template -- the picker is "loading from a template".
         _select(page, "wizard-project-template", "proj_basic")
@@ -250,7 +331,8 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         # Step: equipment.
         _select(page, "wizard-project-equipment", "MICROSCOPE1")
         _project_next(page, "equipment")
-        # Step: variables (template defaults; nothing to enter).
+        # Step: variables -- the copier-driven dynamic form.
+        _fill(page, "wizard-project-var-sample_id", "S-042")
         _project_next(page, "variables")
         # Step: README core fields.
         _fill(page, "wizard-project-readme-label", "Cortex pilot")
@@ -276,6 +358,8 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         _run_next(page, "project_equipment")
         _select(page, "wizard-run-template", "run_exp")
         _run_next(page, "template")
+        # Step: variables -- the copier-driven dynamic form.
+        _fill(page, "wizard-run-var-gain", "7")
         _run_next(page, "variables")
         _fill(page, "wizard-run-readme-label", "Calibration sweep")
         _fill(page, "wizard-run-readme-operator", "operator@example.test")
@@ -296,6 +380,8 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         _run_next(page, "project_equipment")
         _select(page, "wizard-run-template", "run_test")
         _run_next(page, "template")
+        # Step: variables -- the copier-driven dynamic form.
+        _fill(page, "wizard-run-var-gain", "2")
         _run_next(page, "variables")
         _fill(page, "wizard-run-readme-label", "Dry run")
         _fill(page, "wizard-run-readme-operator", "operator@example.test")

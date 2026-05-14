@@ -98,16 +98,17 @@ def _references(testid: str, haystack: str) -> bool:
     """Return ``True`` when ``haystack`` references ``testid``.
 
     Tolerates testids that the source / tests build with an f-string
-    (``f'data-testid="settings-nav-{section}"'`` or a page-object
-    helper like ``f"settings-nav-{section}"``): such a testid counts as
-    referenced when its stem -- everything up to and including the last
-    ``-`` -- appears followed by a ``{`` placeholder.
+    (``f'data-testid="settings-nav-{section}"'``, a page-object helper
+    like ``f"settings-nav-{section}"``, or the dynamic copier-variable
+    fields ``f"{testid_prefix}-{key}"``): such a testid counts as
+    referenced when its stem -- everything up to the last ``-`` --
+    appears in the haystack (as the f-string prefix literal).
     """
     if testid in haystack:
         return True
     if "-" in testid:
-        stem = testid.rsplit("-", 1)[0] + "-{"
-        if stem in haystack:
+        stem = testid.rsplit("-", 1)[0]
+        if f"{stem}-{{" in haystack or stem in haystack:
             return True
     return False
 

@@ -45,3 +45,4 @@ state/
 
 # Local agent artifacts
 .claude-agent-output/
+.playwright-mcp/

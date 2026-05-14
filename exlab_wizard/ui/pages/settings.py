@@ -12,7 +12,12 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from exlab_wizard.config.models import Config, EquipmentConfig, RcloneTransport
+from exlab_wizard.config.models import (
+    Config,
+    EquipmentConfig,
+    RcloneTransport,
+    RsyncSshTransport,
+)
 from exlab_wizard.constants import CompletenessSignal
 from exlab_wizard.logging import get_logger
 from exlab_wizard.ui import notifications
@@ -390,17 +395,77 @@ def _render_section_body(section: str, draft: Config) -> None:
             ui.button("Quit ExLab-Wizard now").props("flat")
 
 
+def build_equipment_config(
+    *,
+    equipment_id: str,
+    label: str,
+    local_root: str,
+    nas_root: str,
+    completeness_signal: str,
+    sentinel_filename: str,
+    manifest_filename: str,
+    transport_type: str,
+    rclone_remote: str,
+    rclone_remote_path: str,
+    ssh_target: str,
+    ssh_key_path: str,
+    rsync_remote_path: str,
+) -> EquipmentConfig:
+    """Assemble a validated :class:`EquipmentConfig` from raw form fields.
+
+    Covers the full §9 equipment surface: either completeness signal
+    (``sentinel_file`` / ``manifest``) and either transport (``rclone``
+    / ``rsync_ssh``). Pydantic validation (equipment-id regex, the
+    signal/filename cross-check, transport required fields) raises if
+    the inputs do not form a valid entry -- the caller surfaces that to
+    the operator.
+    """
+    signal = CompletenessSignal(completeness_signal)
+    transport: RcloneTransport | RsyncSshTransport
+    if transport_type == "rsync_ssh":
+        transport = RsyncSshTransport(
+            type="rsync_ssh",
+            ssh_target=ssh_target.strip(),
+            ssh_key_path=ssh_key_path.strip() or "~/.ssh/id_ed25519",
+            remote_path=rsync_remote_path.strip(),
+        )
+    else:
+        transport = RcloneTransport(
+            type="rclone",
+            rclone_remote=rclone_remote.strip(),
+            rclone_remote_path=rclone_remote_path.strip(),
+        )
+    return EquipmentConfig(
+        id=equipment_id.strip(),
+        label=label.strip(),
+        local_root=local_root.strip(),
+        nas_root=nas_root.strip(),
+        completeness_signal=signal,
+        sentinel_filename=(
+            sentinel_filename.strip() or None
+            if signal is CompletenessSignal.SENTINEL_FILE
+            else None
+        ),
+        manifest_filename=(
+            manifest_filename.strip() or None
+            if signal is CompletenessSignal.MANIFEST
+            else None
+        ),
+        transport=transport,
+    )
+
+
 def _render_equipment_section(draft: Config) -> None:
-    """Render the equipment list + an add-equipment sub-form.
+    """Render the equipment list + a full add-equipment sub-form.
 
     Adding an entry appends a validated :class:`EquipmentConfig` to
     ``draft.equipment`` and reflects it in the visible list; the whole
     draft is re-validated and persisted when the operator clicks Save.
 
-    The sub-form covers the common single-equipment case: the
-    ``sentinel_file`` completeness signal and the ``rclone`` transport.
-    Richer transports / the ``manifest`` signal are a follow-up; an
-    operator who needs them edits ``config.yaml`` directly.
+    The sub-form covers the full §9 equipment surface: a
+    completeness-signal radio (``sentinel_file`` / ``manifest``) that
+    swaps the filename field, and a transport radio (``rclone`` /
+    ``rsync_ssh``) that swaps the transport fieldset.
     """
     from nicegui import ui
 
@@ -411,9 +476,10 @@ def _render_equipment_section(draft: Config) -> None:
         with rows:
             if draft.equipment:
                 for entry in draft.equipment:
-                    ui.label(f"{entry.id} -- {entry.label}").props(
-                        'data-testid="settings-equipment-row"'
-                    )
+                    ui.label(
+                        f"{entry.id} -- {entry.label} "
+                        f"[{entry.completeness_signal} / {entry.transport.type}]"
+                    ).props('data-testid="settings-equipment-row"')
             else:
                 ui.label("No equipment configured yet.").props(
                     'data-testid="settings-equipment-empty"'
@@ -429,29 +495,95 @@ def _render_equipment_section(draft: Config) -> None:
         'data-testid="settings-equipment-local-root"'
     )
     eq_nas = ui.input(label="NAS root").props('data-testid="settings-equipment-nas-root"')
-    eq_sentinel = ui.input(
-        label="Sentinel filename", value="acquisition_complete.flag"
-    ).props('data-testid="settings-equipment-sentinel"')
-    eq_remote = ui.input(label="rclone remote").props(
-        'data-testid="settings-equipment-rclone-remote"'
+
+    # Completeness signal: a radio that swaps the filename field.
+    signal_radio = ui.radio(
+        [CompletenessSignal.SENTINEL_FILE.value, CompletenessSignal.MANIFEST.value],
+        value=CompletenessSignal.SENTINEL_FILE.value,
+    ).props('data-testid="settings-equipment-signal"')
+    # Widget refs the swap-panels and ``_add`` share.
+    fields: dict[str, Any] = {}
+
+    @ui.refreshable
+    def _signal_field() -> None:
+        if signal_radio.value == CompletenessSignal.MANIFEST.value:
+            fields["manifest"] = ui.input(
+                label="Manifest filename", value="manifest.json"
+            ).props('data-testid="settings-equipment-manifest"')
+            fields.pop("sentinel", None)
+        else:
+            fields["sentinel"] = ui.input(
+                label="Sentinel filename", value="acquisition_complete.flag"
+            ).props('data-testid="settings-equipment-sentinel"')
+            fields.pop("manifest", None)
+
+    _signal_field()
+    signal_radio.on_value_change(lambda _e: _signal_field.refresh())
+
+    # Transport: a radio that swaps the transport fieldset.
+    transport_radio = ui.radio(["rclone", "rsync_ssh"], value="rclone").props(
+        'data-testid="settings-equipment-transport"'
     )
-    eq_remote_path = ui.input(label="rclone remote path").props(
-        'data-testid="settings-equipment-rclone-path"'
-    )
+
+    @ui.refreshable
+    def _transport_fields() -> None:
+        if transport_radio.value == "rsync_ssh":
+            fields["ssh_target"] = ui.input(label="SSH target").props(
+                'data-testid="settings-equipment-ssh-target"'
+            )
+            fields["ssh_key"] = ui.input(
+                label="SSH key path", value="~/.ssh/id_ed25519"
+            ).props('data-testid="settings-equipment-ssh-key"')
+            fields["rsync_path"] = ui.input(label="Remote path").props(
+                'data-testid="settings-equipment-rsync-path"'
+            )
+            for stale in ("rclone_remote", "rclone_path"):
+                fields.pop(stale, None)
+        else:
+            fields["rclone_remote"] = ui.input(label="rclone remote").props(
+                'data-testid="settings-equipment-rclone-remote"'
+            )
+            fields["rclone_path"] = ui.input(label="rclone remote path").props(
+                'data-testid="settings-equipment-rclone-path"'
+            )
+            for stale in ("ssh_target", "ssh_key", "rsync_path"):
+                fields.pop(stale, None)
+
+    _transport_fields()
+    transport_radio.on_value_change(lambda _e: _transport_fields.refresh())
 
     def _add(_evt: Any = None) -> None:
         try:
-            entry = EquipmentConfig(
-                id=(eq_id.value or "").strip(),
-                label=(eq_label.value or "").strip(),
-                local_root=(eq_local.value or "").strip(),
-                nas_root=(eq_nas.value or "").strip(),
-                completeness_signal=CompletenessSignal.SENTINEL_FILE,
-                sentinel_filename=(eq_sentinel.value or "").strip() or None,
-                transport=RcloneTransport(
-                    type="rclone",
-                    rclone_remote=(eq_remote.value or "").strip(),
-                    rclone_remote_path=(eq_remote_path.value or "").strip(),
+            entry = build_equipment_config(
+                equipment_id=eq_id.value or "",
+                label=eq_label.value or "",
+                local_root=eq_local.value or "",
+                nas_root=eq_nas.value or "",
+                completeness_signal=signal_radio.value
+                or CompletenessSignal.SENTINEL_FILE.value,
+                sentinel_filename=(
+                    fields["sentinel"].value or "" if "sentinel" in fields else ""
+                ),
+                manifest_filename=(
+                    fields["manifest"].value or "" if "manifest" in fields else ""
+                ),
+                transport_type=transport_radio.value or "rclone",
+                rclone_remote=(
+                    fields["rclone_remote"].value or ""
+                    if "rclone_remote" in fields
+                    else ""
+                ),
+                rclone_remote_path=(
+                    fields["rclone_path"].value or "" if "rclone_path" in fields else ""
+                ),
+                ssh_target=(
+                    fields["ssh_target"].value or "" if "ssh_target" in fields else ""
+                ),
+                ssh_key_path=(
+                    fields["ssh_key"].value or "" if "ssh_key" in fields else ""
+                ),
+                rsync_remote_path=(
+                    fields["rsync_path"].value or "" if "rsync_path" in fields else ""
                 ),
             )
         except Exception as exc:  # noqa: BLE001 -- surface validation to the operator
@@ -462,14 +594,7 @@ def _render_equipment_section(draft: Config) -> None:
             return
         draft.equipment.append(entry)
         _render_rows()
-        for widget in (
-            eq_id,
-            eq_label,
-            eq_local,
-            eq_nas,
-            eq_remote,
-            eq_remote_path,
-        ):
+        for widget in (eq_id, eq_label, eq_local, eq_nas):
             widget.value = ""
         notifications.notify_success(f"Equipment {entry.id!r} added")
 

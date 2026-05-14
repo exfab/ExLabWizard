@@ -143,6 +143,8 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         return wizard_project_page.render_project_wizard(
             templates=_template_names(deps, "project"),
             equipment_ids=_equipment_ids(deps),
+            template_questions=_template_questions_map(deps, "project"),
+            lims_projects=_lims_projects(deps),
             on_submit=lambda state: _submit_project(deps, state, ui),
         )
 
@@ -410,6 +412,77 @@ def _template_names(deps: Any, template_type: str) -> list[str]:
         return []
 
 
+def _template_questions_map(deps: Any, template_type: str) -> dict[str, Any]:
+    """Map each ``template_type`` template name to its parsed copier questions.
+
+    Resolves every template through the real ``TemplateEngine`` so the
+    wizard's dynamic Variables step is driven by the actual
+    ``copier.yml`` question definitions. A template that fails to
+    resolve is skipped with a WARN -- its wizard entry simply shows no
+    variables.
+    """
+    templates_dir = _templates_dir(deps)
+    if templates_dir is None:
+        return {}
+    try:
+        from exlab_wizard.constants import TemplateType
+        from exlab_wizard.template.copier_driver import TemplateEngine
+        from exlab_wizard.ui.pages import templates as templates_page
+
+        engine = TemplateEngine()
+        scope = TemplateType(template_type)
+        result: dict[str, Any] = {}
+        for summary in templates_page.list_templates(
+            templates_dir, template_type=template_type
+        ):
+            try:
+                resolved = engine.resolve(summary.path, scope)
+            except Exception as exc:  # noqa: BLE001 -- skip the broken template
+                _log.warning("template %s failed to resolve: %s", summary.name, exc)
+                continue
+            result[summary.name] = templates_page.template_questions(
+                resolved.raw_manifest
+            )
+        return result
+    except Exception as exc:  # noqa: BLE001 -- defensive UI boundary
+        _log.warning("template question scan failed: %s", exc)
+        return {}
+
+
+def _lims_projects(deps: Any) -> list[dict[str, Any]]:
+    """Return the LIMS projects backing the project wizard's picker.
+
+    Reads the offline catalogue (``config.lims.offline_catalogue_path``)
+    -- the documented disconnected-workstation source. Returns ``[]``
+    on any failure, in which case the wizard falls back to manual
+    short-ID entry.
+    """
+    config = getattr(deps, "config", None) if deps is not None else None
+    if config is None:
+        return []
+    catalogue_path = getattr(config.lims, "offline_catalogue_path", "") or ""
+    if not catalogue_path or not Path(catalogue_path).exists():
+        return []
+    try:
+        from exlab_wizard.lims.catalogue import read_catalogue
+
+        catalogue = read_catalogue(
+            Path(catalogue_path), expected_endpoint=config.lims.endpoint
+        )
+        return [
+            {
+                "short_id": project.short_id,
+                "name": project.name,
+                "uid": project.uid,
+                "source": "offline_catalogue",
+            }
+            for project in catalogue.projects
+        ]
+    except Exception as exc:  # noqa: BLE001 -- defensive UI boundary
+        _log.warning("offline catalogue read failed: %s", exc)
+        return []
+
+
 def _equipment_ids(deps: Any) -> list[str]:
     """Return the configured equipment IDs."""
     config = getattr(deps, "config", None) if deps is not None else None
@@ -538,6 +611,7 @@ def _render_run_wizard(deps: Any, run_kind: RunKind, ui: Any) -> Any:
         state=state,
         templates=_template_names(deps, "run"),
         equipment_ids=_equipment_ids(deps),
+        template_questions=_template_questions_map(deps, "run"),
         on_submit=lambda submitted: _submit_run(deps, submitted, run_kind, ui),
     )
 

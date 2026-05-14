@@ -28,10 +28,13 @@ from exlab_wizard.constants import COPIER_MANIFEST_NAME, RunScope, TemplateType
 from exlab_wizard.logging import get_logger
 
 __all__ = [
+    "TemplateQuestion",
     "TemplateSummary",
     "create_template",
     "list_templates",
+    "render_question_field",
     "render_template_manager",
+    "template_questions",
 ]
 
 _log = get_logger(__name__)
@@ -57,6 +60,86 @@ class TemplateSummary:
     template_type: str
     run_scope: str | None
     description: str
+
+
+@dataclass(frozen=True)
+class TemplateQuestion:
+    """One Copier question parsed from a template's ``copier.yml``.
+
+    ``kind`` is normalised to the widget family the wizard renders:
+    ``str`` / ``int`` / ``float`` / ``bool`` / ``choice``. ``choices``
+    is populated only for ``choice`` questions. ``secret`` flags a
+    password-style ``str`` input.
+    """
+
+    key: str
+    kind: str
+    default: Any = None
+    choices: tuple[Any, ...] = ()
+    help: str = ""
+    secret: bool = False
+
+
+# Copier reserves ``_``-prefixed manifest keys for itself; everything
+# else under the top level is an operator-answerable question.
+_COPIER_TYPE_TO_KIND: dict[str, str] = {
+    "str": "str",
+    "int": "int",
+    "float": "float",
+    "bool": "bool",
+    "yaml": "str",
+    "json": "str",
+}
+
+
+def template_questions(raw_manifest: dict[str, Any]) -> list[TemplateQuestion]:
+    """Parse the operator-answerable questions out of a ``copier.yml`` body.
+
+    Handles both Copier question forms:
+
+    * **long form** -- ``key: {type: ..., default: ..., choices: ...}``
+    * **short form** -- ``key: <scalar>`` (the scalar is the default;
+      the type is inferred from it)
+
+    ``_``-prefixed keys (Copier / ``_exlab_*`` metadata) are skipped.
+    Questions carrying a ``when`` clause are still returned -- the
+    wizard renders them unconditionally for v1.
+    """
+    questions: list[TemplateQuestion] = []
+    for key, spec in raw_manifest.items():
+        if key.startswith("_"):
+            continue
+        if isinstance(spec, dict):
+            raw_type = str(spec.get("type", "str"))
+            raw_choices = spec.get("choices")
+            choices: tuple[Any, ...] = ()
+            if isinstance(raw_choices, dict):
+                choices = tuple(raw_choices.values())
+            elif isinstance(raw_choices, list):
+                choices = tuple(raw_choices)
+            kind = "choice" if choices else _COPIER_TYPE_TO_KIND.get(raw_type, "str")
+            questions.append(
+                TemplateQuestion(
+                    key=key,
+                    kind=kind,
+                    default=spec.get("default"),
+                    choices=choices,
+                    help=str(spec.get("help", "")),
+                    secret=bool(spec.get("secret", False)),
+                )
+            )
+        else:
+            # Short form: the scalar is the default; infer the kind.
+            if isinstance(spec, bool):
+                kind = "bool"
+            elif isinstance(spec, int):
+                kind = "int"
+            elif isinstance(spec, float):
+                kind = "float"
+            else:
+                kind = "str"
+            questions.append(TemplateQuestion(key=key, kind=kind, default=spec))
+    return questions
 
 
 def list_templates(
@@ -156,6 +239,60 @@ def create_template(
     (root / _SCAFFOLD_CONTENT_NAME).write_text(_SCAFFOLD_CONTENT_BODY, encoding="utf-8")
     _log.info("scaffolded %s template %r at %s", template_type, clean_name, root)
     return root
+
+
+def render_question_field(
+    question: TemplateQuestion,
+    answers: dict[str, Any],
+    *,
+    testid_prefix: str,
+) -> None:
+    """Render one Copier question as a bound NiceGUI widget.
+
+    The widget two-way binds into ``answers[question.key]``; the entry
+    is seeded with the question's default so a never-touched field
+    still contributes its default to the render. ``testid_prefix``
+    namespaces the ``data-testid`` (``f"{prefix}-{key}"``).
+    """
+    from nicegui import ui
+
+    key = question.key
+    answers.setdefault(key, question.default)
+    testid = f"{testid_prefix}-{key}"
+    label = key.replace("_", " ").strip().title()
+
+    widget: Any
+    if question.kind == "bool":
+        widget = ui.checkbox(label, value=bool(answers.get(key)))
+        widget.props(f'data-testid="{testid}"')
+        widget.on_value_change(lambda e: answers.__setitem__(key, bool(e.value)))
+        return
+    if question.kind in ("int", "float"):
+        current = answers.get(key)
+        widget = ui.number(label=label, value=current if current is not None else 0)
+        widget.props(f'data-testid="{testid}"')
+        cast = int if question.kind == "int" else float
+        widget.on_value_change(
+            lambda e: answers.__setitem__(
+                key, cast(e.value) if e.value is not None else None
+            )
+        )
+        return
+    if question.kind == "choice":
+        widget = ui.select(
+            list(question.choices),
+            value=answers.get(key) if answers.get(key) in question.choices else None,
+            label=label,
+        )
+        widget.props(f'data-testid="{testid}"')
+        widget.on_value_change(lambda e: answers.__setitem__(key, e.value))
+        return
+    # str (and yaml/json, which the wizard treats as free text).
+    widget = ui.input(label=label, value=str(answers.get(key) or ""))
+    widget.props(f'data-testid="{testid}"')
+    if question.secret:
+        widget.props("type=password")
+    widget.on_value_change(lambda e: answers.__setitem__(key, e.value or ""))
 
 
 def render_template_manager(

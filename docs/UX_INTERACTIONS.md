@@ -43,9 +43,15 @@ flow test.
 | `/settings` | `settings-equipment-label` | input | Type the equipment label | Provides the EquipmentConfig.label for the new entry. |
 | `/settings` | `settings-equipment-local-root` | input | Type the equipment local root | Provides the EquipmentConfig.local_root for the new entry. |
 | `/settings` | `settings-equipment-nas-root` | input | Type the equipment NAS root | Provides the EquipmentConfig.nas_root for the new entry. |
+| `/settings` | `settings-equipment-signal` | radio | Pick the completeness signal (sentinel_file / manifest) | Swaps the filename field between sentinel and manifest. |
 | `/settings` | `settings-equipment-sentinel` | input | Type the sentinel filename | Sets the sentinel_file completeness signal filename. |
+| `/settings` | `settings-equipment-manifest` | input | Type the manifest filename | Sets the manifest completeness signal filename. |
+| `/settings` | `settings-equipment-transport` | radio | Pick the transport (rclone / rsync_ssh) | Swaps the transport fieldset between rclone and rsync_ssh. |
 | `/settings` | `settings-equipment-rclone-remote` | input | Type the rclone remote | Sets the rclone transport remote for the new entry. |
 | `/settings` | `settings-equipment-rclone-path` | input | Type the rclone remote path | Sets the rclone transport remote path for the new entry. |
+| `/settings` | `settings-equipment-ssh-target` | input | Type the rsync_ssh SSH target | Sets the rsync_ssh transport ssh_target for the new entry. |
+| `/settings` | `settings-equipment-ssh-key` | input | Type the rsync_ssh SSH key path | Sets the rsync_ssh transport ssh_key_path for the new entry. |
+| `/settings` | `settings-equipment-rsync-path` | input | Type the rsync_ssh remote path | Sets the rsync_ssh transport remote_path for the new entry. |
 | `/settings` | `settings-equipment-add` | button | Click 'Add equipment' | Validates and appends an EquipmentConfig to the draft; row appears. |
 
 ## New template
@@ -63,9 +69,11 @@ flow test.
 
 | Route | Test ID | Element | Action | Outcome |
 |---|---|---|---|---|
-| `/wizard/project` | `wizard-project-lims-id` | input | Type the LIMS project short ID (PROJ-NNNN) | Sets the project short_id on the wizard state. |
+| `/wizard/project` | `wizard-project-lims-picker` | select | Pick a LIMS project from the cache / offline catalogue | Fills the project short_id + name from the catalogue row. |
+| `/wizard/project` | `wizard-project-lims-id` | input | Type the LIMS project short ID (PROJ-NNNN) | Sets the project short_id (manual-entry fallback). |
 | `/wizard/project` | `wizard-project-lims-name` | input | Type the project name | Sets the LIMS project name on the wizard state. |
 | `/wizard/project` | `wizard-project-template` | select | Pick a project template (load from a template) | Selects the Copier template the project is scaffolded from. |
+| `/wizard/project` | `wizard-project-var-sample_id` | dynamic field | Fill a copier.yml-declared variable (e.g. sample_id) | Binds the value into state.template_variables for Copier render. |
 | `/wizard/project` | `wizard-project-equipment` | select | Pick the host equipment | Selects the equipment_id for the new project. |
 | `/wizard/project` | `wizard-project-readme-label` | input | Type the README label | Sets the mandatory core README 'label' field. |
 | `/wizard/project` | `wizard-project-readme-operator` | input | Type the README operator | Sets the mandatory core README 'operator' field. |
@@ -81,6 +89,7 @@ flow test.
 | `/wizard/run, /wizard/test-run` | `wizard-run-project-id` | input | Type the parent project short ID | Sets the project_short_id on the run wizard state. |
 | `/wizard/run, /wizard/test-run` | `wizard-run-equipment` | select | Pick the host equipment | Selects the equipment_id for the new run. |
 | `/wizard/run, /wizard/test-run` | `wizard-run-template` | select | Pick a run template (load from a template) | Selects the Copier template the run is scaffolded from. |
+| `/wizard/run, /wizard/test-run` | `wizard-run-var-gain` | dynamic field | Fill a copier.yml-declared variable (e.g. gain) | Binds the value into state.template_variables for Copier render. |
 | `/wizard/run, /wizard/test-run` | `wizard-run-readme-label` | input | Type the README label | Sets the mandatory core README 'label' field. |
 | `/wizard/run, /wizard/test-run` | `wizard-run-readme-operator` | input | Type the README operator | Sets the mandatory core README 'operator' field. |
 | `/wizard/run, /wizard/test-run` | `wizard-run-readme-objective` | input | Type the README objective | Sets the mandatory core README 'objective' field. |
