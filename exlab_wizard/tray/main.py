@@ -125,16 +125,28 @@ class TrayApp:
 # ---------------------------------------------------------------------------
 
 
-def _build_default_app() -> Any:
+def _build_default_app(state_dir: Path) -> Any:
     """Return the production FastAPI app for the tray.
 
-    Imported lazily so the tray module's import graph stays light --
-    importing FastAPI / NiceGUI on a CI worker that only runs unit
-    tests for a single helper is wasteful.
+    Constructs the live :class:`AppDependencies` bundle (controller,
+    validator, LIMS client, sync queue, plugin host, ...), wires them
+    into the FastAPI app via ``create_app(dependencies=...)``, and
+    mounts the NiceGUI wizard at ``/`` so the pywebview window renders
+    the GUI instead of the API's 404 envelope. Imports are deferred to
+    keep the tray module's import graph light.
     """
     from exlab_wizard.api.app import create_app
+    from exlab_wizard.tray.dependencies import build_production_dependencies
+    from exlab_wizard.tray.storage_secret import load_or_create_storage_secret
+    from exlab_wizard.ui.mount import mount_ui
 
-    return create_app()
+    deps = build_production_dependencies(state_dir)
+    app = create_app(
+        dependencies=deps,
+        start_audit_task=deps.validator is not None,
+    )
+    mount_ui(app, storage_secret=load_or_create_storage_secret(state_dir))
+    return app
 
 
 def _build_default_components(
@@ -148,7 +160,8 @@ def _build_default_components(
     helper with a stub state dir to exercise the production wiring
     against a tmp_path.
     """
-    fastapi_app = app if app is not None else _build_default_app()
+    fastapi_app = app if app is not None else _build_default_app(state_dir)
+    deps = getattr(fastapi_app.state, "dependencies", None)
     server_runner = ServerRunner(app=fastapi_app, state_dir=state_dir)
     window_launcher = WindowLauncher(state_dir=state_dir)
     notification_bus = NotificationBus()
@@ -157,8 +170,8 @@ def _build_default_components(
     quit_coordinator = QuitCoordinator(
         server_runner=server_runner,
         window_launcher=window_launcher,
-        session_store=None,
-        nas_sync=None,
+        session_store=getattr(deps, "session_store", None),
+        nas_sync=getattr(deps, "nas_sync", None),
     )
     return TrayApp(
         server_runner=server_runner,
@@ -214,7 +227,7 @@ def _run_smoke(state_dir: Path) -> int:
     cannot drive) the pystray icon on a headless runner. This path
     bypasses pystray entirely.
     """
-    fastapi_app = _build_default_app()
+    fastapi_app = _build_default_app(state_dir)
     server_runner = ServerRunner(app=fastapi_app, state_dir=state_dir)
     port = server_runner.start()
     _log.info("smoke: server bound to port %d", port)

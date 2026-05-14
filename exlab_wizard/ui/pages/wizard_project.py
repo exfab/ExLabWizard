@@ -18,12 +18,16 @@ remains authoritative.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from exlab_wizard.logging import get_logger
 from exlab_wizard.ui.components import session_progress
+
+if TYPE_CHECKING:
+    from exlab_wizard.ui.pages.templates import TemplateQuestion
 
 _log = get_logger(__name__)
 
@@ -59,6 +63,7 @@ class ProjectWizardState:
 
     active_step: str = PROJECT_WIZARD_STEPS[0]
     selected_lims_short_id: str | None = None
+    lims_project_name: str = ""
     selected_template: str | None = None
     selected_equipment: str | None = None
     template_variables: dict[str, Any] = field(default_factory=dict)
@@ -118,25 +123,62 @@ def disk_space_pre_flight_message(state: ProjectWizardState) -> str | None:
 def render_project_wizard(
     *,
     state: ProjectWizardState | None = None,
-    on_submit: Callable[[ProjectWizardState], None] | None = None,
+    templates: list[str] | None = None,
+    equipment_ids: list[str] | None = None,
+    template_questions: dict[str, list[TemplateQuestion]] | None = None,
+    lims_projects: list[dict[str, Any]] | None = None,
+    on_submit: Callable[[ProjectWizardState], Any] | None = None,
 ) -> Any:
     """Render the seven-step project wizard.
+
+    ``templates`` is the list of project-scope template names the
+    operator can pick from; ``equipment_ids`` is the configured
+    equipment list; ``template_questions`` maps each template name to
+    its parsed ``copier.yml`` questions (drives the dynamic Variables
+    step); ``lims_projects`` is the cache / offline-catalogue project
+    list backing the LIMS project picker. Each step binds real inputs
+    into ``state`` so the confirm step's ``on_submit`` sees a fully
+    populated :class:`ProjectWizardState`.
 
     Returns the NiceGUI dialog (or, in tests, a payload describing the
     rendered steps).
     """
 
     s = state or ProjectWizardState()
+    template_choices = list(templates or [])
+    equipment_choices = list(equipment_ids or [])
+    questions_map = template_questions or {}
+    project_rows = list(lims_projects or [])
     payload = {
         "steps": PROJECT_WIZARD_STEPS,
         "active": s.active_step,
         "can_advance": can_advance(s),
+        "templates": template_choices,
+        "equipment_ids": equipment_choices,
+        "lims_projects": [row.get("short_id") for row in project_rows],
+        "template_questions": {k: [q.key for q in v] for k, v in questions_map.items()},
     }
 
     try:
         from nicegui import ui
     except Exception:
         return payload
+
+    from exlab_wizard.ui.pages.templates import render_question_field
+
+    @ui.refreshable
+    def _variables_panel() -> None:
+        """Dynamic Copier-variable form for the currently-picked template."""
+        questions = questions_map.get(s.selected_template or "", [])
+        if not questions:
+            ui.label("This template declares no variables; Copier defaults are used.").props(
+                'data-testid="wizard-project-variables-empty"'
+            ).style("color: var(--color-muted);")
+            return
+        for question in questions:
+            render_question_field(
+                question, s.template_variables, testid_prefix="wizard-project-var"
+            )
 
     card = (
         ui.card()
@@ -165,6 +207,17 @@ def render_project_wizard(
                     f'data-testid="wizard-step-{step_id}"'
                 ):
                     ui.label(_step_helper_text(step_id, s)).style("color: var(--color-body);")
+                    if step_id == "variables":
+                        _variables_panel()
+                    else:
+                        _render_project_step_fields(
+                            step_id,
+                            s,
+                            template_choices,
+                            equipment_choices,
+                            project_rows,
+                            on_template_change=_variables_panel.refresh,
+                        )
                     if step_id == "confirm":
                         session_progress.session_progress(
                             active_phase=None,
@@ -176,13 +229,19 @@ def render_project_wizard(
                         ).props('flat data-testid="wizard-back"')
                         primary_label = "Create" if step_id == "confirm" else "Next"
 
-                        def _on_primary(
+                        async def _on_primary(
                             _evt: Any,
                             sp: Any = stepper,
                             sid: str = step_id,
                         ) -> None:
+                            # ``on_submit`` may be sync or async (the
+                            # production handler awaits the controller
+                            # pipeline) -- await it either way.
                             if sid == "confirm" and on_submit is not None:
-                                on_submit(s)
+                                result: Any = on_submit(s)
+                                if inspect.isawaitable(result):
+                                    await result
+                                return
                             sp.next()
 
                         button_testid = "wizard-submit" if step_id == "confirm" else "wizard-next"
@@ -190,6 +249,90 @@ def render_project_wizard(
                             f'color=primary data-testid="{button_testid}"'
                         )
     return card
+
+
+def _render_project_step_fields(
+    step_id: str,
+    state: ProjectWizardState,
+    templates: list[str],
+    equipment_ids: list[str],
+    lims_projects: list[dict[str, Any]],
+    *,
+    on_template_change: Callable[..., Any],
+) -> None:
+    """Render the bound input fields for one project-wizard step.
+
+    Each widget two-way binds into ``state`` so values entered on an
+    earlier step survive while the operator moves through the stepper.
+    The "variables" step is rendered by the caller's refreshable panel,
+    not here.
+    """
+    from nicegui import ui
+
+    if step_id == "lims_project":
+        if lims_projects:
+            options = {
+                row["short_id"]: f"{row['short_id']} -- {row.get('name', '')}"
+                for row in lims_projects
+                if row.get("short_id")
+            }
+            by_short_id = {row["short_id"]: row for row in lims_projects if row.get("short_id")}
+
+            def _pick(event: Any) -> None:
+                row = by_short_id.get(event.value)
+                if row is None:
+                    return
+                state.selected_lims_short_id = row["short_id"]
+                state.lims_project_name = row.get("name", "")
+
+            ui.select(
+                options,
+                value=state.selected_lims_short_id
+                if state.selected_lims_short_id in options
+                else None,
+                label="LIMS project",
+            ).props('data-testid="wizard-project-lims-picker"').on_value_change(_pick)
+        # Manual entry stays available -- it is the editable source of
+        # truth, and the only path when no catalogue / cache is wired.
+        ui.input(
+            label="LIMS project short ID (PROJ-NNNN)",
+            value=state.selected_lims_short_id or "",
+        ).props('data-testid="wizard-project-lims-id"').on_value_change(
+            lambda e: setattr(state, "selected_lims_short_id", e.value or None)
+        ).bind_value(state, "selected_lims_short_id")
+        ui.input(label="Project name", value=state.lims_project_name).props(
+            'data-testid="wizard-project-lims-name"'
+        ).bind_value(state, "lims_project_name")
+    elif step_id == "template":
+
+        def _on_template(event: Any) -> None:
+            state.selected_template = event.value or None
+            on_template_change()
+
+        ui.select(
+            templates,
+            value=state.selected_template if state.selected_template in templates else None,
+            label="Project template",
+        ).props('data-testid="wizard-project-template"').on_value_change(_on_template)
+    elif step_id == "equipment":
+        ui.select(
+            equipment_ids,
+            value=(state.selected_equipment if state.selected_equipment in equipment_ids else None),
+            label="Equipment",
+        ).props('data-testid="wizard-project-equipment"').on_value_change(
+            lambda e: setattr(state, "selected_equipment", e.value or None)
+        )
+    elif step_id == "readme":
+        for field_id, label in (
+            ("label", "Label"),
+            ("operator", "Operator"),
+            ("objective", "Objective"),
+        ):
+            ui.input(label=label, value=state.readme_fields.get(field_id, "")).props(
+                f'data-testid="wizard-project-readme-{field_id}"'
+            ).on_value_change(
+                lambda e, fid=field_id: state.readme_fields.__setitem__(fid, e.value or "")
+            )
 
 
 def _step_helper_text(step_id: str, state: ProjectWizardState) -> str:

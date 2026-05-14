@@ -163,7 +163,10 @@ def test_run_wires_icon_and_invokes_run_loop(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_build_default_components(tmp_path: Path) -> None:
-    fake_app = object()
+    class _FakeApp:
+        state = MagicMock(dependencies=None)
+
+    fake_app = _FakeApp()
     tray = _build_default_components(state_dir=tmp_path, app=fake_app)
     assert isinstance(tray, TrayApp)
     assert tray.server_runner is not None
@@ -262,17 +265,37 @@ def test_request_quit_uses_running_loop_when_present(
     assert fake_loop.completed
 
 
-def test_build_default_app(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``_build_default_app`` lazily imports and calls ``create_app``."""
+def test_build_default_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``_build_default_app`` builds deps, calls ``create_app``, mounts NiceGUI."""
     from exlab_wizard.tray import main as tray_main
 
-    sentinel = object()
+    sentinel_app = MagicMock(name="fake_app")
+    fake_deps = MagicMock(validator=None)
+    create_app_calls: list[dict[str, Any]] = []
+    mount_calls: list[dict[str, Any]] = []
 
-    def _fake_create_app() -> object:
-        return sentinel
+    def _fake_create_app(**kwargs: Any) -> Any:
+        create_app_calls.append(kwargs)
+        return sentinel_app
+
+    def _fake_mount_ui(app: Any, *, storage_secret: str) -> None:
+        mount_calls.append({"app": app, "storage_secret": storage_secret})
 
     monkeypatch.setattr("exlab_wizard.api.app.create_app", _fake_create_app)
-    assert tray_main._build_default_app() is sentinel
+    monkeypatch.setattr(
+        "exlab_wizard.tray.dependencies.build_production_dependencies",
+        lambda _state_dir: fake_deps,
+    )
+    monkeypatch.setattr(
+        "exlab_wizard.tray.storage_secret.load_or_create_storage_secret",
+        lambda _state_dir: "test-secret",
+    )
+    monkeypatch.setattr("exlab_wizard.ui.mount.mount_ui", _fake_mount_ui)
+
+    result = tray_main._build_default_app(tmp_path)
+    assert result is sentinel_app
+    assert create_app_calls == [{"dependencies": fake_deps, "start_audit_task": False}]
+    assert mount_calls == [{"app": sentinel_app, "storage_secret": "test-secret"}]
 
 
 def test_build_default_components_falls_back_to_default_app(
@@ -281,8 +304,8 @@ def test_build_default_components_falls_back_to_default_app(
     """When ``app`` is None, the helper calls ``_build_default_app``."""
     from exlab_wizard.tray import main as tray_main
 
-    sentinel = object()
-    monkeypatch.setattr(tray_main, "_build_default_app", lambda: sentinel)
+    sentinel = MagicMock(state=MagicMock(dependencies=None))
+    monkeypatch.setattr(tray_main, "_build_default_app", lambda _state_dir: sentinel)
     tray = tray_main._build_default_components(state_dir=tmp_path)
     assert tray.server_runner is not None
 
@@ -335,7 +358,7 @@ def test_run_smoke_starts_server_and_stops_on_signal(
             stopped.append(True)
 
     monkeypatch.setattr(tray_main, "ServerRunner", _SmokeRunner)
-    monkeypatch.setattr(tray_main, "_build_default_app", lambda: object())
+    monkeypatch.setattr(tray_main, "_build_default_app", lambda _state_dir: object())
 
     # Replace threading.Event with a pre-set event so wait() returns
     # immediately and we don't block the test.

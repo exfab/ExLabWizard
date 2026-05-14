@@ -65,7 +65,12 @@ master_doc = "index"
 # Start lenient; tighten once the doc tree stabilizes.
 nitpicky = False
 
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+# ``UX_INTERACTIONS.md`` is a generated QA artifact (regenerated from
+# tests/e2e/ux_catalog.py by the e2e suite). It lives under docs/ only
+# because the test writes it there; it is not part of the rendered site
+# -- the user guide already documents the UX with screenshots -- so it
+# is excluded rather than wired into a toctree.
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "UX_INTERACTIONS.md"]
 
 templates_path = ["_templates"]
 

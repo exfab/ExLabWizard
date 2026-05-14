@@ -16,14 +16,18 @@ Steps:
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from exlab_wizard.constants import RunKind
 from exlab_wizard.logging import get_logger
 from exlab_wizard.paths import run_dir_stem
 from exlab_wizard.ui.components import mode_badge, session_progress
+
+if TYPE_CHECKING:
+    from exlab_wizard.ui.pages.templates import TemplateQuestion
 
 _log = get_logger(__name__)
 
@@ -131,10 +135,24 @@ def can_advance(state: RunWizardState) -> bool:
 def render_run_wizard(
     *,
     state: RunWizardState,
-    on_submit: Callable[[RunWizardState], None] | None = None,
+    templates: list[str] | None = None,
+    equipment_ids: list[str] | None = None,
+    template_questions: dict[str, list[TemplateQuestion]] | None = None,
+    on_submit: Callable[[RunWizardState], Any] | None = None,
 ) -> Any:
-    """Render the six-step run wizard."""
+    """Render the six-step run wizard.
 
+    ``templates`` lists run-scope template names appropriate to the
+    run kind; ``equipment_ids`` is the configured equipment list;
+    ``template_questions`` maps each template name to its parsed
+    ``copier.yml`` questions (drives the dynamic Variables step). Each
+    step binds real inputs into ``state`` so the confirm step's
+    ``on_submit`` sees a fully-populated :class:`RunWizardState`.
+    """
+
+    template_choices = list(templates or [])
+    equipment_choices = list(equipment_ids or [])
+    questions_map = template_questions or {}
     payload = {
         "title": title_text(state),
         "mode_badge": mode_badge.mode_badge_props(state.run_kind),
@@ -142,12 +160,31 @@ def render_run_wizard(
         "active": state.active_step,
         "primary_label": primary_button_label(state),
         "primary_color": primary_button_color(state),
+        "templates": template_choices,
+        "equipment_ids": equipment_choices,
+        "template_questions": {k: [q.key for q in v] for k, v in questions_map.items()},
     }
 
     try:
         from nicegui import ui
     except Exception:
         return payload
+
+    from exlab_wizard.ui.pages.templates import render_question_field
+
+    @ui.refreshable
+    def _variables_panel() -> None:
+        """Dynamic Copier-variable form for the currently-picked template."""
+        questions = questions_map.get(state.selected_template or "", [])
+        if not questions:
+            ui.label("This template declares no variables; Copier defaults are used.").props(
+                'data-testid="wizard-run-variables-empty"'
+            ).style("color: var(--color-muted);")
+            return
+        for question in questions:
+            render_question_field(
+                question, state.template_variables, testid_prefix="wizard-run-var"
+            )
 
     card = (
         ui.card()
@@ -177,6 +214,16 @@ def render_run_wizard(
                     f'data-testid="wizard-run-step-{step_id}"'
                 ):
                     ui.label(_step_helper_text(step_id, state)).style("color: var(--color-body);")
+                    if step_id == "variables":
+                        _variables_panel()
+                    else:
+                        _render_run_step_fields(
+                            step_id,
+                            state,
+                            template_choices,
+                            equipment_choices,
+                            on_template_change=_variables_panel.refresh,
+                        )
                     if step_id == "confirm":
                         session_progress.session_progress(active_phase=None)
                     with ui.stepper_navigation():
@@ -188,13 +235,19 @@ def render_run_wizard(
                             primary_button_label(state) if step_id == "confirm" else "Next"
                         )
 
-                        def _on_primary(
+                        async def _on_primary(
                             _evt: Any,
                             sp: Any = stepper,
                             sid: str = step_id,
                         ) -> None:
+                            # ``on_submit`` may be sync or async; await
+                            # it either way (the production handler
+                            # awaits the controller pipeline).
                             if sid == "confirm" and on_submit is not None:
-                                on_submit(state)
+                                result: Any = on_submit(state)
+                                if inspect.isawaitable(result):
+                                    await result
+                                return
                             sp.next()
 
                         button_testid = (
@@ -204,6 +257,59 @@ def render_run_wizard(
                             f'color={primary_button_color(state)} data-testid="{button_testid}"'
                         )
     return card
+
+
+def _render_run_step_fields(
+    step_id: str,
+    state: RunWizardState,
+    templates: list[str],
+    equipment_ids: list[str],
+    *,
+    on_template_change: Callable[..., Any],
+) -> None:
+    """Render the bound input fields for one run-wizard step.
+
+    The "variables" step is rendered by the caller's refreshable panel,
+    not here.
+    """
+    from nicegui import ui
+
+    if step_id == "project_equipment":
+        ui.input(
+            label="Parent project short ID (PROJ-NNNN)",
+            value=state.selected_project_short_id or "",
+        ).props('data-testid="wizard-run-project-id"').on_value_change(
+            lambda e: setattr(state, "selected_project_short_id", e.value or None)
+        )
+        ui.select(
+            equipment_ids,
+            value=(state.selected_equipment if state.selected_equipment in equipment_ids else None),
+            label="Equipment",
+        ).props('data-testid="wizard-run-equipment"').on_value_change(
+            lambda e: setattr(state, "selected_equipment", e.value or None)
+        )
+    elif step_id == "template":
+
+        def _on_template(event: Any) -> None:
+            state.selected_template = event.value or None
+            on_template_change()
+
+        ui.select(
+            templates,
+            value=state.selected_template if state.selected_template in templates else None,
+            label="Run template",
+        ).props('data-testid="wizard-run-template"').on_value_change(_on_template)
+    elif step_id == "readme":
+        for field_id, label in (
+            ("label", "Label"),
+            ("operator", "Operator"),
+            ("objective", "Objective"),
+        ):
+            ui.input(label=label, value=state.readme_fields.get(field_id, "")).props(
+                f'data-testid="wizard-run-readme-{field_id}"'
+            ).on_value_change(
+                lambda e, fid=field_id: state.readme_fields.__setitem__(fid, e.value or "")
+            )
 
 
 def _step_helper_text(step_id: str, state: RunWizardState) -> str:

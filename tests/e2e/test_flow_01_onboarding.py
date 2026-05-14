@@ -15,13 +15,31 @@ from tests.e2e.page_objects.main_page import MainPage
 from tests.e2e.page_objects.welcome_page import WelcomePage
 
 
+def _goto(page, url: str, *, retries: int = 2) -> None:
+    """Navigate to a NiceGUI page, tolerating a transient ERR_ABORTED.
+
+    NiceGUI's client occasionally aborts the first document request when
+    it issues its connect-time reload handshake; a single retry settles
+    it. Mirrors the helper in ``test_flow_00_full_lifecycle.py``.
+    """
+    last_error: Exception | None = None
+    for _ in range(retries + 1):
+        try:
+            page.goto(url, wait_until="domcontentloaded")
+            page.wait_for_load_state("networkidle")
+            return
+        except Exception as exc:
+            last_error = exc
+            page.wait_for_timeout(300)
+    raise AssertionError(f"navigation to {url} failed: {last_error!r}")
+
+
 def test_flow_01_onboarding(page, server_url) -> None:
     welcome = WelcomePage(page)
     main = MainPage(page)
 
     # 1. Welcome card visible with autostart default-on.
-    page.goto(f"{server_url}/")
-    page.wait_for_load_state("networkidle")
+    _goto(page, f"{server_url}/")
     welcome.headline.wait_for(state="visible", timeout=10_000)
     assert welcome.autostart_toggle.is_visible()
 
@@ -32,8 +50,7 @@ def test_flow_01_onboarding(page, server_url) -> None:
     # 3. Open the settings page directly (the welcome card's CTA is
     # observable via the welcome-status marker; in the test app it
     # navigates implicitly to /settings via the main-window flow).
-    page.goto(f"{server_url}/settings?incomplete=paths,equipment")
-    page.wait_for_load_state("networkidle")
+    _goto(page, f"{server_url}/settings?incomplete=paths,equipment")
     page.locator('[data-testid="settings-incomplete-banner"]').wait_for(
         state="visible", timeout=10_000
     )
@@ -43,8 +60,7 @@ def test_flow_01_onboarding(page, server_url) -> None:
     page.locator('[data-testid="settings-paths-plugin"]').fill("/tmp/plugins")
     page.locator('[data-testid="settings-paths-local-root"]').fill("/tmp/data")
 
-    page.goto(f"{server_url}/settings?incomplete=paths,equipment&active=equipment")
-    page.wait_for_load_state("networkidle")
+    _goto(page, f"{server_url}/settings?incomplete=paths,equipment&active=equipment")
     page.locator('[data-testid="settings-equipment-id"]').fill("EQ1")
     page.locator('[data-testid="settings-equipment-add"]').click()
 
@@ -53,8 +69,7 @@ def test_flow_01_onboarding(page, server_url) -> None:
     page.wait_for_load_state("networkidle")
 
     # 6. Navigate to main window (now in READY state).
-    page.goto(f"{server_url}/main?setup=0")
-    page.wait_for_load_state("networkidle")
+    _goto(page, f"{server_url}/main?setup=0")
     main.tree.wait_for(state="visible", timeout=10_000)
     # Setup-incomplete banner should NOT be present.
     assert page.locator('[data-testid="setup-incomplete-banner"]').count() == 0

@@ -33,6 +33,7 @@ from urllib.parse import parse_qs
 from fastapi import FastAPI
 
 from exlab_wizard.api import create_app
+from exlab_wizard.config.models import Config
 from exlab_wizard.constants import Tier
 from exlab_wizard.ui import notifications
 from exlab_wizard.ui.notifications import BannerId, ContainerId, Severity
@@ -70,6 +71,10 @@ class TestState:
     last_action: str = ""
     findings: list[problems_page.Finding] = field(default_factory=list)
     overrides: dict[str, str] = field(default_factory=dict)
+    # Settings flow: ``config`` seeds the dialog (None == fresh install),
+    # ``saved_config`` captures what the Save handler emitted.
+    config: Config | None = None
+    saved_config: Config | None = None
 
 
 def _read_query(request_url: str) -> dict[str, list[str]]:
@@ -104,11 +109,13 @@ def build_test_app() -> FastAPI:
             test_state.welcomed = True
             test_state.setup_incomplete = True
             test_state.last_action = "welcome.get_started"
+            ui.navigate.to("/settings")
 
         def on_skip(autostart: bool) -> None:
             test_state.autostart_enabled = autostart
             test_state.welcomed = True
             test_state.last_action = "welcome.skip"
+            ui.navigate.to("/main")
 
         ui.label(f"welcomed={test_state.welcomed}").props('data-testid="welcome-status"').style(
             "display:none;"
@@ -279,9 +286,10 @@ def build_test_app() -> FastAPI:
             active_section=active_section,
         )
 
-        def _save(state: settings_page.SettingsState) -> None:
+        def _save(updated: Config) -> None:
             test_state.last_action = "settings.save"
             test_state.setup_incomplete = False
+            test_state.saved_config = updated
             ui.label("Settings saved").props('data-testid="settings-saved"')
 
         def _discard(state: settings_page.SettingsState) -> None:
@@ -292,6 +300,7 @@ def build_test_app() -> FastAPI:
             ui.navigate.to(f"/settings?incomplete={incomplete}&active={section}")
 
         settings_page.render_settings_page(
+            config=test_state.config,
             state=s,
             on_save=_save,
             on_discard=_discard,
