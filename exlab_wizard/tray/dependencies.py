@@ -48,8 +48,10 @@ def build_production_dependencies(state_dir: Path) -> AppDependencies:
     deps = AppDependencies()
 
     deps.config = _try("config", _load_config_safely)
-    if deps.config is not None:
-        deps.save_config = _make_save_config()
+    # Wire the saver unconditionally: a fresh install has no config.yaml
+    # yet, but the settings wizard must be able to *create* one. The
+    # saver handles the missing-file case (no original text to preserve).
+    deps.save_config = _make_save_config()
 
     validator = _try("validator", _build_validator, deps.config)
     deps.validator = validator

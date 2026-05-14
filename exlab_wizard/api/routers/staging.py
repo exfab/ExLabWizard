@@ -29,7 +29,6 @@ from exlab_wizard.cache.ingest_writer import IngestWriter
 from exlab_wizard.config.models import Config
 from exlab_wizard.constants import IngestState, SyncHandleState
 from exlab_wizard.logging import get_logger
-from exlab_wizard.orchestrator.cleanup import clear_run
 from exlab_wizard.orchestrator.staging_query import (
     StagedRunSummary,
     list_staged_runs,
@@ -168,6 +167,12 @@ def build_staging_router() -> APIRouter:
                         ),
                     },
                 )
+        # Deferred import: ``orchestrator.cleanup`` pulls in
+        # ``api.schemas`` -> ``api`` package, so a module-level import
+        # here creates an ``api.routers.staging`` <-> ``orchestrator``
+        # cycle whenever ``orchestrator`` is imported before ``api``.
+        from exlab_wizard.orchestrator.cleanup import clear_run
+
         files_freed, bytes_freed = await clear_run(
             path,
             config=config,

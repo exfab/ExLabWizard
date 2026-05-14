@@ -181,6 +181,14 @@ class AppDependencies:
     keyring_password_present: bool = True
     lims_reason: str | None = None
 
+    # Restart-required gate ---------------------------------------------
+    # Set True after the wizard writes config.yaml: the config-dependent
+    # components (controller / lims_client / nas_sync) are built once at
+    # tray boot, so the operator must relaunch the tray for a freshly
+    # written config to take effect. The NiceGUI mount helper reads this
+    # to route every page to the restart-required screen.
+    restart_required: bool = False
+
     # Components --------------------------------------------------------
     controller: Any = None
     validator: Any = None

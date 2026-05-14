@@ -79,13 +79,26 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
     @ui.page("/")
     def _index() -> Any:
         deps = _deps()
+        if _restart_gate(deps, ui):
+            return
         if _is_setup_ready(deps):
             ui.navigate.to("/main")
         else:
             ui.navigate.to("/welcome")
 
+    @ui.page("/restart-required")
+    def _restart_required() -> Any:
+        # Terminal screen: config.yaml was written but the tray's
+        # config-dependent components were built once at boot, so the
+        # operator must relaunch to finish setup. Not gated -- this is
+        # the gate's destination.
+        return _render_restart_required(ui)
+
     @ui.page("/welcome")
     def _welcome() -> Any:
+        if _restart_gate(_deps(), ui):
+            return None
+
         def _on_started(autostart: bool) -> None:
             _apply_autostart(_deps(), autostart)
             ui.navigate.to("/settings")
@@ -102,6 +115,8 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
     @ui.page("/main")
     def _main() -> Any:
         deps = _deps()
+        if _restart_gate(deps, ui):
+            return None
         state = _build_main_state(deps)
 
         def _refresh() -> None:
@@ -119,46 +134,72 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
     @ui.page("/wizard/project")
     def _wizard_project() -> Any:
         deps = _deps()
+        if _restart_gate(deps, ui):
+            return None
         return wizard_project_page.render_project_wizard(
             on_submit=lambda state: _submit_project(deps, state, ui),
         )
 
     @ui.page("/wizard/run")
     def _wizard_run() -> Any:
-        return _render_run_wizard(_deps(), RunKind.EXPERIMENTAL, ui)
+        deps = _deps()
+        if _restart_gate(deps, ui):
+            return None
+        return _render_run_wizard(deps, RunKind.EXPERIMENTAL, ui)
 
     @ui.page("/wizard/test-run")
     def _wizard_test_run() -> Any:
-        return _render_run_wizard(_deps(), RunKind.TEST, ui)
+        deps = _deps()
+        if _restart_gate(deps, ui):
+            return None
+        return _render_run_wizard(deps, RunKind.TEST, ui)
 
     @ui.page("/settings")
-    def _settings() -> Any:
+    def _settings(active: str = "") -> Any:
         deps = _deps()
+        if _restart_gate(deps, ui):
+            return None
         incomplete = _missing_setup_sections(deps)
-        state = settings_page.SettingsState(incomplete_sections=incomplete)
+        # ``active`` is an optional deep-link query param; when absent the
+        # page falls back to its own first-incomplete-section logic.
+        state = (
+            settings_page.SettingsState(
+                incomplete_sections=incomplete,
+                active_section=active,
+            )
+            if active
+            else settings_page.SettingsState(incomplete_sections=incomplete)
+        )
+        config = getattr(deps, "config", None) if deps is not None else None
 
-        def _on_save(_: settings_page.SettingsState) -> None:
-            _show_toast(ui, "Settings saved", positive=True)
-            ui.navigate.to("/main")
+        def _on_save(updated: Any) -> None:
+            if not _persist_config(deps, updated, ui):
+                return
+            ui.navigate.to("/restart-required")
 
+        # ``on_select_section`` is left unset: the settings dialog swaps
+        # sections client-side, so a navigation hook would only reload
+        # the page and discard the operator's in-progress edits.
         return settings_page.render_settings_page(
+            config=config,
             state=state,
             on_save=_on_save,
             on_discard=None,
-            on_select_section=lambda section: ui.navigate.to(
-                f"/settings?active={section}"
-            ),
         )
 
     @ui.page("/problems")
     def _problems() -> Any:
         deps = _deps()
+        if _restart_gate(deps, ui):
+            return None
         findings = _safe_audit(deps)
         return problems_page.render_problems_page(findings=findings)
 
     @ui.page("/staging")
     def _staging() -> Any:
         deps = _deps()
+        if _restart_gate(deps, ui):
+            return None
         state = _build_staging_state(deps)
         if state is None:
             _render_unavailable(
@@ -173,6 +214,71 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _restart_gate(deps: Any, ui: Any) -> bool:
+    """Route to ``/restart-required`` when config was written this session.
+
+    The config-dependent components (controller / lims_client /
+    nas_sync) are built once at tray boot, so a config.yaml written by
+    the settings wizard only takes effect after a relaunch. Returns
+    ``True`` when the caller should stop rendering its normal page.
+    """
+    if deps is not None and getattr(deps, "restart_required", False):
+        ui.navigate.to("/restart-required")
+        return True
+    return False
+
+
+def _persist_config(deps: Any, updated: Any, ui: Any) -> bool:
+    """Write ``updated`` via ``deps.save_config`` and arm the restart gate.
+
+    Returns ``True`` on success. On failure a negative toast is shown
+    and the function returns ``False`` so the caller leaves the operator
+    on the settings page to retry.
+    """
+    saver = getattr(deps, "save_config", None) if deps is not None else None
+    if saver is None:
+        _show_toast(ui, "Cannot save: no config writer is available", positive=False)
+        return False
+    try:
+        result = saver(updated)
+        if hasattr(result, "__await__"):
+            # Production wires a synchronous saver; an awaitable here
+            # would silently no-op, so surface it rather than swallow.
+            _log.warning("save_config returned an awaitable; a sync saver is expected")
+    except Exception as exc:  # noqa: BLE001 -- defensive UI boundary
+        _log.exception("save_config failed")
+        _show_toast(ui, f"Save failed: {exc}", positive=False)
+        return False
+    if deps is not None:
+        deps.config = updated
+        deps.restart_required = True
+    return True
+
+
+def _render_restart_required(ui: Any) -> Any:
+    """Render the terminal restart-required screen."""
+    try:
+        card = ui.card().props('data-testid="restart-required"').style(
+            "max-width: 520px; margin: 4rem auto; padding: var(--sp-8); "
+            "background: var(--color-surface); border-radius: var(--radius-lg);"
+        )
+        with card:
+            ui.label("Restart required").style(
+                "font-family: var(--font-display); font-size: var(--text-lg); "
+                "font-weight: 600; color: var(--color-heading);"
+            )
+            ui.label(
+                "Your configuration has been saved. Quit ExLab-Wizard from the "
+                "system tray and relaunch it so the new settings take effect."
+            ).props('data-testid="restart-required-message"').style(
+                "color: var(--color-body);"
+            )
+        return card
+    except Exception as exc:  # noqa: BLE001 -- fallback for missing card primitive
+        _log.warning("render_restart_required failed: %s", exc)
+        return None
 
 
 def _is_setup_ready(deps: Any) -> bool:
@@ -291,11 +397,14 @@ def _build_staging_state(deps: Any) -> Any:
 
 
 def _show_toast(ui: Any, message: str, *, positive: bool) -> None:
+    del ui  # toasts route through the notifications helper, not raw ui
     try:
-        notify = getattr(ui, "notify", None)
-        if notify is None:
-            return
-        notify(message, type="positive" if positive else "negative")
+        from exlab_wizard.ui import notifications
+
+        if positive:
+            notifications.notify_success(message)
+        else:
+            notifications.notify_error(message)
     except Exception as exc:  # noqa: BLE001 -- toast must never crash the route
         _log.debug("toast notify failed: %s", exc)
 

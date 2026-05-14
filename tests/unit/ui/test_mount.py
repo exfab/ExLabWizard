@@ -212,3 +212,78 @@ def test_staging_state_returns_empty_rows_on_query_failure(
     state = mount._build_staging_state(deps)
     assert state is not None
     assert state.rows == []
+
+
+# ---------------------------------------------------------------------------
+# _restart_gate
+# ---------------------------------------------------------------------------
+
+
+class _NavSpy:
+    """Minimal stand-in for the NiceGUI ``ui`` object's navigate surface."""
+
+    def __init__(self) -> None:
+        self.navigated: list[str] = []
+        self.navigate = SimpleNamespace(to=self.navigated.append)
+
+
+def test_restart_gate_false_when_deps_none() -> None:
+    nav = _NavSpy()
+    assert mount._restart_gate(None, nav) is False
+    assert nav.navigated == []
+
+
+def test_restart_gate_false_when_flag_unset() -> None:
+    nav = _NavSpy()
+    assert mount._restart_gate(_deps(restart_required=False), nav) is False
+    assert nav.navigated == []
+
+
+def test_restart_gate_redirects_when_flag_set() -> None:
+    nav = _NavSpy()
+    assert mount._restart_gate(_deps(restart_required=True), nav) is True
+    assert nav.navigated == ["/restart-required"]
+
+
+# ---------------------------------------------------------------------------
+# _persist_config
+# ---------------------------------------------------------------------------
+
+
+def test_persist_config_writes_and_arms_restart_gate() -> None:
+    nav = _NavSpy()
+    saved: list[Any] = []
+    deps = _deps(save_config=saved.append, restart_required=False)
+    sentinel_config = object()
+
+    ok = mount._persist_config(deps, sentinel_config, nav)
+
+    assert ok is True
+    assert saved == [sentinel_config]
+    assert deps.config is sentinel_config
+    assert deps.restart_required is True
+
+
+def test_persist_config_returns_false_when_no_saver() -> None:
+    nav = _NavSpy()
+    deps = _deps(save_config=None, restart_required=False)
+
+    ok = mount._persist_config(deps, object(), nav)
+
+    assert ok is False
+    assert deps.restart_required is False
+
+
+def test_persist_config_returns_false_when_saver_raises() -> None:
+    nav = _NavSpy()
+
+    def _boom(_config: Any) -> None:
+        msg = "disk full"
+        raise OSError(msg)
+
+    deps = _deps(save_config=_boom, restart_required=False)
+
+    ok = mount._persist_config(deps, object(), nav)
+
+    assert ok is False
+    assert deps.restart_required is False
