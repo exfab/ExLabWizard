@@ -12,12 +12,11 @@ Covers the pure logic behind the three polish features:
 
 from __future__ import annotations
 
-# Prime the api package before importing ui.pages (import-cycle workaround).
-import exlab_wizard.api.app  # noqa: F401
-
 import pytest
 from pydantic import ValidationError
 
+# Prime the api package before importing ui.pages (import-cycle workaround).
+import exlab_wizard.api.app  # noqa: F401
 from exlab_wizard.config.models import RcloneTransport, RsyncSshTransport
 from exlab_wizard.constants import CompletenessSignal
 from exlab_wizard.ui.pages.settings import build_equipment_config
@@ -26,7 +25,6 @@ from exlab_wizard.ui.pages.templates import (
     render_question_field,
     template_questions,
 )
-
 
 # ---------------------------------------------------------------------------
 # template_questions

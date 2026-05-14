@@ -327,11 +327,9 @@ def _render_section_body(section: str, draft: Config) -> None:
             ui.number(label="Cache TTL (hours)", value=draft.lims.cache_ttl_hours).props(
                 'data-testid="settings-lims-cache-ttl"'
             ).bind_value(draft.lims, "cache_ttl_hours")
-            ui.input(
-                label="Offline catalogue path", value=draft.lims.offline_catalogue_path
-            ).props('data-testid="settings-lims-offline-path"').bind_value(
-                draft.lims, "offline_catalogue_path"
-            )
+            ui.input(label="Offline catalogue path", value=draft.lims.offline_catalogue_path).props(
+                'data-testid="settings-lims-offline-path"'
+            ).bind_value(draft.lims, "offline_catalogue_path")
             test_connection_panel.test_connection_panel(None)
         elif section == "equipment":
             _render_equipment_section(draft)
@@ -363,13 +361,12 @@ def _render_section_body(section: str, draft: Config) -> None:
                 value=draft.validator.content_scan_max_mib,
             ).bind_value(draft.validator, "content_scan_max_mib")
             ui.label(
-                "Scanned file extensions: "
-                + ", ".join(draft.validator.content_scan_extensions)
+                "Scanned file extensions: " + ", ".join(draft.validator.content_scan_extensions)
             )
         elif section == "logging":
-            ui.radio(
-                ["DEBUG", "INFO", "WARN", "ERROR"], value=draft.logging.level
-            ).bind_value(draft.logging, "level")
+            ui.radio(["DEBUG", "INFO", "WARN", "ERROR"], value=draft.logging.level).bind_value(
+                draft.logging, "level"
+            )
             ui.number(
                 label="Central log size cap (MB)", value=draft.logging.central_log_max_mb
             ).bind_value(draft.logging, "central_log_max_mb")
@@ -377,15 +374,15 @@ def _render_section_body(section: str, draft: Config) -> None:
                 label="Rotated log copies kept", value=draft.logging.central_log_keep
             ).bind_value(draft.logging, "central_log_keep")
         elif section == "orchestrator":
-            ui.checkbox(
-                "Orchestrator mode enabled", value=draft.orchestrator.enabled
-            ).bind_value(draft.orchestrator, "enabled")
+            ui.checkbox("Orchestrator mode enabled", value=draft.orchestrator.enabled).bind_value(
+                draft.orchestrator, "enabled"
+            )
             ui.input(label="Workstation label", value=draft.orchestrator.label).bind_value(
                 draft.orchestrator, "label"
             )
-            ui.input(
-                label="Staging root", value=draft.orchestrator.staging_root
-            ).bind_value(draft.orchestrator, "staging_root")
+            ui.input(label="Staging root", value=draft.orchestrator.staging_root).bind_value(
+                draft.orchestrator, "staging_root"
+            )
         elif section == "application":
             # "Start at login" is the autostart toggle, not a config.yaml
             # field -- it is set from the welcome card. Shown here for
@@ -447,9 +444,7 @@ def build_equipment_config(
             else None
         ),
         manifest_filename=(
-            manifest_filename.strip() or None
-            if signal is CompletenessSignal.MANIFEST
-            else None
+            manifest_filename.strip() or None if signal is CompletenessSignal.MANIFEST else None
         ),
         transport=transport,
     )
@@ -491,9 +486,7 @@ def _render_equipment_section(draft: Config) -> None:
         'data-testid="settings-equipment-id"'
     )
     eq_label = ui.input(label="Label").props('data-testid="settings-equipment-label"')
-    eq_local = ui.input(label="Local root").props(
-        'data-testid="settings-equipment-local-root"'
-    )
+    eq_local = ui.input(label="Local root").props('data-testid="settings-equipment-local-root"')
     eq_nas = ui.input(label="NAS root").props('data-testid="settings-equipment-nas-root"')
 
     # Completeness signal: a radio that swaps the filename field.
@@ -507,9 +500,9 @@ def _render_equipment_section(draft: Config) -> None:
     @ui.refreshable
     def _signal_field() -> None:
         if signal_radio.value == CompletenessSignal.MANIFEST.value:
-            fields["manifest"] = ui.input(
-                label="Manifest filename", value="manifest.json"
-            ).props('data-testid="settings-equipment-manifest"')
+            fields["manifest"] = ui.input(label="Manifest filename", value="manifest.json").props(
+                'data-testid="settings-equipment-manifest"'
+            )
             fields.pop("sentinel", None)
         else:
             fields["sentinel"] = ui.input(
@@ -531,9 +524,9 @@ def _render_equipment_section(draft: Config) -> None:
             fields["ssh_target"] = ui.input(label="SSH target").props(
                 'data-testid="settings-equipment-ssh-target"'
             )
-            fields["ssh_key"] = ui.input(
-                label="SSH key path", value="~/.ssh/id_ed25519"
-            ).props('data-testid="settings-equipment-ssh-key"')
+            fields["ssh_key"] = ui.input(label="SSH key path", value="~/.ssh/id_ed25519").props(
+                'data-testid="settings-equipment-ssh-key"'
+            )
             fields["rsync_path"] = ui.input(label="Remote path").props(
                 'data-testid="settings-equipment-rsync-path"'
             )
@@ -559,34 +552,23 @@ def _render_equipment_section(draft: Config) -> None:
                 label=eq_label.value or "",
                 local_root=eq_local.value or "",
                 nas_root=eq_nas.value or "",
-                completeness_signal=signal_radio.value
-                or CompletenessSignal.SENTINEL_FILE.value,
-                sentinel_filename=(
-                    fields["sentinel"].value or "" if "sentinel" in fields else ""
-                ),
-                manifest_filename=(
-                    fields["manifest"].value or "" if "manifest" in fields else ""
-                ),
+                completeness_signal=signal_radio.value or CompletenessSignal.SENTINEL_FILE.value,
+                sentinel_filename=(fields["sentinel"].value or "" if "sentinel" in fields else ""),
+                manifest_filename=(fields["manifest"].value or "" if "manifest" in fields else ""),
                 transport_type=transport_radio.value or "rclone",
                 rclone_remote=(
-                    fields["rclone_remote"].value or ""
-                    if "rclone_remote" in fields
-                    else ""
+                    fields["rclone_remote"].value or "" if "rclone_remote" in fields else ""
                 ),
                 rclone_remote_path=(
                     fields["rclone_path"].value or "" if "rclone_path" in fields else ""
                 ),
-                ssh_target=(
-                    fields["ssh_target"].value or "" if "ssh_target" in fields else ""
-                ),
-                ssh_key_path=(
-                    fields["ssh_key"].value or "" if "ssh_key" in fields else ""
-                ),
+                ssh_target=(fields["ssh_target"].value or "" if "ssh_target" in fields else ""),
+                ssh_key_path=(fields["ssh_key"].value or "" if "ssh_key" in fields else ""),
                 rsync_remote_path=(
                     fields["rsync_path"].value or "" if "rsync_path" in fields else ""
                 ),
             )
-        except Exception as exc:  # noqa: BLE001 -- surface validation to the operator
+        except Exception as exc:
             notifications.notify_error(f"Equipment invalid: {exc}")
             return
         if any(e.id == entry.id for e in draft.equipment):
@@ -598,6 +580,4 @@ def _render_equipment_section(draft: Config) -> None:
             widget.value = ""
         notifications.notify_success(f"Equipment {entry.id!r} added")
 
-    ui.button("Add equipment", on_click=_add).props(
-        'data-testid="settings-equipment-add"'
-    )
+    ui.button("Add equipment", on_click=_add).props('data-testid="settings-equipment-add"')

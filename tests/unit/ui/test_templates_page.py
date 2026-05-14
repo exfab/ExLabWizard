@@ -11,15 +11,14 @@ raising.
 
 from __future__ import annotations
 
-# Prime the api package before importing ui.pages so the pre-existing
-# orchestrator <-> api import order resolves cleanly (see test_mount.py).
-import exlab_wizard.api.app  # noqa: F401  -- import order matters
-
 from pathlib import Path
 
 import pytest
 import yaml
 
+# Prime the api package before importing ui.pages so the pre-existing
+# orchestrator <-> api import order resolves cleanly (see test_mount.py).
+import exlab_wizard.api.app  # noqa: F401  -- import order matters
 from exlab_wizard.constants import COPIER_MANIFEST_NAME, RunScope, TemplateType
 from exlab_wizard.template.copier_driver import TemplateEngine
 from exlab_wizard.ui.pages.templates import (
@@ -43,9 +42,7 @@ def test_create_template_scaffolds_dir_with_manifest_and_content(
     manifest = root / COPIER_MANIFEST_NAME
     assert manifest.is_file()
     # Exactly one content file is scaffolded alongside copier.yml.
-    content_files = [
-        p for p in root.iterdir() if p.name != COPIER_MANIFEST_NAME
-    ]
+    content_files = [p for p in root.iterdir() if p.name != COPIER_MANIFEST_NAME]
     assert len(content_files) == 1
     assert content_files[0].read_text(encoding="utf-8")
 
@@ -109,9 +106,7 @@ def test_create_run_template_requires_run_scope(tmp_path: Path) -> None:
 
 def test_create_run_template_rejects_invalid_run_scope(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="run_scope"):
-        create_template(
-            tmp_path, name="x", template_type="run", run_scope="nonsense"
-        )
+        create_template(tmp_path, name="x", template_type="run", run_scope="nonsense")
 
 
 def test_create_template_rejects_duplicate_name(tmp_path: Path) -> None:
@@ -169,9 +164,7 @@ def test_list_templates_returns_empty_for_dir_with_no_templates(
 
 
 def test_list_templates_summarizes_each_template(tmp_path: Path) -> None:
-    create_template(
-        tmp_path, name="alpha", template_type="project", description="A"
-    )
+    create_template(tmp_path, name="alpha", template_type="project", description="A")
     create_template(
         tmp_path,
         name="beta",
@@ -223,9 +216,7 @@ def test_list_templates_filters_by_template_type(tmp_path: Path) -> None:
     )
 
     only_runs = list_templates(tmp_path, template_type=TemplateType.RUN.value)
-    only_projects = list_templates(
-        tmp_path, template_type=TemplateType.PROJECT.value
-    )
+    only_projects = list_templates(tmp_path, template_type=TemplateType.PROJECT.value)
 
     assert [s.name for s in only_runs] == ["run"]
     assert [s.name for s in only_projects] == ["proj"]

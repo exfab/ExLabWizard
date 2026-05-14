@@ -164,7 +164,7 @@ def list_templates(
             continue
         try:
             data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
-        except Exception as exc:  # noqa: BLE001 -- skip malformed, keep scanning
+        except Exception as exc:
             _log.warning("skipping malformed template manifest %s: %s", manifest, exc)
             continue
         if not isinstance(data, dict):
@@ -273,9 +273,7 @@ def render_question_field(
         widget.props(f'data-testid="{testid}"')
         cast = int if question.kind == "int" else float
         widget.on_value_change(
-            lambda e: answers.__setitem__(
-                key, cast(e.value) if e.value is not None else None
-            )
+            lambda e: answers.__setitem__(key, cast(e.value) if e.value is not None else None)
         )
         return
     if question.kind == "choice":
@@ -334,21 +332,17 @@ def render_template_manager(
         if templates:
             for summary in templates:
                 scope = f" [{summary.run_scope}]" if summary.run_scope else ""
-                ui.label(
-                    f"{summary.name} -- {summary.template_type}{scope}"
-                ).props('data-testid="template-row"').style("color: var(--color-body);")
+                ui.label(f"{summary.name} -- {summary.template_type}{scope}").props(
+                    'data-testid="template-row"'
+                ).style("color: var(--color-body);")
         else:
             ui.label("No templates yet. Create one below.").props(
                 'data-testid="templates-empty"'
             ).style("color: var(--color-muted);")
 
         # Create form -------------------------------------------------------
-        ui.label("New template").style(
-            "font-weight: 600; padding-top: var(--sp-3);"
-        )
-        name_input = ui.input(label="Template name").props(
-            'data-testid="template-name"'
-        )
+        ui.label("New template").style("font-weight: 600; padding-top: var(--sp-3);")
+        name_input = ui.input(label="Template name").props('data-testid="template-name"')
         type_select = ui.select(
             [t.value for t in TemplateType],
             value=TemplateType.PROJECT.value,
@@ -366,11 +360,7 @@ def render_template_manager(
         def _submit(_evt: Any = None) -> None:
             if on_create is None:
                 return
-            run_scope = (
-                scope_select.value
-                if type_select.value == TemplateType.RUN.value
-                else None
-            )
+            run_scope = scope_select.value if type_select.value == TemplateType.RUN.value else None
             on_create(
                 name_input.value or "",
                 type_select.value or TemplateType.PROJECT.value,
@@ -378,8 +368,10 @@ def render_template_manager(
                 run_scope,
             )
 
-        with ui.row().classes("items-center w-full justify-end").style(
-            "gap: var(--sp-3); padding-top: var(--sp-4);"
+        with (
+            ui.row()
+            .classes("items-center w-full justify-end")
+            .style("gap: var(--sp-3); padding-top: var(--sp-4);")
         ):
             if on_back is not None:
                 ui.button("Back", on_click=lambda _evt: on_back()).props(

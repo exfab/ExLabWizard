@@ -76,12 +76,15 @@ def build_production_dependencies(state_dir: Path) -> AppDependencies:
     )
 
     keyring_store = _try("keyring_store", _build_keyring_store, state_dir)
-    deps.keyring_password_present = _try(
-        "keyring_password_check",
-        _check_keyring_present,
-        keyring_store,
-        deps.config,
-    ) or False
+    deps.keyring_password_present = (
+        _try(
+            "keyring_password_check",
+            _check_keyring_present,
+            keyring_store,
+            deps.config,
+        )
+        or False
+    )
 
     deps.lims_client = _try("lims_client", _build_lims_client, deps.config, keyring_store)
     deps.lims_reachable = True
@@ -119,7 +122,7 @@ def _try(label: str, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
     """Run ``fn(*args, **kwargs)`` swallowing exceptions with a WARN log."""
     try:
         return fn(*args, **kwargs)
-    except Exception as exc:  # noqa: BLE001 -- defensive boundary
+    except Exception as exc:
         _log.warning("dependency unavailable [component=%s] %s: %s", label, type(exc).__name__, exc)
         return None
 
@@ -154,9 +157,7 @@ def _build_validator(config: Any) -> Any:
                 equipment_roots[eq.id] = local_root / eq.id
     staging_root = (
         Path(config.orchestrator.staging_root)
-        if config is not None
-        and config.orchestrator.enabled
-        and config.orchestrator.staging_root
+        if config is not None and config.orchestrator.enabled and config.orchestrator.staging_root
         else None
     )
     return Validator(
@@ -201,9 +202,7 @@ def _build_plugin_host(config: Any) -> Any:
     from exlab_wizard.plugins.registry import PluginRegistry
 
     plugin_dir = (
-        Path(config.paths.plugin_dir)
-        if config is not None and config.paths.plugin_dir
-        else None
+        Path(config.paths.plugin_dir) if config is not None and config.paths.plugin_dir else None
     )
     registry = PluginRegistry(bundled_dir=None, lab_dir=plugin_dir)
     report = registry.reload()
@@ -263,7 +262,7 @@ def _check_keyring_present(keyring_store: Any, config: Any) -> bool:
         return False
     try:
         value = getter(email)
-    except Exception:  # noqa: BLE001 -- probe never raises into the caller
+    except Exception:
         return False
     return bool(value)
 
@@ -301,7 +300,7 @@ def _make_lims_probe(deps: AppDependencies) -> Any:
             return {"ok": False, "reason": "LIMS not configured"}
         try:
             await client.login()
-        except Exception as exc:  # noqa: BLE001 -- probe surfaces failure to caller
+        except Exception as exc:
             deps.lims_reachable = False
             return {"ok": False, "reason": str(exc)}
         deps.lims_reachable = True
@@ -373,9 +372,7 @@ def _make_session_store_snapshot(deps: AppDependencies) -> Any:
             return {"status": "unavailable", "active_sessions": 0, "input_required": 0}
         sessions_attr = getattr(store, "_sessions", {})
         active = sum(
-            1
-            for s in sessions_attr.values()
-            if not getattr(s, "is_terminal", lambda: False)()
+            1 for s in sessions_attr.values() if not getattr(s, "is_terminal", lambda: False)()
         )
         input_required = sum(
             1

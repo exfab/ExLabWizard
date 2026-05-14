@@ -14,7 +14,6 @@ from __future__ import annotations
 # Prime the api package before importing ui.pages so the pre-existing
 # orchestrator <-> api import order resolves cleanly (see test_mount.py).
 import exlab_wizard.api.app  # noqa: F401  -- import order matters
-
 from exlab_wizard.constants import RunKind
 from exlab_wizard.ui.pages import wizard_run
 from exlab_wizard.ui.pages.wizard_run import (

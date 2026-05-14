@@ -25,17 +25,15 @@ Wiring those is tracked as follow-up feature work.
 
 from __future__ import annotations
 
-import os
-import socket
 import subprocess
 import sys
 import time
-from contextlib import closing
 from pathlib import Path
 
 import httpx
 import pytest
 
+from tests.e2e._prod_server import free_port, prod_app_env, resolve_config_path
 from tests.e2e.conftest import (  # reuse the chromium discovery + skip logic
     PLAYWRIGHT_AVAILABLE,
 )
@@ -44,21 +42,6 @@ pytestmark = pytest.mark.skipif(
     not PLAYWRIGHT_AVAILABLE,
     reason="playwright not installed",
 )
-
-
-def _free_port() -> int:
-    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
-def _macos_config_path(home: Path) -> Path:
-    """Where ``paths.os_config_path()`` resolves under a redirected HOME.
-
-    The e2e host is macOS (Darwin); ``os_config_path`` returns
-    ``$HOME/Library/Application Support/exlab-wizard/config.yaml`` there.
-    """
-    return home / "Library" / "Application Support" / "exlab-wizard" / "config.yaml"
 
 
 @pytest.fixture
@@ -71,13 +54,8 @@ def fresh_prod_server(tmp_path: Path):
     """
     home_dir = tmp_path / "home"
     home_dir.mkdir()
-    port = _free_port()
-    repo_root = Path(__file__).resolve().parents[2]
-    env = {
-        **os.environ,
-        "HOME": str(home_dir),
-        "PYTHONPATH": str(repo_root) + os.pathsep + os.environ.get("PYTHONPATH", ""),
-    }
+    port = free_port()
+    env = prod_app_env(home_dir)
     # A fresh-install boot legitimately logs WARN for the config-dependent
     # components (no config.yaml yet); keep the subprocess quiet so the
     # test output stays readable.
@@ -131,7 +109,7 @@ def test_fresh_install_setup_writes_config_and_gates_on_restart(
     tmp_path: Path,
 ) -> None:
     base_url, home_dir = fresh_prod_server
-    config_path = _macos_config_path(home_dir)
+    config_path = resolve_config_path(home_dir)
     assert not config_path.exists(), "precondition: fresh install has no config.yaml"
 
     # Folders the operator will point the wizard at -- all under tmp.

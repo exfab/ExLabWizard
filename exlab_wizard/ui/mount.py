@@ -30,8 +30,6 @@ from exlab_wizard.logging import get_logger
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
-    from exlab_wizard.ui.pages import main as main_page
-    from exlab_wizard.ui.pages import staging as staging_page
 
 __all__ = ["MOUNT_PATH", "mount_ui"]
 
@@ -68,13 +66,24 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
 
     from exlab_wizard.ui.pages import (
         main as main_page,
+    )
+    from exlab_wizard.ui.pages import (
         problems as problems_page,
+    )
+    from exlab_wizard.ui.pages import (
         settings as settings_page,
+    )
+    from exlab_wizard.ui.pages import (
         staging as staging_page,
+    )
+    from exlab_wizard.ui.pages import (
         templates as templates_page,
+    )
+    from exlab_wizard.ui.pages import (
         welcome as welcome_page,
+    )
+    from exlab_wizard.ui.pages import (
         wizard_project as wizard_project_page,
-        wizard_run as wizard_run_page,
     )
 
     def _deps() -> Any:
@@ -183,16 +192,14 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
                     description=description,
                     run_scope=run_scope,
                 )
-            except Exception as exc:  # noqa: BLE001 -- surface to the operator
+            except Exception as exc:
                 _show_toast(ui, f"Template not created: {exc}", positive=False)
                 return
             _show_toast(ui, f"Template {name!r} created", positive=True)
             ui.navigate.to("/templates")
 
         summaries = (
-            templates_page.list_templates(templates_dir)
-            if templates_dir is not None
-            else []
+            templates_page.list_templates(templates_dir) if templates_dir is not None else []
         )
         return templates_page.render_template_manager(
             templates=summaries,
@@ -293,7 +300,7 @@ def _persist_config(deps: Any, updated: Any, ui: Any) -> bool:
             # Production wires a synchronous saver; an awaitable here
             # would silently no-op, so surface it rather than swallow.
             _log.warning("save_config returned an awaitable; a sync saver is expected")
-    except Exception as exc:  # noqa: BLE001 -- defensive UI boundary
+    except Exception as exc:
         _log.exception("save_config failed")
         _show_toast(ui, f"Save failed: {exc}", positive=False)
         return False
@@ -306,9 +313,13 @@ def _persist_config(deps: Any, updated: Any, ui: Any) -> bool:
 def _render_restart_required(ui: Any) -> Any:
     """Render the terminal restart-required screen."""
     try:
-        card = ui.card().props('data-testid="restart-required"').style(
-            "max-width: 520px; margin: 4rem auto; padding: var(--sp-8); "
-            "background: var(--color-surface); border-radius: var(--radius-lg);"
+        card = (
+            ui.card()
+            .props('data-testid="restart-required"')
+            .style(
+                "max-width: 520px; margin: 4rem auto; padding: var(--sp-8); "
+                "background: var(--color-surface); border-radius: var(--radius-lg);"
+            )
         )
         with card:
             ui.label("Restart required").style(
@@ -318,11 +329,9 @@ def _render_restart_required(ui: Any) -> Any:
             ui.label(
                 "Your configuration has been saved. Quit ExLab-Wizard from the "
                 "system tray and relaunch it so the new settings take effect."
-            ).props('data-testid="restart-required-message"').style(
-                "color: var(--color-body);"
-            )
+            ).props('data-testid="restart-required-message"').style("color: var(--color-body);")
         return card
-    except Exception as exc:  # noqa: BLE001 -- fallback for missing card primitive
+    except Exception as exc:
         _log.warning("render_restart_required failed: %s", exc)
         return None
 
@@ -344,7 +353,7 @@ def _apply_autostart(deps: Any, enabled: bool) -> None:
         return
     try:
         toggle(enabled)
-    except Exception as exc:  # noqa: BLE001 -- defensive UI boundary
+    except Exception as exc:
         _log.warning("autostart toggle failed in welcome: %s", exc)
 
 
@@ -379,9 +388,8 @@ def _missing_setup_sections(deps: Any) -> tuple[str, ...]:
         missing.append("paths")
     if not config.lims.endpoint or not config.lims.email:
         missing.append("lims")
-    if not getattr(deps, "keyring_password_present", False):
-        if "lims" not in missing:
-            missing.append("lims")
+    if not getattr(deps, "keyring_password_present", False) and "lims" not in missing:
+        missing.append("lims")
     return tuple(missing)
 
 
@@ -403,11 +411,9 @@ def _template_names(deps: Any, template_type: str) -> list[str]:
 
         return [
             summary.name
-            for summary in templates_page.list_templates(
-                templates_dir, template_type=template_type
-            )
+            for summary in templates_page.list_templates(templates_dir, template_type=template_type)
         ]
-    except Exception as exc:  # noqa: BLE001 -- defensive UI boundary
+    except Exception as exc:
         _log.warning("template scan failed: %s", exc)
         return []
 
@@ -432,19 +438,15 @@ def _template_questions_map(deps: Any, template_type: str) -> dict[str, Any]:
         engine = TemplateEngine()
         scope = TemplateType(template_type)
         result: dict[str, Any] = {}
-        for summary in templates_page.list_templates(
-            templates_dir, template_type=template_type
-        ):
+        for summary in templates_page.list_templates(templates_dir, template_type=template_type):
             try:
                 resolved = engine.resolve(summary.path, scope)
-            except Exception as exc:  # noqa: BLE001 -- skip the broken template
+            except Exception as exc:
                 _log.warning("template %s failed to resolve: %s", summary.name, exc)
                 continue
-            result[summary.name] = templates_page.template_questions(
-                resolved.raw_manifest
-            )
+            result[summary.name] = templates_page.template_questions(resolved.raw_manifest)
         return result
-    except Exception as exc:  # noqa: BLE001 -- defensive UI boundary
+    except Exception as exc:
         _log.warning("template question scan failed: %s", exc)
         return {}
 
@@ -466,9 +468,7 @@ def _lims_projects(deps: Any) -> list[dict[str, Any]]:
     try:
         from exlab_wizard.lims.catalogue import read_catalogue
 
-        catalogue = read_catalogue(
-            Path(catalogue_path), expected_endpoint=config.lims.endpoint
-        )
+        catalogue = read_catalogue(Path(catalogue_path), expected_endpoint=config.lims.endpoint)
         return [
             {
                 "short_id": project.short_id,
@@ -478,7 +478,7 @@ def _lims_projects(deps: Any) -> list[dict[str, Any]]:
             }
             for project in catalogue.projects
         ]
-    except Exception as exc:  # noqa: BLE001 -- defensive UI boundary
+    except Exception as exc:
         _log.warning("offline catalogue read failed: %s", exc)
         return []
 
@@ -588,7 +588,7 @@ async def _run_creation(
     try:
         handle = await create_fn(request)
         final = await _await_session(controller, handle)
-    except Exception as exc:  # noqa: BLE001 -- defensive UI boundary
+    except Exception as exc:
         _log.exception("%s creation raised", label)
         _show_toast(ui, f"{label} creation failed: {exc}", positive=False)
         return
@@ -623,7 +623,7 @@ def _safe_audit(deps: Any) -> list[Any]:
         return []
     try:
         return list(validator.audit({"kind": AuditScopeKind.ALL}))
-    except Exception as exc:  # noqa: BLE001 -- defensive UI boundary
+    except Exception as exc:
         _log.warning("validator.audit failed: %s", exc)
         return []
 
@@ -638,7 +638,7 @@ def _build_staging_state(deps: Any) -> Any:
         from exlab_wizard.orchestrator.staging_query import list_staged_runs
 
         rows = list_staged_runs(config=config)
-    except Exception as exc:  # noqa: BLE001 -- defensive UI boundary
+    except Exception as exc:
         _log.warning("staging_query failed: %s", exc)
         return staging_page.StagingDockState(rows=[])
     return staging_page.StagingDockState(rows=list(rows))
@@ -653,7 +653,7 @@ def _show_toast(ui: Any, message: str, *, positive: bool) -> None:
             notifications.notify_success(message)
         else:
             notifications.notify_error(message)
-    except Exception as exc:  # noqa: BLE001 -- toast must never crash the route
+    except Exception as exc:
         _log.debug("toast notify failed: %s", exc)
 
 
@@ -662,5 +662,5 @@ def _render_unavailable(ui: Any, headline: str, subline: str) -> None:
         with ui.card().style("max-width: 480px; padding: var(--sp-6);"):
             ui.label(headline).style("font-weight: 600;")
             ui.label(subline).style("color: var(--color-muted);")
-    except Exception as exc:  # noqa: BLE001 -- fallback for missing card primitive
+    except Exception as exc:
         _log.warning("render_unavailable failed: %s", exc)

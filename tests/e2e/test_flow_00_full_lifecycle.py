@@ -103,9 +103,7 @@ def _step_button(
     they must be scoped by the active step's ``wizard-step-*`` container
     (the same pattern the other flow tests use).
     """
-    locator = page.locator(
-        f'[data-testid="{step_testid}"] [data-testid="{button_testid}"]'
-    )
+    locator = page.locator(f'[data-testid="{step_testid}"] [data-testid="{button_testid}"]')
     locator.wait_for(state="visible", timeout=timeout)
     locator.click()
 
@@ -133,7 +131,7 @@ def _goto(page, url: str, *, retries: int = 2) -> None:
             page.goto(url, wait_until="domcontentloaded")
             page.wait_for_load_state("networkidle")
             return
-        except Exception as exc:  # noqa: BLE001 -- retry transient nav aborts
+        except Exception as exc:
             last_error = exc
             page.wait_for_timeout(300)
     raise AssertionError(f"navigation to {url} failed: {last_error!r}")
@@ -232,9 +230,7 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         _fill(page, "settings-equipment-rclone-remote", "lab-nas")
         _fill(page, "settings-equipment-rclone-path", "lab/microscope1")
         page.get_by_test_id("settings-equipment-add").click()
-        page.get_by_test_id("settings-equipment-row").first.wait_for(
-            state="visible", timeout=8_000
-        )
+        page.get_by_test_id("settings-equipment-row").first.wait_for(state="visible", timeout=8_000)
 
         # 4b. rsync_ssh transport + manifest signal -- exercises the
         #     completeness-signal and transport radios swapping fields.
@@ -250,8 +246,7 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         page.get_by_test_id("settings-equipment-add").click()
         # Two equipment rows now present.
         page.wait_for_function(
-            "document.querySelectorAll('[data-testid=\"settings-equipment-row\"]')"
-            ".length === 2"
+            "document.querySelectorAll('[data-testid=\"settings-equipment-row\"]').length === 2"
         )
 
         # ---- Phase 5: save -> restart-required gate --------------------

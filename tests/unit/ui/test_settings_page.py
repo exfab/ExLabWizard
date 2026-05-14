@@ -9,13 +9,12 @@ read -> edit -> save round-trip is exercised by the Playwright e2e.
 
 from __future__ import annotations
 
-# Prime the api package before importing ui.pages so the pre-existing
-# orchestrator <-> api import order resolves cleanly (see test_mount.py).
-import exlab_wizard.api.app  # noqa: F401  -- import order matters
-
 import pytest
 from pydantic import ValidationError
 
+# Prime the api package before importing ui.pages so the pre-existing
+# orchestrator <-> api import order resolves cleanly (see test_mount.py).
+import exlab_wizard.api.app  # noqa: F401  -- import order matters
 from exlab_wizard.config.models import Config
 from exlab_wizard.ui.pages.settings import (
     build_settings_draft,

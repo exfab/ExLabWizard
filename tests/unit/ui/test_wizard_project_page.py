@@ -13,7 +13,6 @@ from __future__ import annotations
 # Prime the api package before importing ui.pages so the pre-existing
 # orchestrator <-> api import order resolves cleanly (see test_mount.py).
 import exlab_wizard.api.app  # noqa: F401  -- import order matters
-
 from exlab_wizard.ui.pages import wizard_project
 from exlab_wizard.ui.pages.wizard_project import (
     DISK_SPACE_MIN_BYTES,
@@ -127,6 +126,4 @@ def test_render_project_wizard_defaults_state_when_omitted() -> None:
 
 
 def test_wizard_project_step_titles_cover_every_step() -> None:
-    assert set(wizard_project.PROJECT_STEP_TITLES) == set(
-        wizard_project.PROJECT_WIZARD_STEPS
-    )
+    assert set(wizard_project.PROJECT_STEP_TITLES) == set(wizard_project.PROJECT_WIZARD_STEPS)

@@ -42,7 +42,7 @@ def test_root_serves_html_after_mount(tmp_path: Path) -> None:
         from exlab_wizard.tray.main import _build_default_app
 
         app = _build_default_app(tmp_path)
-    except Exception as exc:  # noqa: BLE001 -- import/mount can fail on headless runners
+    except Exception as exc:
         pytest.skip(f"NiceGUI stack unavailable: {exc}")
 
     runner = ServerRunner(app=app, state_dir=tmp_path)
@@ -57,8 +57,7 @@ def test_root_serves_html_after_mount(tmp_path: Path) -> None:
         )
         content_type = root.headers.get("content-type", "")
         assert "html" in content_type or root.status_code in (303, 307), (
-            f"expected HTML at /, got content-type={content_type!r} "
-            f"body={root.text[:200]!r}"
+            f"expected HTML at /, got content-type={content_type!r} body={root.text[:200]!r}"
         )
     finally:
         runner.stop()

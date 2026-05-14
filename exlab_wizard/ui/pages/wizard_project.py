@@ -171,11 +171,9 @@ def render_project_wizard(
         """Dynamic Copier-variable form for the currently-picked template."""
         questions = questions_map.get(s.selected_template or "", [])
         if not questions:
-            ui.label(
-                "This template declares no variables; Copier defaults are used."
-            ).props('data-testid="wizard-project-variables-empty"').style(
-                "color: var(--color-muted);"
-            )
+            ui.label("This template declares no variables; Copier defaults are used.").props(
+                'data-testid="wizard-project-variables-empty"'
+            ).style("color: var(--color-muted);")
             return
         for question in questions:
             render_question_field(
@@ -319,11 +317,7 @@ def _render_project_step_fields(
     elif step_id == "equipment":
         ui.select(
             equipment_ids,
-            value=(
-                state.selected_equipment
-                if state.selected_equipment in equipment_ids
-                else None
-            ),
+            value=(state.selected_equipment if state.selected_equipment in equipment_ids else None),
             label="Equipment",
         ).props('data-testid="wizard-project-equipment"').on_value_change(
             lambda e: setattr(state, "selected_equipment", e.value or None)

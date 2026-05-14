@@ -116,8 +116,7 @@ def _references(testid: str, haystack: str) -> bool:
 def test_ux_interaction_testids_exist_in_source() -> None:
     """Every cataloged ``data-testid`` is present in the UI source."""
     source = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in sorted(_UI_SOURCE_ROOT.rglob("*.py"))
+        path.read_text(encoding="utf-8") for path in sorted(_UI_SOURCE_ROOT.rglob("*.py"))
     )
     missing = sorted(
         {entry.testid for entry in UX_INTERACTIONS if not _references(entry.testid, source)}
@@ -140,6 +139,4 @@ def test_ux_interactions_are_e2e_covered() -> None:
     uncovered = sorted(
         {entry.testid for entry in UX_INTERACTIONS if not _references(entry.testid, e2e_text)}
     )
-    assert not uncovered, (
-        f"testids not exercised by any tests/e2e test: {uncovered}"
-    )
+    assert not uncovered, f"testids not exercised by any tests/e2e test: {uncovered}"

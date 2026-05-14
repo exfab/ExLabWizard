@@ -33,9 +33,9 @@ from urllib.parse import parse_qs
 from fastapi import FastAPI
 
 from exlab_wizard.api import create_app
+from exlab_wizard.config.models import Config
 from exlab_wizard.constants import Tier
 from exlab_wizard.ui import notifications
-from exlab_wizard.config.models import Config
 from exlab_wizard.ui.notifications import BannerId, ContainerId, Severity
 from exlab_wizard.ui.pages import (
     main as main_page,
