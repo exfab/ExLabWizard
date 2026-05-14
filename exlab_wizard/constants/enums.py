@@ -59,6 +59,7 @@ class ProblemClass(StrEnum):
     ORPHAN = "orphan"
     MISSING_REQUIRED_FIELD = "missing_required_field"
     MALFORMED_YAML_FRONT_MATTER = "malformed_yaml_front_matter"
+    UNSAFE_PROJECT_NAME = "unsafe_project_name"
 
 
 class FindingKind(StrEnum):

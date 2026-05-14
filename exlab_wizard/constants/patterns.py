@@ -19,6 +19,11 @@ EQUIPMENT_ID_PATTERN: re.Pattern[str] = re.compile(EQUIPMENT_ID_REGEX)
 # Maximum length of an equipment ID, in characters. Backend Spec §3.1.
 EQUIPMENT_ID_MAX_LENGTH: int = 32
 
+# Maximum length of a project-folder name, in characters. The project
+# folder is the human-readable LIMS name used verbatim (Backend Spec §3.2);
+# 255 is the conservative single-segment limit shared by ext4/APFS/NTFS.
+PROJECT_NAME_MAX_LENGTH: int = 255
+
 # Detects unresolved ``<placeholder>`` tokens left over after rendering.
 # Validator engine flags every match. Backend Spec §8.1.1.
 PLACEHOLDER_ANGLE_BRACKET_REGEX: str = r"<[A-Za-z_][A-Za-z0-9_]*>"

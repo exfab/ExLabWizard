@@ -339,7 +339,9 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         # Step: confirm -> Create.
         _step_button(page, "wizard-step-confirm", "wizard-submit")
         page.wait_for_url(re.compile(r".*/main"), timeout=15_000)
-        project_dir = data_root / "MICROSCOPE1" / "PROJ-1001"
+        # The <project>/ folder is the human-readable LIMS name, used verbatim
+        # (§3.2) -- the picker selected PROJ-1001 == "Cortex Mapping Study".
+        project_dir = data_root / "MICROSCOPE1" / "Cortex Mapping Study"
         assert project_dir.is_dir(), f"project dir not created: {project_dir}"
         assert (project_dir / ".exlab-wizard" / "creation.json").is_file()
 
@@ -348,7 +350,7 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         page.get_by_test_id("wizard-run-card-experimental").wait_for(
             state="visible", timeout=10_000
         )
-        _fill(page, "wizard-run-project-id", "PROJ-1001")
+        _fill(page, "wizard-run-project-name", "Cortex Mapping Study")
         _select(page, "wizard-run-equipment", "MICROSCOPE1")
         _run_next(page, "project_equipment")
         _select(page, "wizard-run-template", "run_exp")
@@ -370,7 +372,7 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         # ---- Phase 11: New Test Run wizard -----------------------------
         _goto(page, f"{server.base_url}/wizard/test-run")
         page.get_by_test_id("wizard-run-card-test").wait_for(state="visible", timeout=10_000)
-        _fill(page, "wizard-run-project-id", "PROJ-1001")
+        _fill(page, "wizard-run-project-name", "Cortex Mapping Study")
         _select(page, "wizard-run-equipment", "MICROSCOPE1")
         _run_next(page, "project_equipment")
         _select(page, "wizard-run-template", "run_test")

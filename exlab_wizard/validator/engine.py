@@ -716,6 +716,20 @@ class Validator:
                 findings=findings,
             )
 
+        # §3.2: the project-folder name is the human-readable LIMS name
+        # used verbatim, so it must be a safe single path segment. Fires
+        # once per project directory (this method runs once per project
+        # / run / test-run dir, unlike the child-loop name rules).
+        if level is DirectoryLevel.PROJECT:
+            self._extend_findings(
+                rules.check_unsafe_project_name(name=current.name),
+                findings=findings,
+                run_path_str=run_path_str,
+                offending_path_override=current_str,
+                active_classes=active_classes,
+                sync_status=sync_status,
+            )
+
         # Directory-name rules on the leaf itself.
         self._apply_directory_name_rules(
             dir_path=current,

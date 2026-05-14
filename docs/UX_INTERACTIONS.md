@@ -69,9 +69,10 @@ flow test.
 
 | Route | Test ID | Element | Action | Outcome |
 |---|---|---|---|---|
-| `/wizard/project` | `wizard-project-lims-picker` | select | Pick a LIMS project from the cache / offline catalogue | Fills the project short_id + name from the catalogue row. |
-| `/wizard/project` | `wizard-project-lims-id` | input | Type the LIMS project short ID (PROJ-NNNN) | Sets the project short_id (manual-entry fallback). |
-| `/wizard/project` | `wizard-project-lims-name` | input | Type the project name | Sets the LIMS project name on the wizard state. |
+| `/wizard/project` | `wizard-project-lims-picker` | select | Pick a LIMS project from the live LIMS / offline catalogue | Fills the project short_id + name + source from the picked row. Shown only when a project list could be loaded. |
+| `/wizard/project` | `wizard-project-lims-gate` | button | Click 'Enter project details manually' | Reveals the manual short-ID / name inputs. Shown only when neither the live LIMS nor an offline catalogue produced any projects. |
+| `/wizard/project` | `wizard-project-lims-id` | input | Type the LIMS project short ID (PROJ-NNNN) | Sets the project short_id. Hidden until the manual-entry gate is clicked. |
+| `/wizard/project` | `wizard-project-lims-name` | input | Type the project name | Sets the LIMS project name on the wizard state. Hidden until the manual-entry gate is clicked. |
 | `/wizard/project` | `wizard-project-template` | select | Pick a project template (load from a template) | Selects the Copier template the project is scaffolded from. |
 | `/wizard/project` | `wizard-project-var-sample_id` | dynamic field | Fill a copier.yml-declared variable (e.g. sample_id) | Binds the value into state.template_variables for Copier render. |
 | `/wizard/project` | `wizard-project-equipment` | select | Pick the host equipment | Selects the equipment_id for the new project. |
@@ -79,14 +80,15 @@ flow test.
 | `/wizard/project` | `wizard-project-readme-operator` | input | Type the README operator | Sets the mandatory core README 'operator' field. |
 | `/wizard/project` | `wizard-project-readme-objective` | input | Type the README objective | Sets the mandatory core README 'objective' field. |
 | `/wizard/project` | `wizard-next` | button | Click 'Next' on a wizard step | Advances the stepper to the next step. |
-| `/wizard/project` | `wizard-back` | button | Click 'Back' on a wizard step | Returns the stepper to the previous step. |
+| `/wizard/project` | `wizard-back` | button | Click 'Back' on a wizard step | Returns the stepper to the previous step. Absent on the first step, which exits via 'Cancel'. |
+| `/wizard/project` | `wizard-cancel` | button | Click 'Cancel' on a wizard step | Discards the wizard and returns to /main. Present on every step. |
 | `/wizard/project` | `wizard-submit` | button | Click 'Create' on the confirm step | Runs controller.create_project; writes the project dir + creation.json. |
 
 ## New run / test run
 
 | Route | Test ID | Element | Action | Outcome |
 |---|---|---|---|---|
-| `/wizard/run, /wizard/test-run` | `wizard-run-project-id` | input | Type the parent project short ID | Sets the project_short_id on the run wizard state. |
+| `/wizard/run, /wizard/test-run` | `wizard-run-project-name` | input | Type the parent project name | Sets the parent project's folder name (the human-readable LIMS name used verbatim, §3.2) on the run wizard state. |
 | `/wizard/run, /wizard/test-run` | `wizard-run-equipment` | select | Pick the host equipment | Selects the equipment_id for the new run. |
 | `/wizard/run, /wizard/test-run` | `wizard-run-template` | select | Pick a run template (load from a template) | Selects the Copier template the run is scaffolded from. |
 | `/wizard/run, /wizard/test-run` | `wizard-run-var-gain` | dynamic field | Fill a copier.yml-declared variable (e.g. gain) | Binds the value into state.template_variables for Copier render. |
@@ -94,5 +96,6 @@ flow test.
 | `/wizard/run, /wizard/test-run` | `wizard-run-readme-operator` | input | Type the README operator | Sets the mandatory core README 'operator' field. |
 | `/wizard/run, /wizard/test-run` | `wizard-run-readme-objective` | input | Type the README objective | Sets the mandatory core README 'objective' field. |
 | `/wizard/run, /wizard/test-run` | `wizard-run-next` | button | Click 'Next' on a run-wizard step | Advances the run-wizard stepper to the next step. |
-| `/wizard/run, /wizard/test-run` | `wizard-run-back` | button | Click 'Back' on a run-wizard step | Returns the run-wizard stepper to the previous step. |
+| `/wizard/run, /wizard/test-run` | `wizard-run-back` | button | Click 'Back' on a run-wizard step | Returns the run-wizard stepper to the previous step. Absent on the first step, which exits via 'Cancel'. |
+| `/wizard/run, /wizard/test-run` | `wizard-run-cancel` | button | Click 'Cancel' on a run-wizard step | Discards the run wizard and returns to /main. Present on every step. |
 | `/wizard/run, /wizard/test-run` | `wizard-run-submit` | button | Click 'Create run' on the confirm step | Runs controller.create_run; writes the run dir + creation.json. |

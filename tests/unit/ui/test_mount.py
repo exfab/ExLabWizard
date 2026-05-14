@@ -636,20 +636,20 @@ def test_template_names_swallows_scan_failure(
 # ---------------------------------------------------------------------------
 
 
-def test_lims_projects_empty_without_config() -> None:
-    assert mount._lims_projects(_deps()) == []
+async def test_lims_projects_empty_without_config() -> None:
+    assert await mount._lims_projects(_deps()) == []
 
 
-def test_lims_projects_empty_without_catalogue_path() -> None:
-    assert mount._lims_projects(_deps(config=_config())) == []
+async def test_lims_projects_empty_without_catalogue_path() -> None:
+    assert await mount._lims_projects(_deps(config=_config())) == []
 
 
-def test_lims_projects_empty_when_catalogue_missing(tmp_path: Path) -> None:
+async def test_lims_projects_empty_when_catalogue_missing(tmp_path: Path) -> None:
     deps = _deps(config=_config(offline_catalogue_path=str(tmp_path / "missing.json")))
-    assert mount._lims_projects(deps) == []
+    assert await mount._lims_projects(deps) == []
 
 
-def test_lims_projects_reads_offline_catalogue(
+async def test_lims_projects_reads_offline_catalogue(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     catalogue = tmp_path / "catalogue.json"
@@ -660,7 +660,7 @@ def test_lims_projects_reads_offline_catalogue(
         lambda _path, expected_endpoint=None: SimpleNamespace(projects=projects),
     )
     deps = _deps(config=_config(offline_catalogue_path=str(catalogue)))
-    assert mount._lims_projects(deps) == [
+    assert await mount._lims_projects(deps) == [
         {
             "short_id": "P-1",
             "name": "Project One",
@@ -670,7 +670,7 @@ def test_lims_projects_reads_offline_catalogue(
     ]
 
 
-def test_lims_projects_swallows_read_failure(
+async def test_lims_projects_swallows_read_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     catalogue = tmp_path / "catalogue.json"
@@ -683,8 +683,79 @@ def test_lims_projects_swallows_read_failure(
     monkeypatch.setattr("exlab_wizard.lims.catalogue.read_catalogue", _boom)
     deps = _deps(config=_config(offline_catalogue_path=str(catalogue)))
     with caplog.at_level("WARNING"):
-        assert mount._lims_projects(deps) == []
+        assert await mount._lims_projects(deps) == []
     assert any("offline catalogue read failed" in r.message for r in caplog.records)
+
+
+class _FakeLimsClient:
+    """Async ``list_projects`` stub for the live-LIMS picker path."""
+
+    def __init__(self, projects: list[Any] | None = None, *, raises: bool = False) -> None:
+        self._projects = projects or []
+        self._raises = raises
+        self.calls = 0
+
+    async def list_projects(self, *, status_filter: Any = None) -> list[Any]:
+        self.calls += 1
+        if self._raises:
+            msg = "lims unreachable"
+            raise RuntimeError(msg)
+        return self._projects
+
+
+async def test_lims_projects_uses_live_lims() -> None:
+    client = _FakeLimsClient(
+        [SimpleNamespace(short_id="PROJ-9", name="Live Project", uid="uid-9")]
+    )
+    deps = _deps(config=_config(), lims_client=client, lims_reachable=True)
+    assert await mount._lims_projects(deps) == [
+        {
+            "short_id": "PROJ-9",
+            "name": "Live Project",
+            "uid": "uid-9",
+            "source": "lims",
+        }
+    ]
+    assert client.calls == 1
+
+
+async def test_lims_projects_skips_live_lims_when_unreachable() -> None:
+    client = _FakeLimsClient(
+        [SimpleNamespace(short_id="PROJ-9", name="Live Project", uid="uid-9")]
+    )
+    deps = _deps(config=_config(), lims_client=client, lims_reachable=False)
+    assert await mount._lims_projects(deps) == []
+    assert client.calls == 0
+
+
+async def test_lims_projects_falls_back_to_catalogue_on_live_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    catalogue = tmp_path / "catalogue.json"
+    catalogue.write_text("{}", encoding="utf-8")
+    projects = [SimpleNamespace(short_id="P-1", name="Project One", uid="uid-1")]
+    monkeypatch.setattr(
+        "exlab_wizard.lims.catalogue.read_catalogue",
+        lambda _path, expected_endpoint=None: SimpleNamespace(projects=projects),
+    )
+    client = _FakeLimsClient(raises=True)
+    deps = _deps(
+        config=_config(offline_catalogue_path=str(catalogue)),
+        lims_client=client,
+        lims_reachable=True,
+    )
+    with caplog.at_level("WARNING"):
+        result = await mount._lims_projects(deps)
+    assert result == [
+        {
+            "short_id": "P-1",
+            "name": "Project One",
+            "uid": "uid-1",
+            "source": "offline_catalogue",
+        }
+    ]
+    assert client.calls == 1
+    assert any("live LIMS project list failed" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -848,7 +919,7 @@ async def test_submit_run_builds_request_and_runs(tmp_path: Path) -> None:
     state = SimpleNamespace(
         selected_template="run_exp",
         selected_equipment="MIC1",
-        selected_project_short_id="P-1",
+        selected_project_name="Cortex Q3 Pilot",
         template_variables={"gain": 7},
         readme_fields={"label": "L", "operator": "op", "objective": "obj"},
     )
@@ -856,6 +927,6 @@ async def test_submit_run_builds_request_and_runs(tmp_path: Path) -> None:
     assert len(controller.created) == 1
     request = controller.created[0]
     assert request.run_kind is RunKind.TEST
-    assert request.project_short_id == "P-1"
+    assert request.project_name == "Cortex Q3 Pilot"
     assert request.template_path == tmp_path / "run_exp"
     assert nav.navigated == ["/main"]

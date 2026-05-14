@@ -38,8 +38,10 @@ from exlab_wizard.paths import (
     os_central_log_path,
     os_config_path,
     os_state_path,
+    project_name_violations,
     setup_state_missing,
     setup_state_next_action,
+    validate_project_name,
 )
 
 # ---------------------------------------------------------------------------
@@ -384,17 +386,19 @@ def test_canonicalize_equipment_id_does_not_mutate_input() -> None:
 
 _RUN_DATE = datetime(2026, 4, 17, 14, 32, 0)
 _EXPECTED_STAMP = "2026-04-17T14-32-00"
+# The <project>/ segment is the human-readable LIMS name, used verbatim. §3.2.
+_PROJECT_NAME = "Cortex Q3 Pilot"
 
 
 def test_compose_run_path_experimental(tmp_path: Path) -> None:
     result = compose_run_path(
         local_root=tmp_path,
         equipment_id="CONFOCAL_01",
-        project_short_id="PROJ-0042",
+        project_name=_PROJECT_NAME,
         run_kind=RunKind.EXPERIMENTAL,
         run_date=_RUN_DATE,
     )
-    expected = tmp_path / "CONFOCAL_01" / "PROJ-0042" / f"Run_{_EXPECTED_STAMP}"
+    expected = tmp_path / "CONFOCAL_01" / _PROJECT_NAME / f"Run_{_EXPECTED_STAMP}"
     assert result == expected
 
 
@@ -402,11 +406,11 @@ def test_compose_run_path_test(tmp_path: Path) -> None:
     result = compose_run_path(
         local_root=tmp_path,
         equipment_id="CONFOCAL_01",
-        project_short_id="PROJ-0042",
+        project_name=_PROJECT_NAME,
         run_kind=RunKind.TEST,
         run_date=_RUN_DATE,
     )
-    expected = tmp_path / "CONFOCAL_01" / "PROJ-0042" / "TestRuns" / f"TestRun_{_EXPECTED_STAMP}"
+    expected = tmp_path / "CONFOCAL_01" / _PROJECT_NAME / "TestRuns" / f"TestRun_{_EXPECTED_STAMP}"
     assert result == expected
 
 
@@ -416,7 +420,7 @@ def test_compose_run_path_strftime_format() -> None:
     result = compose_run_path(
         local_root=Path("/data/lab"),
         equipment_id="FLOW_01",
-        project_short_id="PROJ-1234",
+        project_name=_PROJECT_NAME,
         run_kind=RunKind.EXPERIMENTAL,
         run_date=when,
     )
@@ -429,18 +433,18 @@ def test_compose_run_path_rejects_invalid_equipment_id(tmp_path: Path) -> None:
         compose_run_path(
             local_root=tmp_path,
             equipment_id="confocal_01",
-            project_short_id="PROJ-0042",
+            project_name=_PROJECT_NAME,
             run_kind=RunKind.EXPERIMENTAL,
             run_date=_RUN_DATE,
         )
 
 
-def test_compose_run_path_rejects_invalid_project_short_id(tmp_path: Path) -> None:
+def test_compose_run_path_rejects_unsafe_project_name(tmp_path: Path) -> None:
     with pytest.raises(ConfigError):
         compose_run_path(
             local_root=tmp_path,
             equipment_id="CONFOCAL_01",
-            project_short_id="not-a-proj-id",
+            project_name="bad/name",
             run_kind=RunKind.EXPERIMENTAL,
             run_date=_RUN_DATE,
         )
@@ -450,9 +454,9 @@ def test_compose_project_path_basic(tmp_path: Path) -> None:
     result = compose_project_path(
         local_root=tmp_path,
         equipment_id="CONFOCAL_01",
-        project_short_id="PROJ-0042",
+        project_name=_PROJECT_NAME,
     )
-    expected = tmp_path / "CONFOCAL_01" / "PROJ-0042"
+    expected = tmp_path / "CONFOCAL_01" / _PROJECT_NAME
     assert result == expected
 
 
@@ -461,53 +465,100 @@ def test_compose_project_path_rejects_invalid_equipment_id(tmp_path: Path) -> No
         compose_project_path(
             local_root=tmp_path,
             equipment_id="bad id",
-            project_short_id="PROJ-0042",
+            project_name=_PROJECT_NAME,
         )
 
 
-def test_compose_project_path_rejects_invalid_short_id(tmp_path: Path) -> None:
+def test_compose_project_path_rejects_unsafe_project_name(tmp_path: Path) -> None:
     with pytest.raises(ConfigError):
         compose_project_path(
             local_root=tmp_path,
             equipment_id="CONFOCAL_01",
-            project_short_id="proj-0042",
+            project_name="NUL",
         )
 
 
-def test_compose_run_path_rejects_non_str_project_short_id(tmp_path: Path) -> None:
-    """Non-str project_short_id hits the isinstance guard, not the regex."""
+def test_compose_run_path_rejects_non_str_project_name(tmp_path: Path) -> None:
+    """A non-str project_name hits the isinstance guard."""
     with pytest.raises(ConfigError) as info:
         compose_run_path(
             local_root=tmp_path,
             equipment_id="CONFOCAL_01",
-            project_short_id=None,  # type: ignore[arg-type]
+            project_name=None,  # type: ignore[arg-type]
             run_kind=RunKind.EXPERIMENTAL,
             run_date=_RUN_DATE,
         )
     assert "non-empty string" in str(info.value)
 
 
-def test_compose_run_path_rejects_empty_project_short_id(tmp_path: Path) -> None:
-    """Empty string project_short_id also hits the same guard."""
+def test_compose_run_path_rejects_empty_project_name(tmp_path: Path) -> None:
+    """An empty-string project_name also hits the same guard."""
     with pytest.raises(ConfigError) as info:
         compose_run_path(
             local_root=tmp_path,
             equipment_id="CONFOCAL_01",
-            project_short_id="",
+            project_name="",
             run_kind=RunKind.EXPERIMENTAL,
             run_date=_RUN_DATE,
         )
     assert "non-empty string" in str(info.value)
 
 
-def test_compose_project_path_rejects_non_str_short_id(tmp_path: Path) -> None:
+def test_compose_project_path_rejects_non_str_project_name(tmp_path: Path) -> None:
     with pytest.raises(ConfigError) as info:
         compose_project_path(
             local_root=tmp_path,
             equipment_id="CONFOCAL_01",
-            project_short_id=42,  # type: ignore[arg-type]
+            project_name=42,  # type: ignore[arg-type]
         )
     assert "non-empty string" in str(info.value)
+
+
+# ---------------------------------------------------------------------------
+# validate_project_name / project_name_violations -- §3.2 safe-segment rule
+# ---------------------------------------------------------------------------
+
+
+def test_validate_project_name_accepts_human_readable_names() -> None:
+    """Spaces and ordinary punctuation are fine -- the name is used verbatim."""
+    for name in ("Cortex Q3 Pilot", "PROJ-0042", "Q3_run (pilot)", "a.b.c"):
+        assert validate_project_name(name) == name
+        assert project_name_violations(name) == []
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",
+        "bad/name",
+        "back\\slash",
+        " leading",
+        "trailing ",
+        "trailing.",
+        "ctrl\ttab",
+        "café",  # non-ASCII
+        "CON",  # reserved Windows device name
+        "nul.txt",  # reserved stem, case-insensitive
+        "star*",
+        'quote"',
+    ],
+)
+def test_validate_project_name_rejects_unsafe_names(name: str) -> None:
+    with pytest.raises(ConfigError):
+        validate_project_name(name)
+    assert project_name_violations(name)
+
+
+def test_validate_project_name_rejects_overlong_name() -> None:
+    with pytest.raises(ConfigError) as info:
+        validate_project_name("x" * 256)
+    assert "max length" in str(info.value)
+
+
+def test_validate_project_name_does_not_mutate_input() -> None:
+    """The §3.2 contract is 'used verbatim' -- no canonicalisation."""
+    name = "Cortex Q3 Pilot"
+    assert validate_project_name(name) is name
 
 
 # ---------------------------------------------------------------------------

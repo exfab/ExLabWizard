@@ -122,12 +122,20 @@ def _session_to_entry(session_id: str, session: Any) -> OperationEntry:
 
 
 def _project_short_id(request: Any) -> str | None:
-    """Pluck the project short id off a project / run request."""
+    """Pluck a project identifier off a project / run request.
+
+    A project request carries the LIMS ``short_id`` in its
+    ``lims_project`` block; a run request carries only the parent
+    project's folder name (the human-readable LIMS name, Backend Spec
+    §3.2), so that name is used as the operations-panel identifier.
+    """
     short = getattr(request, "project_short_id", None)
     if short:
         return short
     lims_project = getattr(request, "lims_project", None)
     if isinstance(lims_project, dict):
         value = lims_project.get("short_id")
-        return value if isinstance(value, str) and value else None
-    return None
+        if isinstance(value, str) and value:
+            return value
+    project_name = getattr(request, "project_name", None)
+    return project_name if isinstance(project_name, str) and project_name else None

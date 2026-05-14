@@ -153,7 +153,7 @@ def test_create_session_run(tmp_path: Path) -> None:
     body = {
         "kind": "run",
         "equipment_id": "EQ1",
-        "project_short_id": "PROJ-0001",
+        "project_name": "Cortex Q3 Pilot",
         "template_path": str(tmp_path / "tpl"),
         "run_kind": "experimental",
         "label": "calibration",

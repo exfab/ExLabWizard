@@ -29,9 +29,31 @@ class WizardProjectPage:
         return self._page.get_by_test_id(f"wizard-step-{step_id}")
 
     @property
+    def lims_gate(self) -> Locator:
+        """The manual-entry gate button on the LIMS Project step.
+
+        Rendered only when neither the live LIMS nor an offline catalogue
+        produced a project list; clicking it reveals the manual inputs.
+        """
+        return self._page.get_by_test_id("wizard-project-lims-gate")
+
+    @property
+    def lims_id(self) -> Locator:
+        """The manual LIMS short-ID input (revealed by ``lims_gate``)."""
+        return self._page.get_by_test_id("wizard-project-lims-id")
+
+    @property
     def back(self) -> Locator:
-        """The back button on the active stepper navigation."""
+        """The back button on the active stepper navigation.
+
+        Absent on the first step -- that step exits via ``cancel``.
+        """
         return self._page.get_by_test_id("wizard-back").first
+
+    @property
+    def cancel(self) -> Locator:
+        """The cancel button; present on every step, returns to /main."""
+        return self._page.get_by_test_id("wizard-cancel").first
 
     @property
     def next(self) -> Locator:

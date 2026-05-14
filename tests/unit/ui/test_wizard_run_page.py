@@ -59,7 +59,7 @@ def test_can_advance_default_step_is_project_equipment() -> None:
     state = RunWizardState(run_kind=RunKind.EXPERIMENTAL)
     assert state.active_step == "project_equipment"
     assert can_advance(state) is False
-    state.selected_project_short_id = "PROJ-1"
+    state.selected_project_name = "Cortex Q3 Pilot"
     assert can_advance(state) is False  # equipment still missing
     state.selected_equipment = "CONFOCAL_01"
     assert can_advance(state) is True
@@ -110,11 +110,11 @@ def test_preview_path_segments_test_uses_testrun_prefix_and_folder() -> None:
     state = RunWizardState(
         run_kind=RunKind.TEST,
         selected_equipment="EM_02",
-        selected_project_short_id="PROJ-9",
+        selected_project_name="Cortex Q3 Pilot",
     )
     result = preview_path_segments(state, run_date="2026-05-13")
     segments = result["segments"]
-    assert segments == ["EM_02", "PROJ-9", "TestRuns", "TestRun_2026-05-13"]
+    assert segments == ["EM_02", "Cortex Q3 Pilot", "TestRuns", "TestRun_2026-05-13"]
     assert result["warning_indices"] == (2, 3)
 
 

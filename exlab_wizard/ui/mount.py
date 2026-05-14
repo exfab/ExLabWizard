@@ -18,6 +18,7 @@ see a usable GUI even when individual collaborators are unavailable.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import uuid
 from collections.abc import Callable
@@ -145,7 +146,7 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         )
 
     @ui.page("/wizard/project")
-    def _wizard_project() -> Any:
+    async def _wizard_project() -> Any:
         deps = _deps()
         if _restart_gate(deps, ui):
             return None
@@ -153,8 +154,9 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             templates=_template_names(deps, "project"),
             equipment_ids=_equipment_ids(deps),
             template_questions=_template_questions_map(deps, "project"),
-            lims_projects=_lims_projects(deps),
+            lims_projects=await _lims_projects(deps),
             on_submit=lambda state: _submit_project(deps, state, ui),
+            on_cancel=lambda: ui.navigate.to("/main"),
         )
 
     @ui.page("/wizard/run")
@@ -501,13 +503,12 @@ def _template_questions_map(deps: Any, template_type: str) -> dict[str, Any]:
         return {}
 
 
-def _lims_projects(deps: Any) -> list[dict[str, Any]]:
-    """Return the LIMS projects backing the project wizard's picker.
+def _lims_catalogue_projects(deps: Any) -> list[dict[str, Any]]:
+    """Read the offline-catalogue projects (disconnected-workstation source).
 
-    Reads the offline catalogue (``config.lims.offline_catalogue_path``)
-    -- the documented disconnected-workstation source. Returns ``[]``
-    on any failure, in which case the wizard falls back to manual
-    short-ID entry.
+    Reads the offline catalogue (``config.lims.offline_catalogue_path``).
+    Returns ``[]`` on any failure -- missing path, schema mismatch, parse
+    error -- so callers can fall through to the next picker source.
     """
     config = getattr(deps, "config", None) if deps is not None else None
     if config is None:
@@ -531,6 +532,36 @@ def _lims_projects(deps: Any) -> list[dict[str, Any]]:
     except Exception as exc:
         _log.warning("offline catalogue read failed: %s", exc)
         return []
+
+
+async def _lims_projects(deps: Any) -> list[dict[str, Any]]:
+    """Return the LIMS projects backing the project wizard's picker.
+
+    Tries the live LIMS first (``deps.lims_client.list_projects``); on any
+    failure -- client absent, unreachable, auth, timeout -- falls back to
+    the offline catalogue (``config.lims.offline_catalogue_path``). Returns
+    ``[]`` when neither source yields rows, in which case the wizard offers
+    a deliberate manual-entry gate instead of a dropdown.
+    """
+    lims_client = getattr(deps, "lims_client", None) if deps is not None else None
+    lims_reachable = getattr(deps, "lims_reachable", True) if deps is not None else False
+    if lims_client is not None and lims_reachable:
+        try:
+            projects = await asyncio.wait_for(lims_client.list_projects(), timeout=5.0)
+            rows = [
+                {
+                    "short_id": project.short_id,
+                    "name": project.name,
+                    "uid": project.uid,
+                    "source": "lims",
+                }
+                for project in projects
+            ]
+            if rows:
+                return rows
+        except Exception as exc:
+            _log.warning("live LIMS project list failed: %s", exc)
+    return _lims_catalogue_projects(deps)
 
 
 def _equipment_ids(deps: Any) -> list[str]:
@@ -579,7 +610,7 @@ async def _submit_project(deps: Any, state: Any, ui: Any) -> None:
             "uid": str(uuid.uuid4()),
             "short_id": state.selected_lims_short_id or "",
             "name_at_creation": state.lims_project_name or "",
-            "source": "offline_catalogue",
+            "source": getattr(state, "selected_lims_source", "manual") or "manual",
         },
         variables=dict(state.template_variables),
         label=readme.get("label", ""),
@@ -603,22 +634,18 @@ async def _submit_run(deps: Any, state: Any, run_kind: RunKind, ui: Any) -> None
     from exlab_wizard.controller.creation import RunCreateRequest
 
     readme = state.readme_fields
-    short_id = state.selected_project_short_id or ""
+    # The run lives under <equipment>/<project name>/ (Backend Spec §3.2);
+    # the controller inherits the parent project's full LIMS identity
+    # (uid / short_id / source) from that project's creation.json.
     request = RunCreateRequest(
         equipment_id=state.selected_equipment or "",
-        project_short_id=short_id,
+        project_name=state.selected_project_name or "",
         template_path=templates_dir / state.selected_template,
         run_kind=run_kind,
         variables=dict(state.template_variables),
         label=readme.get("label", ""),
         operator=readme.get("operator", ""),
         objective=readme.get("objective", ""),
-        lims_project={
-            "uid": str(uuid.uuid4()),
-            "short_id": short_id,
-            "name_at_creation": readme.get("label", ""),
-            "source": "offline_catalogue",
-        },
     )
     kind_label = "Test run" if run_kind is RunKind.TEST else "Run"
     await _run_creation(controller, controller.create_run, request, ui, label=kind_label)
@@ -663,6 +690,7 @@ def _render_run_wizard(deps: Any, run_kind: RunKind, ui: Any) -> Any:
         equipment_ids=_equipment_ids(deps),
         template_questions=_template_questions_map(deps, "run"),
         on_submit=lambda submitted: _submit_run(deps, submitted, run_kind, ui),
+        on_cancel=lambda: ui.navigate.to("/main"),
     )
 
 

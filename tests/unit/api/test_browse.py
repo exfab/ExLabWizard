@@ -84,7 +84,8 @@ def test_get_tree_lists_equipment_and_projects(tmp_path: Path) -> None:
     local_root = tmp_path / "data"
     local_root.mkdir()
     eq_dir = local_root / "EQ1"
-    project_dir = eq_dir / "PROJ-0042"
+    # The <project>/ segment is the human-readable LIMS name, used verbatim. §3.2.
+    project_dir = eq_dir / "Cortex Q3 Pilot"
     run_dir = project_dir / f"{RUN_DIR_PREFIX}2026-04-17T14-00-00"
     run_dir.mkdir(parents=True)
     _write_creation_json(run_dir)
@@ -101,7 +102,7 @@ def test_get_tree_lists_equipment_and_projects(tmp_path: Path) -> None:
     assert eq["id"] == "EQ1"
     assert len(eq["projects"]) == 1
     project = eq["projects"][0]
-    assert project["short_id"] == "PROJ-0042"
+    assert project["name"] == "Cortex Q3 Pilot"
     assert len(project["runs"]) == 1
     assert project["runs"][0]["kind"] == "experimental"
     assert project["runs"][0]["sync_status"] == SyncStatus.PENDING.value

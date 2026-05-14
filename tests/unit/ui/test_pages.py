@@ -197,7 +197,7 @@ def test_wizard_run_preview_test_path_highlights() -> None:
     state = wizard_run.RunWizardState(
         run_kind="test",
         selected_equipment="CONFOCAL_01",
-        selected_project_short_id="PROJ-1",
+        selected_project_name="Cortex Q3 Pilot",
     )
     segments = wizard_run.preview_path_segments(state, run_date="2026-05-07")
     assert "TestRuns" in segments["segments"]
@@ -209,7 +209,7 @@ def test_wizard_run_preview_experimental_no_test_marker() -> None:
     state = wizard_run.RunWizardState(
         run_kind="experimental",
         selected_equipment="CONFOCAL_01",
-        selected_project_short_id="PROJ-1",
+        selected_project_name="Cortex Q3 Pilot",
     )
     segments = wizard_run.preview_path_segments(state, run_date="2026-05-07")
     assert "TestRuns" not in segments["segments"]
@@ -219,7 +219,7 @@ def test_wizard_run_preview_experimental_no_test_marker() -> None:
 def test_wizard_run_can_advance_blocks_until_project_and_equipment() -> None:
     state = wizard_run.RunWizardState(run_kind="experimental", active_step="project_equipment")
     assert wizard_run.can_advance(state) is False
-    state.selected_project_short_id = "PROJ-1"
+    state.selected_project_name = "Cortex Q3 Pilot"
     state.selected_equipment = "CONFOCAL_01"
     assert wizard_run.can_advance(state) is True
 

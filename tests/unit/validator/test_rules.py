@@ -17,6 +17,7 @@ from exlab_wizard.validator.rules import (
     check_orphan,
     check_reserved_filesystem_name,
     check_unresolved_placeholder,
+    check_unsafe_project_name,
 )
 
 # ---------------------------------------------------------------------------
@@ -296,6 +297,48 @@ def test_reserved_name_fires(name: str) -> None:
 def test_non_reserved_name_passes(name: str) -> None:
     findings = check_reserved_filesystem_name(file_names=[name])
     assert findings == []
+
+
+# ---------------------------------------------------------------------------
+# §3.2 Unsafe-project-name rule
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "bad/name",
+        "back\\slash",
+        " leading",
+        "trailing ",
+        "trailing.",
+        "café",  # non-ASCII
+        "CON",  # reserved Windows device name
+        'quote"',
+    ],
+)
+def test_unsafe_project_name_fires(name: str) -> None:
+    findings = check_unsafe_project_name(name=name)
+    assert findings
+    assert all(f["rule"] == "unsafe_project_name" for f in findings)
+    # Audit mode is advisory: a non-conforming directory already on disk
+    # is surfaced for review, not blocked.
+    assert all(f["tier"] == "soft" for f in findings)
+    assert all(f["offending_kind"] == "directory_segment" for f in findings)
+    assert all(f["offending_path"] == name for f in findings)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Cortex Q3 Pilot",  # spaces are fine -- used verbatim
+        "PROJ-0042",
+        "Q3_run (pilot)",
+        "a.b.c",
+    ],
+)
+def test_safe_project_name_passes(name: str) -> None:
+    assert check_unsafe_project_name(name=name) == []
 
 
 # ---------------------------------------------------------------------------

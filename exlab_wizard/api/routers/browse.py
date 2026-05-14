@@ -65,7 +65,11 @@ class RunNode(BaseModel):
 class ProjectNode(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    short_id: str
+    # The on-disk project folder name -- the human-readable LIMS project
+    # name used verbatim (Backend Spec §3.2). The LIMS short_id is a
+    # barcoding identifier kept in the project's creation.json metadata,
+    # not in the directory path.
+    name: str
     path: str
     runs: list[RunNode] = []
     test_runs: list[RunNode] = []
@@ -233,7 +237,7 @@ def _build_project_node(project_dir: Path) -> ProjectNode:
             runs.append(_build_run_node(Path(entry.path), kind="experimental"))
     has_cache = creation_json_path(project_dir).exists()
     return ProjectNode(
-        short_id=project_dir.name,
+        name=project_dir.name,
         path=str(project_dir),
         runs=runs,
         test_runs=test_runs,

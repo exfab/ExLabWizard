@@ -230,7 +230,9 @@ def build_test_app() -> FastAPI:
                 'data-testid="wizard-project-success"'
             )
 
-        wizard_project_page.render_project_wizard(state=s, on_submit=_submit)
+        wizard_project_page.render_project_wizard(
+            state=s, on_submit=_submit, on_cancel=lambda: ui.navigate.to("/main")
+        )
 
     # ----------------------------------------------------------------------
     # Run wizard, experimental (Flow 03)
@@ -239,7 +241,7 @@ def build_test_app() -> FastAPI:
     def run_wizard_index() -> None:
         s = wizard_run_page.RunWizardState(
             run_kind="experimental",
-            selected_project_short_id="LIMS-001",
+            selected_project_name="Demo Project",
             selected_equipment="EQ1",
             selected_template="default",
             template_variables={},
@@ -250,7 +252,9 @@ def build_test_app() -> FastAPI:
             test_state.last_action = f"wizard.run.{state.run_kind}.submit"
             ui.label("Run created").props('data-testid="wizard-run-success"')
 
-        wizard_run_page.render_run_wizard(state=s, on_submit=_submit)
+        wizard_run_page.render_run_wizard(
+            state=s, on_submit=_submit, on_cancel=lambda: ui.navigate.to("/main")
+        )
 
     # ----------------------------------------------------------------------
     # Run wizard, test mode (Flow 04)
@@ -259,7 +263,7 @@ def build_test_app() -> FastAPI:
     def test_run_wizard_index() -> None:
         s = wizard_run_page.RunWizardState(
             run_kind="test",
-            selected_project_short_id="LIMS-001",
+            selected_project_name="Demo Project",
             selected_equipment="EQ1",
             selected_template="default",
             template_variables={},
@@ -270,7 +274,9 @@ def build_test_app() -> FastAPI:
             test_state.last_action = f"wizard.run.{state.run_kind}.submit"
             ui.label("Test run created").props('data-testid="wizard-run-success"')
 
-        wizard_run_page.render_run_wizard(state=s, on_submit=_submit)
+        wizard_run_page.render_run_wizard(
+            state=s, on_submit=_submit, on_cancel=lambda: ui.navigate.to("/main")
+        )
 
     # ----------------------------------------------------------------------
     # Settings (Flow 08)

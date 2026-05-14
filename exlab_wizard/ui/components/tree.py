@@ -167,7 +167,9 @@ def build_nodes(
                 run_label = run.directory_name + (f"  --  {run.label}" if run.label else "")
                 run_nodes.append(
                     TreeNode(
-                        node_id=f"{equipment.equipment_id}/{project.short_id}/{run.directory_name}",
+                        # node_id mirrors the on-disk path: the project
+                        # segment is the human-readable name (§3.2).
+                        node_id=f"{equipment.equipment_id}/{project.name}/{run.directory_name}",
                         label=run_label,
                         kind=kind,
                         badges=badges,
@@ -190,7 +192,7 @@ def build_nodes(
 
             project_nodes.append(
                 TreeNode(
-                    node_id=f"{equipment.equipment_id}/{project.short_id}",
+                    node_id=f"{equipment.equipment_id}/{project.name}",
                     label=project_label,
                     kind=KIND_PROJECT,
                     children=tuple(run_nodes),

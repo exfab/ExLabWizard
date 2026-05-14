@@ -322,8 +322,18 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
         route="/wizard/project",
         testid="wizard-project-lims-picker",
         element="select",
-        action="Pick a LIMS project from the cache / offline catalogue",
-        outcome="Fills the project short_id + name from the catalogue row.",
+        action="Pick a LIMS project from the live LIMS / offline catalogue",
+        outcome="Fills the project short_id + name + source from the picked row. "
+        "Shown only when a project list could be loaded.",
+    ),
+    UXInteraction(
+        flow="New project",
+        route="/wizard/project",
+        testid="wizard-project-lims-gate",
+        element="button",
+        action="Click 'Enter project details manually'",
+        outcome="Reveals the manual short-ID / name inputs. Shown only when "
+        "neither the live LIMS nor an offline catalogue produced any projects.",
     ),
     UXInteraction(
         flow="New project",
@@ -331,7 +341,8 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
         testid="wizard-project-lims-id",
         element="input",
         action="Type the LIMS project short ID (PROJ-NNNN)",
-        outcome="Sets the project short_id (manual-entry fallback).",
+        outcome="Sets the project short_id. Hidden until the manual-entry "
+        "gate is clicked.",
     ),
     UXInteraction(
         flow="New project",
@@ -339,7 +350,8 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
         testid="wizard-project-lims-name",
         element="input",
         action="Type the project name",
-        outcome="Sets the LIMS project name on the wizard state.",
+        outcome="Sets the LIMS project name on the wizard state. Hidden until "
+        "the manual-entry gate is clicked.",
     ),
     UXInteraction(
         flow="New project",
@@ -403,7 +415,16 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
         testid="wizard-back",
         element="button",
         action="Click 'Back' on a wizard step",
-        outcome="Returns the stepper to the previous step.",
+        outcome="Returns the stepper to the previous step. Absent on the first "
+        "step, which exits via 'Cancel'.",
+    ),
+    UXInteraction(
+        flow="New project",
+        route="/wizard/project",
+        testid="wizard-cancel",
+        element="button",
+        action="Click 'Cancel' on a wizard step",
+        outcome="Discards the wizard and returns to /main. Present on every step.",
     ),
     UXInteraction(
         flow="New project",
@@ -417,10 +438,11 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
     UXInteraction(
         flow="New run / test run",
         route="/wizard/run, /wizard/test-run",
-        testid="wizard-run-project-id",
+        testid="wizard-run-project-name",
         element="input",
-        action="Type the parent project short ID",
-        outcome="Sets the project_short_id on the run wizard state.",
+        action="Type the parent project name",
+        outcome="Sets the parent project's folder name (the human-readable LIMS "
+        "name used verbatim, §3.2) on the run wizard state.",
     ),
     UXInteraction(
         flow="New run / test run",
@@ -484,7 +506,16 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
         testid="wizard-run-back",
         element="button",
         action="Click 'Back' on a run-wizard step",
-        outcome="Returns the run-wizard stepper to the previous step.",
+        outcome="Returns the run-wizard stepper to the previous step. Absent on "
+        "the first step, which exits via 'Cancel'.",
+    ),
+    UXInteraction(
+        flow="New run / test run",
+        route="/wizard/run, /wizard/test-run",
+        testid="wizard-run-cancel",
+        element="button",
+        action="Click 'Cancel' on a run-wizard step",
+        outcome="Discards the run wizard and returns to /main. Present on every step.",
     ),
     UXInteraction(
         flow="New run / test run",

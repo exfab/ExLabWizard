@@ -19,6 +19,14 @@ def test_flow_02_project_wizard(page, server_url) -> None:
     wizard.card.wait_for(state="visible", timeout=10_000)
     wizard.stepper.wait_for(state="visible", timeout=5_000)
 
+    # First step has nowhere to step back to: no Back button, Cancel is
+    # its only exit (the bug fix). The e2e app passes no LIMS project
+    # list, so manual entry sits behind the deliberate gate button.
+    assert page.get_by_test_id("wizard-back").count() == 0
+    wizard.cancel.wait_for(state="visible", timeout=2_000)
+    wizard.lims_gate.click()
+    wizard.lims_id.wait_for(state="visible", timeout=2_000)
+
     # Walk every step Next, then Create on the confirm step.
     for step_id in (
         "lims_project",

@@ -144,8 +144,9 @@ async def test_full_project_creation_flow(app_with_real_controller: Any, tmp_pat
         assert snapshot.status_code == 200
         body_snap = snapshot.json()
         assert body_snap["state"] == "done"
-        # creation.json must exist on disk.
-        project_dir = tmp_path / "data" / "EQ1" / "PROJ-0042"
+        # creation.json must exist on disk -- the project folder is the
+        # human-readable LIMS name used verbatim (§3.2).
+        project_dir = tmp_path / "data" / "EQ1" / "Cortex Q3 Pilot"
         cache_path = project_dir / CACHE_DIR_NAME / CREATION_JSON_NAME
         assert cache_path.is_file()
         decoded = msgspec.json.decode(cache_path.read_bytes(), type=CreationJson)
