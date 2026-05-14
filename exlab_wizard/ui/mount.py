@@ -24,7 +24,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from exlab_wizard.constants import AuditScopeKind, RunKind
+from exlab_wizard.constants import KEYRING_USERNAME_LIMS, AuditScopeKind, RunKind
 from exlab_wizard.logging import get_logger
 
 if TYPE_CHECKING:
@@ -230,6 +230,8 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
                 return
             ui.navigate.to("/restart-required")
 
+        on_save_lims_password, on_clear_lims_password = _lims_credential_handlers(deps, ui)
+
         # ``on_select_section`` is left unset: the settings dialog swaps
         # sections client-side, so a navigation hook would only reload
         # the page and discard the operator's in-progress edits.
@@ -238,6 +240,9 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             state=state,
             on_save=_on_save,
             on_discard=None,
+            on_save_lims_password=on_save_lims_password,
+            on_clear_lims_password=on_clear_lims_password,
+            lims_password_present=bool(getattr(deps, "keyring_password_present", False)),
         )
 
     @ui.page("/problems")
@@ -281,6 +286,51 @@ def _restart_gate(deps: Any, ui: Any) -> bool:
         ui.navigate.to("/restart-required")
         return True
     return False
+
+
+def _lims_credential_handlers(
+    deps: Any, ui: Any
+) -> tuple[Callable[[str], None], Callable[[], None]]:
+    """Build the LIMS-password Save / Clear handlers for the settings dialog.
+
+    Credentials are independent of the config Save (Frontend Spec §7.3):
+    these write straight to the OS keyring via ``deps.keyring_store`` at
+    click time, under the ``(exlab-wizard, lims)`` pair. A missing
+    keyring store (best-effort construction failed at tray boot) or a
+    backend error surfaces as a negative toast instead of crashing the
+    page.
+    """
+    keyring_store = getattr(deps, "keyring_store", None) if deps is not None else None
+
+    def _on_save(value: str) -> None:
+        if keyring_store is None:
+            _show_toast(
+                ui, "Cannot save the password: the OS keyring is unavailable", positive=False
+            )
+            return
+        try:
+            keyring_store.set_password(username=KEYRING_USERNAME_LIMS, password=value)
+        except Exception as exc:
+            _log.exception("LIMS keyring set_password failed")
+            _show_toast(ui, f"Could not save the LIMS password: {exc}", positive=False)
+            return
+        _show_toast(ui, "LIMS password saved to the OS keyring", positive=True)
+
+    def _on_clear() -> None:
+        if keyring_store is None:
+            _show_toast(
+                ui, "Cannot clear the password: the OS keyring is unavailable", positive=False
+            )
+            return
+        try:
+            keyring_store.delete_password(username=KEYRING_USERNAME_LIMS)
+        except Exception as exc:
+            _log.exception("LIMS keyring delete_password failed")
+            _show_toast(ui, f"Could not clear the LIMS password: {exc}", positive=False)
+            return
+        _show_toast(ui, "LIMS password removed from the OS keyring", positive=True)
+
+    return _on_save, _on_clear
 
 
 def _persist_config(deps: Any, updated: Any, ui: Any) -> bool:

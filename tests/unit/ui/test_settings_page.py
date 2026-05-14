@@ -16,9 +16,11 @@ from pydantic import ValidationError
 # orchestrator <-> api import order resolves cleanly (see test_mount.py).
 import exlab_wizard.api.app  # noqa: F401  -- import order matters
 from exlab_wizard.config.models import Config
+from exlab_wizard.ui.components import credential_field
 from exlab_wizard.ui.pages.settings import (
     build_settings_draft,
     finalize_settings_draft,
+    lims_credential_initial_state,
 )
 
 
@@ -93,3 +95,17 @@ def test_finalize_raises_on_invalid_edit() -> None:
 
     with pytest.raises(ValidationError):
         finalize_settings_draft(draft)
+
+
+def test_lims_credential_initial_state_not_set_when_keyring_empty() -> None:
+    state = lims_credential_initial_state(present=False)
+    assert state.state == credential_field.STATE_NOT_SET
+
+
+def test_lims_credential_initial_state_set_when_keyring_has_password() -> None:
+    """A password already in the OS keyring opens the row in *Set*."""
+
+    state = lims_credential_initial_state(present=True)
+    assert state.state == credential_field.STATE_SET
+    # The resting target matches so a cancelled Replace returns to Set.
+    assert state.resting == credential_field.STATE_SET

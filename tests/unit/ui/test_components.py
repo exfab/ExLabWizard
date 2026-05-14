@@ -224,6 +224,67 @@ def test_credential_field_editing_offers_save_and_cancel() -> None:
     assert props["input_visible"] is True
 
 
+# credential_field -- state transitions ------------------------------------
+
+
+def test_begin_edit_from_not_set_enters_editing_remembering_not_set() -> None:
+    """Clicking *Set* opens the editor; *Cancel* must return to Not set."""
+
+    result = credential_field.begin_edit(
+        credential_field.CredentialState(state=credential_field.STATE_NOT_SET)
+    )
+    assert result.state == credential_field.STATE_EDITING
+    assert result.resting == credential_field.STATE_NOT_SET
+
+
+def test_begin_edit_from_set_remembers_set_as_resting() -> None:
+    """Clicking *Replace* opens the editor; *Cancel* must return to Set."""
+
+    result = credential_field.begin_edit(
+        credential_field.CredentialState(state=credential_field.STATE_SET)
+    )
+    assert result.state == credential_field.STATE_EDITING
+    assert result.resting == credential_field.STATE_SET
+
+
+def test_cancel_edit_returns_to_remembered_resting_state() -> None:
+    editing = credential_field.begin_edit(
+        credential_field.CredentialState(state=credential_field.STATE_SET)
+    )
+    assert credential_field.cancel_edit(editing).state == credential_field.STATE_SET
+
+
+def test_cancel_edit_from_fresh_edit_returns_to_not_set() -> None:
+    editing = credential_field.begin_edit(
+        credential_field.CredentialState(state=credential_field.STATE_NOT_SET)
+    )
+    assert credential_field.cancel_edit(editing).state == credential_field.STATE_NOT_SET
+
+
+def test_commit_edit_with_value_transitions_to_set_and_signals_save() -> None:
+    new_state, should_save = credential_field.commit_edit(
+        credential_field.CredentialState(state=credential_field.STATE_EDITING), "hunter2"
+    )
+    assert new_state.state == credential_field.STATE_SET
+    assert should_save is True
+
+
+def test_commit_edit_with_empty_value_stays_editing_and_skips_save() -> None:
+    """An empty input has nothing to persist -- stay in the editor."""
+
+    original = credential_field.CredentialState(state=credential_field.STATE_EDITING)
+    new_state, should_save = credential_field.commit_edit(original, "")
+    assert new_state.state == credential_field.STATE_EDITING
+    assert should_save is False
+
+
+def test_clear_credential_returns_to_not_set() -> None:
+    result = credential_field.clear_credential(
+        credential_field.CredentialState(state=credential_field.STATE_SET)
+    )
+    assert result.state == credential_field.STATE_NOT_SET
+
+
 # ---------------------------------------------------------------------------
 # test_connection_panel
 # ---------------------------------------------------------------------------

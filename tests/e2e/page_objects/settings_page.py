@@ -48,6 +48,41 @@ class SettingsPage:
         return self._page.get_by_test_id("settings-paths-local-root")
 
     @property
+    def lims_password_primary(self) -> Locator:
+        """LIMS section: the credential row's primary button ([Set] / [Replace])."""
+        return self._page.get_by_test_id("settings-lims-password-primary")
+
+    @property
+    def lims_password_secondary(self) -> Locator:
+        """LIMS section: the credential row's secondary button ([Clear])."""
+        return self._page.get_by_test_id("settings-lims-password-secondary")
+
+    @property
+    def lims_password_input(self) -> Locator:
+        """LIMS section: the inline password input shown while editing."""
+        return self._page.get_by_test_id("settings-lims-password-input")
+
+    @property
+    def lims_password_save(self) -> Locator:
+        """LIMS section: the credential row's Save button (editing state)."""
+        return self._page.get_by_test_id("settings-lims-password-save")
+
+    @property
+    def lims_password_cancel(self) -> Locator:
+        """LIMS section: the credential row's Cancel button (editing state)."""
+        return self._page.get_by_test_id("settings-lims-password-cancel")
+
+    @property
+    def lims_password_clear_confirm(self) -> Locator:
+        """LIMS section: the confirm button in the Clear-credential dialog."""
+        return self._page.get_by_test_id("settings-lims-password-clear-confirm")
+
+    @property
+    def lims_password_status(self) -> Locator:
+        """LIMS section: the credential row's status line (resting states)."""
+        return self._page.get_by_test_id("settings-lims-password-status")
+
+    @property
     def equipment_id(self) -> Locator:
         """Equipment section: equipment-id input."""
         return self._page.get_by_test_id("settings-equipment-id")

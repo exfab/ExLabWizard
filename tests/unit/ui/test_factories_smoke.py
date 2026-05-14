@@ -125,6 +125,66 @@ def test_smoke_credential_field_renders_each_state() -> None:
         assert out is not None
 
 
+def _credential_testids(element: object) -> set[str]:
+    """Collect every ``data-testid`` in an element's subtree."""
+
+    return {
+        tid
+        for child in element.descendants()  # type: ignore[attr-defined]
+        if (tid := child._props.get("data-testid"))
+    }
+
+
+def test_credential_field_editing_state_renders_a_password_input() -> None:
+    """Regression: the editing state must expose an inline password input."""
+
+    with _slot():
+        out = credential_field.credential_field(
+            label="Password",
+            on_save=lambda v: None,
+            on_clear=lambda: None,
+            data_testid="cred",
+            initial_state=credential_field.CredentialState(state=credential_field.STATE_EDITING),
+        )
+    password_inputs = [
+        child
+        for child in out.descendants()
+        if type(child).__name__ == "Input" and child._props.get("type") == "password"
+    ]
+    assert len(password_inputs) == 1
+    assert password_inputs[0]._props.get("data-testid") == "cred-input"
+    ids = _credential_testids(out)
+    assert {"cred-save", "cred-cancel"} <= ids
+
+
+def test_credential_field_not_set_state_renders_set_button_without_input() -> None:
+    with _slot():
+        out = credential_field.credential_field(
+            label="Password",
+            on_save=lambda v: None,
+            on_clear=lambda: None,
+            data_testid="cred",
+            initial_state=credential_field.CredentialState(state=credential_field.STATE_NOT_SET),
+        )
+    ids = _credential_testids(out)
+    assert "cred-primary" in ids
+    assert "cred-input" not in ids
+
+
+def test_credential_field_set_state_renders_replace_and_clear_buttons() -> None:
+    with _slot():
+        out = credential_field.credential_field(
+            label="Password",
+            on_save=lambda v: None,
+            on_clear=lambda: None,
+            data_testid="cred",
+            initial_state=credential_field.CredentialState(state=credential_field.STATE_SET),
+        )
+    ids = _credential_testids(out)
+    assert {"cred-primary", "cred-secondary"} <= ids
+    assert "cred-input" not in ids
+
+
 def test_smoke_test_connection_panel_renders() -> None:
     with _slot():
         out = test_connection_panel.test_connection_panel(None)
@@ -374,6 +434,35 @@ def test_smoke_settings_page_setup_incomplete_auto_selects_first() -> None:
         on_discard=lambda s: None,
     )
     assert out is not None
+
+
+def test_settings_lims_section_renders_credential_field_with_e2e_hooks() -> None:
+    """The LIMS section must expose the password credential row."""
+
+    captured: list[str] = []
+    out = settings.render_settings_page(
+        state=settings.SettingsState(active_section="lims"),
+        on_save=lambda s: None,
+        on_discard=lambda s: None,
+        on_save_lims_password=captured.append,
+        on_clear_lims_password=lambda: None,
+    )
+    ids = _credential_testids(out)
+    assert "settings-lims-password-primary" in ids
+
+
+def test_settings_lims_section_credential_field_opens_set_when_password_present() -> None:
+    out = settings.render_settings_page(
+        state=settings.SettingsState(active_section="lims"),
+        on_save=lambda s: None,
+        on_discard=lambda s: None,
+        on_save_lims_password=lambda v: None,
+        on_clear_lims_password=lambda: None,
+        lims_password_present=True,
+    )
+    ids = _credential_testids(out)
+    # The Clear action only exists in the resting "set" state.
+    assert "settings-lims-password-secondary" in ids
 
 
 def test_smoke_problems_page_renders() -> None:
