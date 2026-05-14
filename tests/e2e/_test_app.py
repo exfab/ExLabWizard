@@ -104,11 +104,13 @@ def build_test_app() -> FastAPI:
             test_state.welcomed = True
             test_state.setup_incomplete = True
             test_state.last_action = "welcome.get_started"
+            ui.navigate.to("/settings")
 
         def on_skip(autostart: bool) -> None:
             test_state.autostart_enabled = autostart
             test_state.welcomed = True
             test_state.last_action = "welcome.skip"
+            ui.navigate.to("/main")
 
         ui.label(f"welcomed={test_state.welcomed}").props('data-testid="welcome-status"').style(
             "display:none;"
