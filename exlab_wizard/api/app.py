@@ -199,6 +199,10 @@ class AppDependencies:
     session_store: Any = None
     ingest_writer: Any = None
     staging_watcher: Any = None
+    # OS-keyring store (:class:`exlab_wizard.lims.keyring_store.KeyringStore`).
+    # The settings dialog's credential fields write the LIMS password
+    # straight to this at click time (Frontend Spec §7.3, §7.4.1).
+    keyring_store: Any = None
 
     # Audit / pub-sub ---------------------------------------------------
     audit_channel: AuditChannel | None = None

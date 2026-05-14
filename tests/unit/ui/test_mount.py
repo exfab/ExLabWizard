@@ -21,7 +21,7 @@ import pytest
 # always loads api first (the tray's _build_default_app imports api.app
 # before any page module), so this matches the live import order.
 import exlab_wizard.api.app  # noqa: F401  -- import order matters
-from exlab_wizard.constants import RunKind
+from exlab_wizard.constants import KEYRING_USERNAME_LIMS, RunKind
 from exlab_wizard.controller import SessionState
 from exlab_wizard.ui import mount
 
@@ -465,6 +465,69 @@ def test_show_toast_swallows_notification_failure(
     monkeypatch.setattr(notifications, "notify_success", _boom)
     # Must not raise even though the underlying notify call does.
     mount._show_toast(None, "x", positive=True)
+
+
+# ---------------------------------------------------------------------------
+# _lims_credential_handlers
+# ---------------------------------------------------------------------------
+
+
+class _RecordingKeyringStore:
+    """Keyring-store stand-in that records the calls the handlers make."""
+
+    def __init__(self, *, raises: bool = False) -> None:
+        self._raises = raises
+        self.set_calls: list[tuple[str, str]] = []
+        self.delete_calls: list[str] = []
+
+    def set_password(self, *, username: str, password: str) -> None:
+        if self._raises:
+            msg = "keyring backend unavailable"
+            raise RuntimeError(msg)
+        self.set_calls.append((username, password))
+
+    def delete_password(self, *, username: str) -> None:
+        if self._raises:
+            msg = "keyring backend unavailable"
+            raise RuntimeError(msg)
+        self.delete_calls.append(username)
+
+
+def test_lims_credential_handlers_save_writes_under_lims_username() -> None:
+    store = _RecordingKeyringStore()
+    on_save, _on_clear = mount._lims_credential_handlers(_deps(keyring_store=store), None)
+
+    on_save("hunter2")
+
+    assert store.set_calls == [(KEYRING_USERNAME_LIMS, "hunter2")]
+
+
+def test_lims_credential_handlers_clear_deletes_under_lims_username() -> None:
+    store = _RecordingKeyringStore()
+    _on_save, on_clear = mount._lims_credential_handlers(_deps(keyring_store=store), None)
+
+    on_clear()
+
+    assert store.delete_calls == [KEYRING_USERNAME_LIMS]
+
+
+def test_lims_credential_handlers_tolerate_missing_keyring_store() -> None:
+    """A best-effort keyring build can fail; the handlers must not crash."""
+
+    on_save, on_clear = mount._lims_credential_handlers(_deps(keyring_store=None), None)
+
+    on_save("hunter2")
+    on_clear()
+
+
+def test_lims_credential_handlers_swallow_backend_errors() -> None:
+    """A raising keyring backend surfaces a toast, not an unhandled crash."""
+
+    store = _RecordingKeyringStore(raises=True)
+    on_save, on_clear = mount._lims_credential_handlers(_deps(keyring_store=store), None)
+
+    on_save("hunter2")
+    on_clear()
 
 
 # ---------------------------------------------------------------------------

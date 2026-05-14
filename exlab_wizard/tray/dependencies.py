@@ -26,6 +26,7 @@ from typing import Any
 
 from exlab_wizard.api.app import AppDependencies
 from exlab_wizard.config.loader import load_config, save_config
+from exlab_wizard.constants import KEYRING_USERNAME_LIMS
 from exlab_wizard.logging import get_logger
 from exlab_wizard.paths import os_config_path
 from exlab_wizard.tray.autostart import AutostartManager
@@ -76,6 +77,9 @@ def build_production_dependencies(state_dir: Path) -> AppDependencies:
     )
 
     keyring_store = _try("keyring_store", _build_keyring_store, state_dir)
+    # Expose the store so the settings dialog can persist the LIMS
+    # password to the OS keyring at click time (Frontend Spec §7.4.1).
+    deps.keyring_store = keyring_store
     deps.keyring_password_present = (
         _try(
             "keyring_password_check",
@@ -251,20 +255,34 @@ def _build_keyring_store(state_dir: Path) -> Any:
     return KeyringStore(state_dir=state_dir)
 
 
+def _lims_keyring_password(keyring_store: Any) -> str | None:
+    """Return the stored LIMS password, or ``None`` if absent/unavailable.
+
+    The credential lives under ``(KEYRING_SERVICE, KEYRING_USERNAME_LIMS)``
+    -- the same ``(service, username)`` pair the settings dialog's
+    credential field writes to (Frontend Spec §7.4.1, Backend Spec §7.4).
+    ``KeyringStore.get_password`` is keyword-only; any backend error
+    degrades to ``None`` so the caller treats the password as
+    not-yet-configured rather than crashing.
+    """
+    if keyring_store is None:
+        return None
+    getter = getattr(keyring_store, "get_password", None)
+    if getter is None:
+        return None
+    with contextlib.suppress(Exception):
+        return getter(username=KEYRING_USERNAME_LIMS)
+    return None
+
+
 def _check_keyring_present(keyring_store: Any, config: Any) -> bool:
     if keyring_store is None or config is None:
         return False
-    email = getattr(config.lims, "email", "") or ""
-    if not email:
+    # An unconfigured LIMS email means the slot is not set up yet, so a
+    # stray keyring entry should not count as "password present".
+    if not (getattr(config.lims, "email", "") or ""):
         return False
-    getter = getattr(keyring_store, "get_password", None)
-    if getter is None:
-        return False
-    try:
-        value = getter(email)
-    except Exception:
-        return False
-    return bool(value)
+    return bool(_lims_keyring_password(keyring_store))
 
 
 def _build_lims_client(config: Any, keyring_store: Any) -> Any:
@@ -276,14 +294,7 @@ def _build_lims_client(config: Any, keyring_store: Any) -> Any:
     email = config.lims.email
 
     def _provider() -> str | None:
-        if keyring_store is None:
-            return None
-        getter = getattr(keyring_store, "get_password", None)
-        if getter is None:
-            return None
-        with contextlib.suppress(Exception):
-            return getter(email)
-        return None
+        return _lims_keyring_password(keyring_store)
 
     return LIMSClient(
         endpoint=config.lims.endpoint,

@@ -75,6 +75,9 @@ class TestState:
     # ``saved_config`` captures what the Save handler emitted.
     config: Config | None = None
     saved_config: Config | None = None
+    # LIMS credential field: the keyring is mocked by this attribute --
+    # ``None`` means "not set", a string is the captured password.
+    lims_password: str | None = None
 
 
 def _read_query(request_url: str) -> dict[str, list[str]]:
@@ -299,12 +302,24 @@ def build_test_app() -> FastAPI:
             test_state.last_action = f"settings.select:{section}"
             ui.navigate.to(f"/settings?incomplete={incomplete}&active={section}")
 
+        def _save_lims_password(value: str) -> None:
+            # Stands in for the OS keyring write (Frontend Spec §7.4.1).
+            test_state.last_action = "settings.lims_password.save"
+            test_state.lims_password = value
+
+        def _clear_lims_password() -> None:
+            test_state.last_action = "settings.lims_password.clear"
+            test_state.lims_password = None
+
         settings_page.render_settings_page(
             config=test_state.config,
             state=s,
             on_save=_save,
             on_discard=_discard,
             on_select_section=_select_section,
+            on_save_lims_password=_save_lims_password,
+            on_clear_lims_password=_clear_lims_password,
+            lims_password_present=test_state.lims_password is not None,
         )
 
     # ----------------------------------------------------------------------

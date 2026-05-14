@@ -121,6 +121,19 @@ def finalize_settings_draft(draft: Config) -> Config:
     return Config.model_validate(draft.model_dump(mode="python", warnings=False))
 
 
+def lims_credential_initial_state(*, present: bool) -> credential_field.CredentialState:
+    """Return the credential-row state seeding the LIMS password field.
+
+    A password already in the OS keyring opens the row in the *Set*
+    resting state (``[Replace]`` / ``[Clear]``); an empty keyring opens
+    it in *Not set* (``[Set]``). ``resting`` matches ``state`` so a
+    cancelled *Replace* collapses back to where it started.
+    """
+
+    name = credential_field.STATE_SET if present else credential_field.STATE_NOT_SET
+    return credential_field.CredentialState(state=name, resting=name)
+
+
 def render_settings_page(
     *,
     config: Config | None = None,
@@ -128,6 +141,9 @@ def render_settings_page(
     on_save: Callable[[Config], None] | None = None,
     on_discard: Callable[[SettingsState], None] | None = None,
     on_select_section: Callable[[str], None] | None = None,
+    on_save_lims_password: Callable[[str], None] | None = None,
+    on_clear_lims_password: Callable[[], None] | None = None,
+    lims_password_present: bool = False,
 ) -> Any:
     """Render the settings dialog.
 
@@ -140,6 +156,13 @@ def render_settings_page(
     nav row. The Phase 12 cut bound this to a no-op (the selection
     cycle is handled by the host page); the e2e harness wires it to a
     navigation hook so each section's body becomes assertable.
+
+    ``on_save_lims_password`` / ``on_clear_lims_password`` back the LIMS
+    section's credential field. Per Frontend Spec §7.3 credentials are
+    independent of Save -- these write straight to the OS keyring at
+    click time, so the host wires them to a :class:`KeyringStore` rather
+    than to the draft. ``lims_password_present`` seeds the credential
+    row's resting state from whether the keyring already holds one.
     """
 
     s = state or SettingsState()
@@ -240,7 +263,13 @@ def render_settings_page(
                     body = ui.column().classes("w-full")
                     body.visible = section == s.active_section
                     with body:
-                        _render_section_body(section, draft)
+                        _render_section_body(
+                            section,
+                            draft,
+                            on_save_lims_password=on_save_lims_password,
+                            on_clear_lims_password=on_clear_lims_password,
+                            lims_password_present=lims_password_present,
+                        )
                     section_bodies[section] = body
 
         def _do_save(_evt: Any = None) -> None:
@@ -275,7 +304,14 @@ def render_settings_page(
     return card
 
 
-def _render_section_body(section: str, draft: Config) -> None:
+def _render_section_body(
+    section: str,
+    draft: Config,
+    *,
+    on_save_lims_password: Callable[[str], None] | None = None,
+    on_clear_lims_password: Callable[[], None] | None = None,
+    lims_password_present: bool = False,
+) -> None:
     """Render the content for a single section, bound to ``draft``.
 
     Every scalar field uses NiceGUI two-way binding against the
@@ -285,6 +321,10 @@ def _render_section_body(section: str, draft: Config) -> None:
     sections (equipment, operators allowlist, scanned extensions) render
     their current entries read-only -- rich list editors are a
     follow-up; the deadlock this unblocks is the scalar config fields.
+
+    The LIMS section's password credential is the exception to the
+    draft-binding rule: it is keyring-backed and writes at click time
+    via ``on_save_lims_password`` / ``on_clear_lims_password``.
     """
 
     from nicegui import ui
@@ -321,8 +361,10 @@ def _render_section_body(section: str, draft: Config) -> None:
             ).bind_value(draft.lims, "email")
             credential_field.credential_field(
                 label="LIMS password",
-                on_save=lambda v: None,
-                on_clear=lambda: None,
+                on_save=on_save_lims_password or (lambda _value: None),
+                on_clear=on_clear_lims_password or (lambda: None),
+                initial_state=lims_credential_initial_state(present=lims_password_present),
+                data_testid="settings-lims-password",
             )
             ui.number(label="Cache TTL (hours)", value=draft.lims.cache_ttl_hours).props(
                 'data-testid="settings-lims-cache-ttl"'
