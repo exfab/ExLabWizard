@@ -376,12 +376,36 @@ right-clicking an owned-equipment tree node offers "Edit equipment…" /
   - `GET /folder` contents + per-file sync status.
   - `GET /tree` with a mixed owned/received equipment set.
   - `StagingWatcher` auto-discovery surfacing received equipment.
-- **E2E**
-  - flow-01 onboarding updated for the new layout + always-on staging.
-  - New flow: add equipment via the wizard → create a run under it → watch
-    files populate in the centre pane.
-  - Relay flow: a `stage`-mode equipment whose run appears on the orchestrator
-    as received with the `relay` badge.
+- **E2E** — Playwright flows against the mounted NiceGUI app. E2E coverage is a
+  first-class requirement for this redesign, not an afterthought: every
+  user-facing flow below ships with a passing E2E test before the corresponding
+  work is considered done.
+  - **Onboarding (flow-01, updated)** — Welcome card → Settings in
+    setup-incomplete mode → `staging_root` + `label` + first equipment added via
+    the Add-Equipment wizard → main window renders with always-on staging.
+  - **Add equipment + acquire (`nas` mode)** — add a `nas`-mode equipment via
+    the wizard → create a project and an experimental run under it → the run
+    lands under `Runs/` → files appear in the centre pane via the live folder
+    feed → per-file sync status advances `pending → synced`.
+  - **Add equipment + relay (`stage` mode)** — add a `stage`-mode equipment →
+    create a run → the centre pane shows files → sync status tops out at
+    `relayed` and the Metadata pane shows the `stage` ceiling note.
+  - **Relay receive flow** — a run relayed into this device's `staging_root`
+    is auto-discovered, appears as a received-equipment node carrying the
+    `relay` badge, and its `ingest.json` lifecycle state shows in the Metadata
+    pane.
+  - **File-explorer navigation** — tree selection drives the centre file list
+    and the right Metadata pane; double-click navigates folders; breadcrumb
+    segments navigate to ancestors; the right pane collapses and restores.
+  - **Problems tab + travelling badge** — a seeded hard-tier finding surfaces
+    the red badge on the shallowest collapsed ancestor, travels inward on
+    expand, and clicking it selects the node and opens its scoped Problems tab;
+    the footer Validator segment selects the root for the full list.
+  - **New Run picker step** — with a valid owned node selected the picker is
+    pre-filled and skipped; with no selection the picker step is shown; the
+    creation buttons are disabled when a received-equipment node is selected.
+  - **Edit / remove equipment** — right-clicking an owned-equipment tree node
+    deep-links into Settings → Equipment List.
 
 ---
 
