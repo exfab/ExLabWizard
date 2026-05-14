@@ -18,7 +18,10 @@ see a usable GUI even when individual collaborators are unavailable.
 
 from __future__ import annotations
 
+import contextlib
+import uuid
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from exlab_wizard.constants import AuditScopeKind, RunKind
@@ -68,6 +71,7 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         problems as problems_page,
         settings as settings_page,
         staging as staging_page,
+        templates as templates_page,
         welcome as welcome_page,
         wizard_project as wizard_project_page,
         wizard_run as wizard_run_page,
@@ -137,6 +141,8 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         if _restart_gate(deps, ui):
             return None
         return wizard_project_page.render_project_wizard(
+            templates=_template_names(deps, "project"),
+            equipment_ids=_equipment_ids(deps),
             on_submit=lambda state: _submit_project(deps, state, ui),
         )
 
@@ -153,6 +159,44 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         if _restart_gate(deps, ui):
             return None
         return _render_run_wizard(deps, RunKind.TEST, ui)
+
+    @ui.page("/templates")
+    def _templates() -> Any:
+        deps = _deps()
+        if _restart_gate(deps, ui):
+            return None
+        templates_dir = _templates_dir(deps)
+
+        def _on_create(
+            name: str, template_type: str, description: str, run_scope: str | None
+        ) -> None:
+            if templates_dir is None:
+                _show_toast(ui, "Set the templates directory in Settings first", positive=False)
+                return
+            try:
+                templates_page.create_template(
+                    templates_dir,
+                    name=name,
+                    template_type=template_type,
+                    description=description,
+                    run_scope=run_scope,
+                )
+            except Exception as exc:  # noqa: BLE001 -- surface to the operator
+                _show_toast(ui, f"Template not created: {exc}", positive=False)
+                return
+            _show_toast(ui, f"Template {name!r} created", positive=True)
+            ui.navigate.to("/templates")
+
+        summaries = (
+            templates_page.list_templates(templates_dir)
+            if templates_dir is not None
+            else []
+        )
+        return templates_page.render_template_manager(
+            templates=summaries,
+            on_create=_on_create,
+            on_back=lambda: ui.navigate.to("/main"),
+        )
 
     @ui.page("/settings")
     def _settings(active: str = "") -> Any:
@@ -339,33 +383,163 @@ def _missing_setup_sections(deps: Any) -> tuple[str, ...]:
     return tuple(missing)
 
 
-def _submit_project(deps: Any, state: Any, ui: Any) -> None:
+def _templates_dir(deps: Any) -> Path | None:
+    """Return the configured templates directory, or ``None``."""
+    config = getattr(deps, "config", None) if deps is not None else None
+    if config is None or not config.paths.templates_dir:
+        return None
+    return Path(config.paths.templates_dir)
+
+
+def _template_names(deps: Any, template_type: str) -> list[str]:
+    """List template directory names of ``template_type`` under templates_dir."""
+    templates_dir = _templates_dir(deps)
+    if templates_dir is None:
+        return []
+    try:
+        from exlab_wizard.ui.pages import templates as templates_page
+
+        return [
+            summary.name
+            for summary in templates_page.list_templates(
+                templates_dir, template_type=template_type
+            )
+        ]
+    except Exception as exc:  # noqa: BLE001 -- defensive UI boundary
+        _log.warning("template scan failed: %s", exc)
+        return []
+
+
+def _equipment_ids(deps: Any) -> list[str]:
+    """Return the configured equipment IDs."""
+    config = getattr(deps, "config", None) if deps is not None else None
+    if config is None:
+        return []
+    return [entry.id for entry in config.equipment]
+
+
+async def _await_session(controller: Any, handle: Any) -> Any:
+    """Await a controller session's pipeline task and return the final handle.
+
+    ``create_project`` / ``create_run`` return immediately with the
+    post-validation handle and run the rest of the pipeline as a
+    background task tracked in ``controller._tasks`` (the integration
+    suite drains it the same way). We await that task so the wizard
+    shows a real DONE / FAILED outcome rather than the transient
+    RENDERING state.
+    """
+    task = controller._tasks.get(handle.session_id)
+    if task is not None:
+        with contextlib.suppress(Exception):
+            await task
+    return await controller.status(handle.session_id)
+
+
+async def _submit_project(deps: Any, state: Any, ui: Any) -> None:
+    """Build a ProjectCreateRequest from the wizard state and run it."""
     controller = getattr(deps, "controller", None) if deps is not None else None
     if controller is None:
         _show_toast(ui, "Project creation unavailable: controller not initialized", positive=False)
         return
-    _show_toast(ui, f"Project '{state.selected_lims_short_id}' submitted", positive=True)
-    ui.navigate.to("/main")
+    templates_dir = _templates_dir(deps)
+    if templates_dir is None or not state.selected_template:
+        _show_toast(ui, "Pick a template before creating the project", positive=False)
+        return
+
+    from exlab_wizard.controller.creation import ProjectCreateRequest
+
+    readme = state.readme_fields
+    request = ProjectCreateRequest(
+        equipment_id=state.selected_equipment or "",
+        template_path=templates_dir / state.selected_template,
+        lims_project={
+            "uid": str(uuid.uuid4()),
+            "short_id": state.selected_lims_short_id or "",
+            "name_at_creation": state.lims_project_name or "",
+            "source": "offline_catalogue",
+        },
+        variables=dict(state.template_variables),
+        label=readme.get("label", ""),
+        operator=readme.get("operator", ""),
+        objective=readme.get("objective", ""),
+    )
+    await _run_creation(controller, controller.create_project, request, ui, label="Project")
+
+
+async def _submit_run(deps: Any, state: Any, run_kind: RunKind, ui: Any) -> None:
+    """Build a RunCreateRequest from the wizard state and run it."""
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    if controller is None:
+        _show_toast(ui, "Run creation unavailable: controller not initialized", positive=False)
+        return
+    templates_dir = _templates_dir(deps)
+    if templates_dir is None or not state.selected_template:
+        _show_toast(ui, "Pick a template before creating the run", positive=False)
+        return
+
+    from exlab_wizard.controller.creation import RunCreateRequest
+
+    readme = state.readme_fields
+    short_id = state.selected_project_short_id or ""
+    request = RunCreateRequest(
+        equipment_id=state.selected_equipment or "",
+        project_short_id=short_id,
+        template_path=templates_dir / state.selected_template,
+        run_kind=run_kind,
+        variables=dict(state.template_variables),
+        label=readme.get("label", ""),
+        operator=readme.get("operator", ""),
+        objective=readme.get("objective", ""),
+        lims_project={
+            "uid": str(uuid.uuid4()),
+            "short_id": short_id,
+            "name_at_creation": readme.get("label", ""),
+            "source": "offline_catalogue",
+        },
+    )
+    kind_label = "Test run" if run_kind is RunKind.TEST else "Run"
+    await _run_creation(controller, controller.create_run, request, ui, label=kind_label)
+
+
+async def _run_creation(
+    controller: Any,
+    create_fn: Callable[[Any], Any],
+    request: Any,
+    ui: Any,
+    *,
+    label: str,
+) -> None:
+    """Drive a create_* call to completion and toast the outcome."""
+    from exlab_wizard.controller import SessionState
+
+    try:
+        handle = await create_fn(request)
+        final = await _await_session(controller, handle)
+    except Exception as exc:  # noqa: BLE001 -- defensive UI boundary
+        _log.exception("%s creation raised", label)
+        _show_toast(ui, f"{label} creation failed: {exc}", positive=False)
+        return
+    if final.state is SessionState.DONE:
+        _show_toast(ui, f"{label} created", positive=True)
+        ui.navigate.to("/main")
+        return
+    detail = ""
+    session = controller.session_store.get(handle.session_id)
+    if session is not None and session.error:
+        detail = f": {session.error.get('message', session.error.get('code', ''))}"
+    _show_toast(ui, f"{label} creation {final.state.value}{detail}", positive=False)
 
 
 def _render_run_wizard(deps: Any, run_kind: RunKind, ui: Any) -> Any:
     from exlab_wizard.ui.pages import wizard_run as wizard_run_page
 
     state = wizard_run_page.RunWizardState(run_kind=run_kind)
-
-    def _on_submit(submitted: Any) -> None:
-        controller = getattr(deps, "controller", None) if deps is not None else None
-        if controller is None:
-            _show_toast(ui, "Run creation unavailable: controller not initialized", positive=False)
-            return
-        _show_toast(
-            ui,
-            f"{submitted.run_kind.value.title()} run submitted",
-            positive=True,
-        )
-        ui.navigate.to("/main")
-
-    return wizard_run_page.render_run_wizard(state=state, on_submit=_on_submit)
+    return wizard_run_page.render_run_wizard(
+        state=state,
+        templates=_template_names(deps, "run"),
+        equipment_ids=_equipment_ids(deps),
+        on_submit=lambda submitted: _submit_run(deps, submitted, run_kind, ui),
+    )
 
 
 def _safe_audit(deps: Any) -> list[Any]:

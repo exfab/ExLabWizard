@@ -18,6 +18,7 @@ remains authoritative.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -59,6 +60,7 @@ class ProjectWizardState:
 
     active_step: str = PROJECT_WIZARD_STEPS[0]
     selected_lims_short_id: str | None = None
+    lims_project_name: str = ""
     selected_template: str | None = None
     selected_equipment: str | None = None
     template_variables: dict[str, Any] = field(default_factory=dict)
@@ -118,19 +120,31 @@ def disk_space_pre_flight_message(state: ProjectWizardState) -> str | None:
 def render_project_wizard(
     *,
     state: ProjectWizardState | None = None,
-    on_submit: Callable[[ProjectWizardState], None] | None = None,
+    templates: list[str] | None = None,
+    equipment_ids: list[str] | None = None,
+    on_submit: Callable[[ProjectWizardState], Any] | None = None,
 ) -> Any:
     """Render the seven-step project wizard.
+
+    ``templates`` is the list of project-scope template names the
+    operator can pick from (from ``config.paths.templates_dir``);
+    ``equipment_ids`` is the configured equipment list. Each step binds
+    real inputs into ``state`` so the confirm step's ``on_submit`` sees
+    a fully-populated :class:`ProjectWizardState`.
 
     Returns the NiceGUI dialog (or, in tests, a payload describing the
     rendered steps).
     """
 
     s = state or ProjectWizardState()
+    template_choices = list(templates or [])
+    equipment_choices = list(equipment_ids or [])
     payload = {
         "steps": PROJECT_WIZARD_STEPS,
         "active": s.active_step,
         "can_advance": can_advance(s),
+        "templates": template_choices,
+        "equipment_ids": equipment_choices,
     }
 
     try:
@@ -165,6 +179,9 @@ def render_project_wizard(
                     f'data-testid="wizard-step-{step_id}"'
                 ):
                     ui.label(_step_helper_text(step_id, s)).style("color: var(--color-body);")
+                    _render_project_step_fields(
+                        step_id, s, template_choices, equipment_choices
+                    )
                     if step_id == "confirm":
                         session_progress.session_progress(
                             active_phase=None,
@@ -176,13 +193,19 @@ def render_project_wizard(
                         ).props('flat data-testid="wizard-back"')
                         primary_label = "Create" if step_id == "confirm" else "Next"
 
-                        def _on_primary(
+                        async def _on_primary(
                             _evt: Any,
                             sp: Any = stepper,
                             sid: str = step_id,
                         ) -> None:
+                            # ``on_submit`` may be sync or async (the
+                            # production handler awaits the controller
+                            # pipeline) -- await it either way.
                             if sid == "confirm" and on_submit is not None:
-                                on_submit(s)
+                                result: Any = on_submit(s)
+                                if inspect.isawaitable(result):
+                                    await result
+                                return
                             sp.next()
 
                         button_testid = "wizard-submit" if step_id == "confirm" else "wizard-next"
@@ -190,6 +213,62 @@ def render_project_wizard(
                             f'color=primary data-testid="{button_testid}"'
                         )
     return card
+
+
+def _render_project_step_fields(
+    step_id: str,
+    state: ProjectWizardState,
+    templates: list[str],
+    equipment_ids: list[str],
+) -> None:
+    """Render the bound input fields for one project-wizard step.
+
+    Each widget two-way binds into ``state`` so values entered on an
+    earlier step survive while the operator moves through the stepper.
+    """
+    from nicegui import ui
+
+    if step_id == "lims_project":
+        ui.input(
+            label="LIMS project short ID (PROJ-NNNN)",
+            value=state.selected_lims_short_id or "",
+        ).props('data-testid="wizard-project-lims-id"').on_value_change(
+            lambda e: setattr(state, "selected_lims_short_id", e.value or None)
+        )
+        ui.input(label="Project name", value=state.lims_project_name).props(
+            'data-testid="wizard-project-lims-name"'
+        ).bind_value(state, "lims_project_name")
+    elif step_id == "template":
+        ui.select(
+            templates,
+            value=state.selected_template if state.selected_template in templates else None,
+            label="Project template",
+        ).props('data-testid="wizard-project-template"').on_value_change(
+            lambda e: setattr(state, "selected_template", e.value or None)
+        )
+    elif step_id == "equipment":
+        ui.select(
+            equipment_ids,
+            value=(
+                state.selected_equipment
+                if state.selected_equipment in equipment_ids
+                else None
+            ),
+            label="Equipment",
+        ).props('data-testid="wizard-project-equipment"').on_value_change(
+            lambda e: setattr(state, "selected_equipment", e.value or None)
+        )
+    elif step_id == "readme":
+        for field_id, label in (
+            ("label", "Label"),
+            ("operator", "Operator"),
+            ("objective", "Objective"),
+        ):
+            ui.input(label=label, value=state.readme_fields.get(field_id, "")).props(
+                f'data-testid="wizard-project-readme-{field_id}"'
+            ).on_value_change(
+                lambda e, fid=field_id: state.readme_fields.__setitem__(fid, e.value or "")
+            )
 
 
 def _step_helper_text(step_id: str, state: ProjectWizardState) -> str:

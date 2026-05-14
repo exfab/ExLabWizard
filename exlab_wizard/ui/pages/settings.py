@@ -12,7 +12,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from exlab_wizard.config.models import Config
+from exlab_wizard.config.models import Config, EquipmentConfig, RcloneTransport
+from exlab_wizard.constants import CompletenessSignal
 from exlab_wizard.logging import get_logger
 from exlab_wizard.ui import notifications
 from exlab_wizard.ui.components import credential_field, test_connection_panel
@@ -328,19 +329,7 @@ def _render_section_body(section: str, draft: Config) -> None:
             )
             test_connection_panel.test_connection_panel(None)
         elif section == "equipment":
-            if draft.equipment:
-                for entry in draft.equipment:
-                    ui.label(f"{entry.id} -- {entry.label}").props(
-                        'data-testid="settings-equipment-row"'
-                    )
-            else:
-                ui.label("No equipment configured yet. [+ Add equipment]").props(
-                    'data-testid="settings-equipment-empty"'
-                )
-            ui.input(label="Equipment ID (regex ^[A-Z][A-Z0-9_]*$, len 1-32)").props(
-                'data-testid="settings-equipment-id"'
-            )
-            ui.button("Add equipment").props('data-testid="settings-equipment-add"')
+            _render_equipment_section(draft)
         elif section == "nas_cleanup":
             ui.checkbox("Cleanup enabled", value=draft.nas_cleanup.enabled).bind_value(
                 draft.nas_cleanup, "enabled"
@@ -399,3 +388,91 @@ def _render_section_body(section: str, draft: Config) -> None:
             ui.checkbox("Start ExLab-Wizard at login")
             ui.label("Show in system tray: available")
             ui.button("Quit ExLab-Wizard now").props("flat")
+
+
+def _render_equipment_section(draft: Config) -> None:
+    """Render the equipment list + an add-equipment sub-form.
+
+    Adding an entry appends a validated :class:`EquipmentConfig` to
+    ``draft.equipment`` and reflects it in the visible list; the whole
+    draft is re-validated and persisted when the operator clicks Save.
+
+    The sub-form covers the common single-equipment case: the
+    ``sentinel_file`` completeness signal and the ``rclone`` transport.
+    Richer transports / the ``manifest`` signal are a follow-up; an
+    operator who needs them edits ``config.yaml`` directly.
+    """
+    from nicegui import ui
+
+    rows = ui.column().classes("w-full").style("gap: 0.25rem;")
+
+    def _render_rows() -> None:
+        rows.clear()
+        with rows:
+            if draft.equipment:
+                for entry in draft.equipment:
+                    ui.label(f"{entry.id} -- {entry.label}").props(
+                        'data-testid="settings-equipment-row"'
+                    )
+            else:
+                ui.label("No equipment configured yet.").props(
+                    'data-testid="settings-equipment-empty"'
+                )
+
+    _render_rows()
+
+    eq_id = ui.input(label="Equipment ID (^[A-Z][A-Z0-9_]*$)").props(
+        'data-testid="settings-equipment-id"'
+    )
+    eq_label = ui.input(label="Label").props('data-testid="settings-equipment-label"')
+    eq_local = ui.input(label="Local root").props(
+        'data-testid="settings-equipment-local-root"'
+    )
+    eq_nas = ui.input(label="NAS root").props('data-testid="settings-equipment-nas-root"')
+    eq_sentinel = ui.input(
+        label="Sentinel filename", value="acquisition_complete.flag"
+    ).props('data-testid="settings-equipment-sentinel"')
+    eq_remote = ui.input(label="rclone remote").props(
+        'data-testid="settings-equipment-rclone-remote"'
+    )
+    eq_remote_path = ui.input(label="rclone remote path").props(
+        'data-testid="settings-equipment-rclone-path"'
+    )
+
+    def _add(_evt: Any = None) -> None:
+        try:
+            entry = EquipmentConfig(
+                id=(eq_id.value or "").strip(),
+                label=(eq_label.value or "").strip(),
+                local_root=(eq_local.value or "").strip(),
+                nas_root=(eq_nas.value or "").strip(),
+                completeness_signal=CompletenessSignal.SENTINEL_FILE,
+                sentinel_filename=(eq_sentinel.value or "").strip() or None,
+                transport=RcloneTransport(
+                    type="rclone",
+                    rclone_remote=(eq_remote.value or "").strip(),
+                    rclone_remote_path=(eq_remote_path.value or "").strip(),
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 -- surface validation to the operator
+            notifications.notify_error(f"Equipment invalid: {exc}")
+            return
+        if any(e.id == entry.id for e in draft.equipment):
+            notifications.notify_error(f"Equipment {entry.id!r} already exists")
+            return
+        draft.equipment.append(entry)
+        _render_rows()
+        for widget in (
+            eq_id,
+            eq_label,
+            eq_local,
+            eq_nas,
+            eq_remote,
+            eq_remote_path,
+        ):
+            widget.value = ""
+        notifications.notify_success(f"Equipment {entry.id!r} added")
+
+    ui.button("Add equipment", on_click=_add).props(
+        'data-testid="settings-equipment-add"'
+    )
