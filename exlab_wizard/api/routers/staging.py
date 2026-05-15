@@ -207,22 +207,20 @@ def _row_from_summary(summary: StagedRunSummary) -> StagedRunRow:
 
 
 def _require_orchestrator_enabled(deps: Any) -> Config:
-    """Return the live :class:`Config` after asserting orchestrator mode.
+    """Return the live :class:`Config`.
 
-    Returns 503 with ``code: "orchestrator_disabled"`` per the spec when
-    ``config.orchestrator.enabled`` is False (or when no config is wired).
+    Redesign §3.1: the orchestrator pipeline is always active. This helper
+    now only ensures a config is wired (returns 503 if not). Name kept for
+    backward compatibility; it'll be inlined in Phase 6 alongside the
+    Settings refactor.
     """
     config = getattr(deps, "config", None)
-    if config is None or not config.orchestrator.enabled:
+    if config is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
-                "code": "orchestrator_disabled",
-                "message": (
-                    "the orchestrator is not enabled on this workstation; "
-                    "set orchestrator.enabled to true in config.yaml to use "
-                    "this endpoint"
-                ),
+                "code": "internal_error",
+                "message": "config is not wired on this app instance",
             },
         )
     return config

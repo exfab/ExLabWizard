@@ -81,17 +81,20 @@ def list_staged_runs(
     """Enumerate every staged run with its current lifecycle state.
 
     ``staging_root`` defaults to ``config.orchestrator.staging_root``.
-    Returns an empty list when the orchestrator is not enabled (cheap
-    no-op so callers never need to gate on the flag themselves) or when
-    the directory does not exist.
+    Returns an empty list when ``staging_root`` is unset / missing.
 
     Sort order: most recent activity first.
     """
-    if not config.orchestrator.enabled:
+    root_value = (
+        staging_root
+        if staging_root is not None
+        else Path(config.orchestrator.staging_root)
+        if config.orchestrator.staging_root
+        else None
+    )
+    if root_value is None or not root_value.exists():
         return []
-    root = staging_root if staging_root is not None else Path(config.orchestrator.staging_root)
-    if not root.exists():
-        return []
+    root = root_value
     now = utc_now_or(now_utc)
     rows = [
         summary

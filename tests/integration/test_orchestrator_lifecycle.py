@@ -134,7 +134,6 @@ def _make_config(
             ),
         ],
         orchestrator=OrchestratorConfig(
-            enabled=True,
             label="ORCH",
             staging_root=str(staging_root),
             staging_cleanup=OrchestratorStagingCleanup(

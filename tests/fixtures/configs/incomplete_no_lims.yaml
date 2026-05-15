@@ -67,9 +67,8 @@ sync:
   retry_attempts: 3
 
 orchestrator:
-  enabled: false
-  label: ""
-  staging_root: ""
+  label: "Lab Acquisition Station 01"
+  staging_root: "/staging"
   staging_cleanup:
     mode: "manual"
     retain_hours: 24

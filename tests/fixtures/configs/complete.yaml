@@ -89,9 +89,8 @@ sync:
   retry_attempts: 3
 
 orchestrator:
-  enabled: false
-  label: "Lab Acquisition Station 01"
-  staging_root: "/staging"                      # POSIX example
+  label: "Lab Acquisition Station 01"           # always required (Redesign §3.1)
+  staging_root: "/staging"                      # always required (Redesign §3.1)
   staging_cleanup:
     mode: "manual"                              # or "scheduled"
     retain_hours: 24                            # only used if mode is "scheduled"

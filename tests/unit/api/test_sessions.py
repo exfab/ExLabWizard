@@ -27,6 +27,7 @@ from exlab_wizard.controller.state_machine import Phase, SessionState
 
 
 def _ready_config() -> Config:
+    from exlab_wizard.config.models import OrchestratorConfig
     return Config(
         paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
         equipment=[
@@ -45,6 +46,7 @@ def _ready_config() -> Config:
             )
         ],
         lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),
+        orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
     )
 
 

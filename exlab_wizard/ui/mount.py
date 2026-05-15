@@ -413,13 +413,13 @@ def _build_main_state(deps: Any) -> Any:
     from exlab_wizard.ui.pages import main as main_page
 
     setup_incomplete = not _is_setup_ready(deps)
-    orchestrator_enabled = False
-    config = getattr(deps, "config", None) if deps is not None else None
-    if config is not None:
-        orchestrator_enabled = bool(getattr(config.orchestrator, "enabled", False))
+    # Redesign §3.1: orchestrator pipeline is always active; the staging
+    # surface always renders. The orchestrator_enabled flag on
+    # MainPageState is now always True; it remains for the staging-dock
+    # render path until Phase 8 rebuilds the main page.
     return main_page.MainPageState(
         setup_incomplete=setup_incomplete,
-        orchestrator_enabled=orchestrator_enabled,
+        orchestrator_enabled=True,
     )
 
 
@@ -710,8 +710,10 @@ def _build_staging_state(deps: Any) -> Any:
     from exlab_wizard.ui.pages import staging as staging_page
 
     config = getattr(deps, "config", None) if deps is not None else None
-    if config is None or not getattr(config.orchestrator, "enabled", False):
+    if config is None:
         return None
+    # Redesign §3.1: orchestrator pipeline is always active; missing
+    # staging_root surfaces as an empty staging dock, not a None panel.
     try:
         from exlab_wizard.orchestrator.staging_query import list_staged_runs
 

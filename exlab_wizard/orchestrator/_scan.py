@@ -13,6 +13,7 @@ from pathlib import Path
 
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
+    RUNS_DIR_NAME,
     TEST_RUNS_DIR_NAME,
 )
 from exlab_wizard.paths import is_run_dir, is_test_run_dir
@@ -53,10 +54,11 @@ def walk_run_leaves(staging_root: Path) -> list[Path]:
     """Return every ``Run_*`` / ``TestRun_*`` directory under ``staging_root``.
 
     Per §13.2 the staging layout is
-    ``<staging_root>/<EQUIP>/<PROJ>/<run_or_TestRuns>``; experimental
-    runs sit directly under the project, test runs sit under a
-    ``TestRuns/`` parent. Anything else (e.g. the project's
-    ``.exlab-wizard/`` cache) is skipped.
+    ``<staging_root>/<EQUIP>/<PROJ>/{Runs,TestRuns}/<leaf>``;
+    GUI/Orchestrator Redesign §3.4 makes experimental runs symmetric
+    with test runs (both sit under a marker folder). Misplaced
+    ``Run_*`` directly under the project (pre-redesign layout) is still
+    surfaced so the validator can flag it.
     """
     if not staging_root.exists():
         return []
@@ -64,11 +66,19 @@ def walk_run_leaves(staging_root: Path) -> list[Path]:
     for equipment_dir in iter_subdirs(staging_root):
         for project_dir in iter_subdirs(equipment_dir):
             for child in iter_subdirs(project_dir):
-                if child.name == TEST_RUNS_DIR_NAME:
+                if child.name in (RUNS_DIR_NAME, TEST_RUNS_DIR_NAME):
                     for run_dir in iter_subdirs(child):
-                        if is_test_run_dir(run_dir.name):
+                        if (
+                            child.name == TEST_RUNS_DIR_NAME
+                            and is_test_run_dir(run_dir.name)
+                        ) or (
+                            child.name == RUNS_DIR_NAME and is_run_dir(run_dir.name)
+                        ):
                             leaves.append(run_dir)
                 elif is_run_dir(child.name):
+                    # Misplaced Run_* directly under the project — surface
+                    # it so the validator's mode_prefix_mismatch rule can
+                    # flag it as a hard finding.
                     leaves.append(child)
     return leaves
 

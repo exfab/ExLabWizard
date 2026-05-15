@@ -425,6 +425,8 @@ def evaluate_setup_state(
         return SetupState.INCOMPLETE_NO_CONFIG
     if not _paths_complete(config):
         return SetupState.INCOMPLETE_MISSING_PATHS
+    if not _orchestrator_identity_complete(config):
+        return SetupState.INCOMPLETE_NO_ORCHESTRATOR
     if not config.equipment:
         return SetupState.INCOMPLETE_NO_EQUIPMENT
     if not _lims_slot_satisfied(config, keyring_password_present=keyring_password_present):
@@ -432,6 +434,15 @@ def evaluate_setup_state(
     if not lims_reachable:
         return SetupState.INCOMPLETE_LIMS_UNREACHABLE
     return SetupState.READY
+
+
+def _orchestrator_identity_complete(config: Config) -> bool:
+    """Return True when this device has an orchestrator label + staging root.
+
+    Redesign §3.1: the staging pipeline is always active so both fields
+    are always required (no longer gated on a removed ``enabled`` flag).
+    """
+    return bool(config.orchestrator.label and config.orchestrator.staging_root)
 
 
 def setup_state_missing(state: SetupState, config: Config | None) -> list[dict[str, str]]:
@@ -449,9 +460,26 @@ def setup_state_missing(state: SetupState, config: Config | None) -> list[dict[s
         return [{"field": "equipment", "reason": "empty"}]
     if state is SetupState.INCOMPLETE_MISSING_PATHS:
         return _missing_paths_fields(config)
+    if state is SetupState.INCOMPLETE_NO_ORCHESTRATOR:
+        return _missing_orchestrator_fields(config)
     if state is SetupState.INCOMPLETE_NO_LIMS:
         return _missing_lims_fields(config)
     return []
+
+
+def _missing_orchestrator_fields(config: Config | None) -> list[dict[str, str]]:
+    """Redesign §3.1: ``label`` + ``staging_root`` are required."""
+    if config is None:
+        return [
+            {"field": "orchestrator.label", "reason": "missing"},
+            {"field": "orchestrator.staging_root", "reason": "missing"},
+        ]
+    out: list[dict[str, str]] = []
+    if not config.orchestrator.label:
+        out.append({"field": "orchestrator.label", "reason": "missing"})
+    if not config.orchestrator.staging_root:
+        out.append({"field": "orchestrator.staging_root", "reason": "missing"})
+    return out
 
 
 def _missing_paths_fields(config: Config | None) -> list[dict[str, str]]:
@@ -494,6 +522,10 @@ def setup_state_next_action(state: SetupState) -> SetupNextAction | None:
     """
     match state:
         case SetupState.INCOMPLETE_NO_CONFIG | SetupState.INCOMPLETE_MISSING_PATHS:
+            return SetupNextAction.SET_PATHS
+        case SetupState.INCOMPLETE_NO_ORCHESTRATOR:
+            # Redesign §3.1: label + staging_root fold into an early
+            # Settings section. SET_PATHS routes to that section.
             return SetupNextAction.SET_PATHS
         case SetupState.INCOMPLETE_NO_EQUIPMENT:
             return SetupNextAction.ADD_EQUIPMENT

@@ -51,10 +51,10 @@ def test_draft_edits_do_not_leak_into_source() -> None:
     draft = build_settings_draft(source)
 
     draft.paths.local_root = "/srv/data"
-    draft.orchestrator.enabled = True
+    draft.orchestrator.label = "BENCH-1"
 
     assert source.paths.local_root == ""
-    assert source.orchestrator.enabled is False
+    assert source.orchestrator.label == ""
 
 
 def test_finalize_coerces_widget_floats_back_to_int() -> None:
@@ -77,7 +77,6 @@ def test_finalize_round_trips_edited_scalar_fields() -> None:
     draft.paths.local_root = "/srv/data"
     draft.lims.endpoint = "https://lims.example"
     draft.lims.email = "operator@example"
-    draft.orchestrator.enabled = True
     draft.orchestrator.label = "BENCH-1"
     draft.orchestrator.staging_root = "/srv/staging"
 

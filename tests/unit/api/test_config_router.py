@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from exlab_wizard.api import AppDependencies, create_app
 from exlab_wizard.config.models import (
+    OrchestratorConfig,
     Config,
     EquipmentConfig,
     PathsConfig,
@@ -37,6 +38,7 @@ def _ready_config() -> Config:
                 ),
             )
         ],
+        orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
     )
 
 

@@ -165,6 +165,7 @@ def test_setup_state_values() -> None:
     assert {m.value for m in enums.SetupState} == {
         "incomplete_no_config",
         "incomplete_missing_paths",
+        "incomplete_no_orchestrator",
         "incomplete_no_equipment",
         "incomplete_no_lims",
         "incomplete_lims_unreachable",

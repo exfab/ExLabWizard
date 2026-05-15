@@ -541,11 +541,17 @@ class OrchestratorStagingCleanup(BaseModel):
 
 
 class OrchestratorConfig(BaseModel):
-    """``orchestrator:`` block. Backend Spec §9, §13."""
+    """``orchestrator:`` block. Backend Spec §9, §13.
+
+    GUI/Orchestrator Redesign §3.1 collapsed the single-equipment /
+    orchestrator distinction: the staging pipeline is always active, so
+    ``label`` and ``staging_root`` become required at the top-level
+    ``Config`` cross-field validator (no longer gated on a removed
+    ``enabled`` toggle).
+    """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    enabled: bool = False
     label: str = ""
     staging_root: str = ""
     staging_cleanup: OrchestratorStagingCleanup = Field(
@@ -586,18 +592,11 @@ class Config(BaseModel):
                 raise ValueError(msg)
             seen.add(entry.id)
 
-        # 2. When orchestrator is enabled, label and staging_root must be set.
-        if self.orchestrator.enabled:
-            if not self.orchestrator.label:
-                msg = (
-                    "orchestrator.label must be a non-empty string when "
-                    "orchestrator.enabled is true"
-                )
-                raise ValueError(msg)
-            if not self.orchestrator.staging_root:
-                msg = (
-                    "orchestrator.staging_root must be a non-empty string when "
-                    "orchestrator.enabled is true"
-                )
-                raise ValueError(msg)
+        # 2. The staging pipeline is always active (Redesign §3.1), so
+        #    label and staging_root are always required (or empty for the
+        #    setup-incomplete gate to trip — see paths.setup_state).
+        # The non-empty check has moved to the setup-incomplete evaluator
+        # so that an in-flight first-launch config is loadable but flagged
+        # for completion. Pydantic validation only ensures the fields are
+        # present (which they always are due to the empty-string defaults).
         return self

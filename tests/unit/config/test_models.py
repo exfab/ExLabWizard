@@ -191,9 +191,8 @@ def _full_config_dict() -> dict:
         "plugins": {"allow_network": False},
         "sync": {"enabled": True, "retry_attempts": 3},
         "orchestrator": {
-            "enabled": False,
-            "label": "",
-            "staging_root": "",
+            "label": "Lab Acquisition Station 01",
+            "staging_root": "/staging",
             "staging_cleanup": {"mode": "manual", "retain_hours": 24},
         },
     }
@@ -854,8 +853,10 @@ def test_orchestrator_staging_cleanup_rejects_unknown_mode() -> None:
 
 
 def test_orchestrator_config_defaults() -> None:
+    """Redesign §3.1: the ``enabled`` toggle is removed; ``label`` and
+    ``staging_root`` default to empty (and join the setup-incomplete
+    gate at the top-level config)."""
     cfg = OrchestratorConfig()
-    assert cfg.enabled is False
     assert cfg.label == ""
     assert cfg.staging_root == ""
     assert cfg.staging_cleanup.mode == "manual"
@@ -869,7 +870,11 @@ def test_orchestrator_config_defaults() -> None:
 def test_config_fully_default_is_valid() -> None:
     cfg = Config()
     assert cfg.equipment == []
-    assert cfg.orchestrator.enabled is False
+    # Redesign §3.1: ``enabled`` is removed; the staging pipeline is
+    # always active. ``label`` / ``staging_root`` default to empty and
+    # trip the setup-incomplete gate.
+    assert cfg.orchestrator.label == ""
+    assert cfg.orchestrator.staging_root == ""
 
 
 def test_unique_equipment_ids_required() -> None:
@@ -901,45 +906,49 @@ def test_distinct_equipment_ids_accepted() -> None:
     assert [e.id for e in cfg.equipment] == ["CONFOCAL_01", "FLOW_01"]
 
 
-def test_orchestrator_enabled_requires_label() -> None:
-    with pytest.raises(ValidationError):
-        Config.model_validate(
-            {
-                "orchestrator": {
-                    "enabled": True,
-                    "label": "",
-                    "staging_root": "/staging",
-                }
-            }
-        )
-
-
-def test_orchestrator_enabled_requires_staging_root() -> None:
-    with pytest.raises(ValidationError):
+def test_orchestrator_legacy_enabled_field_rejected() -> None:
+    """Redesign §3.1: the ``enabled`` toggle is removed; old configs
+    that carry it now fail validation with ``extra_forbidden``."""
+    with pytest.raises(ValidationError) as info:
         Config.model_validate(
             {
                 "orchestrator": {
                     "enabled": True,
                     "label": "Lab Acquisition Station 01",
-                    "staging_root": "",
+                    "staging_root": "/staging",
                 }
             }
         )
+    assert "enabled" in str(info.value)
 
 
-def test_orchestrator_enabled_with_both_fields_is_valid() -> None:
+def test_orchestrator_label_and_staging_root_load_independently() -> None:
+    """They can be empty at load time (the setup-incomplete gate trips,
+    not the Pydantic validator); a populated config still validates."""
     cfg = Config.model_validate(
         {
             "orchestrator": {
-                "enabled": True,
+                "label": "Lab Acquisition Station 01",
+                "staging_root": "/staging",
+            }
+        }
+    )
+    assert cfg.orchestrator.label == "Lab Acquisition Station 01"
+    assert cfg.orchestrator.staging_root == "/staging"
+
+
+def test_orchestrator_with_both_fields_is_valid() -> None:
+    cfg = Config.model_validate(
+        {
+            "orchestrator": {
                 "label": "Lab Acquisition Station 01",
                 "staging_root": "/staging",
                 "staging_cleanup": {"mode": "manual", "retain_hours": 24},
             }
         }
     )
-    assert cfg.orchestrator.enabled is True
     assert cfg.orchestrator.label == "Lab Acquisition Station 01"
+    assert cfg.orchestrator.staging_root == "/staging"
 
 
 def test_config_rejects_unknown_top_level_key() -> None:

@@ -19,6 +19,7 @@ from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
     LIMSConfig,
+    OrchestratorConfig,
     PathsConfig,
     RcloneTransport,
 )
@@ -55,6 +56,7 @@ def _config_with_local_root(local_root: Path) -> Config:
             )
         ],
         lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),
+        orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
     )
 
 
@@ -114,6 +116,7 @@ def test_get_tree_returns_empty_when_no_equipment(tmp_path: Path) -> None:
     local_root.mkdir()
     config = Config(
         paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root=str(local_root)),
+        orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
     )
     deps = AppDependencies(config=config)
     app = create_app(dependencies=deps)

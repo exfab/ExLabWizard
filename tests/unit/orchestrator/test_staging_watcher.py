@@ -94,7 +94,7 @@ def _make_config(
     manifest_filename: str | None = None,
     cleanup_mode: str = StagingCleanupMode.MANUAL.value,
     retain_hours: int = 24,
-    enabled: bool = True,
+    enabled: bool = True,  # accepted for backward compat; orchestrator pipeline is always on
 ) -> Config:
     return Config(
         paths=PathsConfig(local_root=str(staging_root)),
@@ -118,7 +118,6 @@ def _make_config(
             ),
         ],
         orchestrator=OrchestratorConfig(
-            enabled=enabled,
             label="ORCH",
             staging_root=str(staging_root),
             staging_cleanup=OrchestratorStagingCleanup(
@@ -617,8 +616,11 @@ def test_on_state_change_supports_sync_callable(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_start_does_nothing_when_orchestrator_disabled(tmp_path: Path) -> None:
-    config = _make_config(tmp_path, enabled=False)
+async def test_start_with_missing_staging_root_is_no_op(tmp_path: Path) -> None:
+    """Redesign §3.1: orchestrator pipeline is always active. A missing
+    staging_root on disk is handled per-poll as a no-op, not by skipping
+    the start() call."""
+    config = _make_config(tmp_path / "does-not-exist")
     watcher = StagingWatcher(
         config=config,
         ingest_writer=IngestWriter(),
@@ -626,7 +628,9 @@ async def test_start_does_nothing_when_orchestrator_disabled(tmp_path: Path) -> 
         cache_creation=StubCreationCache(),
     )
     await watcher.start()
-    # Idempotent stop on a watcher that never started.
+    # Poll once with a non-existent staging root returns empty.
+    states = await watcher.poll_once()
+    assert states == []
     await watcher.stop()
 
 

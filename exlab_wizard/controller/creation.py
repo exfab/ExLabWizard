@@ -44,11 +44,13 @@ from exlab_wizard.api.schemas import (
     CreationJson,
     EquipmentJson,
     LimsProjectBlock,
+    OrchestratorBlock,
     PathsBlock,
     PluginApplied,
     PluginIsolation,
     TemplateBlock,
 )
+from exlab_wizard.cache.ingest_writer import default_host
 from exlab_wizard.cache.creation_writer import CreationWriter
 from exlab_wizard.cache.equipment import EquipmentCacheWriter
 from exlab_wizard.cache.log_writer import append_log_line, format_log_line
@@ -613,6 +615,21 @@ class CreationController:
         resolved: ResolvedTemplate = req._resolved_template  # type: ignore[attr-defined]
         dst = self._compose_destination_path(req)
 
+        # Redesign §3.4: run-folder timestamps are minute-precision, so
+        # two creations on the same instrument within the same minute
+        # resolve to the same path. Reject the second creation with a
+        # structured "destination exists" error before Copier renders.
+        if isinstance(req, RunCreateRequest) and dst.exists():
+            from exlab_wizard.errors import ConfigError
+
+            msg = (
+                f"destination run path already exists: {dst}. "
+                "Same-minute creation collisions are a hard failure under "
+                "the minute-precision run-folder convention; retry the "
+                "creation after the next minute starts."
+            )
+            raise ConfigError(msg)
+
         # A run inherits the parent project's LIMS identity (uid /
         # short_id / source) from that project's creation.json. Resolve
         # it once here so _render and _write_cache can read it back via
@@ -944,6 +961,30 @@ class CreationController:
             for entry in plugin_result.applied
         ]
 
+        # Redesign §3.1: creation.json always carries the orchestrator
+        # block. Redesign §3.3: the block carries the producing equipment's
+        # label + completeness-signal info so a receiving orchestrator
+        # can auto-discover the relayed equipment without a per-equipment
+        # config of its own.
+        equipment_entry = next(
+            (e for e in self._config.equipment if e.id == req.equipment_id), None
+        )
+        orchestrator_block = OrchestratorBlock(
+            enabled=True,
+            host=default_host(),
+            label=self._config.orchestrator.label,
+            equipment_label=equipment_entry.label if equipment_entry else None,
+            completeness_signal=(
+                equipment_entry.completeness_signal if equipment_entry else None
+            ),
+            sentinel_filename=(
+                equipment_entry.sentinel_filename if equipment_entry else None
+            ),
+            manifest_filename=(
+                equipment_entry.manifest_filename if equipment_entry else None
+            ),
+        )
+
         payload = CreationJson(
             schema_version=CREATION_JSON_VERSION,
             created_at=utc_now_iso(),
@@ -963,6 +1004,7 @@ class CreationController:
                 nas=str(Path(nas_root) / req.equipment_id) if nas_root else "",
             ),
             plugins_applied=plugins_applied,
+            orchestrator=orchestrator_block,
             sync_status=SyncStatus.PENDING,
         )
         await self._cache_creation.write_creation(cache_path, payload)

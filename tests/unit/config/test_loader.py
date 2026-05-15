@@ -75,9 +75,11 @@ def test_load_config_complete_yaml() -> None:
     # Operators allowlist (one entry per the prompt).
     assert cfg.operators.allowlist == ["alex.nguyen"]
 
-    # Top-level toggles per the prompt.
+    # Top-level toggles per the prompt. Redesign §3.1: orchestrator
+    # ``enabled`` is gone; label + staging_root are always required.
     assert cfg.sync.enabled is True
-    assert cfg.orchestrator.enabled is False
+    assert cfg.orchestrator.label == "Lab Acquisition Station 01"
+    assert cfg.orchestrator.staging_root == "/staging"
 
 
 def test_load_config_missing_file_raises(tmp_path: Path) -> None:

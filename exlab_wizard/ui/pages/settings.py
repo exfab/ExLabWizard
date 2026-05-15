@@ -416,9 +416,11 @@ def _render_section_body(
                 label="Rotated log copies kept", value=draft.logging.central_log_keep
             ).bind_value(draft.logging, "central_log_keep")
         elif section == "orchestrator":
-            ui.checkbox("Orchestrator mode enabled", value=draft.orchestrator.enabled).bind_value(
-                draft.orchestrator, "enabled"
-            )
+            # Redesign §3.1: orchestrator pipeline is always active; the
+            # enabled toggle is removed. label + staging_root are now
+            # always required (they join the setup-incomplete gate). The
+            # full Settings refactor that folds these into an early
+            # section lands in Phase 6.
             ui.input(label="Workstation label", value=draft.orchestrator.label).bind_value(
                 draft.orchestrator, "label"
             )

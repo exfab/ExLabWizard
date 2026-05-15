@@ -129,10 +129,16 @@ class SetupState(StrEnum):
 
     Backend Spec §4.9.1. Values are the same strings as the member names
     (lower case) by convention.
+
+    ``INCOMPLETE_NO_ORCHESTRATOR`` is the GUI/Orchestrator Redesign §3.1
+    addition: ``orchestrator.label`` + ``orchestrator.staging_root`` are
+    always required (no longer gated on a removed ``enabled`` toggle) so
+    they join the setup-incomplete gate.
     """
 
     INCOMPLETE_NO_CONFIG = "incomplete_no_config"
     INCOMPLETE_MISSING_PATHS = "incomplete_missing_paths"
+    INCOMPLETE_NO_ORCHESTRATOR = "incomplete_no_orchestrator"
     INCOMPLETE_NO_EQUIPMENT = "incomplete_no_equipment"
     INCOMPLETE_NO_LIMS = "incomplete_no_lims"
     INCOMPLETE_LIMS_UNREACHABLE = "incomplete_lims_unreachable"

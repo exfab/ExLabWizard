@@ -22,6 +22,7 @@ from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
     LIMSConfig,
+    OrchestratorConfig,
     PathsConfig,
     RcloneTransport,
 )
@@ -70,6 +71,7 @@ def _ready_config(local_root: Path) -> Config:
             )
         ],
         lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),
+        orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
     )
 
 

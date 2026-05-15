@@ -243,6 +243,35 @@ async def test_full_experimental_run_creation_happy_path(tmp_path: Path) -> None
     assert decoded.run_kind == RunKind.EXPERIMENTAL.value
 
 
+async def test_same_minute_run_creation_collision_is_hard_failure(
+    tmp_path: Path,
+) -> None:
+    """Redesign §3.4: two creations on the same instrument within the
+    same minute resolve to the same path. Copier overwrite=False (and an
+    explicit pre-render dst.exists() check) reject the second creation."""
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+    controller = _build_controller(config)
+
+    # First creation at 14:32:05 lands cleanly.
+    run_date_1 = datetime(2026, 4, 17, 14, 32, 5, tzinfo=UTC)
+    handle1 = await controller.create_run(_run_request(run_date=run_date_1))
+    final1 = await _drain_to_done(controller, handle1.session_id)
+    assert final1["state"] is SessionState.DONE
+
+    # Second creation at 14:32:55 — same minute — must fail hard.
+    run_date_2 = datetime(2026, 4, 17, 14, 32, 55, tzinfo=UTC)
+    handle2 = await controller.create_run(_run_request(run_date=run_date_2))
+    final2 = await _drain_to_done(controller, handle2.session_id)
+    assert final2["state"] is SessionState.FAILED
+    # The first run's data must still be intact.
+    expected_first = (
+        local_root / "EQ1" / "Cortex Q3 Pilot" / "Runs" / "Run_2026-04-17T14-32"
+    )
+    assert expected_first.is_dir()
+
+
 # ---------------------------------------------------------------------------
 # Happy path: test run creation
 # ---------------------------------------------------------------------------

@@ -68,8 +68,23 @@ def _make_equipment(equipment_id: str = "CONFOCAL_01") -> EquipmentConfig:
     )
 
 
+def _make_orchestrator():  # type: ignore[no-untyped-def]
+    """Minimal orchestrator identity (Redesign §3.1) for setup-state fixtures."""
+    from exlab_wizard.config.models import OrchestratorConfig
+    return OrchestratorConfig(
+        label="Lab Acquisition Station 01",
+        staging_root="/staging",
+    )
+
+
 def _ready_config() -> Config:
-    """Construct a fully READY Config (paths + equipment + LIMS endpoint+email)."""
+    """Construct a fully READY Config (paths + equipment + LIMS endpoint+email).
+
+    Redesign §3.1: orchestrator.label + orchestrator.staging_root are
+    now required even in the always-on world; the README field is set
+    here so the setup-state evaluator returns READY.
+    """
+    from exlab_wizard.config.models import OrchestratorConfig
     return Config(
         paths=PathsConfig(
             templates_dir="/srv/templates",
@@ -78,6 +93,10 @@ def _ready_config() -> Config:
         ),
         lims=LIMSConfig(endpoint="https://lims.example/api/v1", email="op@lab.example"),
         equipment=[_make_equipment()],
+        orchestrator=OrchestratorConfig(
+            label="Lab Acquisition Station 01",
+            staging_root="/staging",
+        ),
     )
 
 
@@ -614,6 +633,7 @@ def test_evaluate_setup_state_missing_paths() -> None:
     config = Config(
         paths=PathsConfig(templates_dir="", plugin_dir="", local_root=""),
         equipment=[_make_equipment()],
+        orchestrator=_make_orchestrator(),
     )
     assert evaluate_setup_state(config) is SetupState.INCOMPLETE_MISSING_PATHS
 
@@ -627,6 +647,7 @@ def test_evaluate_setup_state_missing_paths_partial() -> None:
             local_root="",
         ),
         equipment=[_make_equipment()],
+        orchestrator=_make_orchestrator(),
     )
     assert evaluate_setup_state(config) is SetupState.INCOMPLETE_MISSING_PATHS
 
@@ -639,8 +660,22 @@ def test_evaluate_setup_state_no_equipment() -> None:
             local_root="/data/lab",
         ),
         equipment=[],
+        orchestrator=_make_orchestrator(),
     )
     assert evaluate_setup_state(config) is SetupState.INCOMPLETE_NO_EQUIPMENT
+
+
+def test_evaluate_setup_state_no_orchestrator() -> None:
+    """Redesign §3.1: orchestrator.label + staging_root are required."""
+    config = Config(
+        paths=PathsConfig(
+            templates_dir="/srv/templates",
+            plugin_dir="/srv/plugins",
+            local_root="/data/lab",
+        ),
+        equipment=[_make_equipment()],
+    )
+    assert evaluate_setup_state(config) is SetupState.INCOMPLETE_NO_ORCHESTRATOR
 
 
 def test_evaluate_setup_state_no_lims() -> None:
@@ -652,6 +687,7 @@ def test_evaluate_setup_state_no_lims() -> None:
         ),
         lims=LIMSConfig(endpoint="", email="", offline_catalogue_path=""),
         equipment=[_make_equipment()],
+        orchestrator=_make_orchestrator(),
     )
     assert evaluate_setup_state(config) is SetupState.INCOMPLETE_NO_LIMS
 
@@ -670,6 +706,7 @@ def test_evaluate_setup_state_lims_via_offline_catalogue() -> None:
             offline_catalogue_path="/mnt/share/offline_catalogue.json",
         ),
         equipment=[_make_equipment()],
+        orchestrator=_make_orchestrator(),
     )
     # Even with keyring missing, offline catalogue path makes the slot complete.
     assert evaluate_setup_state(config, keyring_password_present=False) is SetupState.READY
@@ -705,6 +742,7 @@ def test_evaluate_setup_state_endpoint_only_missing_email() -> None:
         ),
         lims=LIMSConfig(endpoint="https://lims.example/api/v1", email=""),
         equipment=[_make_equipment()],
+        orchestrator=_make_orchestrator(),
     )
     assert evaluate_setup_state(config) is SetupState.INCOMPLETE_NO_LIMS
 
@@ -776,6 +814,7 @@ def test_setup_state_missing_for_no_lims_lists_endpoint_email() -> None:
         ),
         lims=LIMSConfig(endpoint="", email=""),
         equipment=[_make_equipment()],
+        orchestrator=_make_orchestrator(),
     )
     result = setup_state_missing(SetupState.INCOMPLETE_NO_LIMS, config)
     fields = {entry["field"] for entry in result}
@@ -817,6 +856,7 @@ def test_setup_state_missing_for_no_lims_flags_keyring_when_endpoint_email_set()
             offline_catalogue_path="",
         ),
         equipment=[_make_equipment()],
+        orchestrator=_make_orchestrator(),
     )
     result = setup_state_missing(SetupState.INCOMPLETE_NO_LIMS, config)
     fields = {(entry["field"], entry["reason"]) for entry in result}

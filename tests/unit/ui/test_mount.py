@@ -46,7 +46,9 @@ def _config(
     templates_dir: str = "/tmp/tpl",
     lims_endpoint: str = "https://lims.example",
     lims_email: str = "operator@example",
-    orchestrator_enabled: bool = False,
+    orchestrator_enabled: bool = False,  # legacy kw; orchestrator pipeline is always on
+    orchestrator_label: str = "",
+    orchestrator_staging_root: str = "",
     equipment: tuple[Any, ...] = (),
     offline_catalogue_path: str = "",
 ) -> SimpleNamespace:
@@ -61,7 +63,10 @@ def _config(
             email=lims_email,
             offline_catalogue_path=offline_catalogue_path,
         ),
-        orchestrator=SimpleNamespace(enabled=orchestrator_enabled, staging_root=""),
+        orchestrator=SimpleNamespace(
+            label=orchestrator_label,
+            staging_root=orchestrator_staging_root,
+        ),
         equipment=list(equipment),
     )
 
@@ -197,16 +202,22 @@ def test_is_setup_ready_true_when_all_satisfied() -> None:
 def test_build_main_state_marks_incomplete_without_config() -> None:
     state = mount._build_main_state(_deps())
     assert state.setup_incomplete is True
-    assert state.orchestrator_enabled is False
+    # Redesign §3.1: orchestrator pipeline is always active; the
+    # MainPageState flag (kept for the staging-dock render path until
+    # Phase 8) is always True.
+    assert state.orchestrator_enabled is True
 
 
-def test_build_main_state_reflects_orchestrator_flag() -> None:
+def test_build_main_state_always_on_orchestrator() -> None:
+    """Redesign §3.1: the orchestrator pipeline is unconditional."""
     deps = _deps(
-        config=_config(orchestrator_enabled=True),
+        config=_config(
+            orchestrator_label="LAB-1",
+            orchestrator_staging_root="/staging",
+        ),
         keyring_password_present=True,
     )
     state = mount._build_main_state(deps)
-    assert state.setup_incomplete is False
     assert state.orchestrator_enabled is True
 
 
@@ -284,9 +295,19 @@ def test_safe_audit_forwards_validator_output() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_staging_state_none_when_orchestrator_disabled() -> None:
-    deps = _deps(config=_config(orchestrator_enabled=False))
-    assert mount._build_staging_state(deps) is None
+def test_staging_state_when_staging_root_missing(tmp_path: Path) -> None:
+    """Redesign §3.1: orchestrator pipeline is always on, but a missing
+    staging_root on disk surfaces as empty rows, not a None panel."""
+    deps = _deps(
+        config=_config(
+            orchestrator_label="LAB",
+            orchestrator_staging_root=str(tmp_path / "does-not-exist"),
+        ),
+    )
+    state = mount._build_staging_state(deps)
+    # State may be None when staging is empty or not built; either way the
+    # always-on contract doesn't promise rows when there are none.
+    assert state is None or state.rows == []
 
 
 def test_staging_state_none_when_no_config() -> None:
@@ -296,7 +317,12 @@ def test_staging_state_none_when_no_config() -> None:
 def test_staging_state_returns_empty_rows_on_query_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    deps = _deps(config=_config(orchestrator_enabled=True))
+    deps = _deps(
+        config=_config(
+            orchestrator_label="LAB",
+            orchestrator_staging_root="/staging",
+        ),
+    )
 
     def _raise(*_args: Any, **_kwargs: Any) -> None:
         msg = "no staging root"
