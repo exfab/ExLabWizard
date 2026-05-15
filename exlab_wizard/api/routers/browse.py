@@ -16,6 +16,7 @@ audit-mode walks; §4.5). ``creation.json`` is decoded via
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -527,13 +528,12 @@ def _scan_run_children(
     marker_dir: Path,
     *,
     kind: str,
-    prefix_check: Any = None,
+    prefix_check: Callable[[str], bool],
 ) -> list[RunNode]:
-    check = prefix_check or is_test_run_dir
     return [
         _build_run_node(Path(entry.path), kind=kind)
         for entry in _iter_run_or_project_subdirs(marker_dir)
-        if check(entry.name)
+        if prefix_check(entry.name)
     ]
 
 

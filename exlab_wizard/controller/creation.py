@@ -966,23 +966,17 @@ class CreationController:
         # label + completeness-signal info so a receiving orchestrator
         # can auto-discover the relayed equipment without a per-equipment
         # config of its own.
-        equipment_entry = next(
+        eq = next(
             (e for e in self._config.equipment if e.id == req.equipment_id), None
         )
         orchestrator_block = OrchestratorBlock(
             enabled=True,
             host=default_host(),
             label=self._config.orchestrator.label,
-            equipment_label=equipment_entry.label if equipment_entry else None,
-            completeness_signal=(
-                equipment_entry.completeness_signal if equipment_entry else None
-            ),
-            sentinel_filename=(
-                equipment_entry.sentinel_filename if equipment_entry else None
-            ),
-            manifest_filename=(
-                equipment_entry.manifest_filename if equipment_entry else None
-            ),
+            equipment_label=eq.label if eq else None,
+            completeness_signal=eq.completeness_signal if eq else None,
+            sentinel_filename=eq.sentinel_filename if eq else None,
+            manifest_filename=eq.manifest_filename if eq else None,
         )
 
         payload = CreationJson(

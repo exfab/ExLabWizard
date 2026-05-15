@@ -31,11 +31,10 @@ def segments_from_node_id(selected_node: str | None) -> list[BreadcrumbSegment]:
     if not selected_node:
         return []
     parts = [p for p in selected_node.split("/") if p]
-    out: list[BreadcrumbSegment] = []
-    for idx, part in enumerate(parts):
-        ancestor_id = "/".join(parts[: idx + 1])
-        out.append(BreadcrumbSegment(label=part, node_id=ancestor_id))
-    return out
+    return [
+        BreadcrumbSegment(label=part, node_id="/".join(parts[: idx + 1]))
+        for idx, part in enumerate(parts)
+    ]
 
 
 def render_breadcrumb(
