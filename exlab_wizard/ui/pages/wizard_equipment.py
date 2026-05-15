@@ -155,7 +155,13 @@ def render_wizard_equipment(
     on_confirm: Callable[[EquipmentConfig], None] | None = None,
     on_cancel: Callable[[], None] | None = None,
 ) -> Any:
-    """Render the Add-Equipment wizard. Pure render function."""
+    """Render the Add-Equipment wizard. Pure render function.
+
+    Rendered as a full-page card (not a dialog) since the wizard has its
+    own route at ``/wizard/equipment``; the previous dialog wrapping
+    required an explicit ``.open()`` call which the route handler had
+    no clean place to issue.
+    """
     s = state or EquipmentWizardState()
 
     try:
@@ -163,45 +169,46 @@ def render_wizard_equipment(
     except Exception:
         return {"state": s}
 
-    with ui.dialog().props("persistent maximized").classes("w-full h-full") as dialog:
-        with ui.card().classes("w-full h-full p-6"):
-            ui.label("Add Equipment").style(
-                "font-family: var(--font-display); font-size: var(--text-lg); "
-                "color: var(--color-heading); font-weight: 600;"
-            )
-            ui.label(EQUIPMENT_STEP_TITLES[s.active_step]).style(
-                "color: var(--color-muted); margin-bottom: var(--sp-3);"
-            ).props(f'data-testid="wizard-equipment-step-{s.active_step}"')
+    with ui.card().classes("w-full h-full p-6").props(
+        'data-testid="wizard-equipment"'
+    ) as dialog:
+        ui.label("Add Equipment").style(
+            "font-family: var(--font-display); font-size: var(--text-lg); "
+            "color: var(--color-heading); font-weight: 600;"
+        )
+        ui.label(EQUIPMENT_STEP_TITLES[s.active_step]).style(
+            "color: var(--color-muted); margin-bottom: var(--sp-3);"
+        ).props(f'data-testid="wizard-equipment-step-{s.active_step}"')
 
-            _STEP_RENDERERS[s.active_step](s)
+        _STEP_RENDERERS[s.active_step](s)
 
-            with ui.row().classes("items-center w-full").style(
-                "margin-top: var(--sp-4); gap: var(--sp-2);"
-            ):
-                if on_cancel is not None:
-                    ui.button("Cancel").props(
-                        'flat data-testid="wizard-equipment-cancel"'
-                    ).on("click", lambda _evt: on_cancel())
-                if s.active_step != EQUIPMENT_WIZARD_STEPS[0] and on_back is not None:
-                    ui.button("Back").props(
-                        'flat data-testid="wizard-equipment-back"'
-                    ).on("click", lambda _evt: on_back(s.active_step))
-                ui.space()
-                if s.active_step == "review":
-                    ui.button("Confirm").props(
-                        'color=primary data-testid="wizard-equipment-confirm"'
-                    ).on(
-                        "click",
-                        lambda _evt: _maybe_confirm(s, on_confirm),
-                    )
-                else:
-                    btn = ui.button("Next").props(
-                        'color=primary data-testid="wizard-equipment-next"'
-                    )
-                    if on_advance is not None:
-                        btn.on("click", lambda _evt: on_advance(s.active_step))
-                    if not can_advance(s):
-                        btn.props("disable")
+        with ui.row().classes("items-center w-full").style(
+            "margin-top: var(--sp-4); gap: var(--sp-2);"
+        ):
+            if on_cancel is not None:
+                ui.button("Cancel").props(
+                    'flat data-testid="wizard-equipment-cancel"'
+                ).on("click", lambda _evt: on_cancel())
+            if s.active_step != EQUIPMENT_WIZARD_STEPS[0] and on_back is not None:
+                ui.button("Back").props(
+                    'flat data-testid="wizard-equipment-back"'
+                ).on("click", lambda _evt: on_back(s.active_step))
+            ui.space()
+            if s.active_step == "review":
+                ui.button("Confirm").props(
+                    'color=primary data-testid="wizard-equipment-confirm"'
+                ).on(
+                    "click",
+                    lambda _evt: _maybe_confirm(s, on_confirm),
+                )
+            else:
+                btn = ui.button("Next").props(
+                    'color=primary data-testid="wizard-equipment-next"'
+                )
+                if on_advance is not None:
+                    btn.on("click", lambda _evt: on_advance(s.active_step))
+                if not can_advance(s):
+                    btn.props("disable")
     return dialog
 
 

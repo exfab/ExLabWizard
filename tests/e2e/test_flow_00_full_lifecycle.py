@@ -365,8 +365,9 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         _run_next(page, "preview")
         _step_button(page, "wizard-run-step-confirm", "wizard-run-submit")
         page.wait_for_url(re.compile(r".*/main"), timeout=15_000)
-        run_dirs = list((project_dir).glob("Run_*"))
-        assert run_dirs, f"experimental run dir not created under {project_dir}"
+        # Redesign §3.4: experimental runs live under <project>/Runs/.
+        run_dirs = list((project_dir / "Runs").glob("Run_*"))
+        assert run_dirs, f"experimental run dir not created under {project_dir}/Runs"
         assert (run_dirs[0] / ".exlab-wizard" / "creation.json").is_file()
 
         # ---- Phase 11: New Test Run wizard -----------------------------

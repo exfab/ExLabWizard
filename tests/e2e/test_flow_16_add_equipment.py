@@ -1,39 +1,72 @@
 """E2E flow 16: Add-Equipment wizard (Redesign §6).
 
-Drives the 5-step wizard from /main → /wizard/equipment, fills the
-identity / paths / sync_mode / signal steps, and confirms.
+Drives the five-step wizard end to end against the test app:
+identity → paths → sync_mode → signal → review → confirm.
 
-The full Playwright + uvicorn flow lands when the rebuilt main page
-toolbar is fully wired through ``render_file_explorer_page``; for now
-this module documents the catalog testids the wizard surface exposes so
-``test_ux_documentation`` coverage stays green. The static testid
-references below are the contract the wizard must honor — they're
-asserted at module import time by the catalog check.
+The test app mounts the wizard at ``/wizard/equipment?step=<step>`` so
+each step can be loaded directly; the production navigation between
+steps is exercised in the unit tests
+(``tests/unit/ui/test_wizard_equipment.py``). This flow proves the
+NiceGUI render path produces every testid the catalog promises.
 """
 
 from __future__ import annotations
 
-
-# Testids exercised by this flow (asserted by the UX coverage check).
-WIZARD_EQUIPMENT_TESTIDS: tuple[str, ...] = (
-    "toolbar-add-equipment",
-    "wizard-equipment-id",
-    "wizard-equipment-label",
-    "wizard-equipment-local-root",
-    "wizard-equipment-sync-mode",
-    "wizard-equipment-signal",
-    "wizard-equipment-confirm",
-    "wizard-equipment-cancel",
-)
+from tests.e2e.page_objects.wizard_equipment_page import WizardEquipmentPage
 
 
-def test_add_equipment_flow_testid_contract() -> None:
-    """Static assertion that this flow declares the full wizard testid
-    contract. The Playwright-driven flow lands once the rebuilt main
-    window's toolbar Add Equipment button is wired through
-    ``render_file_explorer_page``; until then the wizard route is
-    reachable directly via /wizard/equipment.
-    """
-    assert "toolbar-add-equipment" in WIZARD_EQUIPMENT_TESTIDS
-    assert "wizard-equipment-id" in WIZARD_EQUIPMENT_TESTIDS
-    assert "wizard-equipment-confirm" in WIZARD_EQUIPMENT_TESTIDS
+def _goto(page, url: str, *, retries: int = 2) -> None:
+    last: Exception | None = None
+    for _ in range(retries + 1):
+        try:
+            page.goto(url, wait_until="domcontentloaded")
+            page.wait_for_load_state("networkidle")
+            return
+        except Exception as exc:
+            last = exc
+            page.wait_for_timeout(300)
+    raise AssertionError(f"navigation to {url} failed: {last!r}")
+
+
+def test_flow_16_add_equipment_identity_step(page, server_url) -> None:
+    """Identity step renders the ID + label inputs."""
+    wiz = WizardEquipmentPage(page)
+    _goto(page, f"{server_url}/wizard/equipment?step=identity")
+    wiz.step_identity.wait_for(state="visible", timeout=10_000)
+    wiz.equipment_id.wait_for(state="visible")
+    wiz.label.wait_for(state="visible")
+    wiz.cancel.wait_for(state="visible")
+    wiz.next_button.wait_for(state="visible")
+
+
+def test_flow_16_add_equipment_paths_step(page, server_url) -> None:
+    """Paths step renders local + NAS root inputs."""
+    wiz = WizardEquipmentPage(page)
+    _goto(page, f"{server_url}/wizard/equipment?step=paths")
+    wiz.local_root.wait_for(state="visible", timeout=10_000)
+    wiz.nas_root.wait_for(state="visible")
+
+
+def test_flow_16_add_equipment_sync_mode_step(page, server_url) -> None:
+    """Sync mode step renders the nas/stage radio."""
+    wiz = WizardEquipmentPage(page)
+    _goto(page, f"{server_url}/wizard/equipment?step=sync_mode")
+    wiz.sync_mode.wait_for(state="visible", timeout=10_000)
+
+
+def test_flow_16_add_equipment_signal_step(page, server_url) -> None:
+    """Completeness signal step renders the radio + sentinel filename."""
+    wiz = WizardEquipmentPage(page)
+    _goto(page, f"{server_url}/wizard/equipment?step=signal")
+    wiz.signal.wait_for(state="visible", timeout=10_000)
+    wiz.sentinel_filename.wait_for(state="visible")
+
+
+def test_flow_16_add_equipment_review_and_confirm(page, server_url) -> None:
+    """Review step renders Confirm; clicking it fires the success label."""
+    wiz = WizardEquipmentPage(page)
+    _goto(page, f"{server_url}/wizard/equipment?step=review")
+    wiz.confirm.wait_for(state="visible", timeout=10_000)
+    wiz.confirm.click()
+    page.wait_for_load_state("networkidle")
+    wiz.success.wait_for(state="visible", timeout=5_000)
