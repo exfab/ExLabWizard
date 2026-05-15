@@ -35,7 +35,7 @@ on:
     branches: ["main"]
   pull_request:
     paths:
-      - "exlab_wizard/lims/**"
+      - "src/exlab_wizard/lims/**"
       - "tests/integration/test_lims_integration.py"
       - "tests/integration/test_lims_contract.py"
       - "tests/fixtures/lims/**"

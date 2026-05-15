@@ -25,7 +25,7 @@ from tests.e2e.ux_catalog import UX_INTERACTIONS, UXInteraction
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DOC_PATH = _REPO_ROOT / "docs" / "UX_INTERACTIONS.md"
-_UI_SOURCE_ROOT = _REPO_ROOT / "exlab_wizard" / "ui"
+_UI_SOURCE_ROOT = _REPO_ROOT / "src" / "exlab_wizard" / "ui"
 _E2E_ROOT = _REPO_ROOT / "tests" / "e2e"
 
 _DOC_HEADER = """# UX Interaction Reference

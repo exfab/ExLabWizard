@@ -55,7 +55,7 @@ jobs:
         run: ruff format --check .
 
       - name: mypy
-        run: mypy exlab_wizard
+        run: mypy src/exlab_wizard
 
   coverage:
     name: coverage (unit + integration)

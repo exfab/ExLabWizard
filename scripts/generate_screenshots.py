@@ -4,13 +4,13 @@ CLI:
 
     python scripts/generate_screenshots.py [output_dir]
 
-Default output directory: ``docs/_static/screenshots``.
+Default output directory: ``docs/source/_static/screenshots``.
 
 The script spawns the same uvicorn-hosted e2e test app
 (:func:`tests.e2e._test_app.create_app_factory`) that the e2e suite uses,
 launches a headless Chromium via Playwright, and captures one or more
 PNGs per user-visible capability. The capability map mirrors the
-``docs/user_guide/`` tree:
+``docs/source/user_guide/`` tree:
 
 ================  ====================================================
 Capability id     Source route(s) inside the test app
@@ -58,7 +58,7 @@ if str(REPO_ROOT) not in sys.path:
 from tests.e2e.conftest import _resolve_chromium_executable  # noqa: E402
 
 VIEWPORT = {"width": 1280, "height": 720}
-DEFAULT_OUTPUT = REPO_ROOT / "docs" / "_static" / "screenshots"
+DEFAULT_OUTPUT = REPO_ROOT / "docs" / "source" / "_static" / "screenshots"
 
 
 def _free_port() -> int:
@@ -81,7 +81,17 @@ def _start_server(state_dir: Path) -> tuple[subprocess.Popen[bytes], str]:
         "EXLAB_TESTING": "1",
         "EXLAB_STATE_DIR": str(state_dir),
         "EXLAB_PORT": str(port),
-        "PYTHONPATH": str(REPO_ROOT) + os.pathsep + os.environ.get("PYTHONPATH", ""),
+        # Src-layout: both the repo root (for `tests.e2e._test_app`) and
+        # `src/` (for `exlab_wizard.*`) need to be importable. We append
+        # both so a fresh checkout without an editable install still
+        # resolves the package.
+        "PYTHONPATH": os.pathsep.join(
+            [
+                str(REPO_ROOT),
+                str(REPO_ROOT / "src"),
+                os.environ.get("PYTHONPATH", ""),
+            ]
+        ),
     }
     proc = subprocess.Popen(
         [
@@ -336,9 +346,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # Place the per-run state directory under the docs build tree so a
     # local run does not litter the repo root with a top-level
-    # ``.docs_screenshot_state/`` folder. The docs/_build/ tree is
+    # ``.docs_screenshot_state/`` folder. The docs/build/ tree is
     # already gitignored.
-    state_dir = REPO_ROOT / "docs" / "_build" / "screenshot_state"
+    state_dir = REPO_ROOT / "docs" / "build" / "screenshot_state"
     state_dir.mkdir(parents=True, exist_ok=True)
     proc, base_url = _start_server(state_dir)
     print(f"Server running at: {base_url}")

@@ -103,7 +103,7 @@ write a single-folder bundle into `dist/ExLab-Wizard/`. Packaging
 uv run pytest tests/unit tests/integration   # fast suite
 uv run pytest tests/e2e                      # Playwright flows (browser required)
 uv run ruff check . && uv run ruff format --check .
-uv run mypy exlab_wizard
+uv run mypy src/exlab_wizard
 ```
 
 The `qc` workflow runs all of the above on every PR; the `lims-live`
@@ -117,8 +117,8 @@ The published Sphinx site is at
 [**exfab.github.io/ExLabWizard**](https://exfab.github.io/ExLabWizard/index.html).
 Local sources:
 
-- Operator-facing user guide: `docs/user_guide/` (rendered via
-  Sphinx; `make -C docs html`).
-- Plugin authoring guide: `docs/plugin_guide/`.
+- Operator-facing user guide: `docs/source/user_guide/` (rendered via
+  Sphinx; `make -C docs html` writes the site to `docs/build/html/`).
+- Plugin authoring guide: `docs/source/plugin_guide/`.
 - Design specs: `design_specs/` (the authoritative source for
   capability scope, interfaces, and wire contracts).

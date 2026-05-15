@@ -62,16 +62,16 @@ jobs:
         run: python -m playwright install chromium
 
       - name: Generate user-guide screenshots
-        run: python scripts/generate_screenshots.py docs/_static/screenshots
+        run: python scripts/generate_screenshots.py docs/source/_static/screenshots
 
       - name: Build HTML site
-        run: python -m sphinx -W -b html docs docs/_build/html
+        run: python -m sphinx -W -b html docs/source docs/build/html
 
       - name: Upload built site (PR preview)
         uses: actions/upload-artifact@v4
         with:
           name: docs-html
-          path: docs/_build/html
+          path: docs/build/html
 
   deploy:
     name: Deploy to GitHub Pages
@@ -103,15 +103,15 @@ jobs:
         run: python -m playwright install chromium
 
       - name: Generate user-guide screenshots
-        run: python scripts/generate_screenshots.py docs/_static/screenshots
+        run: python scripts/generate_screenshots.py docs/source/_static/screenshots
 
       - name: Build HTML site
-        run: python -m sphinx -W -b html docs docs/_build/html
+        run: python -m sphinx -W -b html docs/source docs/build/html
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/_build/html
+          path: docs/build/html
 
       - name: Deploy to GitHub Pages
         id: deployment

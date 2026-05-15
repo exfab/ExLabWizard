@@ -124,10 +124,14 @@ def resolve_assets_dir() -> Path:
 
     Resolves both in source layout (``<repo>/assets/``) and in a
     PyInstaller-frozen layout (``sys._MEIPASS/assets/``).
+
+    Source-layout walk: this file lives at
+    ``<repo>/src/exlab_wizard/ui/theme.py`` so the four ``.parent`` hops
+    are ``ui -> exlab_wizard -> src -> <repo>``.
     """
     if hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS) / "assets"  # type: ignore[attr-defined]
-    return Path(__file__).resolve().parent.parent.parent / "assets"
+    return Path(__file__).resolve().parent.parent.parent.parent / "assets"
 
 
 def register_static_assets() -> Path:
