@@ -23,12 +23,16 @@ Every directory level created or managed by the app contains a `.exlab-wizard` c
       creation.json             # project-level provenance
       readme_fields.json
       wizard.<hostname>.log
-    Run_<DATE>/                 # experimental run
+    Runs/
       .exlab-wizard/
-        creation.json
-        readme_fields.json
-        wizard.<hostname>.log
-        ingest.json              # orchestrator only; see Section 13.4
+        runs.json                # marks the subfolder as experimental-only; written once on first experimental run
+        wizard.<hostname>.log    # shared log for all experimental-run activity under this project
+      Run_<DATE>/               # experimental run
+        .exlab-wizard/
+          creation.json
+          readme_fields.json
+          wizard.<hostname>.log
+          ingest.json            # orchestrator only; see Section 13.4
     TestRuns/
       .exlab-wizard/
         test_runs.json           # marks the subfolder as test-only; written once on first test run; filename retained for backward compatibility with v0.5 readers
@@ -52,6 +56,13 @@ Equipment folders sit at the top level under the shared storage root and contain
 | `equipment.json` | Yes | Equipment ID, label, configured NAS root path, first-seen timestamp |
 | `wizard.<hostname>.log` | Yes | Append-only log of all activity (across all projects, experimental and test) under this equipment folder |
 | `templates/` (directory) | Yes | Per-equipment template cache; holds run templates and equipment-specific project templates. See [[05_Template_Format#5.0 Template Locations (Global and Per-Equipment)|§5.0]]. Each child directory is a Copier template with its own `copier.yml`. |
+
+**Runs folder level** -- written the first time an experimental run is created for a given `<equipment>/<project>/Runs/`:
+
+| File | Synced to NAS | Description |
+|---|---|---|
+| `runs.json` | Yes | Marker declaring the subtree as experimental-only; contains `{ "run_kind": "experimental", "created_at": <UTC>, "project": <name>, "equipment": <id> }`. Symmetric with the `TestRuns/` marker `test_runs.json`. |
+| `wizard.<hostname>.log` | Yes | Append-only log of all experimental-run activity under this subfolder |
 
 **Test-runs folder level** -- written the first time a test run is created for a given `<equipment>/<project>/TestRuns/`:
 
@@ -122,8 +133,8 @@ The schema is implemented as a `msgspec.Struct` class hierarchy in `exlab_wizard
     }
   ],
   "paths": {
-    "local": "/data/lab/CONFOCAL_01/PROJ-0042/Run_2026-04-17T14-32-00",
-    "nas": "//nas01/lab/CONFOCAL_01/PROJ-0042/Run_2026-04-17T14-32-00"
+    "local": "/data/lab/CONFOCAL_01/PROJ-0042/Runs/Run_2026-04-17T14-32",
+    "nas": "//nas01/lab/CONFOCAL_01/PROJ-0042/Runs/Run_2026-04-17T14-32"
   },
   "orchestrator": {
     "enabled": true,
@@ -208,8 +219,8 @@ Empty array (the default) means no overrides are active. Tombstones with no matc
 
 ```
 "paths": {
-  "local": "/data/lab/CONFOCAL_01/PROJ-0042/TestRuns/TestRun_2026-04-17T14-32-00",
-  "nas":   "//nas01/lab/CONFOCAL_01/PROJ-0042/TestRuns/TestRun_2026-04-17T14-32-00"
+  "local": "/data/lab/CONFOCAL_01/PROJ-0042/TestRuns/TestRun_2026-04-17T14-32",
+  "nas":   "//nas01/lab/CONFOCAL_01/PROJ-0042/TestRuns/TestRun_2026-04-17T14-32"
 }
 ```
 
@@ -261,7 +272,7 @@ Schema version 1.1 separates the four field layers so downstream tools can reaso
     "equipment": {"id": "CONFOCAL_01", "label": "Confocal Microscope 1"},
     "template": {"name": "confocal_run_v2", "version": "2.1"},
     "project": "PROJ-0042",
-    "run": "Run_2026-04-17T14-32-00",
+    "run": "Run_2026-04-17T14-32",
     "run_kind": "experimental"
   }
 }
@@ -313,6 +324,22 @@ Marker file written once on the first test run within `<equipment>/<project>/Tes
 
 Schema version `1.0` is the only valid value in v1. Subsequent test-run creations under the same project do NOT rewrite this file.
 
+### 11.4.3 `runs.json` Schema
+
+```json
+{
+  "schema_version": "1.0",
+  "run_kind": "experimental",
+  "created_at": "2026-04-17T14:00:00Z",
+  "project": "PROJ-0042",
+  "equipment": "CONFOCAL_01"
+}
+```
+
+Marker file written once on the first experimental run within `<equipment>/<project>/Runs/`. Symmetric with `test_runs.json` (§11.4.2): it declares the entire `Runs/` subtree as experimental-only, so downstream consumers (validator, NAS sync) can apply mode-aware rules without inspecting individual run-level `creation.json` files.
+
+Schema version `1.0` is the only valid value in v1. Subsequent experimental-run creations under the same project do NOT rewrite this file.
+
 ## 11.5 `wizard.<hostname>.log` Format
 
 The on-disk format of `wizard.<hostname>.log` is canonical here; the runtime logger architecture that produces this file is specified in [[16_Logging|§16]].
@@ -325,12 +352,12 @@ Per-machine log files (`wizard.<hostname>.log`) avoid concurrent write conflicts
 2026-04-17T14:31:55Z [INFO ] [host:labpc-04] [equip:CONFOCAL_01] [proj:PROJ-0042] [kind:experimental] Creation started: new_run on CONFOCAL_01/PROJ-0042
 2026-04-17T14:32:00Z [INFO ] [host:labpc-04] [equip:CONFOCAL_01] [proj:PROJ-0042] [kind:experimental] Template selected: confocal_run_v2 v2.1
 2026-04-17T14:32:01Z [INFO ] [host:labpc-04] [equip:CONFOCAL_01] [proj:PROJ-0042] [kind:experimental] Variables resolved: 3 fields
-2026-04-17T14:32:02Z [INFO ] [host:labpc-04] [equip:CONFOCAL_01] [proj:PROJ-0042] [kind:experimental] Directory created: /data/lab/CONFOCAL_01/PROJ-0042/Run_2026-04-17T14-32-00
+2026-04-17T14:32:02Z [INFO ] [host:labpc-04] [equip:CONFOCAL_01] [proj:PROJ-0042] [kind:experimental] Directory created: /data/lab/CONFOCAL_01/PROJ-0042/Runs/Run_2026-04-17T14-32
 2026-04-17T14:32:03Z [INFO ] [host:labpc-04] [equip:CONFOCAL_01] [proj:PROJ-0042] [kind:experimental] Plugin xlsx_field_filler applied to metadata.xlsx: success
 2026-04-17T14:32:04Z [INFO ] [host:labpc-04] [equip:CONFOCAL_01] [proj:PROJ-0042] [kind:experimental] README written: README.md
 2026-04-17T14:32:05Z [INFO ] [host:labpc-04] [equip:CONFOCAL_01] [proj:PROJ-0042] [kind:experimental] Cache written: .exlab-wizard/creation.json, readme_fields.json
 2026-04-17T14:32:05Z [INFO ] [host:labpc-04] [equip:CONFOCAL_01] [proj:PROJ-0042] [kind:experimental] NAS sync queued
-2026-04-17T14:32:11Z [INFO ] [host:labpc-04] [equip:CONFOCAL_01] [proj:PROJ-0042] [kind:experimental] NAS sync complete: //nas01/lab/CONFOCAL_01/PROJ-0042/Run_...
+2026-04-17T14:32:11Z [INFO ] [host:labpc-04] [equip:CONFOCAL_01] [proj:PROJ-0042] [kind:experimental] NAS sync complete: //nas01/lab/CONFOCAL_01/PROJ-0042/Runs/Run_...
 2026-04-17T14:32:11Z [INFO ] [host:labpc-04] [equip:CONFOCAL_01] [proj:PROJ-0042] [kind:experimental] creation.json sync_status updated: synced
 ```
 
@@ -404,8 +431,8 @@ The validator engine is the single component that implements the rules in [[08_E
 {
   "rule": "unresolved_placeholder_token",
   "tier": "hard",
-  "run_path": "/data/lab/CONFOCAL_01/PROJ-0042/Run_<run_date>",
-  "offending_path": "/data/lab/CONFOCAL_01/PROJ-0042/Run_<run_date>",
+  "run_path": "/data/lab/CONFOCAL_01/PROJ-0042/Runs/Run_<run_date>",
+  "offending_path": "/data/lab/CONFOCAL_01/PROJ-0042/Runs/Run_<run_date>",
   "offending_kind": "directory_segment",
   "matched_token": "<run_date>",
   "rule_detail": "Angle-bracket identifier token <run_date> survived templating; this segment was not rendered.",
@@ -424,7 +451,7 @@ The validator engine is the single component that implements the rules in [[08_E
 
 ## 11.9 Schema Versioning and Migration Policy
 
-The on-disk schemas (`creation.json`, `readme_fields.json`, `ingest.json`, `equipment.json`, `test_runs.json`) carry an explicit `schema_version` field. The policy below is the contract every reader and writer follows.
+The on-disk schemas (`creation.json`, `readme_fields.json`, `ingest.json`, `equipment.json`, `runs.json`, `test_runs.json`) carry an explicit `schema_version` field. The policy below is the contract every reader and writer follows.
 
 ### 11.9.1 Versioning rules
 

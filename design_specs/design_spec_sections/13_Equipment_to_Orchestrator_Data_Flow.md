@@ -29,14 +29,15 @@ Equipment machines write into a staging area on the orchestrator using either a 
 /staging/
   CONFOCAL_01/                          # equipment (matches final NAS structure)
     PROJ-0042/                          # project
-      Run_2026-04-17T14-32-00/          # experimental run
-        .exlab-wizard/
-          creation.json                 # copied from equipment machine at run start
-          ingest.json                   # orchestrator-side lifecycle metadata
-          wizard.<hostname>.log
-        [data files as they arrive]
+      Runs/
+        Run_2026-04-17T14-32/             # experimental run
+          .exlab-wizard/
+            creation.json                 # copied from equipment machine at run start
+            ingest.json                   # orchestrator-side lifecycle metadata
+            wizard.<hostname>.log
+          [data files as they arrive]
       TestRuns/
-        TestRun_2026-04-17T09-12-00/    # test run on the same instrument
+        TestRun_2026-04-17T09-12/       # test run on the same instrument
           .exlab-wizard/
             creation.json               # run_kind: "test"
             ingest.json
@@ -44,9 +45,9 @@ Equipment machines write into a staging area on the orchestrator using either a 
           [data files as they arrive]
 ```
 
-`creation.json` from the equipment machine is copied into staging at the start of the push, giving the orchestrator full provenance context before any data files arrive. The orchestrator reads `run_kind` from `creation.json` and uses it to: (a) place the staged directory under `TestRuns/` with a `TestRun_<DATE>` leaf when appropriate, and (b) expose the test classification as an attribute on the staging state (the client may flag it visually; see frontend doc). v1 has no per-run LIMS write; `run_kind` flows only into the on-disk `creation.json` and into the orchestrator's in-memory staging-state view. The LIMS-side run record returns in v1.x (see [[07_Sync_and_Database_Integration#7.2 LIMS Integration|§7.2.7]]).
+`creation.json` from the equipment machine is copied into staging at the start of the push, giving the orchestrator full provenance context before any data files arrive. The orchestrator reads `run_kind` from `creation.json` and uses it to: (a) place the staged directory under `Runs/` with a `Run_<DATE>` leaf, or under `TestRuns/` with a `TestRun_<DATE>` leaf when `run_kind` is `"test"`, and (b) expose the test classification as an attribute on the staging state (the client may flag it visually; see frontend doc). v1 has no per-run LIMS write; `run_kind` flows only into the on-disk `creation.json` and into the orchestrator's in-memory staging-state view. The LIMS-side run record returns in v1.x (see [[07_Sync_and_Database_Integration#7.2 LIMS Integration|§7.2.7]]).
 
-The staging layout mirrors the final NAS structure (equipment-first, with `TestRuns/` parallel to experimental runs and the `TestRun_` leaf prefix preserved) so that sync is a direct subtree copy with no path rewriting.
+The staging layout mirrors the final NAS structure (equipment-first, with `Runs/` and `TestRuns/` as parallel containers and the `Run_` / `TestRun_` leaf prefixes preserved) so that sync is a direct subtree copy with no path rewriting.
 
 ## 13.3 Run Lifecycle States
 
@@ -68,7 +69,7 @@ The orchestrator tracks each staged run through five states, recorded in `ingest
   "project_name": "Cortex Q3 Pilot",
   "equipment_id": "CONFOCAL_01",
   "run_kind": "experimental",
-  "run_path": "CONFOCAL_01/PROJ-0042/Run_2026-04-17T14-32-00",
+  "run_path": "CONFOCAL_01/PROJ-0042/Runs/Run_2026-04-17T14-32",
   "transport": "smb_mount",
   "current_state": "sync_verified",
   "history": [
@@ -93,14 +94,14 @@ The orchestrator tracks each staged run through five states, recorded in `ingest
       "state": "sync_verified",
       "at": "2026-04-17T16:18:43Z",
       "host": "labpc-04",
-      "nas_path": "//nas01/lab/CONFOCAL_01/PROJ-0042/Run_2026-04-17T14-32-00",
+      "nas_path": "//nas01/lab/CONFOCAL_01/PROJ-0042/Runs/Run_2026-04-17T14-32",
       "checksum_file": ".exlab-wizard/checksums.sha256"
     }
   ]
 }
 ```
 
-For a test run the same structure applies, with `run_kind: "test"` and the `run_path` / `nas_path` containing the `TestRuns/` segment and the `TestRun_` leaf prefix, for example `CONFOCAL_01/PROJ-0042/TestRuns/TestRun_2026-04-17T09-12-00`.
+For a test run the same structure applies, with `run_kind: "test"` and the `run_path` / `nas_path` containing the `TestRuns/` segment and the `TestRun_` leaf prefix, for example `CONFOCAL_01/PROJ-0042/TestRuns/TestRun_2026-04-17T09-12`.
 
 `ingest.json` is written by the orchestrator only and is not present on equipment machines. It syncs to NAS as part of the run directory so the full lifecycle history travels with the data.
 

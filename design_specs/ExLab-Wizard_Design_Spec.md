@@ -30,7 +30,7 @@ This Design Spec is the index for the backend behavior, schemas, and persistence
 
 ## 1. Purpose and Goals
 
-A lightweight desktop application that allows lab users to create standardized directory structures on local disk, NAS, and a LIMS database from predefined templates. The app enforces the lab's naming convention (`<Equipment>/<Project>/Run_<ISO8601_DATE>` for experimental runs, or `<Equipment>/<Project>/TestRuns/TestRun_<ISO8601_DATE>` for test/calibration runs), reduces human error in directory creation, and provides an extensible plugin system for transforming template file contents at creation time.
+A lightweight desktop application that allows lab users to create standardized directory structures on local disk, NAS, and a LIMS database from predefined templates. The app enforces the lab's naming convention (`<Equipment>/<Project>/Runs/Run_<ISO8601_DATE>` for experimental runs, or `<Equipment>/<Project>/TestRuns/TestRun_<ISO8601_DATE>` for test/calibration runs), reduces human error in directory creation, and provides an extensible plugin system for transforming template file contents at creation time.
 
 **Non-goals for v1:** Remote template editing, multi-user conflict resolution, real-time sync status dashboards.
 
@@ -64,7 +64,7 @@ The creation controller's hard-coded behaviors that this document continues to o
 
 Moved to [[design_spec_sections/03_Directory_Structure_Convention]].
 
-Defines the equipment-first hierarchy, the `Run_<DATE>` / `TestRuns/TestRun_<DATE>` split, and the three template scopes (project, equipment, run).
+Defines the equipment-first hierarchy, the `Runs/Run_<DATE>` / `TestRuns/TestRun_<DATE>` split, and the three template scopes (project, equipment, run).
 
 ---
 

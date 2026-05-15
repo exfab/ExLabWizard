@@ -7,17 +7,18 @@ Parent: [[ExLab-Wizard_Design_Spec]]
 ```
 <equipment>/
   <project>/                           # human-readable LIMS project name, used verbatim (see §3.2)
-    Run_<YYYY-MM-DDTHH-MM-SS>/         # experimental run (ISO 8601, colons replaced with hyphens for filesystem safety)
-      [template files and subdirs]
+    Runs/
+      Run_<YYYY-MM-DDTHH-MM>/         # experimental run (ISO 8601, colons replaced with hyphens for filesystem safety)
+        [template files and subdirs]
     TestRuns/                          # isolated subfolder for non-experimental runs
-      TestRun_<YYYY-MM-DDTHH-MM-SS>/   # test-run leaf folder; the TestRun_ prefix is itself a marker
+      TestRun_<YYYY-MM-DDTHH-MM>/   # test-run leaf folder; the TestRun_ prefix is itself a marker
         [template files and subdirs]
 ```
 
 A worked example of the resolved layout for a confocal run on `CONFOCAL_01` under the LIMS project named *"UCR-000-I-D_WHEELDON"* (LIMS short ID `PROJ-0042`):
 
 ```
-/data/lab/CONFOCAL_01/UCR-000-I-D_WHEELDON/Run_2026-04-17T14-32-00/¡
+/data/lab/CONFOCAL_01/UCR-000-I-D_WHEELDON/Runs/Run_2026-04-17T14-32/
 ```
 
 The human-readable name *"UCR-000-I-D_WHEELDON"* **is** the `<project>/` path segment, used verbatim (spaces and all); it is also shown in the browse view's project label and the wizard, and is sourced from the LIMS (live or via the local LIMS-project cache; §7.2.4). The LIMS short ID `PROJ-0042` is a barcoding identifier and does **not** appear in the path — it is recorded in the project's metadata (README front matter) instead. See §3.2 for the project-folder naming rule.
@@ -45,12 +46,12 @@ The LIMS **short ID** (`short_id`, e.g. `PROJ-0042`) is a barcoding identifier, 
 
 Unlike equipment IDs (§3.1), the project name is **not** canonicalized — there is no rewrite to a collapsed form. Because LIMS names are free-text, they can in principle contain characters that are unsafe as a filesystem path segment: `/` or `\`, leading or trailing whitespace, control characters, reserved Windows device names (`CON`, `NUL`, …), or non-ASCII that round-trips poorly across filesystems. The spec does not silently sanitize these. Instead, the validator **rejects** any project name that is not a safe single path segment, with a structured error, at project-creation time; a non-conforming project directory found on disk is flagged during the audit-mode walk as a soft-tier finding. A LIMS project whose name cannot be used verbatim must be renamed in the LIMS before a project folder can be created for it.
 
-Test runs live in a dedicated `TestRuns/` subfolder that sits parallel to experimental runs inside each project folder. Two redundant signals separate test data from experimental data:
+Experimental runs live in a dedicated `Runs/` subfolder, and test runs in a dedicated `TestRuns/` subfolder, the two sitting parallel inside each project folder. Two redundant signals separate test data from experimental data:
 
-1. **Parent folder.** Test runs are children of `TestRuns/`; experimental runs are direct children of the project folder.
+1. **Parent folder.** Test runs are children of `TestRuns/`; experimental runs are children of `Runs/`.
 2. **Leaf folder prefix.** Test runs use `TestRun_<DATE>`; experimental runs use `Run_<DATE>`.
 
-Either signal alone is sufficient to identify a test run. Downstream tooling can walk `<equipment>/<project>/Run_*` to enumerate experimental runs while ignoring everything under `TestRuns/`, and can additionally assert that no leaf-folder name beginning with `TestRun_` is processed as experimental. The redundancy is intentional: the folder-level separation is the primary defense, and the leaf-name prefix protects against partial-tree copies, glob misuse, or scripts that walk on leaf names alone.
+Either signal alone is sufficient to identify a test run. Downstream tooling can walk `<equipment>/<project>/Runs/Run_*` to enumerate experimental runs while ignoring everything under `TestRuns/`, and can additionally assert that no leaf-folder name beginning with `TestRun_` is processed as experimental. The redundancy is intentional: the folder-level separation is the primary defense, and the leaf-name prefix protects against partial-tree copies, glob misuse, or scripts that walk on leaf names alone.
 
 Three template scopes exist:
 
@@ -58,6 +59,6 @@ Three template scopes exist:
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
 | **Project template**   | Creates the `<project>/` skeleton inside an equipment folder                                                                                                          | Create a New Project (User Interaction Spec 3.1) |
 | **Equipment template** | Creates `<equipment>/` (typically once per equipment, before the first project lands under it)                                                                        | (Invoked during initial equipment setup or as a side-effect of the first project creation under that equipment) |
-| **Run template**       | Creates `Run_<DATE>/` directly under `<equipment>/<project>/` (experimental) or `TestRun_<DATE>/` under `<equipment>/<project>/TestRuns/` (test). Custom per equipment. | Experimental and Test run creation (User Interaction Spec 3.2, 3.3) |
+| **Run template**       | Creates `Run_<DATE>/` under `<equipment>/<project>/Runs/` (experimental) or `TestRun_<DATE>/` under `<equipment>/<project>/TestRuns/` (test). Custom per equipment. | Experimental and Test run creation (User Interaction Spec 3.2, 3.3) |
 
 Templates declare which run modes they support via `_exlab_run_scope` in `copier.yml` (see [[05_Template_Format#5.2 Copier Manifest (`copier.yml`)|Section 5.2]]): `"experimental"`, `"test"`, or `"both"`. The run creation flow only considers templates whose scope includes the mode the user selected at session start.

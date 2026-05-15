@@ -20,7 +20,7 @@ App-level config lives in a single `config.yaml` in the user's app data director
 paths:
   templates_dir: "..."      # directory containing Copier template subdirectories (app files)
   plugin_dir: "..."
-  local_root: "..."         # equipment-first root; the app writes into <local_root>/<equipment>/<project>/Run_<DATE>/ for experimental runs and <local_root>/<equipment>/<project>/TestRuns/TestRun_<DATE>/ for test runs
+  local_root: "..."         # equipment-first root; the app writes into <local_root>/<equipment>/<project>/Runs/Run_<DATE>/ for experimental runs and <local_root>/<equipment>/<project>/TestRuns/TestRun_<DATE>/ for test runs
 
 lims:
   endpoint: "https://lims.lab.example/api/v1"   # Optional if offline_catalogue_path is set (offline-only workstation).
@@ -54,14 +54,14 @@ readme:
 equipment:
   # local_root and nas_root below are equipment-scoped anchor paths. The full
   # destination is composed at creation time as
-  #   <*_root>/<equipment>/<lims_short_id>/Run_<DATE>/        (experimental)
+  #   <*_root>/<equipment>/<lims_short_id>/Runs/Run_<DATE>/   (experimental)
   #   <*_root>/<equipment>/<lims_short_id>/TestRuns/TestRun_<DATE>/ (test)
   # The <lims_short_id> segment is the LIMS project's short_id (e.g. PROJ-0042),
   # not the human-readable project name. The human name is sourced from the LIMS
   # at display time. For example, a run on CONFOCAL_01 under LIMS project
   # PROJ-0042 (named "Cortex Q3 Pilot" in LIMS) resolves to:
-  #   local: /data/lab/CONFOCAL_01/PROJ-0042/Run_<DATE>/
-  #   nas:   //nas01/lab/CONFOCAL_01/PROJ-0042/Run_<DATE>/
+  #   local: /data/lab/CONFOCAL_01/PROJ-0042/Runs/Run_<DATE>/
+  #   nas:   //nas01/lab/CONFOCAL_01/PROJ-0042/Runs/Run_<DATE>/
   # The equipment ID is the first path segment beneath the shared storage root,
   # matching the equipment-first convention introduced in v0.6 (Section 3).
   - id: "CONFOCAL_01"

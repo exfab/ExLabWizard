@@ -79,7 +79,7 @@ from exlab_wizard.logging.context import set_run_context, clear_run_context
 # At the start of a creation session:
 with set_run_context(host=os.uname().nodename, equipment_id="CONFOCAL_01",
                      project_short_id="PROJ-0042", run_kind="experimental",
-                     run_id="Run_2026-04-17T14-32-00"):
+                     run_id="Run_2026-04-17T14-32"):
     await controller.run(session)
 # Context auto-clears on exit
 ```
@@ -97,7 +97,7 @@ Logs emitted inside the `with` block carry the `[host:]`, `[equip:]`, `[proj:]`,
 - Writes one structured line per event.
 - Does NOT close the file between emits within a session; the handler holds the descriptor open for the lifetime of the process and uses fsync only on `ERROR`-level events.
 
-Project- and run-level scoping (writing to `<local_root>/<equipment>/<project>/.exlab-wizard/...` or its run subdirectory) follows the same pattern with the path resolved from `project_short_id` / `run_id` in the active context.
+Project- and run-level scoping (writing to `<local_root>/<equipment>/<project>/.exlab-wizard/...` or a run subdirectory under `Runs/` or `TestRuns/`) follows the same pattern with the path resolved from `project_short_id` / `run_id` in the active context.
 
 ### 16.2.5 Non-blocking emit via `QueueHandler` + `QueueListener`
 
@@ -115,7 +115,7 @@ This is the recommended adoption from the vectorization audit and matches the §
 
 | If you want to debug... | Look at... |
 |---|---|
-| A single creation that failed | `<local_root>/<equipment>/<project>/<run>/.exlab-wizard/wizard.<hostname>.log` |
+| A single creation that failed | `<local_root>/<equipment>/<project>/Runs/<run>/.exlab-wizard/wizard.<hostname>.log` (test runs: `…/TestRuns/<run>/…`) |
 | All runs that have touched an equipment | `<local_root>/<equipment>/.exlab-wizard/wizard.<hostname>.log` |
 | All runs under a project (any equipment) | `<local_root>/<equipment>/<project>/.exlab-wizard/wizard.<hostname>.log` (per equipment) |
 | App-wide errors, startup, plugin registry, validator audits, sync queue, LIMS cache refresh | The **central app log**, OS-conditional path: |
