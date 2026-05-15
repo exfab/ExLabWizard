@@ -288,6 +288,27 @@ def _capability_plan() -> list[tuple[str, list[dict[str, Any]]]]:
                 },
             ],
         ),
+        # GUI/Orchestrator Redesign capability additions.
+        (
+            "09_add_equipment_wizard",
+            [
+                {
+                    "step_id": "01_identity",
+                    "route": "/wizard/equipment",
+                    "wait_selector": '[data-testid="wizard-equipment-id"]',
+                },
+            ],
+        ),
+        (
+            "10_file_explorer",
+            [
+                {
+                    "step_id": "01_overview",
+                    "route": "/main",
+                    "wait_selector": '[data-testid="toolbar-add-equipment"]',
+                },
+            ],
+        ),
     ]
 
 

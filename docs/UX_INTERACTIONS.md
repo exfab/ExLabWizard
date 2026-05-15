@@ -99,3 +99,16 @@ flow test.
 | `/wizard/run, /wizard/test-run` | `wizard-run-back` | button | Click 'Back' on a run-wizard step | Returns the run-wizard stepper to the previous step. Absent on the first step, which exits via 'Cancel'. |
 | `/wizard/run, /wizard/test-run` | `wizard-run-cancel` | button | Click 'Cancel' on a run-wizard step | Discards the run wizard and returns to /main. Present on every step. |
 | `/wizard/run, /wizard/test-run` | `wizard-run-submit` | button | Click 'Create run' on the confirm step | Runs controller.create_run; writes the run dir + creation.json. |
+
+## Add equipment
+
+| Route | Test ID | Element | Action | Outcome |
+|---|---|---|---|---|
+| `/main` | `toolbar-add-equipment` | button | Click 'Add Equipment' on the main-window toolbar | Navigates to /wizard/equipment for the 5-step Add-Equipment wizard. |
+| `/wizard/equipment` | `wizard-equipment-id` | input | Type the equipment ID (^[A-Z][A-Z0-9_]*$) | Sets the canonical equipment id used by paths + sync_mode validation. |
+| `/wizard/equipment` | `wizard-equipment-label` | input | Type the equipment label | Sets the human-readable equipment label. |
+| `/wizard/equipment` | `wizard-equipment-local-root` | input | Type the equipment's local root path | Sets where this device acquires runs on disk. |
+| `/wizard/equipment` | `wizard-equipment-sync-mode` | radio | Pick 'nas' or 'stage' sync mode | Swaps the transport sub-form between NAS-direct and stage-push. |
+| `/wizard/equipment` | `wizard-equipment-signal` | radio | Pick 'sentinel_file' or 'manifest' completeness signal | Swaps the filename input between sentinel and manifest naming. |
+| `/wizard/equipment` | `wizard-equipment-confirm` | button | Click 'Confirm' on the review step | Posts the assembled EquipmentConfig via POST /config/equipment. |
+| `/wizard/equipment` | `wizard-equipment-cancel` | button | Click 'Cancel' on any wizard step | Discards the wizard and returns to /main. |

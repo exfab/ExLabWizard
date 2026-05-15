@@ -22,8 +22,10 @@ _log = get_logger(__name__)
 
 WELCOME_HEADLINE = "Welcome to ExLab-Wizard"
 WELCOME_BULLETS: tuple[str, ...] = (
-    "Creates standardized run / project directories on disk and NAS.",
-    "Integrates with your LIMS for project tracking.",
+    # GUI/Orchestrator Redesign decision 2: reworded for the
+    # multi-equipment file-explorer framing.
+    "Acquire runs from any equipment you connect — and add more at any time.",
+    "Watch files land in a live folder view, with sync status per file.",
     "Validates outputs and gates NAS sync on hard-tier findings.",
 )
 WELCOME_TIME_ESTIMATE = "Setup takes about 5 minutes."
