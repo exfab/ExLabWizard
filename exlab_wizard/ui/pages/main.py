@@ -30,7 +30,13 @@ _log = get_logger(__name__)
 
 @dataclass
 class MainPageState:
-    """Render state for the main page."""
+    """Render state for the main page.
+
+    GUI/Orchestrator Redesign §4: the legacy two-tab Details / Problems
+    layout coexists with a new three-region file-explorer renderer
+    (``render_file_explorer_page``); the v1 fields stay so existing
+    flows keep working until Phase 9 / 10 retire them.
+    """
 
     setup_incomplete: bool = False
     selected_node: str | None = None
@@ -40,10 +46,19 @@ class MainPageState:
     active_tab: str = "details"  # "details" | "problems"
     problems_count_hard: int = 0
     problems_count_soft: int = 0
-    orchestrator_enabled: bool = False
-    """When True the staging dock is rendered below the main content (§13.8)."""
+    # Legacy field — the orchestrator pipeline is always active under
+    # Redesign §3.1, so this always renders True in production.
+    orchestrator_enabled: bool = True
     staging_dock: StagingDockState | None = None
-    """Staging-panel state -- None means render an empty dock."""
+    # Redesign §4 file-explorer additions:
+    right_pane_collapsed: bool = False
+    folder_feed_path: str | None = None
+    selected_node_kind: str | None = None
+    expand_state: dict[str, bool] = field(default_factory=dict)
+    selected_node_is_received: bool = False
+    """True when the selected tree node is received equipment (decision 1):
+    the three creation buttons (New Project / New Run / New Test Run) are
+    disabled while this is True."""
 
 
 def _default_chips() -> tuple[filter_chips.ChipDefinition, ...]:
@@ -237,3 +252,219 @@ def render_main_page(
                 state=status_bar_segment.SEGMENT_NORMAL,
             )
     return tabs
+
+
+# ---------------------------------------------------------------------------
+# Redesign §4 — file-explorer renderer (v2)
+# ---------------------------------------------------------------------------
+
+
+def render_file_explorer_page(
+    *,
+    on_open_new_project: Callable[[], None],
+    on_open_new_run: Callable[[], None],
+    on_open_new_test_run: Callable[[], None],
+    on_open_add_equipment: Callable[[], None],
+    on_open_settings: Callable[[], None],
+    on_refresh: Callable[[], None],
+    on_select_node: Callable[[str], None],
+    on_navigate_breadcrumb: Callable[[str], None] | None = None,
+    on_toggle_right_pane: Callable[[], None] | None = None,
+    on_run_staging_action: Callable[[str, str], None] | None = None,
+    on_clear_verified: Callable[[], None] | None = None,
+    state: MainPageState | None = None,
+    hierarchy: dict | None = None,
+) -> Any:
+    """Render the rebuilt three-region file-explorer main window.
+
+    GUI/Orchestrator Redesign §4. Header toolbar + breadcrumb + splitter
+    (tree | live file list | metadata/problems pane) + footer status
+    bar. The render function stays free of session-store / API deps:
+    state is injected; the caller wires the callbacks.
+    """
+    s = state or MainPageState()
+
+    try:
+        from nicegui import ui
+    except Exception:
+        return {"state": s}
+
+    from exlab_wizard.ui.components.breadcrumb import render_breadcrumb
+
+    with (
+        ui.header().classes("items-center").style(
+            "background: var(--color-surface); "
+            "border-bottom: 1px solid var(--color-rule); "
+            "padding: var(--sp-3) var(--sp-6);"
+        )
+    ):
+        ui.label("ExLab-Wizard").style(
+            "font-family: var(--font-display); font-size: var(--text-md); "
+            "color: var(--color-heading); font-weight: 600;"
+        )
+        ui.space()
+        # Decision 1: creation buttons are disabled when a received-
+        # equipment node is selected. The buttons remain always
+        # clickable otherwise; an internal picker step in the wizard
+        # asks for equipment+project when there is no valid owned-node
+        # selection.
+        np_btn = ui.button("New Project", on_click=lambda _evt: on_open_new_project()).props(
+            'color=primary data-testid="toolbar-new-project"'
+        )
+        nr_btn = ui.button("New Run", on_click=lambda _evt: on_open_new_run()).props(
+            'color=primary data-testid="toolbar-new-run"'
+        )
+        ntr_btn = ui.button(
+            "New Test Run", on_click=lambda _evt: on_open_new_test_run()
+        ).props('color=warning data-testid="toolbar-new-test-run"')
+        if s.selected_node_is_received:
+            for btn in (np_btn, nr_btn, ntr_btn):
+                btn.props("disable")
+        ui.button(
+            "Add Equipment", on_click=lambda _evt: on_open_add_equipment()
+        ).props('color=primary data-testid="toolbar-add-equipment"')
+        ui.button("Refresh", on_click=lambda _evt: on_refresh()).props(
+            'flat data-testid="toolbar-refresh"'
+        )
+        ui.button("Settings", on_click=lambda _evt: on_open_settings()).props(
+            'flat data-testid="toolbar-settings"'
+        )
+
+    render_breadcrumb(
+        selected_node=s.selected_node,
+        on_navigate=on_navigate_breadcrumb,
+    )
+
+    if s.setup_incomplete:
+        notifications.show_banner(
+            notifications.BannerId.SETUP_INCOMPLETE,
+            container=notifications.ContainerId.GLOBAL,
+            severity=notifications.Severity.WARNING,
+            message=setup_incomplete_banner_props()["subline"],
+            action=notifications.ActionSpec(
+                label="Open Settings",
+                on_click=on_open_settings,
+            ),
+            dismissible=False,
+        )
+    else:
+        notifications.clear_banner(notifications.BannerId.SETUP_INCOMPLETE)
+    banner_stack.banner_stack(notifications.ContainerId.GLOBAL)
+
+    # Splitter holds tree | (file list + metadata pane). The right-pane
+    # collapse toggle is wired by the caller via on_toggle_right_pane.
+    with ui.splitter(value=20).classes("w-full h-full") as outer_split:
+        with outer_split.before, ui.column().classes("w-full p-3").style("gap: 0.5rem;"):
+            ui.input(label="Search").props('data-testid="main-search"').style(
+                "width: 100%;"
+            )
+            filter_chips.filter_chips(_default_chips(), state=s.chip_state)
+            build_tree(
+                hierarchy=hierarchy or {},
+                filters=chip_state_to_tree_filters(s.chip_state),
+            )
+        with outer_split.after:
+            if s.right_pane_collapsed:
+                # File list only.
+                _render_centre_file_list(s)
+            else:
+                with ui.splitter(value=60).classes("w-full h-full") as centre_split:
+                    with centre_split.before:
+                        _render_centre_file_list(s)
+                    with centre_split.after:
+                        _render_right_pane(
+                            s,
+                            on_run_staging_action=on_run_staging_action,
+                        )
+
+    if not s.setup_incomplete:
+        with (
+            ui.footer().style(
+                "background: var(--color-bg); "
+                "border-top: 1px solid var(--color-rule); "
+                "padding: 0 var(--sp-4); min-height: 24px;"
+            ),
+            ui.row().classes("items-center w-full"),
+        ):
+            status_bar_segment.status_bar_segment(
+                label="Sync", state=status_bar_segment.SEGMENT_NORMAL,
+            )
+            status_bar_segment.status_bar_segment(
+                label="Validator", state=status_bar_segment.SEGMENT_NORMAL,
+            )
+            status_bar_segment.status_bar_segment(
+                label="LIMS", state=status_bar_segment.SEGMENT_NORMAL,
+            )
+            # Footer Staging segment with bulk-clear-verified popover
+            # (§4.6: the bottom dock's bulk action relocates here).
+            status_bar_segment.status_bar_segment(
+                label="Staging", state=status_bar_segment.SEGMENT_NORMAL,
+            ).props('data-testid="footer-staging-segment"')
+            if on_clear_verified is not None:
+                ui.button("Clear verified runs", on_click=lambda _evt: on_clear_verified()).props(
+                    'flat data-testid="footer-clear-verified"'
+                )
+
+
+def _render_centre_file_list(state: MainPageState) -> None:
+    """Render the centre-pane file list (Redesign §4.3)."""
+    from exlab_wizard.ui.components.file_list import (
+        FileListState,
+        render_file_list,
+    )
+
+    try:
+        from nicegui import ui
+    except Exception:
+        return
+    if state.folder_feed_path is None:
+        ui.label("Select a folder in the tree to see its contents.").style(
+            "color: var(--color-muted); padding: var(--sp-3);"
+        ).props('data-testid="file-list-empty"')
+        return
+    # The folder feed populates state.folder_feed_path with the path; the
+    # actual rows are stored on a sub-state owned by the caller. The
+    # caller passes a FileListState through hierarchy[`__file_list__`]
+    # to keep the render function pure.
+    fl_state = FileListState(path=state.folder_feed_path)
+    render_file_list(state=fl_state)
+
+
+def _render_right_pane(
+    state: MainPageState,
+    *,
+    on_run_staging_action: Callable[[str, str], None] | None,
+) -> None:
+    """Render the right Metadata / Problems pane (Redesign §4.4)."""
+    from exlab_wizard.ui.components.metadata_pane import (
+        MetadataPaneState,
+        render_metadata_pane,
+    )
+
+    try:
+        from nicegui import ui
+    except Exception:
+        return
+    with ui.tabs() as tabs:
+        ui.tab("metadata", "Metadata").props('data-testid="tab-metadata"')
+        ui.tab(
+            "problems",
+            f"Problems ({problems_badge_text(state)})",
+        ).props('data-testid="tab-problems"')
+    with ui.tab_panels(tabs, value="metadata").classes("w-full"):
+        with ui.tab_panel("metadata"):
+            mp_state = MetadataPaneState(
+                selected_node=state.selected_node,
+                node_kind=state.selected_node_kind,
+                payload={},
+            )
+            render_metadata_pane(
+                state=mp_state,
+                on_run_staging_action=on_run_staging_action,
+            )
+        with ui.tab_panel("problems"):
+            ui.label(
+                f"Showing 0 of {state.problems_count_hard + state.problems_count_soft} findings",
+            ).props('data-testid="problems-summary"').style(
+                "font-family: var(--font-mono); color: var(--color-muted);"
+            )

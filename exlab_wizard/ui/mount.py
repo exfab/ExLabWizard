@@ -86,6 +86,9 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
     from exlab_wizard.ui.pages import (
         wizard_project as wizard_project_page,
     )
+    from exlab_wizard.ui.pages import (
+        wizard_equipment as wizard_equipment_page,
+    )
 
     def _deps() -> Any:
         return getattr(app.state, "dependencies", None)
@@ -172,6 +175,47 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         if _restart_gate(deps, ui):
             return None
         return _render_run_wizard(deps, RunKind.TEST, ui)
+
+    @ui.page("/wizard/equipment")
+    def _wizard_equipment() -> Any:
+        """Redesign §6 — Add-Equipment wizard route."""
+        deps = _deps()
+        if _restart_gate(deps, ui):
+            return None
+        state = wizard_equipment_page.EquipmentWizardState()
+
+        def _on_advance(current_step: str) -> None:
+            idx = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS.index(current_step)
+            if idx + 1 < len(wizard_equipment_page.EQUIPMENT_WIZARD_STEPS):
+                state.active_step = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS[idx + 1]
+                ui.navigate.to("/wizard/equipment")
+
+        def _on_back(current_step: str) -> None:
+            idx = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS.index(current_step)
+            if idx > 0:
+                state.active_step = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS[idx - 1]
+                ui.navigate.to("/wizard/equipment")
+
+        def _on_confirm(eq: Any) -> None:
+            # Posts through the config router. The actual HTTP wiring is
+            # supplied by the deps' append-equipment callable; tests can
+            # stub it.
+            append = getattr(deps, "append_equipment", None) if deps is not None else None
+            if append is not None:
+                try:
+                    append(eq)
+                except Exception as exc:
+                    _show_toast(ui, f"Could not add equipment: {exc}", positive=False)
+                    return
+            ui.navigate.to("/main")
+
+        return wizard_equipment_page.render_wizard_equipment(
+            state=state,
+            on_advance=_on_advance,
+            on_back=_on_back,
+            on_confirm=_on_confirm,
+            on_cancel=lambda: ui.navigate.to("/main"),
+        )
 
     @ui.page("/templates")
     def _templates() -> Any:
