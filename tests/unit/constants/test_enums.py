@@ -63,6 +63,7 @@ def test_problem_class_values() -> None:
     assert enums.ProblemClass.ORPHAN.value == "orphan"
     assert enums.ProblemClass.MISSING_REQUIRED_FIELD.value == "missing_required_field"
     assert enums.ProblemClass.MALFORMED_YAML_FRONT_MATTER.value == "malformed_yaml_front_matter"
+    assert enums.ProblemClass.UNSAFE_PROJECT_NAME.value == "unsafe_project_name"
     assert {m.value for m in enums.ProblemClass} == {
         "unresolved_placeholder_token",
         "leftover_jinja_marker",
@@ -72,6 +73,7 @@ def test_problem_class_values() -> None:
         "orphan",
         "missing_required_field",
         "malformed_yaml_front_matter",
+        "unsafe_project_name",
     }
 
 
@@ -163,6 +165,7 @@ def test_setup_state_values() -> None:
     assert {m.value for m in enums.SetupState} == {
         "incomplete_no_config",
         "incomplete_missing_paths",
+        "incomplete_no_orchestrator",
         "incomplete_no_equipment",
         "incomplete_no_lims",
         "incomplete_lims_unreachable",

@@ -26,12 +26,16 @@ from exlab_wizard.constants import (
     EQUIPMENT_ID_PATTERN,
     EQUIPMENT_JSON_NAME,
     INGEST_JSON_NAME,
+    PROJECT_NAME_MAX_LENGTH,
     PROJECT_SHORT_ID_PATTERN,
     README_FIELDS_JSON_NAME,
     RUN_DATE_STRFTIME,
     RUN_DIR_PREFIX,
+    RUNS_DIR_NAME,
     TEST_RUN_DIR_PREFIX,
     TEST_RUNS_DIR_NAME,
+    WINDOWS_ILLEGAL_CHARS,
+    WINDOWS_RESERVED_NAMES,
     Platform,
     RunKind,
     SetupNextAction,
@@ -221,6 +225,10 @@ def validate_project_short_id(value: str) -> str:
     """Validate ``value`` against ``PROJECT_SHORT_ID_PATTERN``.
 
     Returns the input unchanged. Raises ``ConfigError`` on mismatch.
+
+    The short ID is a LIMS barcoding identifier recorded in project
+    metadata (Backend Spec §3.2); it is no longer a path component, so
+    path composition validates the project *name* instead.
     """
     if not isinstance(value, str) or not value:
         msg = f"project_short_id must be a non-empty string; got {value!r}"
@@ -231,51 +239,129 @@ def validate_project_short_id(value: str) -> str:
     return value
 
 
+def project_name_violations(value: str) -> list[tuple[str | None, str]]:
+    """Return every way ``value`` fails the §3.2 project-name rule.
+
+    The project folder is the human-readable LIMS name used verbatim,
+    so it must be a safe single filesystem path segment. Each entry is
+    a ``(matched_token, detail)`` pair -- ``matched_token`` is the
+    offending character / reserved word (or ``None`` for whole-string
+    failures). An empty list means the name is safe.
+
+    Rejected: non-string / empty, over :data:`PROJECT_NAME_MAX_LENGTH`,
+    leading or trailing whitespace, a reserved Windows device name, a
+    trailing dot, any path separator or other Windows-illegal character,
+    and any non-printable-ASCII character (control or non-ASCII). The
+    name is never canonicalized -- a name that cannot be used verbatim
+    must be renamed in the LIMS.
+    """
+    if not isinstance(value, str) or not value:
+        return [(None, f"project name must be a non-empty string; got {value!r}")]
+
+    problems: list[tuple[str | None, str]] = []
+    if len(value) > PROJECT_NAME_MAX_LENGTH:
+        problems.append(
+            (
+                None,
+                f"project name {value!r} exceeds max length "
+                f"{PROJECT_NAME_MAX_LENGTH} ({len(value)} chars)",
+            )
+        )
+    if value != value.strip():
+        problems.append((None, f"project name {value!r} has leading or trailing whitespace"))
+    stem = value.split(".", 1)[0].strip().upper()
+    if stem in WINDOWS_RESERVED_NAMES:
+        problems.append((stem, f"project name {value!r} is a reserved Windows device name"))
+    if value.endswith("."):
+        problems.append(
+            (".", f"project name {value!r} ends with a trailing dot, illegal on Windows targets")
+        )
+    seen: set[str] = set()
+    for ch in value:
+        if ch in seen:
+            continue
+        if not (0x20 <= ord(ch) <= 0x7E):
+            seen.add(ch)
+            problems.append(
+                (
+                    ch,
+                    f"project name {value!r} contains non-ASCII or control character "
+                    f"{ch!r}; project names must be printable ASCII",
+                )
+            )
+        elif ch in WINDOWS_ILLEGAL_CHARS:
+            seen.add(ch)
+            problems.append(
+                (ch, f"project name {value!r} contains illegal filesystem character {ch!r}")
+            )
+    return problems
+
+
+def validate_project_name(value: str) -> str:
+    """Validate ``value`` as a §3.2 project-folder name.
+
+    Returns the input unchanged on success. Raises ``ConfigError``
+    naming the first violation found by :func:`project_name_violations`.
+    """
+    problems = project_name_violations(value)
+    if problems:
+        raise ConfigError(problems[0][1])
+    return value
+
+
 def compose_run_path(
     *,
     local_root: Path,
     equipment_id: str,
-    project_short_id: str,
+    project_name: str,
     run_kind: RunKind,
     run_date: datetime,
 ) -> Path:
     """Compose the absolute on-disk path for a new run.
 
-    Paths follow Backend Spec §3:
+    Paths follow Backend Spec §3 with the GUI/Orchestrator Redesign §3.4
+    ``Runs/`` symmetry update:
 
-    - experimental: ``<local_root>/<EQUIPMENT_ID>/<PROJ-NNNN>/Run_<DATE>/``
-    - test:         ``<local_root>/<EQUIPMENT_ID>/<PROJ-NNNN>/TestRuns/TestRun_<DATE>/``
+    - experimental: ``<local_root>/<EQUIPMENT_ID>/<project name>/Runs/Run_<DATE>/``
+    - test:         ``<local_root>/<EQUIPMENT_ID>/<project name>/TestRuns/TestRun_<DATE>/``
 
-    Validates ``equipment_id`` via :func:`canonicalize_equipment_id` and
-    ``project_short_id`` via ``PROJECT_SHORT_ID_PATTERN``. ``run_date`` is
-    stamped via ``run_date.strftime(RUN_DATE_STRFTIME)`` to produce the
-    ISO 8601 leaf with colons replaced by hyphens.
+    The ``<project name>`` segment is the human-readable LIMS name used
+    verbatim (§3.2). Validates ``equipment_id`` via
+    :func:`canonicalize_equipment_id` and ``project_name`` via
+    :func:`validate_project_name`. ``run_date`` is stamped via
+    ``run_date.strftime(RUN_DATE_STRFTIME)``; the redesign drops seconds
+    in favour of minute precision, so two runs created on the same
+    instrument within the same minute resolve to the same path. Copier's
+    ``overwrite=False`` (User Interaction Spec §5, gate 6) rejects the
+    second creation rather than clobbering — v1 surfaces this as a hard
+    failure the operator retries.
     """
     canonicalize_equipment_id(equipment_id)
-    validate_project_short_id(project_short_id)
+    validate_project_name(project_name)
     stamp = run_date.strftime(RUN_DATE_STRFTIME)
-    project_dir = Path(local_root) / equipment_id / project_short_id
+    project_dir = Path(local_root) / equipment_id / project_name
     if run_kind is RunKind.TEST:
         return project_dir / TEST_RUNS_DIR_NAME / f"{TEST_RUN_DIR_PREFIX}{stamp}"
-    return project_dir / f"{RUN_DIR_PREFIX}{stamp}"
+    return project_dir / RUNS_DIR_NAME / f"{RUN_DIR_PREFIX}{stamp}"
 
 
 def compose_project_path(
     *,
     local_root: Path,
     equipment_id: str,
-    project_short_id: str,
+    project_name: str,
 ) -> Path:
     """Compose the project-level directory.
 
-    ``<local_root>/<EQUIPMENT_ID>/<PROJ-NNNN>/``.
+    ``<local_root>/<EQUIPMENT_ID>/<project name>/`` -- the project
+    segment is the human-readable LIMS name used verbatim (§3.2).
 
-    Validates ``equipment_id`` and ``project_short_id`` the same way
+    Validates ``equipment_id`` and ``project_name`` the same way
     :func:`compose_run_path` does.
     """
     canonicalize_equipment_id(equipment_id)
-    validate_project_short_id(project_short_id)
-    return Path(local_root) / equipment_id / project_short_id
+    validate_project_name(project_name)
+    return Path(local_root) / equipment_id / project_name
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +425,8 @@ def evaluate_setup_state(
         return SetupState.INCOMPLETE_NO_CONFIG
     if not _paths_complete(config):
         return SetupState.INCOMPLETE_MISSING_PATHS
+    if not _orchestrator_identity_complete(config):
+        return SetupState.INCOMPLETE_NO_ORCHESTRATOR
     if not config.equipment:
         return SetupState.INCOMPLETE_NO_EQUIPMENT
     if not _lims_slot_satisfied(config, keyring_password_present=keyring_password_present):
@@ -346,6 +434,15 @@ def evaluate_setup_state(
     if not lims_reachable:
         return SetupState.INCOMPLETE_LIMS_UNREACHABLE
     return SetupState.READY
+
+
+def _orchestrator_identity_complete(config: Config) -> bool:
+    """Return True when this device has an orchestrator label + staging root.
+
+    Redesign §3.1: the staging pipeline is always active so both fields
+    are always required (no longer gated on a removed ``enabled`` flag).
+    """
+    return bool(config.orchestrator.label and config.orchestrator.staging_root)
 
 
 def setup_state_missing(state: SetupState, config: Config | None) -> list[dict[str, str]]:
@@ -363,9 +460,26 @@ def setup_state_missing(state: SetupState, config: Config | None) -> list[dict[s
         return [{"field": "equipment", "reason": "empty"}]
     if state is SetupState.INCOMPLETE_MISSING_PATHS:
         return _missing_paths_fields(config)
+    if state is SetupState.INCOMPLETE_NO_ORCHESTRATOR:
+        return _missing_orchestrator_fields(config)
     if state is SetupState.INCOMPLETE_NO_LIMS:
         return _missing_lims_fields(config)
     return []
+
+
+def _missing_orchestrator_fields(config: Config | None) -> list[dict[str, str]]:
+    """Redesign §3.1: ``label`` + ``staging_root`` are required."""
+    if config is None:
+        return [
+            {"field": "orchestrator.label", "reason": "missing"},
+            {"field": "orchestrator.staging_root", "reason": "missing"},
+        ]
+    out: list[dict[str, str]] = []
+    if not config.orchestrator.label:
+        out.append({"field": "orchestrator.label", "reason": "missing"})
+    if not config.orchestrator.staging_root:
+        out.append({"field": "orchestrator.staging_root", "reason": "missing"})
+    return out
 
 
 def _missing_paths_fields(config: Config | None) -> list[dict[str, str]]:
@@ -408,6 +522,10 @@ def setup_state_next_action(state: SetupState) -> SetupNextAction | None:
     """
     match state:
         case SetupState.INCOMPLETE_NO_CONFIG | SetupState.INCOMPLETE_MISSING_PATHS:
+            return SetupNextAction.SET_PATHS
+        case SetupState.INCOMPLETE_NO_ORCHESTRATOR:
+            # Redesign §3.1: label + staging_root fold into an early
+            # Settings section. SET_PATHS routes to that section.
             return SetupNextAction.SET_PATHS
         case SetupState.INCOMPLETE_NO_EQUIPMENT:
             return SetupNextAction.ADD_EQUIPMENT

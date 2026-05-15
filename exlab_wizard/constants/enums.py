@@ -59,6 +59,7 @@ class ProblemClass(StrEnum):
     ORPHAN = "orphan"
     MISSING_REQUIRED_FIELD = "missing_required_field"
     MALFORMED_YAML_FRONT_MATTER = "malformed_yaml_front_matter"
+    UNSAFE_PROJECT_NAME = "unsafe_project_name"
 
 
 class FindingKind(StrEnum):
@@ -128,10 +129,16 @@ class SetupState(StrEnum):
 
     Backend Spec §4.9.1. Values are the same strings as the member names
     (lower case) by convention.
+
+    ``INCOMPLETE_NO_ORCHESTRATOR`` is the GUI/Orchestrator Redesign §3.1
+    addition: ``orchestrator.label`` + ``orchestrator.staging_root`` are
+    always required (no longer gated on a removed ``enabled`` toggle) so
+    they join the setup-incomplete gate.
     """
 
     INCOMPLETE_NO_CONFIG = "incomplete_no_config"
     INCOMPLETE_MISSING_PATHS = "incomplete_missing_paths"
+    INCOMPLETE_NO_ORCHESTRATOR = "incomplete_no_orchestrator"
     INCOMPLETE_NO_EQUIPMENT = "incomplete_no_equipment"
     INCOMPLETE_NO_LIMS = "incomplete_no_lims"
     INCOMPLETE_LIMS_UNREACHABLE = "incomplete_lims_unreachable"
@@ -143,6 +150,20 @@ class TransportType(StrEnum):
 
     RCLONE = "rclone"
     RSYNC_SSH = "rsync_ssh"
+
+
+class SyncMode(StrEnum):
+    """Per-equipment sync role. GUI/Orchestrator Redesign Spec §3.2.
+
+    Replaces the device-level orchestrator-mode toggle. Stored under
+    ``sync_mode`` on each ``EquipmentConfig`` entry. An equipment is never
+    both: ``nas`` requires ``transport`` and forbids
+    ``orchestrator_staging_transport``; ``stage`` requires
+    ``orchestrator_staging_transport`` and forbids ``transport``.
+    """
+
+    NAS = "nas"
+    STAGE = "stage"
 
 
 class CompletenessSignal(StrEnum):
@@ -251,11 +272,13 @@ class DirectoryLevel(StrEnum):
     """Result of classifying a directory in the validator engine.
 
     Used internally by the validator scope walk; not persisted. Backend
-    Spec §8.1.
+    Spec §8.1. ``RUNS`` is the GUI/Orchestrator Redesign §3.4 marker
+    folder symmetric with ``TEST_RUNS``.
     """
 
     EQUIPMENT = "equipment"
     PROJECT = "project"
+    RUNS = "runs"
     RUN = "run"
     TEST_RUN = "test_run"
     TEST_RUNS = "test_runs"

@@ -151,7 +151,7 @@ system:
     name: "confocal_run_v2"
     version: "2.1"
   project: "PROJ-0042"
-  run: "Run_2026-04-17T14-32-00"
+  run: "Run_2026-04-17T14-32"
   run_kind: "experimental"
 ---
 
@@ -191,7 +191,7 @@ def read_readme_frontmatter(path: str) -> dict:
             buf.append(line)
     raise ValueError(f"{path}: unterminated YAML front matter")
 
-meta = read_readme_frontmatter("/data/lab/CONFOCAL_01/PROJ-0042/Run_2026-04-17T14-32-00/README.md")
+meta = read_readme_frontmatter("/data/lab/CONFOCAL_01/PROJ-0042/Runs/Run_2026-04-17T14-32/README.md")
 # meta["operator"]                 -> "asmith"
 # meta["system"]["run_kind"]       -> "experimental"
 # meta["template_fields"]["sample_type"] -> "Fixed tissue"

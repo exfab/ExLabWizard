@@ -87,7 +87,7 @@ class _RunSessionBody(BaseModel):
 
     kind: Literal["run"]
     equipment_id: str
-    project_short_id: str
+    project_name: str
     template_path: str
     run_kind: RunKind
     label: str
@@ -300,7 +300,7 @@ def _build_run_request(body: _RunSessionBody) -> RunCreateRequest:
         run_date = parse_utc_iso(body.run_date)
     return RunCreateRequest(
         equipment_id=body.equipment_id,
-        project_short_id=body.project_short_id,
+        project_name=body.project_name,
         template_path=Path(body.template_path),
         run_kind=RunKind(body.run_kind),
         variables=dict(body.variables),

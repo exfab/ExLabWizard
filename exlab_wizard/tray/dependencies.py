@@ -159,9 +159,12 @@ def _build_validator(config: Any) -> Any:
         if local_root is not None:
             for eq in config.equipment:
                 equipment_roots[eq.id] = local_root / eq.id
+    # Redesign §3.1: the orchestrator pipeline is always active, so the
+    # validator's staging-root awareness keys on whether ``staging_root``
+    # is set rather than a removed ``enabled`` toggle.
     staging_root = (
         Path(config.orchestrator.staging_root)
-        if config is not None and config.orchestrator.enabled and config.orchestrator.staging_root
+        if config is not None and config.orchestrator.staging_root
         else None
     )
     return Validator(
@@ -349,7 +352,9 @@ def _build_staging_watcher(
     nas_sync: Any,
     cache_creation: Any,
 ) -> Any:
-    if config is None or not config.orchestrator.enabled:
+    # Redesign §3.1: the staging watcher boots whenever staging_root is
+    # configured; the legacy enabled toggle is gone.
+    if config is None or not config.orchestrator.staging_root:
         return None
     if ingest_writer is None or nas_sync is None or cache_creation is None:
         msg = "staging watcher requires ingest_writer + nas_sync + cache_creation"

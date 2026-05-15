@@ -97,7 +97,7 @@ def _make_clean_tree(
     tmp_path: Path,
     *,
     equipment_id: str = "CONFOCAL_01",
-    project_short_id: str = "PROJ-0042",
+    project_name: str = "Cortex Q3 Pilot",
     run_leaf: str = "Run_2026-04-17T14-32-00",
     run_kind: str = "experimental",
     sync_status: str = "pending",
@@ -105,13 +105,15 @@ def _make_clean_tree(
 ) -> tuple[Path, Path, Path]:
     """Build a single-equipment / single-project / single-run clean tree.
 
-    Returns ``(equipment_root, project_dir, run_dir)``. Both project and
-    run levels carry a ``creation.json``; the run-level file is the
-    one the audit applies the override / sync flags against.
+    Returns ``(equipment_root, project_dir, run_dir)``. ``project_name``
+    is the verbatim human-readable ``<project>/`` folder segment (§3.2).
+    Both project and run levels carry a ``creation.json``; the run-level
+    file is the one the audit applies the override / sync flags against.
     """
     equipment_root = tmp_path / equipment_id
-    project_dir = equipment_root / project_short_id
-    run_dir = project_dir / run_leaf
+    project_dir = equipment_root / project_name
+    # Redesign §3.4: experimental runs live under <project>/Runs/.
+    run_dir = project_dir / "Runs" / run_leaf
     run_dir.mkdir(parents=True)
 
     _write_creation_json(
@@ -212,6 +214,33 @@ def test_audit_run_missing_creation_json_returns_orphan(tmp_path: Path) -> None:
     assert len(orphans) == 1
     assert orphans[0].offending_path == str(run_dir)
     assert orphans[0].tier == "soft"
+
+
+def test_audit_unsafe_project_name_returns_soft_finding(tmp_path: Path) -> None:
+    """A project directory whose name is not a safe path segment (§3.2)
+    produces a soft-tier ``unsafe_project_name`` finding."""
+    equipment_root = tmp_path / "CONFOCAL_01"
+    # Non-ASCII -> not a safe single path segment per §3.2.
+    project_dir = equipment_root / "café"
+    run_dir = project_dir / "Run_2026-04-17T14-32-00"
+    run_dir.mkdir(parents=True)
+    _write_creation_json(project_dir, _build_creation_json_dict(level="project"))
+    _write_creation_json(run_dir, _build_creation_json_dict(level="run"))
+
+    validator = _make_validator(equipment_root=equipment_root)
+    findings = validator.audit({"kind": "all"})
+    unsafe = _by_rule(findings, "unsafe_project_name")
+    assert len(unsafe) == 1
+    assert unsafe[0].tier == "soft"
+    assert unsafe[0].offending_path == str(project_dir)
+
+
+def test_audit_clean_project_name_has_no_unsafe_finding(tmp_path: Path) -> None:
+    """A human-readable project name (spaces and all) is a safe segment."""
+    equipment_root, _project_dir, _run_dir = _make_clean_tree(tmp_path)
+    validator = _make_validator(equipment_root=equipment_root)
+    findings = validator.audit({"kind": "all"})
+    assert _by_rule(findings, "unsafe_project_name") == []
 
 
 def test_audit_mode_prefix_mismatch_run_with_test_kind(tmp_path: Path) -> None:
@@ -459,10 +488,10 @@ def test_audit_scope_equipment_id_resolves_to_configured_root(tmp_path: Path) ->
     """``{"kind": "equipment_id", ...}`` walks only the matching subtree."""
     equipment_root_a = tmp_path / "CONFOCAL_01"
     equipment_root_b = tmp_path / "OTHER_EQUIP"
-    (equipment_root_a / "PROJ-0042" / "Run_2026-04-17T14-32-00").mkdir(parents=True)
-    (equipment_root_b / "PROJ-0099" / "Run_<placeholder>").mkdir(parents=True)
+    (equipment_root_a / "PROJ-0042" / "Runs" / "Run_2026-04-17T14-32-00").mkdir(parents=True)
+    (equipment_root_b / "PROJ-0099" / "Runs" / "Run_<placeholder>").mkdir(parents=True)
     _write_creation_json(
-        equipment_root_a / "PROJ-0042" / "Run_2026-04-17T14-32-00",
+        equipment_root_a / "PROJ-0042" / "Runs" / "Run_2026-04-17T14-32-00",
         _build_creation_json_dict(level="run"),
     )
     _write_creation_json(
@@ -470,7 +499,7 @@ def test_audit_scope_equipment_id_resolves_to_configured_root(tmp_path: Path) ->
         _build_creation_json_dict(level="project"),
     )
     _write_creation_json(
-        equipment_root_b / "PROJ-0099" / "Run_<placeholder>",
+        equipment_root_b / "PROJ-0099" / "Runs" / "Run_<placeholder>",
         _build_creation_json_dict(level="run"),
     )
     _write_creation_json(
@@ -521,14 +550,14 @@ def test_audit_scope_all_walks_every_configured_equipment(tmp_path: Path) -> Non
     """``{"kind": "all"}`` aggregates findings across every equipment root."""
     equipment_root_a = tmp_path / "CONFOCAL_01"
     equipment_root_b = tmp_path / "OTHER_EQUIP"
-    (equipment_root_a / "PROJ-0042" / "Run_<a>").mkdir(parents=True)
-    (equipment_root_b / "PROJ-0099" / "Run_<b>").mkdir(parents=True)
+    (equipment_root_a / "PROJ-0042" / "Runs" / "Run_<a>").mkdir(parents=True)
+    (equipment_root_b / "PROJ-0099" / "Runs" / "Run_<b>").mkdir(parents=True)
     _write_creation_json(
         equipment_root_a / "PROJ-0042",
         _build_creation_json_dict(level="project"),
     )
     _write_creation_json(
-        equipment_root_a / "PROJ-0042" / "Run_<a>",
+        equipment_root_a / "PROJ-0042" / "Runs" / "Run_<a>",
         _build_creation_json_dict(level="run"),
     )
     _write_creation_json(
@@ -536,7 +565,7 @@ def test_audit_scope_all_walks_every_configured_equipment(tmp_path: Path) -> Non
         _build_creation_json_dict(level="project"),
     )
     _write_creation_json(
-        equipment_root_b / "PROJ-0099" / "Run_<b>",
+        equipment_root_b / "PROJ-0099" / "Runs" / "Run_<b>",
         _build_creation_json_dict(level="run"),
     )
 
@@ -668,7 +697,7 @@ def test_audit_includes_staging_root_when_orchestrator_on(tmp_path: Path) -> Non
     equipment_root = tmp_path / "CONFOCAL_01"
     equipment_root.mkdir()
     staging_root = tmp_path / "staging"
-    staging_run = staging_root / "PROJ-0042" / "Run_<staged>"
+    staging_run = staging_root / "PROJ-0042" / "Runs" / "Run_<staged>"
     staging_run.mkdir(parents=True)
     _write_creation_json(staging_run, _build_creation_json_dict(level="run"))
 

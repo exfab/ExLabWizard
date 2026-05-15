@@ -25,6 +25,7 @@ from exlab_wizard.config.models import (
     EquipmentConfig,
     LIMSConfig,
     OperatorsConfig,
+    OrchestratorConfig,
     PathsConfig,
     RcloneTransport,
     READMEConfig,
@@ -72,6 +73,7 @@ def ready_config(tmp_path: Path) -> Config:
         operators=OperatorsConfig(allowlist=["asmith"]),
         readme=READMEConfig(defaults=[]),
         lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),
+        orchestrator=OrchestratorConfig(label="LAB", staging_root=str(tmp_path / "staging")),
     )
 
 
@@ -144,8 +146,9 @@ async def test_full_project_creation_flow(app_with_real_controller: Any, tmp_pat
         assert snapshot.status_code == 200
         body_snap = snapshot.json()
         assert body_snap["state"] == "done"
-        # creation.json must exist on disk.
-        project_dir = tmp_path / "data" / "EQ1" / "PROJ-0042"
+        # creation.json must exist on disk -- the project folder is the
+        # human-readable LIMS name used verbatim (§3.2).
+        project_dir = tmp_path / "data" / "EQ1" / "Cortex Q3 Pilot"
         cache_path = project_dir / CACHE_DIR_NAME / CREATION_JSON_NAME
         assert cache_path.is_file()
         decoded = msgspec.json.decode(cache_path.read_bytes(), type=CreationJson)
@@ -182,6 +185,14 @@ async def test_setup_status_each_incomplete_state() -> None:
         (
             Config(
                 paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
+            ),
+            "incomplete_no_orchestrator",
+            "set_paths",
+        ),
+        (
+            Config(
+                paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
+                orchestrator=OrchestratorConfig(label="LAB", staging_root="/s"),
             ),
             "incomplete_no_equipment",
             "add_equipment",
@@ -325,6 +336,7 @@ async def test_put_config_validates_and_updates_state(tmp_path: Path) -> None:
             plugin_dir=str(tmp_path / "plugins"),
             local_root=str(tmp_path / "data"),
         ),
+        orchestrator=OrchestratorConfig(label="LAB", staging_root=str(tmp_path / "staging")),
     )
     async with await _client(app) as ac:
         response = await ac.put("/api/v1/config", json=new_config.model_dump(mode="json"))

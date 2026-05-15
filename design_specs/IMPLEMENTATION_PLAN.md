@@ -5,7 +5,7 @@
 ExLab-Wizard is a lightweight desktop application that creates standardized
 directory structures on local disk, NAS, and a LIMS database from predefined
 templates. It enforces the lab's
-`<Equipment>/<Project>/Run_<ISO8601_DATE>` naming convention (and the parallel
+`<Equipment>/<Project>/Runs/Run_<ISO8601_DATE>` naming convention (and the parallel
 `TestRuns/TestRun_<ISO8601_DATE>` for non-experimental runs), reduces human
 error in directory creation, and provides an extensible plugin system for
 transforming template file contents at creation time.

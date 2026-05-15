@@ -116,7 +116,7 @@ def _make_creation(local_path: Path) -> CreationJson:
 
 
 async def _populate_run(local_root: Path) -> Path:
-    run_dir = local_root / "EQ1" / "PROJ-0042" / "Run_2026-04-17T14-32-00"
+    run_dir = local_root / "EQ1" / "PROJ-0042" / "Runs" / "Run_2026-04-17T14-32-00"
     run_dir.mkdir(parents=True)
     (run_dir / "data.bin").write_bytes(b"payload-bytes")
     cache = run_dir / CACHE_DIR_NAME
@@ -227,7 +227,7 @@ async def test_pre_sync_gate_blocks_run_with_placeholder_in_path(
 
     cfg = _build_config(local_root)
 
-    bad_dir = local_root / "EQ1" / "PROJ-0042" / "Run_<run_date>"
+    bad_dir = local_root / "EQ1" / "PROJ-0042" / "Runs" / "Run_<run_date>"
     bad_dir.mkdir(parents=True)
     (bad_dir / "data.bin").write_bytes(b"x")
     cache = bad_dir / CACHE_DIR_NAME

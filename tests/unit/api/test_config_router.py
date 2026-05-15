@@ -10,6 +10,7 @@ from exlab_wizard.api import AppDependencies, create_app
 from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
+    OrchestratorConfig,
     PathsConfig,
     RcloneTransport,
 )
@@ -37,6 +38,7 @@ def _ready_config() -> Config:
                 ),
             )
         ],
+        orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
     )
 
 
@@ -93,3 +95,65 @@ def test_put_config_invalid_body_returns_422() -> None:
     assert response.status_code == 422
     body = response.json()
     assert body["error"]["code"] == "validation_failed"
+
+
+# ---------------------------------------------------------------------------
+# POST /config/equipment (Redesign §6)
+# ---------------------------------------------------------------------------
+
+
+def test_append_equipment_persists_and_re_evaluates_state() -> None:
+    captured: dict[str, Any] = {"saved": None}
+
+    async def saver(config: Config) -> None:
+        captured["saved"] = config
+
+    deps = AppDependencies(config=_empty_config(), save_config=saver)
+    app = create_app(dependencies=deps)
+    client = TestClient(app)
+    new_eq = EquipmentConfig.model_validate(
+        {
+            "id": "FLOW_99",
+            "label": "Flow Cytometer 99",
+            "local_root": "/data",
+            "nas_root": "/srv/nas",
+            "completeness_signal": "sentinel_file",
+            "sentinel_filename": "done.flag",
+            "transport": {
+                "type": "rclone",
+                "rclone_remote": "lab-nas",
+                "rclone_remote_path": "lab/FLOW_99",
+            },
+        }
+    )
+    response = client.post("/api/v1/config/equipment", json=new_eq.model_dump(mode="json"))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["appended_id"] == "FLOW_99"
+    assert captured["saved"] is not None
+    assert any(e.id == "FLOW_99" for e in deps.config.equipment)
+
+
+def test_append_equipment_rejects_duplicate_id() -> None:
+    deps = AppDependencies(config=_ready_config())
+    app = create_app(dependencies=deps)
+    client = TestClient(app)
+    duplicate = EquipmentConfig.model_validate(
+        {
+            "id": "EQ1",
+            "label": "Equipment 1 duplicate",
+            "local_root": "/data",
+            "nas_root": "/srv/nas",
+            "completeness_signal": "sentinel_file",
+            "sentinel_filename": "done.flag",
+            "transport": {
+                "type": "rclone",
+                "rclone_remote": "lab-nas",
+                "rclone_remote_path": "lab/EQ1",
+            },
+        }
+    )
+    response = client.post("/api/v1/config/equipment", json=duplicate.model_dump(mode="json"))
+    assert response.status_code == 409
+    body = response.json()
+    assert body["error"]["code"] == "equipment_id_conflict"

@@ -36,9 +36,11 @@ from exlab_wizard.orchestrator.staging_query import (
 
 
 def _config(staging_root: Path, *, enabled: bool = True) -> Config:
+    # ``enabled`` is accepted for backward compat with older test call
+    # sites; Redesign §3.1 makes the orchestrator pipeline always active.
+    _ = enabled
     return Config(
         orchestrator=OrchestratorConfig(
-            enabled=enabled,
             label="ORCH",
             staging_root=str(staging_root),
             staging_cleanup=OrchestratorStagingCleanup(),

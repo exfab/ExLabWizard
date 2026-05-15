@@ -12,12 +12,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from exlab_wizard.config.models import (
-    Config,
-    EquipmentConfig,
-    RcloneTransport,
-    RsyncSshTransport,
-)
+from exlab_wizard.config.models import Config
 from exlab_wizard.constants import CompletenessSignal
 from exlab_wizard.logging import get_logger
 from exlab_wizard.ui import notifications
@@ -416,9 +411,11 @@ def _render_section_body(
                 label="Rotated log copies kept", value=draft.logging.central_log_keep
             ).bind_value(draft.logging, "central_log_keep")
         elif section == "orchestrator":
-            ui.checkbox("Orchestrator mode enabled", value=draft.orchestrator.enabled).bind_value(
-                draft.orchestrator, "enabled"
-            )
+            # Redesign §3.1: orchestrator pipeline is always active; the
+            # enabled toggle is removed. label + staging_root are now
+            # always required (they join the setup-incomplete gate). The
+            # full Settings refactor that folds these into an early
+            # section lands in Phase 6.
             ui.input(label="Workstation label", value=draft.orchestrator.label).bind_value(
                 draft.orchestrator, "label"
             )
@@ -434,62 +431,11 @@ def _render_section_body(
             ui.button("Quit ExLab-Wizard now").props("flat")
 
 
-def build_equipment_config(
-    *,
-    equipment_id: str,
-    label: str,
-    local_root: str,
-    nas_root: str,
-    completeness_signal: str,
-    sentinel_filename: str,
-    manifest_filename: str,
-    transport_type: str,
-    rclone_remote: str,
-    rclone_remote_path: str,
-    ssh_target: str,
-    ssh_key_path: str,
-    rsync_remote_path: str,
-) -> EquipmentConfig:
-    """Assemble a validated :class:`EquipmentConfig` from raw form fields.
-
-    Covers the full §9 equipment surface: either completeness signal
-    (``sentinel_file`` / ``manifest``) and either transport (``rclone``
-    / ``rsync_ssh``). Pydantic validation (equipment-id regex, the
-    signal/filename cross-check, transport required fields) raises if
-    the inputs do not form a valid entry -- the caller surfaces that to
-    the operator.
-    """
-    signal = CompletenessSignal(completeness_signal)
-    transport: RcloneTransport | RsyncSshTransport
-    if transport_type == "rsync_ssh":
-        transport = RsyncSshTransport(
-            type="rsync_ssh",
-            ssh_target=ssh_target.strip(),
-            ssh_key_path=ssh_key_path.strip() or "~/.ssh/id_ed25519",
-            remote_path=rsync_remote_path.strip(),
-        )
-    else:
-        transport = RcloneTransport(
-            type="rclone",
-            rclone_remote=rclone_remote.strip(),
-            rclone_remote_path=rclone_remote_path.strip(),
-        )
-    return EquipmentConfig(
-        id=equipment_id.strip(),
-        label=label.strip(),
-        local_root=local_root.strip(),
-        nas_root=nas_root.strip(),
-        completeness_signal=signal,
-        sentinel_filename=(
-            sentinel_filename.strip() or None
-            if signal is CompletenessSignal.SENTINEL_FILE
-            else None
-        ),
-        manifest_filename=(
-            manifest_filename.strip() or None if signal is CompletenessSignal.MANIFEST else None
-        ),
-        transport=transport,
-    )
+# Redesign §6: the canonical equipment-config assembler now lives in
+# ``ui/equipment_form`` so both the wizard and Settings can share it.
+# This module re-exports it for backward compatibility with existing
+# callers / imports.
+from exlab_wizard.ui.equipment_form import build_equipment_config  # noqa: E402
 
 
 def _render_equipment_section(draft: Config) -> None:
@@ -513,9 +459,12 @@ def _render_equipment_section(draft: Config) -> None:
         with rows:
             if draft.equipment:
                 for entry in draft.equipment:
+                    transport_summary = (
+                        entry.transport.type if entry.transport is not None else "stage"
+                    )
                     ui.label(
                         f"{entry.id} -- {entry.label} "
-                        f"[{entry.completeness_signal} / {entry.transport.type}]"
+                        f"[{entry.completeness_signal} / {transport_summary}]"
                     ).props('data-testid="settings-equipment-row"')
             else:
                 ui.label("No equipment configured yet.").props(

@@ -15,8 +15,9 @@ core-field set:
   ``config.operators.allowlist`` is non-empty.
 - ``objective`` non-empty after trim, ≤ 2000 chars.
 - ``equipment_id`` is in ``config.equipment``.
-- For runs, ``project_short_id`` matches
-  :data:`PROJECT_SHORT_ID_PATTERN`.
+- The project-folder name (the verbatim ``<project>/`` segment, §3.2)
+  is a safe single filesystem path segment per
+  :func:`exlab_wizard.paths.validate_project_name`.
 - Template-required field ids and config-required field ids are all
   present in ``readme_extra``.
 
@@ -43,6 +44,7 @@ from exlab_wizard.api.schemas import (
     CreationJson,
     EquipmentJson,
     LimsProjectBlock,
+    OrchestratorBlock,
     PathsBlock,
     PluginApplied,
     PluginIsolation,
@@ -50,6 +52,7 @@ from exlab_wizard.api.schemas import (
 )
 from exlab_wizard.cache.creation_writer import CreationWriter
 from exlab_wizard.cache.equipment import EquipmentCacheWriter
+from exlab_wizard.cache.ingest_writer import default_host
 from exlab_wizard.cache.log_writer import append_log_line, format_log_line
 from exlab_wizard.config.models import Config
 from exlab_wizard.constants import (
@@ -87,7 +90,7 @@ from exlab_wizard.paths import (
     compose_run_path,
     creation_json_path,
     equipment_json_path,
-    validate_project_short_id,
+    validate_project_name,
 )
 from exlab_wizard.plugins.base import PluginContext
 from exlab_wizard.plugins.host import InputRequiredPayload, PluginHost, PluginPassResult
@@ -148,10 +151,14 @@ class RunCreateRequest:
 
     Backend Spec §4.6.1 / UI-spec §3.2 / §3.3. ``run_kind`` is the core
     mode flag and is immutable mid-session per UI-spec §3.3.
+    ``project_name`` is the human-readable LIMS name of the parent
+    project -- the verbatim ``<project>/`` folder segment (§3.2). The
+    run inherits the parent's full LIMS identity (uid / short_id) from
+    that project's ``creation.json`` at pipeline time.
     """
 
     equipment_id: str
-    project_short_id: str
+    project_name: str
     template_path: Path
     run_kind: RunKind
     variables: dict[str, Any]
@@ -471,6 +478,23 @@ class CreationController:
                 }
             ) from exc
 
+        # Project-folder name gate (Backend Spec §3.2): the ``<project>/``
+        # directory segment is the human-readable LIMS name used verbatim,
+        # so it must be a safe single filesystem path segment. Applies to
+        # both project creation (name from ``lims_project``) and run
+        # creation (name of the parent project folder).
+        project_name = self._project_name_for(req)
+        try:
+            validate_project_name(project_name)
+        except ConfigError as exc:
+            raise ValidationError(
+                {
+                    "code": "unsafe_project_name",
+                    "message": str(exc),
+                    "field": "project_name",
+                }
+            ) from exc
+
         # Mandatory core fields.
         label = (req.label or "").strip()
         if not label:
@@ -529,19 +553,6 @@ class CreationController:
                     "details": {"max_length": OBJECTIVE_MAX_LENGTH},
                 }
             )
-
-        # Run-specific gates.
-        if isinstance(req, RunCreateRequest):
-            try:
-                validate_project_short_id(req.project_short_id)
-            except ConfigError as exc:
-                raise ValidationError(
-                    {
-                        "code": "validation_failed",
-                        "message": str(exc),
-                        "field": "project_short_id",
-                    }
-                ) from exc
 
         # Resolve the template so we can read its required-field ids
         # and store the resolved object on the session for downstream
@@ -603,6 +614,28 @@ class CreationController:
         req = session.request
         resolved: ResolvedTemplate = req._resolved_template  # type: ignore[attr-defined]
         dst = self._compose_destination_path(req)
+
+        # Redesign §3.4: run-folder timestamps are minute-precision, so
+        # two creations on the same instrument within the same minute
+        # resolve to the same path. Reject the second creation with a
+        # structured "destination exists" error before Copier renders.
+        if isinstance(req, RunCreateRequest) and dst.exists():
+            from exlab_wizard.errors import ConfigError
+
+            msg = (
+                f"destination run path already exists: {dst}. "
+                "Same-minute creation collisions are a hard failure under "
+                "the minute-precision run-folder convention; retry the "
+                "creation after the next minute starts."
+            )
+            raise ConfigError(msg)
+
+        # A run inherits the parent project's LIMS identity (uid /
+        # short_id / source) from that project's creation.json. Resolve
+        # it once here so _render and _write_cache can read it back via
+        # the request's stashed _run_lims_block (Backend Spec §3.2).
+        if isinstance(req, RunCreateRequest):
+            object.__setattr__(req, "_run_lims_block", await self._resolve_run_lims_block(req))
 
         # RENDERING.
         render_result = await self._render(resolved, dst, req)
@@ -683,10 +716,52 @@ class CreationController:
 
     @staticmethod
     def _short_id_for(req: ProjectCreateRequest | RunCreateRequest) -> str:
-        """Return the LIMS project ``short_id`` for the request."""
+        """Return the LIMS project ``short_id`` for the request.
+
+        For a project request the short ID comes from the ``lims_project``
+        block the wizard supplied. For a run request the short ID is
+        inherited from the parent project's ``creation.json`` -- resolved
+        once by :meth:`_resolve_run_lims_block` and stashed on the request
+        as ``_run_lims_block`` before this is read; it is ``""`` when the
+        parent has no readable ``creation.json``.
+        """
         if isinstance(req, RunCreateRequest):
-            return req.project_short_id
+            block = getattr(req, "_run_lims_block", None)
+            return block.short_id if block is not None else ""
         return str(req.lims_project.get("short_id", ""))
+
+    @staticmethod
+    def _project_name_for(req: ProjectCreateRequest | RunCreateRequest) -> str:
+        """Return the human-readable LIMS project name for the request.
+
+        This is the verbatim ``<project>/`` directory segment (Backend
+        Spec §3.2). For a run it is the parent project's folder name the
+        wizard carries directly; for a project it is the ``name`` /
+        ``name_at_creation`` field of the ``lims_project`` block.
+        """
+        if isinstance(req, RunCreateRequest):
+            return req.project_name
+        lims = req.lims_project
+        return str(lims.get("name_at_creation") or lims.get("name") or "")
+
+    async def _resolve_run_lims_block(self, req: RunCreateRequest) -> LimsProjectBlock | None:
+        """Read the parent project's ``lims_project`` block for a run.
+
+        A run inherits its LIMS identity (uid / short_id / name / source)
+        from the project it lives under; the run wizard only carries the
+        project's folder name. Returns ``None`` when the parent project
+        has no readable ``creation.json`` (a hand-made or pre-creation
+        folder), in which case the caller falls back to a stub block.
+        """
+        parent_dir = Path(self._config.paths.local_root) / req.equipment_id / req.project_name
+        try:
+            parent = await self._cache_creation.read_creation_snapshot(
+                creation_json_path(parent_dir)
+            )
+        except Exception as exc:
+            _log.debug("parent project creation.json unreadable for run: %s", exc)
+            return None
+        return parent.lims_project
 
     @staticmethod
     def _run_kind_value_for(req: ProjectCreateRequest | RunCreateRequest) -> str:
@@ -706,13 +781,13 @@ class CreationController:
             return compose_project_path(
                 local_root=local_root,
                 equipment_id=req.equipment_id,
-                project_short_id=self._short_id_for(req),
+                project_name=self._project_name_for(req),
             )
         run_date = req.run_date or datetime.now(tz=UTC)
         return compose_run_path(
             local_root=local_root,
             equipment_id=req.equipment_id,
-            project_short_id=req.project_short_id,
+            project_name=req.project_name,
             run_kind=req.run_kind,
             run_date=run_date,
         )
@@ -726,15 +801,19 @@ class CreationController:
         """Render the resolved template into ``dst``.
 
         Copier receives the request's ``variables`` map plus a small set
-        of core defaults (label, operator, objective, project_short_id,
-        run_kind) so templates that reference them via Jinja resolve.
-        Existing keys in ``variables`` are not overwritten -- the
-        operator's explicit values win.
+        of core defaults (label, operator, objective, project_name,
+        project_short_id, run_kind) so templates that reference them via
+        Jinja resolve. ``project_name`` is the verbatim ``<project>/``
+        folder segment; ``project_short_id`` is the LIMS barcoding ID
+        kept as metadata (Backend Spec §3.2). Existing keys in
+        ``variables`` are not overwritten -- the operator's explicit
+        values win.
         """
         variables = dict(req.variables)
         variables.setdefault("label", req.label)
         variables.setdefault("operator", req.operator)
         variables.setdefault("objective", req.objective)
+        variables.setdefault("project_name", self._project_name_for(req))
         variables.setdefault("project_short_id", self._short_id_for(req))
         if isinstance(req, RunCreateRequest):
             variables.setdefault("run_kind", req.run_kind.value)
@@ -830,24 +909,29 @@ class CreationController:
         get_cache_dir(dst).mkdir(parents=True, exist_ok=True)
         cache_path = creation_json_path(dst)
 
-        lims_block_dict = req.lims_project if req.lims_project else {}
-        if not lims_block_dict:
-            # Run requests may not carry a lims_project block in v1; we
-            # still write a stub block so the schema's required fields
-            # are present.
-            lims_block_dict = {
-                "uid": "",
-                "short_id": self._short_id_for(req),
-                "name_at_creation": req.label,
-                "source": LIMSProjectSource.LIVE.value,
-            }
-        lims_block = LimsProjectBlock(
-            uid=str(lims_block_dict.get("uid", "")),
-            short_id=str(lims_block_dict.get("short_id", "")),
-            name_at_creation=str(lims_block_dict.get("name_at_creation", req.label)),
-            source=LIMSProjectSource(lims_block_dict.get("source", LIMSProjectSource.LIVE)),
-            cache_freshness_at_use=lims_block_dict.get("cache_freshness_at_use"),
-        )
+        # A run's lims_project block is inherited from the parent
+        # project's creation.json (resolved into _run_lims_block at the
+        # top of the pipeline); a project's block comes from the wizard's
+        # lims_project dict. Either source can be absent -- a hand-made
+        # parent folder, or a project created without LIMS -- so a stub
+        # keeps creation.json's required fields present (Backend Spec §3.2).
+        if isinstance(req, RunCreateRequest):
+            inherited = getattr(req, "_run_lims_block", None)
+            lims_block = inherited or LimsProjectBlock(
+                uid="",
+                short_id="",
+                name_at_creation=req.project_name,
+                source=LIMSProjectSource.LIVE,
+            )
+        else:
+            lims_block_dict = dict(req.lims_project)
+            lims_block = LimsProjectBlock(
+                uid=str(lims_block_dict.get("uid", "")),
+                short_id=str(lims_block_dict.get("short_id", "")),
+                name_at_creation=self._project_name_for(req) or req.label,
+                source=LIMSProjectSource(lims_block_dict.get("source", LIMSProjectSource.LIVE)),
+                cache_freshness_at_use=lims_block_dict.get("cache_freshness_at_use"),
+            )
 
         run_kind_value = self._run_kind_value_for(req)
         level_value = (
@@ -877,6 +961,22 @@ class CreationController:
             for entry in plugin_result.applied
         ]
 
+        # Redesign §3.1: creation.json always carries the orchestrator
+        # block. Redesign §3.3: the block carries the producing equipment's
+        # label + completeness-signal info so a receiving orchestrator
+        # can auto-discover the relayed equipment without a per-equipment
+        # config of its own.
+        eq = next((e for e in self._config.equipment if e.id == req.equipment_id), None)
+        orchestrator_block = OrchestratorBlock(
+            enabled=True,
+            host=default_host(),
+            label=self._config.orchestrator.label,
+            equipment_label=eq.label if eq else None,
+            completeness_signal=eq.completeness_signal if eq else None,
+            sentinel_filename=eq.sentinel_filename if eq else None,
+            manifest_filename=eq.manifest_filename if eq else None,
+        )
+
         payload = CreationJson(
             schema_version=CREATION_JSON_VERSION,
             created_at=utc_now_iso(),
@@ -896,6 +996,7 @@ class CreationController:
                 nas=str(Path(nas_root) / req.equipment_id) if nas_root else "",
             ),
             plugins_applied=plugins_applied,
+            orchestrator=orchestrator_block,
             sync_status=SyncStatus.PENDING,
         )
         await self._cache_creation.write_creation(cache_path, payload)

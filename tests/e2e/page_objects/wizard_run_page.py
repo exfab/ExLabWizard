@@ -40,8 +40,16 @@ class WizardRunPage:
 
     @property
     def back(self) -> Locator:
-        """The back button on the active stepper navigation."""
+        """The back button on the active stepper navigation.
+
+        Absent on the first step -- that step exits via ``cancel``.
+        """
         return self._page.get_by_test_id("wizard-run-back").first
+
+    @property
+    def cancel(self) -> Locator:
+        """The cancel button; present on every step, returns to /main."""
+        return self._page.get_by_test_id("wizard-run-cancel").first
 
     @property
     def next(self) -> Locator:

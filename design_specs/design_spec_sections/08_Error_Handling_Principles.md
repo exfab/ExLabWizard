@@ -52,7 +52,7 @@ The angle-bracket characters `<` and `>` are forbidden by this rule on Windows t
 
 A run-level directory's leaf-folder name must agree with its `creation.json` `run_kind`:
 
-- `creation.json` `run_kind: "experimental"` requires leaf prefix `Run_` and parent folder *not* equal to `TestRuns/`.
+- `creation.json` `run_kind: "experimental"` requires leaf prefix `Run_` and parent folder equal to `Runs/`.
 - `creation.json` `run_kind: "test"` requires leaf prefix `TestRun_` and parent folder equal to `TestRuns/`.
 
 The two redundant signals from [[03_Directory_Structure_Convention|§3]] (parent folder, leaf prefix) must agree with each other and with `run_kind`. Disagreement on any of the three is a hard-tier finding. Per-finding output names: which signal disagrees and the resolved value of each.

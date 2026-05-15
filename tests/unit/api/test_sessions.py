@@ -27,6 +27,8 @@ from exlab_wizard.controller.state_machine import Phase, SessionState
 
 
 def _ready_config() -> Config:
+    from exlab_wizard.config.models import OrchestratorConfig
+
     return Config(
         paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
         equipment=[
@@ -45,6 +47,7 @@ def _ready_config() -> Config:
             )
         ],
         lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),
+        orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
     )
 
 
@@ -153,7 +156,7 @@ def test_create_session_run(tmp_path: Path) -> None:
     body = {
         "kind": "run",
         "equipment_id": "EQ1",
-        "project_short_id": "PROJ-0001",
+        "project_name": "Cortex Q3 Pilot",
         "template_path": str(tmp_path / "tpl"),
         "run_kind": "experimental",
         "label": "calibration",

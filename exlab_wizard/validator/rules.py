@@ -35,6 +35,7 @@ from exlab_wizard.constants import (
     PLACEHOLDER_JINJA_BLOCK_PATTERN,
     PLACEHOLDER_JINJA_VAR_PATTERN,
     RUN_DIR_PREFIX,
+    RUNS_DIR_NAME,
     TEST_RUN_DIR_PREFIX,
     TEST_RUNS_DIR_NAME,
     WINDOWS_ILLEGAL_CHARS,
@@ -46,7 +47,7 @@ from exlab_wizard.constants import (
     Tier,
 )
 from exlab_wizard.logging import get_logger
-from exlab_wizard.paths import is_run_dir, is_test_run_dir
+from exlab_wizard.paths import is_run_dir, is_test_run_dir, project_name_violations
 
 __all__ = [
     "check_illegal_filesystem_character",
@@ -56,6 +57,7 @@ __all__ = [
     "check_orphan",
     "check_reserved_filesystem_name",
     "check_unresolved_placeholder",
+    "check_unsafe_project_name",
 ]
 
 logger = get_logger(__name__)
@@ -296,6 +298,40 @@ def check_reserved_filesystem_name(*, file_names: list[str]) -> list[dict[str, A
 
 
 # ---------------------------------------------------------------------------
+# §3.2 Unsafe-project-name rule
+# ---------------------------------------------------------------------------
+
+
+def check_unsafe_project_name(*, name: str) -> list[dict[str, Any]]:
+    """§3.2: flag a project directory whose name is not a safe path segment.
+
+    The project folder is the human-readable LIMS name used verbatim, so
+    it must be a safe single filesystem path segment. This is the
+    audit-mode counterpart of
+    :func:`exlab_wizard.paths.validate_project_name`: it reuses the same
+    :func:`~exlab_wizard.paths.project_name_violations` check but emits
+    SOFT-tier findings (a non-conforming directory already on disk is
+    surfaced for review, not blocked), whereas creation time rejects the
+    name hard.
+
+    Returns one ``unsafe_project_name`` finding per violation.
+    """
+    findings: list[dict[str, Any]] = []
+    for matched_token, detail in project_name_violations(name):
+        findings.append(
+            {
+                "rule": ProblemClass.UNSAFE_PROJECT_NAME.value,
+                "tier": Tier.SOFT.value,
+                "matched_token": matched_token,
+                "rule_detail": detail,
+                "offending_kind": FindingKind.DIRECTORY_SEGMENT.value,
+                "offending_path": name,
+            }
+        )
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # §8.1.3 Mode-prefix mismatch rule
 # ---------------------------------------------------------------------------
 
@@ -309,10 +345,11 @@ def check_mode_prefix_mismatch(
     """§8.1.3: detect three-way disagreement between ``run_kind``, leaf
     prefix, and parent folder.
 
-    Hard-tier. Triple-agreement contract:
+    Hard-tier. Triple-agreement contract (Redesign §3.4 puts experimental
+    runs under ``Runs/`` symmetric with test runs under ``TestRuns/``):
 
     - ``run_kind="experimental"`` <=> leaf prefix ``Run_`` <=> parent
-      != ``TestRuns/``
+      == ``Runs/``
     - ``run_kind="test"`` <=> leaf prefix ``TestRun_`` <=> parent
       == ``TestRuns/``
 
@@ -326,6 +363,7 @@ def check_mode_prefix_mismatch(
     leaf_says_test = is_test_run_dir(leaf_dir_name)
     leaf_says_experimental = is_run_dir(leaf_dir_name) and not leaf_says_test
     parent_is_test_runs = parent_dir_name == TEST_RUNS_DIR_NAME
+    parent_is_runs = parent_dir_name == RUNS_DIR_NAME
 
     def _make_finding(matched_token: str, detail: str) -> dict[str, Any]:
         return {
@@ -351,7 +389,15 @@ def check_mode_prefix_mismatch(
                 _make_finding(
                     TEST_RUNS_DIR_NAME,
                     f"creation.json run_kind='experimental' requires parent "
-                    f"!= {TEST_RUNS_DIR_NAME!r} but parent is {parent_dir_name!r}.",
+                    f"== {RUNS_DIR_NAME!r} but parent is {parent_dir_name!r}.",
+                )
+            )
+        elif not parent_is_runs:
+            findings.append(
+                _make_finding(
+                    str(parent_dir_name),
+                    f"creation.json run_kind='experimental' requires parent "
+                    f"== {RUNS_DIR_NAME!r} but parent is {parent_dir_name!r}.",
                 )
             )
     elif creation_run_kind == RunKind.TEST.value:

@@ -95,20 +95,25 @@ def _build_config(local_root: Path, *, allowlist: list[str] | None = None) -> Co
 def _project_request(
     template_path: Path = FIXTURE_TEMPLATES / "project_basic",
     *,
-    label: str = "Cortex Q3 Pilot",
+    label: str = "Cortex Q3 calibration",
     operator: str = "asmith",
     objective: str = "First-pass calibration of the cortex pipeline.",
+    name: str = "Cortex Q3 Pilot",
     short_id: str = "PROJ-0042",
     readme_extra: dict[str, Any] | None = None,
     variables: dict[str, Any] | None = None,
 ) -> ProjectCreateRequest:
+    # ``name`` is the human-readable LIMS project name -- the verbatim
+    # ``<project>/`` folder segment (§3.2); ``label`` is the README label,
+    # a distinct field. ``short_id`` is the LIMS barcoding id kept as
+    # metadata only.
     return ProjectCreateRequest(
         equipment_id="EQ1",
         template_path=template_path,
         lims_project={
             "uid": "8c7e9d2f-1a4b-4e6c-9b3d-7f2a1e5d8c4b",
             "short_id": short_id,
-            "name_at_creation": label,
+            "name_at_creation": name,
             "source": "live",
         },
         variables=variables or {"_exlab_proj": "PROJ-0042"},
@@ -126,13 +131,17 @@ def _run_request(
     label: str = "calibration sweep",
     operator: str = "asmith",
     objective: str = "Sweep the laser wavelengths.",
-    project_short_id: str = "PROJ-0042",
+    project_name: str = "Cortex Q3 Pilot",
     run_date: datetime | None = None,
     variables: dict[str, Any] | None = None,
 ) -> RunCreateRequest:
+    # ``project_name`` is the parent project's folder name (the verbatim
+    # human-readable LIMS name, §3.2). The run inherits the parent's full
+    # LIMS identity from that project's creation.json at pipeline time, so
+    # the request carries no ``lims_project`` block of its own.
     return RunCreateRequest(
         equipment_id="EQ1",
-        project_short_id=project_short_id,
+        project_name=project_name,
         template_path=template_path,
         run_kind=run_kind,
         variables=variables or {"run_id": "run_001"},
@@ -141,12 +150,6 @@ def _run_request(
         objective=objective,
         readme_extra={},
         run_date=run_date,
-        lims_project={
-            "uid": "8c7e9d2f-1a4b-4e6c-9b3d-7f2a1e5d8c4b",
-            "short_id": project_short_id,
-            "name_at_creation": "Cortex Q3 Pilot",
-            "source": "live",
-        },
     )
 
 
@@ -199,7 +202,7 @@ async def test_full_project_creation_happy_path(tmp_path: Path) -> None:
     final = await _drain_to_done(controller, handle.session_id)
     assert final["state"] is SessionState.DONE
 
-    project_dir = local_root / "EQ1" / "PROJ-0042"
+    project_dir = local_root / "EQ1" / "Cortex Q3 Pilot"
     assert project_dir.is_dir()
     cache_path = project_dir / CACHE_DIR_NAME / CREATION_JSON_NAME
     assert cache_path.is_file()
@@ -230,12 +233,39 @@ async def test_full_experimental_run_creation_happy_path(tmp_path: Path) -> None
     final = await _drain_to_done(controller, handle.session_id)
     assert final["state"] is SessionState.DONE
 
-    expected_run = local_root / "EQ1" / "PROJ-0042" / "Run_2026-04-17T14-32-00"
+    expected_run = local_root / "EQ1" / "Cortex Q3 Pilot" / "Runs" / "Run_2026-04-17T14-32"
     assert expected_run.is_dir()
     cache_path = expected_run / CACHE_DIR_NAME / CREATION_JSON_NAME
     decoded = msgspec.json.decode(cache_path.read_bytes(), type=CreationJson)
     assert decoded.level == "run"
     assert decoded.run_kind == RunKind.EXPERIMENTAL.value
+
+
+async def test_same_minute_run_creation_collision_is_hard_failure(
+    tmp_path: Path,
+) -> None:
+    """Redesign §3.4: two creations on the same instrument within the
+    same minute resolve to the same path. Copier overwrite=False (and an
+    explicit pre-render dst.exists() check) reject the second creation."""
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+    controller = _build_controller(config)
+
+    # First creation at 14:32:05 lands cleanly.
+    run_date_1 = datetime(2026, 4, 17, 14, 32, 5, tzinfo=UTC)
+    handle1 = await controller.create_run(_run_request(run_date=run_date_1))
+    final1 = await _drain_to_done(controller, handle1.session_id)
+    assert final1["state"] is SessionState.DONE
+
+    # Second creation at 14:32:55 — same minute — must fail hard.
+    run_date_2 = datetime(2026, 4, 17, 14, 32, 55, tzinfo=UTC)
+    handle2 = await controller.create_run(_run_request(run_date=run_date_2))
+    final2 = await _drain_to_done(controller, handle2.session_id)
+    assert final2["state"] is SessionState.FAILED
+    # The first run's data must still be intact.
+    expected_first = local_root / "EQ1" / "Cortex Q3 Pilot" / "Runs" / "Run_2026-04-17T14-32"
+    assert expected_first.is_dir()
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +292,7 @@ async def test_test_run_creation_uses_test_runs_subdir_and_marks_run_kind(
     final = await _drain_to_done(controller, handle.session_id)
     assert final["state"] is SessionState.DONE
 
-    expected_dir = local_root / "EQ1" / "PROJ-0042" / "TestRuns" / "TestRun_2026-04-17T14-32-00"
+    expected_dir = local_root / "EQ1" / "Cortex Q3 Pilot" / "TestRuns" / "TestRun_2026-04-17T14-32"
     assert expected_dir.is_dir()
     cache_path = expected_dir / CACHE_DIR_NAME / CREATION_JSON_NAME
     decoded = msgspec.json.decode(cache_path.read_bytes(), type=CreationJson)
@@ -349,17 +379,20 @@ async def test_validation_rejects_unknown_equipment(tmp_path: Path) -> None:
     assert session.error["field"] == "equipment_id"
 
 
-async def test_validation_rejects_invalid_project_short_id_for_runs(tmp_path: Path) -> None:
+async def test_validation_rejects_unsafe_project_name_for_runs(tmp_path: Path) -> None:
+    """A run whose parent project name is not a safe path segment (§3.2)
+    is rejected at the validation gate."""
     local_root = tmp_path / "data"
     local_root.mkdir()
     config = _build_config(local_root)
     controller = _build_controller(config)
 
-    handle = await controller.create_run(_run_request(project_short_id="not-a-proj-id"))
+    handle = await controller.create_run(_run_request(project_name="bad/name"))
     assert handle.state is SessionState.FAILED
     session = controller.session_store.get(handle.session_id)
     assert session is not None and session.error is not None
-    assert session.error["field"] == "project_short_id"
+    assert session.error["field"] == "project_name"
+    assert session.error["code"] == "unsafe_project_name"
 
 
 async def test_validation_rejects_empty_objective(tmp_path: Path) -> None:
@@ -476,15 +509,17 @@ async def test_cancel_with_discard_files_removes_partial_dir(tmp_path: Path) -> 
     # the directory.
     handle = await controller.create_project(_project_request())
     await _drain_to_done(controller, handle.session_id)
-    project_dir = local_root / "EQ1" / "PROJ-0042"
+    project_dir = local_root / "EQ1" / "Cortex Q3 Pilot"
     assert project_dir.is_dir()
 
     # Open a second session whose pipeline we will cancel mid-flight.
     # Use a slow plugin scenario by attaching a hand-crafted hung
     # input_required prompt to the controller-level cancel path.
-    handle2 = await controller.create_project(_project_request(short_id="PROJ-0099"))
+    handle2 = await controller.create_project(
+        _project_request(name="Cortex Q3 Pilot Two", short_id="PROJ-0099")
+    )
     # Wait until the directory exists, then cancel.
-    target = local_root / "EQ1" / "PROJ-0099"
+    target = local_root / "EQ1" / "Cortex Q3 Pilot Two"
     for _ in range(200):
         if target.exists():
             break
@@ -509,7 +544,7 @@ async def test_cancel_without_discard_leaves_partial_dir(tmp_path: Path) -> None
 
     handle = await controller.create_project(_project_request())
     await _drain_to_done(controller, handle.session_id)
-    project_dir = local_root / "EQ1" / "PROJ-0042"
+    project_dir = local_root / "EQ1" / "Cortex Q3 Pilot"
     assert project_dir.is_dir()
 
     # Cancelling a terminal session is a no-op; assert directory remains.
@@ -552,7 +587,7 @@ _exlab_run_scope: "experimental"
     assert final["state"] is SessionState.DONE
 
     # The on-disk creation.json should have sync_status = blocked_by_validation.
-    expected_run_dir = next((local_root / "EQ1" / "PROJ-0042").glob("Run_*"))
+    expected_run_dir = next((local_root / "EQ1" / "Cortex Q3 Pilot" / "Runs").glob("Run_*"))
     cache_path = expected_run_dir / CACHE_DIR_NAME / CREATION_JSON_NAME
     decoded = msgspec.json.decode(cache_path.read_bytes(), type=CreationJson)
     assert decoded.sync_status == SyncStatus.BLOCKED_BY_VALIDATION.value
@@ -815,14 +850,14 @@ async def test_cancel_invokes_cleanup_when_compose_path_fails(
     config = _build_config(local_root)
     controller = _build_controller(config)
 
-    # Deliberately corrupt a request: invalid project_short_id makes
-    # compose_run_path raise; cleanup with discard_files=True should
-    # still return without raising.
+    # Deliberately corrupt a request: clearing the lims_project block
+    # leaves _project_name_for empty, so compose_project_path raises;
+    # cleanup with discard_files=True should still return without raising.
     handle = await controller.create_project(_project_request(short_id="PROJ-0042"))
     await _drain_to_done(controller, handle.session_id)
     session = controller.session_store.get(handle.session_id)
     assert session is not None
-    # Mutate the request to trip compose_path.
+    # Mutate the request to trip compose_path (empty -> no project name).
     object.__setattr__(session.request, "lims_project", {"short_id": "BAD"})
     # Cancel a terminal session is a no-op, but the cleanup helper
     # itself swallows errors -- exercise it directly.
@@ -840,7 +875,7 @@ async def test_cleanup_removes_existing_directory_when_discard_files_true(
 
     # Open a session whose dst directory we'll create manually.
     session = controller.session_store.open("project", _project_request())
-    target = local_root / "EQ1" / "PROJ-0042"
+    target = local_root / "EQ1" / "Cortex Q3 Pilot"
     target.mkdir(parents=True)
     (target / "marker.txt").write_text("partial\n", encoding="utf-8")
 
@@ -884,9 +919,10 @@ async def test_render_failure_transitions_session_to_failed(tmp_path: Path) -> N
 
     # Create the destination directory ahead of time so Copier raises
     # ``UserMessageError`` because ``overwrite=False``.
-    dst = local_root / "EQ1" / "PROJ-0042"
+    dst = local_root / "EQ1" / "Cortex Q3 Pilot"
     dst.mkdir(parents=True)
-    # Drop a file so Copier sees a conflict.
+    # Drop the file the template renders ({{ _exlab_proj }}/README.md, with
+    # _exlab_proj="PROJ-0042") so Copier sees a conflict.
     (dst / "PROJ-0042").mkdir()
     (dst / "PROJ-0042" / "README.md").write_text("existing\n", encoding="utf-8")
 
@@ -940,22 +976,28 @@ async def test_append_log_writes_log_line(tmp_path: Path) -> None:
     assert "creation completed" in text
 
 
-async def test_run_request_with_explicit_lims_project_block_used(tmp_path: Path) -> None:
-    """When a run request carries a ``lims_project`` block, the writer
-    should include it on creation.json."""
+async def test_run_inherits_lims_project_block_from_parent(tmp_path: Path) -> None:
+    """A run inherits its LIMS identity from the parent project's
+    creation.json (Backend Spec §3.2) -- the run request carries only the
+    parent project's folder name."""
     local_root = tmp_path / "data"
     local_root.mkdir()
     config = _build_config(local_root)
     controller = _build_controller(config)
 
-    req = _run_request()
-    handle = await controller.create_run(req)
+    # Create the parent project first so its creation.json exists.
+    project_handle = await controller.create_project(_project_request())
+    await _drain_to_done(controller, project_handle.session_id)
+
+    handle = await controller.create_run(_run_request())
     await _drain_to_done(controller, handle.session_id)
 
-    expected = local_root / "EQ1" / "PROJ-0042"
+    expected = local_root / "EQ1" / "Cortex Q3 Pilot" / "Runs"
     cache = next(expected.glob("Run_*")) / CACHE_DIR_NAME / CREATION_JSON_NAME
     decoded = msgspec.json.decode(cache.read_bytes(), type=CreationJson)
     assert decoded.lims_project.uid == "8c7e9d2f-1a4b-4e6c-9b3d-7f2a1e5d8c4b"
+    assert decoded.lims_project.short_id == "PROJ-0042"
+    assert decoded.lims_project.name_at_creation == "Cortex Q3 Pilot"
 
 
 async def test_cancel_before_task_starts_invokes_cleanup(tmp_path: Path) -> None:
@@ -1084,22 +1126,24 @@ async def test_required_field_ids_filters_non_dict_entries() -> None:
     assert _required_field_ids(fields) == ("x",)
 
 
-async def test_run_request_without_lims_project_fills_stub_block(tmp_path: Path) -> None:
-    """A run request without ``lims_project`` data still produces a
-    valid ``creation.json`` with a stub ``lims_project`` block."""
+async def test_run_without_parent_creation_json_fills_stub_block(tmp_path: Path) -> None:
+    """A run whose parent project folder has no readable creation.json
+    still produces a valid ``creation.json`` with a stub ``lims_project``
+    block keyed on the parent project's folder name."""
     local_root = tmp_path / "data"
     local_root.mkdir()
     config = _build_config(local_root)
     controller = _build_controller(config)
 
-    req = _run_request()
-    object.__setattr__(req, "lims_project", {})
-    handle = await controller.create_run(req)
+    # No parent project is created first, so there is no creation.json to
+    # inherit from -- the controller falls back to a stub block.
+    handle = await controller.create_run(_run_request())
     await _drain_to_done(controller, handle.session_id)
 
-    expected = local_root / "EQ1" / "PROJ-0042"
+    expected = local_root / "EQ1" / "Cortex Q3 Pilot" / "Runs"
     cache = next(expected.glob("Run_*")) / CACHE_DIR_NAME / CREATION_JSON_NAME
     decoded = msgspec.json.decode(cache.read_bytes(), type=CreationJson)
-    # Stub block: short_id falls back to req.project_short_id.
-    assert decoded.lims_project.short_id == "PROJ-0042"
+    # Stub block: no inherited identity, name keyed on the folder name.
+    assert decoded.lims_project.short_id == ""
     assert decoded.lims_project.uid == ""
+    assert decoded.lims_project.name_at_creation == "Cortex Q3 Pilot"

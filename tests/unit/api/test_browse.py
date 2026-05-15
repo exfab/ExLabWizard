@@ -19,6 +19,7 @@ from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
     LIMSConfig,
+    OrchestratorConfig,
     PathsConfig,
     RcloneTransport,
 )
@@ -55,6 +56,7 @@ def _config_with_local_root(local_root: Path) -> Config:
             )
         ],
         lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),
+        orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
     )
 
 
@@ -84,7 +86,8 @@ def test_get_tree_lists_equipment_and_projects(tmp_path: Path) -> None:
     local_root = tmp_path / "data"
     local_root.mkdir()
     eq_dir = local_root / "EQ1"
-    project_dir = eq_dir / "PROJ-0042"
+    # The <project>/ segment is the human-readable LIMS name, used verbatim. §3.2.
+    project_dir = eq_dir / "Cortex Q3 Pilot"
     run_dir = project_dir / f"{RUN_DIR_PREFIX}2026-04-17T14-00-00"
     run_dir.mkdir(parents=True)
     _write_creation_json(run_dir)
@@ -101,7 +104,7 @@ def test_get_tree_lists_equipment_and_projects(tmp_path: Path) -> None:
     assert eq["id"] == "EQ1"
     assert len(eq["projects"]) == 1
     project = eq["projects"][0]
-    assert project["short_id"] == "PROJ-0042"
+    assert project["name"] == "Cortex Q3 Pilot"
     assert len(project["runs"]) == 1
     assert project["runs"][0]["kind"] == "experimental"
     assert project["runs"][0]["sync_status"] == SyncStatus.PENDING.value
@@ -113,6 +116,7 @@ def test_get_tree_returns_empty_when_no_equipment(tmp_path: Path) -> None:
     local_root.mkdir()
     config = Config(
         paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root=str(local_root)),
+        orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
     )
     deps = AppDependencies(config=config)
     app = create_app(dependencies=deps)
@@ -227,3 +231,67 @@ def test_get_run_returns_none_readme_when_absent(tmp_path: Path) -> None:
     response = client.get(f"/api/v1/run/{run_dir}")
     assert response.status_code == 200
     assert response.json()["readme"] is None
+
+
+# ---------------------------------------------------------------------------
+# GET /folder (Redesign §5)
+# ---------------------------------------------------------------------------
+
+
+def test_get_folder_returns_immediate_contents(tmp_path: Path) -> None:
+    local_root = tmp_path / "data"
+    folder = local_root / "EQ1" / "PROJ-0042" / "Runs" / "Run_2026-04-17T14-32"
+    folder.mkdir(parents=True)
+    (folder / "scan.tif").write_bytes(b"\x00" * 1024)
+    (folder / "metadata.json").write_text('{"k": "v"}', encoding="utf-8")
+    (folder / "subdir").mkdir()
+    deps = AppDependencies(config=_config_with_local_root(local_root))
+    app = create_app(dependencies=deps)
+    client = TestClient(app)
+    response = client.get(f"/api/v1/folder/{folder}")
+    assert response.status_code == 200
+    body = response.json()
+    names = {row["name"] for row in body["entries"]}
+    assert names == {"scan.tif", "metadata.json", "subdir"}
+    subdir_row = next(row for row in body["entries"] if row["name"] == "subdir")
+    assert subdir_row["is_dir"] is True
+    scan_row = next(row for row in body["entries"] if row["name"] == "scan.tif")
+    assert scan_row["size_bytes"] == 1024
+
+
+def test_get_folder_404_on_vanished_path(tmp_path: Path) -> None:
+    deps = AppDependencies(config=_config_with_local_root(tmp_path / "data"))
+    app = create_app(dependencies=deps)
+    client = TestClient(app)
+    response = client.get(f"/api/v1/folder/{tmp_path / 'does-not-exist'}")
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "folder_not_found"
+
+
+def test_get_tree_includes_sync_mode_on_equipment(tmp_path: Path) -> None:
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    deps = AppDependencies(config=_config_with_local_root(local_root))
+    app = create_app(dependencies=deps)
+    client = TestClient(app)
+    body = client.get("/api/v1/tree").json()
+    assert body["equipment"][0]["sync_mode"] == "nas"
+    assert body["equipment"][0]["relay"] is False
+    assert body["received_equipment"] == []
+
+
+def test_get_folder_rejects_path_outside_configured_roots(tmp_path: Path) -> None:
+    """Path-confinement guard: only the configured local_root /
+    staging_root / templates / plugins are listable via GET /folder."""
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("nope")
+    deps = AppDependencies(config=_config_with_local_root(local_root))
+    app = create_app(dependencies=deps)
+    client = TestClient(app)
+    response = client.get(f"/api/v1/folder/{outside}")
+    assert response.status_code == 403
+    body = response.json()
+    assert body["error"]["code"] == "permission_denied"

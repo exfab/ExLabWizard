@@ -70,7 +70,17 @@ nitpicky = False
 # because the test writes it there; it is not part of the rendered site
 # -- the user guide already documents the UX with screenshots -- so it
 # is excluded rather than wired into a toctree.
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "UX_INTERACTIONS.md"]
+exclude_patterns = [
+    "_build",
+    "Thumbs.db",
+    ".DS_Store",
+    "UX_INTERACTIONS.md",
+    # Internal design specs are reference material for the implementation
+    # team; they don't belong in the public Sphinx site, so excluding them
+    # silences the toctree-not-included warnings (which Sphinx -W
+    # otherwise treats as errors).
+    "superpowers/**",
+]
 
 templates_path = ["_templates"]
 

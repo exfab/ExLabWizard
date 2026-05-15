@@ -17,6 +17,7 @@ from exlab_wizard.validator.rules import (
     check_orphan,
     check_reserved_filesystem_name,
     check_unresolved_placeholder,
+    check_unsafe_project_name,
 )
 
 # ---------------------------------------------------------------------------
@@ -299,17 +300,73 @@ def test_non_reserved_name_passes(name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# §3.2 Unsafe-project-name rule
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "bad/name",
+        "back\\slash",
+        " leading",
+        "trailing ",
+        "trailing.",
+        "café",  # non-ASCII
+        "CON",  # reserved Windows device name
+        'quote"',
+    ],
+)
+def test_unsafe_project_name_fires(name: str) -> None:
+    findings = check_unsafe_project_name(name=name)
+    assert findings
+    assert all(f["rule"] == "unsafe_project_name" for f in findings)
+    # Audit mode is advisory: a non-conforming directory already on disk
+    # is surfaced for review, not blocked.
+    assert all(f["tier"] == "soft" for f in findings)
+    assert all(f["offending_kind"] == "directory_segment" for f in findings)
+    assert all(f["offending_path"] == name for f in findings)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Cortex Q3 Pilot",  # spaces are fine -- used verbatim
+        "PROJ-0042",
+        "Q3_run (pilot)",
+        "a.b.c",
+    ],
+)
+def test_safe_project_name_passes(name: str) -> None:
+    assert check_unsafe_project_name(name=name) == []
+
+
+# ---------------------------------------------------------------------------
 # §8.1.3 Mode-prefix mismatch rule
 # ---------------------------------------------------------------------------
 
 
-def test_experimental_with_run_prefix_and_non_test_parent_passes() -> None:
+def test_experimental_with_run_prefix_under_runs_parent_passes() -> None:
+    """Redesign §3.4: experimental run leaf parented by ``Runs`` is valid."""
+    findings = check_mode_prefix_mismatch(
+        leaf_dir_name="Run_2024-01-01T10-00-00",
+        parent_dir_name="Runs",
+        creation_run_kind="experimental",
+    )
+    assert findings == []
+
+
+def test_experimental_with_run_prefix_at_project_level_fires() -> None:
+    """Redesign §3.4: a misplaced ``Run_*`` directly under the project (not
+    under ``Runs/``) is now a hard mode_prefix_mismatch."""
     findings = check_mode_prefix_mismatch(
         leaf_dir_name="Run_2024-01-01T10-00-00",
         parent_dir_name="PROJ-0001",
         creation_run_kind="experimental",
     )
-    assert findings == []
+    assert len(findings) == 1
+    assert findings[0]["rule"] == "mode_prefix_mismatch"
+    assert findings[0]["matched_token"] == "PROJ-0001"
 
 
 def test_experimental_with_test_run_prefix_fires() -> None:

@@ -106,7 +106,7 @@ def _make_creation(local_path: Path, *, overrides: list[dict] | None = None) -> 
 
 async def _populate_run(local_root: Path) -> Path:
     """Build a clean run directory with a creation.json under EQ1/PROJ-0042/."""
-    run_dir = local_root / "EQ1" / "PROJ-0042" / "Run_2026-04-17T14-32-00"
+    run_dir = local_root / "EQ1" / "PROJ-0042" / "Runs" / "Run_2026-04-17T14-32-00"
     run_dir.mkdir(parents=True)
     (run_dir / "data.bin").write_bytes(b"payload")
     cache = run_dir / CACHE_DIR_NAME
@@ -146,7 +146,7 @@ async def test_enqueue_blocks_run_with_hard_finding_no_override(
 ) -> None:
     """A run path containing ``<placeholder>`` is gated and not queued."""
     cfg = _build_config(tmp_path)
-    bad_root = tmp_path / "EQ1" / "PROJ-0042" / "Run_<run_date>"
+    bad_root = tmp_path / "EQ1" / "PROJ-0042" / "Runs" / "Run_<run_date>"
     bad_root.mkdir(parents=True)
     cache = bad_root / CACHE_DIR_NAME
     cache.mkdir()
@@ -207,7 +207,7 @@ async def test_enqueue_with_active_override_unblocks(
 ) -> None:
     """A run with placeholder findings + matching active overrides is queued."""
     cfg = _build_config(tmp_path)
-    bad_root = tmp_path / "EQ1" / "PROJ-0042" / "Run_<run_date>"
+    bad_root = tmp_path / "EQ1" / "PROJ-0042" / "Runs" / "Run_<run_date>"
     bad_root.mkdir(parents=True)
     cache = bad_root / CACHE_DIR_NAME
     cache.mkdir()
@@ -508,7 +508,7 @@ async def test_mark_cleaned_is_noop_when_creation_json_missing(
 ) -> None:
     """With ``retain_cache=False`` the cache dir is gone; ``_mark_cleaned`` no-ops."""
     cfg = _build_config(tmp_path, retain_cache=False)
-    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Run_2026-04-17T14-32-00"
+    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Runs" / "Run_2026-04-17T14-32-00"
     run_dir.mkdir(parents=True)  # no .exlab-wizard/creation.json
 
     client = NASSyncClient(

@@ -38,8 +38,10 @@ from exlab_wizard.paths import (
     os_central_log_path,
     os_config_path,
     os_state_path,
+    project_name_violations,
     setup_state_missing,
     setup_state_next_action,
+    validate_project_name,
 )
 
 # ---------------------------------------------------------------------------
@@ -66,8 +68,25 @@ def _make_equipment(equipment_id: str = "CONFOCAL_01") -> EquipmentConfig:
     )
 
 
+def _make_orchestrator():  # type: ignore[no-untyped-def]
+    """Minimal orchestrator identity (Redesign §3.1) for setup-state fixtures."""
+    from exlab_wizard.config.models import OrchestratorConfig
+
+    return OrchestratorConfig(
+        label="Lab Acquisition Station 01",
+        staging_root="/staging",
+    )
+
+
 def _ready_config() -> Config:
-    """Construct a fully READY Config (paths + equipment + LIMS endpoint+email)."""
+    """Construct a fully READY Config (paths + equipment + LIMS endpoint+email).
+
+    Redesign §3.1: orchestrator.label + orchestrator.staging_root are
+    now required even in the always-on world; the README field is set
+    here so the setup-state evaluator returns READY.
+    """
+    from exlab_wizard.config.models import OrchestratorConfig
+
     return Config(
         paths=PathsConfig(
             templates_dir="/srv/templates",
@@ -76,6 +95,10 @@ def _ready_config() -> Config:
         ),
         lims=LIMSConfig(endpoint="https://lims.example/api/v1", email="op@lab.example"),
         equipment=[_make_equipment()],
+        orchestrator=OrchestratorConfig(
+            label="Lab Acquisition Station 01",
+            staging_root="/staging",
+        ),
     )
 
 
@@ -383,18 +406,21 @@ def test_canonicalize_equipment_id_does_not_mutate_input() -> None:
 
 
 _RUN_DATE = datetime(2026, 4, 17, 14, 32, 0)
-_EXPECTED_STAMP = "2026-04-17T14-32-00"
+# Redesign §3.4: minute precision (seconds dropped).
+_EXPECTED_STAMP = "2026-04-17T14-32"
+# The <project>/ segment is the human-readable LIMS name, used verbatim. §3.2.
+_PROJECT_NAME = "Cortex Q3 Pilot"
 
 
 def test_compose_run_path_experimental(tmp_path: Path) -> None:
     result = compose_run_path(
         local_root=tmp_path,
         equipment_id="CONFOCAL_01",
-        project_short_id="PROJ-0042",
+        project_name=_PROJECT_NAME,
         run_kind=RunKind.EXPERIMENTAL,
         run_date=_RUN_DATE,
     )
-    expected = tmp_path / "CONFOCAL_01" / "PROJ-0042" / f"Run_{_EXPECTED_STAMP}"
+    expected = tmp_path / "CONFOCAL_01" / _PROJECT_NAME / "Runs" / f"Run_{_EXPECTED_STAMP}"
     assert result == expected
 
 
@@ -402,26 +428,63 @@ def test_compose_run_path_test(tmp_path: Path) -> None:
     result = compose_run_path(
         local_root=tmp_path,
         equipment_id="CONFOCAL_01",
-        project_short_id="PROJ-0042",
+        project_name=_PROJECT_NAME,
         run_kind=RunKind.TEST,
         run_date=_RUN_DATE,
     )
-    expected = tmp_path / "CONFOCAL_01" / "PROJ-0042" / "TestRuns" / f"TestRun_{_EXPECTED_STAMP}"
+    expected = tmp_path / "CONFOCAL_01" / _PROJECT_NAME / "TestRuns" / f"TestRun_{_EXPECTED_STAMP}"
     assert result == expected
 
 
 def test_compose_run_path_strftime_format() -> None:
-    """The leaf is ISO 8601 with colons replaced by hyphens. §3.1."""
+    """The leaf is ISO 8601 with colons replaced by hyphens. §3.1.
+
+    Redesign §3.4: minute precision; seconds are dropped.
+    """
     when = datetime(2030, 12, 31, 23, 59, 59)
     result = compose_run_path(
         local_root=Path("/data/lab"),
         equipment_id="FLOW_01",
-        project_short_id="PROJ-1234",
+        project_name=_PROJECT_NAME,
         run_kind=RunKind.EXPERIMENTAL,
         run_date=when,
     )
-    assert result.name == "Run_2030-12-31T23-59-59"
+    assert result.name == "Run_2030-12-31T23-59"
     assert ":" not in result.name
+
+
+def test_compose_run_path_experimental_under_runs_subdir() -> None:
+    """Redesign §3.4: experimental runs live under <project>/Runs/Run_*."""
+    result = compose_run_path(
+        local_root=Path("/data/lab"),
+        equipment_id="FLOW_01",
+        project_name=_PROJECT_NAME,
+        run_kind=RunKind.EXPERIMENTAL,
+        run_date=_RUN_DATE,
+    )
+    assert result.parent.name == "Runs"
+    assert result.parent.parent.name == _PROJECT_NAME
+
+
+def test_compose_run_path_same_minute_collision_returns_same_path() -> None:
+    """Redesign §3.4: two runs in the same minute resolve to the same
+    path (Copier overwrite=False rejects the second creation)."""
+    first = compose_run_path(
+        local_root=Path("/data/lab"),
+        equipment_id="FLOW_01",
+        project_name=_PROJECT_NAME,
+        run_kind=RunKind.EXPERIMENTAL,
+        run_date=datetime(2026, 4, 17, 14, 32, 5),
+    )
+    second = compose_run_path(
+        local_root=Path("/data/lab"),
+        equipment_id="FLOW_01",
+        project_name=_PROJECT_NAME,
+        run_kind=RunKind.EXPERIMENTAL,
+        run_date=datetime(2026, 4, 17, 14, 32, 55),
+    )
+    assert first == second
+    assert first.name == "Run_2026-04-17T14-32"
 
 
 def test_compose_run_path_rejects_invalid_equipment_id(tmp_path: Path) -> None:
@@ -429,18 +492,18 @@ def test_compose_run_path_rejects_invalid_equipment_id(tmp_path: Path) -> None:
         compose_run_path(
             local_root=tmp_path,
             equipment_id="confocal_01",
-            project_short_id="PROJ-0042",
+            project_name=_PROJECT_NAME,
             run_kind=RunKind.EXPERIMENTAL,
             run_date=_RUN_DATE,
         )
 
 
-def test_compose_run_path_rejects_invalid_project_short_id(tmp_path: Path) -> None:
+def test_compose_run_path_rejects_unsafe_project_name(tmp_path: Path) -> None:
     with pytest.raises(ConfigError):
         compose_run_path(
             local_root=tmp_path,
             equipment_id="CONFOCAL_01",
-            project_short_id="not-a-proj-id",
+            project_name="bad/name",
             run_kind=RunKind.EXPERIMENTAL,
             run_date=_RUN_DATE,
         )
@@ -450,9 +513,9 @@ def test_compose_project_path_basic(tmp_path: Path) -> None:
     result = compose_project_path(
         local_root=tmp_path,
         equipment_id="CONFOCAL_01",
-        project_short_id="PROJ-0042",
+        project_name=_PROJECT_NAME,
     )
-    expected = tmp_path / "CONFOCAL_01" / "PROJ-0042"
+    expected = tmp_path / "CONFOCAL_01" / _PROJECT_NAME
     assert result == expected
 
 
@@ -461,53 +524,100 @@ def test_compose_project_path_rejects_invalid_equipment_id(tmp_path: Path) -> No
         compose_project_path(
             local_root=tmp_path,
             equipment_id="bad id",
-            project_short_id="PROJ-0042",
+            project_name=_PROJECT_NAME,
         )
 
 
-def test_compose_project_path_rejects_invalid_short_id(tmp_path: Path) -> None:
+def test_compose_project_path_rejects_unsafe_project_name(tmp_path: Path) -> None:
     with pytest.raises(ConfigError):
         compose_project_path(
             local_root=tmp_path,
             equipment_id="CONFOCAL_01",
-            project_short_id="proj-0042",
+            project_name="NUL",
         )
 
 
-def test_compose_run_path_rejects_non_str_project_short_id(tmp_path: Path) -> None:
-    """Non-str project_short_id hits the isinstance guard, not the regex."""
+def test_compose_run_path_rejects_non_str_project_name(tmp_path: Path) -> None:
+    """A non-str project_name hits the isinstance guard."""
     with pytest.raises(ConfigError) as info:
         compose_run_path(
             local_root=tmp_path,
             equipment_id="CONFOCAL_01",
-            project_short_id=None,  # type: ignore[arg-type]
+            project_name=None,  # type: ignore[arg-type]
             run_kind=RunKind.EXPERIMENTAL,
             run_date=_RUN_DATE,
         )
     assert "non-empty string" in str(info.value)
 
 
-def test_compose_run_path_rejects_empty_project_short_id(tmp_path: Path) -> None:
-    """Empty string project_short_id also hits the same guard."""
+def test_compose_run_path_rejects_empty_project_name(tmp_path: Path) -> None:
+    """An empty-string project_name also hits the same guard."""
     with pytest.raises(ConfigError) as info:
         compose_run_path(
             local_root=tmp_path,
             equipment_id="CONFOCAL_01",
-            project_short_id="",
+            project_name="",
             run_kind=RunKind.EXPERIMENTAL,
             run_date=_RUN_DATE,
         )
     assert "non-empty string" in str(info.value)
 
 
-def test_compose_project_path_rejects_non_str_short_id(tmp_path: Path) -> None:
+def test_compose_project_path_rejects_non_str_project_name(tmp_path: Path) -> None:
     with pytest.raises(ConfigError) as info:
         compose_project_path(
             local_root=tmp_path,
             equipment_id="CONFOCAL_01",
-            project_short_id=42,  # type: ignore[arg-type]
+            project_name=42,  # type: ignore[arg-type]
         )
     assert "non-empty string" in str(info.value)
+
+
+# ---------------------------------------------------------------------------
+# validate_project_name / project_name_violations -- §3.2 safe-segment rule
+# ---------------------------------------------------------------------------
+
+
+def test_validate_project_name_accepts_human_readable_names() -> None:
+    """Spaces and ordinary punctuation are fine -- the name is used verbatim."""
+    for name in ("Cortex Q3 Pilot", "PROJ-0042", "Q3_run (pilot)", "a.b.c"):
+        assert validate_project_name(name) == name
+        assert project_name_violations(name) == []
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",
+        "bad/name",
+        "back\\slash",
+        " leading",
+        "trailing ",
+        "trailing.",
+        "ctrl\ttab",
+        "café",  # non-ASCII
+        "CON",  # reserved Windows device name
+        "nul.txt",  # reserved stem, case-insensitive
+        "star*",
+        'quote"',
+    ],
+)
+def test_validate_project_name_rejects_unsafe_names(name: str) -> None:
+    with pytest.raises(ConfigError):
+        validate_project_name(name)
+    assert project_name_violations(name)
+
+
+def test_validate_project_name_rejects_overlong_name() -> None:
+    with pytest.raises(ConfigError) as info:
+        validate_project_name("x" * 256)
+    assert "max length" in str(info.value)
+
+
+def test_validate_project_name_does_not_mutate_input() -> None:
+    """The §3.2 contract is 'used verbatim' -- no canonicalisation."""
+    name = "Cortex Q3 Pilot"
+    assert validate_project_name(name) is name
 
 
 # ---------------------------------------------------------------------------
@@ -523,6 +633,7 @@ def test_evaluate_setup_state_missing_paths() -> None:
     config = Config(
         paths=PathsConfig(templates_dir="", plugin_dir="", local_root=""),
         equipment=[_make_equipment()],
+        orchestrator=_make_orchestrator(),
     )
     assert evaluate_setup_state(config) is SetupState.INCOMPLETE_MISSING_PATHS
 
@@ -536,6 +647,7 @@ def test_evaluate_setup_state_missing_paths_partial() -> None:
             local_root="",
         ),
         equipment=[_make_equipment()],
+        orchestrator=_make_orchestrator(),
     )
     assert evaluate_setup_state(config) is SetupState.INCOMPLETE_MISSING_PATHS
 
@@ -548,8 +660,22 @@ def test_evaluate_setup_state_no_equipment() -> None:
             local_root="/data/lab",
         ),
         equipment=[],
+        orchestrator=_make_orchestrator(),
     )
     assert evaluate_setup_state(config) is SetupState.INCOMPLETE_NO_EQUIPMENT
+
+
+def test_evaluate_setup_state_no_orchestrator() -> None:
+    """Redesign §3.1: orchestrator.label + staging_root are required."""
+    config = Config(
+        paths=PathsConfig(
+            templates_dir="/srv/templates",
+            plugin_dir="/srv/plugins",
+            local_root="/data/lab",
+        ),
+        equipment=[_make_equipment()],
+    )
+    assert evaluate_setup_state(config) is SetupState.INCOMPLETE_NO_ORCHESTRATOR
 
 
 def test_evaluate_setup_state_no_lims() -> None:
@@ -561,6 +687,7 @@ def test_evaluate_setup_state_no_lims() -> None:
         ),
         lims=LIMSConfig(endpoint="", email="", offline_catalogue_path=""),
         equipment=[_make_equipment()],
+        orchestrator=_make_orchestrator(),
     )
     assert evaluate_setup_state(config) is SetupState.INCOMPLETE_NO_LIMS
 
@@ -579,6 +706,7 @@ def test_evaluate_setup_state_lims_via_offline_catalogue() -> None:
             offline_catalogue_path="/mnt/share/offline_catalogue.json",
         ),
         equipment=[_make_equipment()],
+        orchestrator=_make_orchestrator(),
     )
     # Even with keyring missing, offline catalogue path makes the slot complete.
     assert evaluate_setup_state(config, keyring_password_present=False) is SetupState.READY
@@ -614,6 +742,7 @@ def test_evaluate_setup_state_endpoint_only_missing_email() -> None:
         ),
         lims=LIMSConfig(endpoint="https://lims.example/api/v1", email=""),
         equipment=[_make_equipment()],
+        orchestrator=_make_orchestrator(),
     )
     assert evaluate_setup_state(config) is SetupState.INCOMPLETE_NO_LIMS
 
@@ -685,6 +814,7 @@ def test_setup_state_missing_for_no_lims_lists_endpoint_email() -> None:
         ),
         lims=LIMSConfig(endpoint="", email=""),
         equipment=[_make_equipment()],
+        orchestrator=_make_orchestrator(),
     )
     result = setup_state_missing(SetupState.INCOMPLETE_NO_LIMS, config)
     fields = {entry["field"] for entry in result}
@@ -726,6 +856,7 @@ def test_setup_state_missing_for_no_lims_flags_keyring_when_endpoint_email_set()
             offline_catalogue_path="",
         ),
         equipment=[_make_equipment()],
+        orchestrator=_make_orchestrator(),
     )
     result = setup_state_missing(SetupState.INCOMPLETE_NO_LIMS, config)
     fields = {(entry["field"], entry["reason"]) for entry in result}

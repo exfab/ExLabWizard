@@ -174,18 +174,20 @@ def test_plugin_name_pattern_rejects() -> None:
 
 def test_run_date_strftime_literal() -> None:
     # ISO 8601 with colons replaced by hyphens for cross-platform safety.
-    assert patterns.RUN_DATE_STRFTIME == "%Y-%m-%dT%H-%M-%S"
+    # Redesign §3.4: minute precision (seconds dropped).
+    assert patterns.RUN_DATE_STRFTIME == "%Y-%m-%dT%H-%M"
 
 
 def test_run_date_strftime_round_trip() -> None:
-    # Sanity: the format is parseable in both directions.
+    # Sanity: the format is parseable in both directions. Seconds round
+    # off to the floor of the minute under Redesign §3.4.
     from datetime import datetime
 
     sample = datetime(2026, 5, 6, 12, 34, 56)
     formatted = sample.strftime(patterns.RUN_DATE_STRFTIME)
-    assert formatted == "2026-05-06T12-34-56"
+    assert formatted == "2026-05-06T12-34"
     parsed = datetime.strptime(formatted, patterns.RUN_DATE_STRFTIME)
-    assert parsed == sample
+    assert parsed == datetime(2026, 5, 6, 12, 34)
 
 
 def test_run_dir_prefix_literal() -> None:
@@ -271,8 +273,9 @@ def test_patterns_re_exported_from_package() -> None:
     assert constants.EQUIPMENT_ID_REGEX == r"^[A-Z][A-Z0-9_]*$"
     assert isinstance(constants.EQUIPMENT_ID_PATTERN, re.Pattern)
     assert constants.EQUIPMENT_ID_MAX_LENGTH == 32
-    assert constants.RUN_DATE_STRFTIME == "%Y-%m-%dT%H-%M-%S"
+    assert constants.RUN_DATE_STRFTIME == "%Y-%m-%dT%H-%M"
     assert constants.RUN_DIR_PREFIX == "Run_"
+    assert constants.RUNS_DIR_NAME == "Runs"
     assert constants.TEST_RUN_DIR_PREFIX == "TestRun_"
     assert constants.TEST_RUNS_DIR_NAME == "TestRuns"
     assert constants.WINDOWS_ILLEGAL_CHARS == '<>:"/\\|?*'

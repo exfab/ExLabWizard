@@ -107,7 +107,7 @@ from copier import run_copy
 
 run_copy(
     src_path="path/to/templates/confocal_run_v2",
-    dst_path="/data/CONFOCAL_01/PROJ-0042/Run_2026-04-17T14-32-00",
+    dst_path="/data/CONFOCAL_01/PROJ-0042/Runs/Run_2026-04-17T14-32",
     data={
         "project_name": "Cortex Q3 Pilot",   # the LIMS project's name; on-disk segment is the short_id (PROJ-0042)
         "operator": "asmith",

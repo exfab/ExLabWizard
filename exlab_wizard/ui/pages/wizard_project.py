@@ -64,6 +64,7 @@ class ProjectWizardState:
     active_step: str = PROJECT_WIZARD_STEPS[0]
     selected_lims_short_id: str | None = None
     lims_project_name: str = ""
+    selected_lims_source: str = "manual"
     selected_template: str | None = None
     selected_equipment: str | None = None
     template_variables: dict[str, Any] = field(default_factory=dict)
@@ -128,6 +129,7 @@ def render_project_wizard(
     template_questions: dict[str, list[TemplateQuestion]] | None = None,
     lims_projects: list[dict[str, Any]] | None = None,
     on_submit: Callable[[ProjectWizardState], Any] | None = None,
+    on_cancel: Callable[[], None] | None = None,
 ) -> Any:
     """Render the seven-step project wizard.
 
@@ -223,10 +225,19 @@ def render_project_wizard(
                             active_phase=None,
                         )
                     with ui.stepper_navigation():
-                        ui.button(
-                            "Back",
-                            on_click=lambda _evt, sp=stepper: sp.previous(),
-                        ).props('flat data-testid="wizard-back"')
+                        # The first step has nowhere to step back to, so
+                        # Cancel is its only exit -- rendering a dead Back
+                        # button there is the bug being fixed here.
+                        if step_id != PROJECT_WIZARD_STEPS[0]:
+                            ui.button(
+                                "Back",
+                                on_click=lambda _evt, sp=stepper: sp.previous(),
+                            ).props('flat data-testid="wizard-back"')
+                        if on_cancel is not None:
+                            ui.button(
+                                "Cancel",
+                                on_click=lambda _evt: on_cancel(),
+                            ).props('flat data-testid="wizard-cancel"')
                         primary_label = "Create" if step_id == "confirm" else "Next"
 
                         async def _on_primary(
@@ -271,6 +282,8 @@ def _render_project_step_fields(
 
     if step_id == "lims_project":
         if lims_projects:
+            # Live LIMS or offline catalogue produced rows: the picker is a
+            # dropdown, and manual entry is intentionally not offered.
             options = {
                 row["short_id"]: f"{row['short_id']} -- {row.get('name', '')}"
                 for row in lims_projects
@@ -284,6 +297,7 @@ def _render_project_step_fields(
                     return
                 state.selected_lims_short_id = row["short_id"]
                 state.lims_project_name = row.get("name", "")
+                state.selected_lims_source = row.get("source", "lims")
 
             ui.select(
                 options,
@@ -292,17 +306,41 @@ def _render_project_step_fields(
                 else None,
                 label="LIMS project",
             ).props('data-testid="wizard-project-lims-picker"').on_value_change(_pick)
-        # Manual entry stays available -- it is the editable source of
-        # truth, and the only path when no catalogue / cache is wired.
-        ui.input(
-            label="LIMS project short ID (PROJ-NNNN)",
-            value=state.selected_lims_short_id or "",
-        ).props('data-testid="wizard-project-lims-id"').on_value_change(
-            lambda e: setattr(state, "selected_lims_short_id", e.value or None)
-        ).bind_value(state, "selected_lims_short_id")
-        ui.input(label="Project name", value=state.lims_project_name).props(
-            'data-testid="wizard-project-lims-name"'
-        ).bind_value(state, "lims_project_name")
+        else:
+            # No LIMS connection and no offline catalogue: manual entry is
+            # the only path, but it is a deliberate choice behind a gate
+            # button rather than the silent default.
+            ui.label("No LIMS connection or offline catalogue is available.").style(
+                "color: var(--color-muted);"
+            )
+            manual_id = (
+                ui.input(
+                    label="LIMS project short ID (PROJ-NNNN)",
+                    value=state.selected_lims_short_id or "",
+                )
+                .props('data-testid="wizard-project-lims-id"')
+                .on_value_change(
+                    lambda e: setattr(state, "selected_lims_short_id", e.value or None)
+                )
+                .bind_value(state, "selected_lims_short_id")
+            )
+            manual_name = (
+                ui.input(label="Project name", value=state.lims_project_name)
+                .props('data-testid="wizard-project-lims-name"')
+                .bind_value(state, "lims_project_name")
+            )
+            manual_id.set_visibility(False)
+            manual_name.set_visibility(False)
+            gate = ui.button("Enter project details manually").props(
+                'flat data-testid="wizard-project-lims-gate"'
+            )
+
+            def _reveal_manual(_evt: Any) -> None:
+                manual_id.set_visibility(True)
+                manual_name.set_visibility(True)
+                gate.set_visibility(False)
+
+            gate.on_click(_reveal_manual)
     elif step_id == "template":
 
         def _on_template(event: Any) -> None:

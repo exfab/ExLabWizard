@@ -57,7 +57,7 @@ class RunWizardState:
 
     run_kind: RunKind  # bound at construction
     active_step: str = RUN_WIZARD_STEPS[0]
-    selected_project_short_id: str | None = None
+    selected_project_name: str | None = None
     selected_equipment: str | None = None
     selected_template: str | None = None
     template_variables: dict[str, Any] = field(default_factory=dict)
@@ -96,7 +96,7 @@ def preview_path_segments(state: RunWizardState, *, run_date: str) -> dict[str, 
         return {
             "segments": [
                 state.selected_equipment or "<equipment>",
-                state.selected_project_short_id or "<project>",
+                state.selected_project_name or "<project>",
                 "TestRuns",
                 run_dir_stem(run_date, test=True),
             ],
@@ -105,7 +105,7 @@ def preview_path_segments(state: RunWizardState, *, run_date: str) -> dict[str, 
     return {
         "segments": [
             state.selected_equipment or "<equipment>",
-            state.selected_project_short_id or "<project>",
+            state.selected_project_name or "<project>",
             run_dir_stem(run_date),
         ],
         "warning_indices": (),
@@ -117,7 +117,7 @@ def can_advance(state: RunWizardState) -> bool:
 
     step = state.active_step
     if step == "project_equipment":
-        return state.selected_project_short_id is not None and state.selected_equipment is not None
+        return state.selected_project_name is not None and state.selected_equipment is not None
     if step == "template":
         return state.selected_template is not None
     if step == "variables":
@@ -139,6 +139,7 @@ def render_run_wizard(
     equipment_ids: list[str] | None = None,
     template_questions: dict[str, list[TemplateQuestion]] | None = None,
     on_submit: Callable[[RunWizardState], Any] | None = None,
+    on_cancel: Callable[[], None] | None = None,
 ) -> Any:
     """Render the six-step run wizard.
 
@@ -227,10 +228,19 @@ def render_run_wizard(
                     if step_id == "confirm":
                         session_progress.session_progress(active_phase=None)
                     with ui.stepper_navigation():
-                        ui.button(
-                            "Back",
-                            on_click=lambda _evt, sp=stepper: sp.previous(),
-                        ).props('flat data-testid="wizard-run-back"')
+                        # The first step has nowhere to step back to, so
+                        # Cancel is its only exit -- rendering a dead Back
+                        # button there is the bug being fixed here.
+                        if step_id != RUN_WIZARD_STEPS[0]:
+                            ui.button(
+                                "Back",
+                                on_click=lambda _evt, sp=stepper: sp.previous(),
+                            ).props('flat data-testid="wizard-run-back"')
+                        if on_cancel is not None:
+                            ui.button(
+                                "Cancel",
+                                on_click=lambda _evt: on_cancel(),
+                            ).props('flat data-testid="wizard-run-cancel"')
                         primary_label = (
                             primary_button_label(state) if step_id == "confirm" else "Next"
                         )
@@ -276,10 +286,10 @@ def _render_run_step_fields(
 
     if step_id == "project_equipment":
         ui.input(
-            label="Parent project short ID (PROJ-NNNN)",
-            value=state.selected_project_short_id or "",
-        ).props('data-testid="wizard-run-project-id"').on_value_change(
-            lambda e: setattr(state, "selected_project_short_id", e.value or None)
+            label="Parent project name",
+            value=state.selected_project_name or "",
+        ).props('data-testid="wizard-run-project-name"').on_value_change(
+            lambda e: setattr(state, "selected_project_name", e.value or None)
         )
         ui.select(
             equipment_ids,
