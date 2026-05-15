@@ -95,8 +95,20 @@ def _build_transport_driver(equipment: EquipmentConfig) -> tuple[Any, Callable[.
     and rsync_ssh push closures nest the remote target under
     ``<remote_path>/<local.name>`` so each run lives in its own subdir
     on the NAS, matching the §7.1.4 hashsum probe layout.
+
+    Stage-mode equipment (Redesign §3.2, ``sync_mode == 'stage'``) has no
+    ``transport`` block — the orchestrator owns the NAS sync. The
+    EquipmentConfig validator guarantees this function only runs against
+    nas-mode equipment.
     """
     transport = equipment.transport
+    if transport is None:
+        msg = (
+            f"equipment {equipment.id!r} has sync_mode "
+            f"{equipment.sync_mode.value!r}; the NAS-sync queue only handles "
+            f"nas-mode equipment with a configured transport"
+        )
+        raise ValueError(msg)
     if isinstance(transport, RcloneTransport):
         rclone_driver = RcloneDriver()
         remote_name = transport.rclone_remote
@@ -138,9 +150,17 @@ def _build_hashsum_callable(
     The closure takes a local run directory and asks the remote-side
     hash probe (``rclone hashsum sha256`` or ``ssh ... sha256sum``) for
     the manifest of ``<remote_path>/<run_dir.name>``. Backend Spec
-    §7.1.4 (integrity-in-transit gap closure).
+    §7.1.4 (integrity-in-transit gap closure). Only called for nas-mode
+    equipment (Redesign §3.2).
     """
     transport = equipment.transport
+    if transport is None:
+        msg = (
+            f"equipment {equipment.id!r} has sync_mode "
+            f"{equipment.sync_mode.value!r}; remote-hashsum probes only "
+            f"apply to nas-mode equipment with a configured transport"
+        )
+        raise ValueError(msg)
     if isinstance(transport, RcloneTransport):
         rclone_driver = RcloneDriver()
         remote_name = transport.rclone_remote

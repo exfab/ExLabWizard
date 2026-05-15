@@ -180,7 +180,7 @@ class OrchestratorBlock(
     enabled: bool
     host: str
     label: str
-    equipment_label: str = ""
+    equipment_label: str | None = None
     completeness_signal: CompletenessSignal | None = None
     sentinel_filename: str | None = None
     manifest_filename: str | None = None

@@ -513,9 +513,14 @@ def _render_equipment_section(draft: Config) -> None:
         with rows:
             if draft.equipment:
                 for entry in draft.equipment:
+                    transport_summary = (
+                        entry.transport.type
+                        if entry.transport is not None
+                        else "stage"
+                    )
                     ui.label(
                         f"{entry.id} -- {entry.label} "
-                        f"[{entry.completeness_signal} / {entry.transport.type}]"
+                        f"[{entry.completeness_signal} / {transport_summary}]"
                     ).props('data-testid="settings-equipment-row"')
             else:
                 ui.label("No equipment configured yet.").props(

@@ -184,7 +184,7 @@ def test_orchestrator_block_relay_fields_default_to_empty_or_none() -> None:
     encoded = msgspec_json.encode(payload)
     decoded = msgspec_json.decode(encoded, type=CreationJson)
     assert decoded.orchestrator is not None
-    assert decoded.orchestrator.equipment_label == ""
+    assert decoded.orchestrator.equipment_label is None
     assert decoded.orchestrator.completeness_signal is None
     assert decoded.orchestrator.sentinel_filename is None
     assert decoded.orchestrator.manifest_filename is None

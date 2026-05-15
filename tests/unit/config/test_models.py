@@ -667,6 +667,20 @@ def test_sync_mode_rejects_unknown_value() -> None:
         EquipmentConfig.model_validate(bad)
 
 
+def test_sync_mode_stage_round_trip_via_dict() -> None:
+    """Build a stage-mode EquipmentConfig from a dict, dump it, compare."""
+    spec = _equipment_dict()
+    spec["sync_mode"] = "stage"
+    spec["transport"] = None
+    spec["orchestrator_staging_transport"] = _orch_staging_transport_dict()
+    eq = EquipmentConfig.model_validate(spec)
+    dumped = eq.model_dump(mode="python")
+    assert dumped["sync_mode"] == "stage"
+    assert dumped["transport"] is None
+    assert dumped["orchestrator_staging_transport"]["type"] == "smb_mount"
+    assert dumped["orchestrator_staging_transport"]["mount_point"] == "/mnt/orch-staging"
+
+
 # ---------------------------------------------------------------------------
 # NASCleanupConfig
 # ---------------------------------------------------------------------------
