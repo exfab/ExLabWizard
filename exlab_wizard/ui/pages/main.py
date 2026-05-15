@@ -272,6 +272,8 @@ def render_file_explorer_page(
     on_toggle_right_pane: Callable[[], None] | None = None,
     on_run_staging_action: Callable[[str, str], None] | None = None,
     on_clear_verified: Callable[[], None] | None = None,
+    on_tree_context_action: Callable[[str, str], None] | None = None,
+    on_file_context_action: Callable[[Any, str], None] | None = None,
     state: MainPageState | None = None,
     hierarchy: dict | None = None,
 ) -> Any:
@@ -366,11 +368,13 @@ def render_file_explorer_page(
         with outer_split.after:
             if s.right_pane_collapsed:
                 # File list only.
-                _render_centre_file_list(s)
+                _render_centre_file_list(s, on_file_context_action=on_file_context_action)
             else:
                 with ui.splitter(value=60).classes("w-full h-full") as centre_split:
                     with centre_split.before:
-                        _render_centre_file_list(s)
+                        _render_centre_file_list(
+                            s, on_file_context_action=on_file_context_action
+                        )
                     with centre_split.after:
                         _render_right_pane(
                             s,
@@ -406,8 +410,16 @@ def render_file_explorer_page(
                 )
 
 
-def _render_centre_file_list(state: MainPageState) -> None:
-    """Render the centre-pane file list (Redesign §4.3)."""
+def _render_centre_file_list(
+    state: MainPageState,
+    *,
+    on_file_context_action: Callable[[Any, str], None] | None = None,
+) -> None:
+    """Render the centre-pane file list (Redesign §4.3).
+
+    Each row carries a right-click context menu (*Open in OS* /
+    *Copy path*) when ``on_file_context_action`` is wired.
+    """
     from exlab_wizard.ui.components.file_list import (
         FileListState,
         render_file_list,
@@ -427,7 +439,7 @@ def _render_centre_file_list(state: MainPageState) -> None:
     # caller passes a FileListState through hierarchy[`__file_list__`]
     # to keep the render function pure.
     fl_state = FileListState(path=state.folder_feed_path)
-    render_file_list(state=fl_state)
+    render_file_list(state=fl_state, on_context_menu=on_file_context_action)
 
 
 def _render_right_pane(

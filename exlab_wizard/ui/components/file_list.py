@@ -8,6 +8,10 @@ The renderer is a pure function kept free of session-store / API deps
 (matches the existing components pattern). The folder feed (§5) is
 expected to call ``render_file_list`` with the current entry list; the
 caller decides when to invoke and when to stop the underlying poll.
+
+Right-click context menu (Redesign §4.3 / decision 6A): selecting a row
+opens a menu with **Open in OS** and **Copy path** actions; the right
+metadata pane is NOT driven by file-list selection.
 """
 
 from __future__ import annotations
@@ -17,6 +21,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from exlab_wizard.ui.pages.staging import format_bytes
+
+
+# Action discriminators consumed by the on_context_menu callback.
+FILE_CONTEXT_OPEN = "open_in_os"
+FILE_CONTEXT_COPY_PATH = "copy_path"
 
 
 @dataclass(frozen=True)
@@ -137,23 +146,36 @@ def _render_row(
         if is_new
         else ""
     )
+    size_text = "-" if entry.size_bytes is None else format_bytes(int(entry.size_bytes))
+    modified_text = entry.modified_iso or "-"
+    sync_text = entry.sync_status or "-"
     with ui.element("tr").style(
         f"{highlight}border-bottom: 1px solid var(--color-rule);"
-    ).props(f'data-testid="file-list-row" data-path="{entry.path}"'):
-        ui.element("td").classes("p-2").style("font-weight: 500;").bind_text_from(
-            entry, "name"
-        )
-        ui.element("td").classes("p-2 text-right").bind_text_from(
-            entry,
-            "size_bytes",
-            backward=lambda v: "-" if v is None else format_bytes(int(v)),
-        )
-        ui.element("td").classes("p-2").bind_text_from(
-            entry, "modified_iso", backward=lambda v: v or "-"
-        )
-        ui.element("td").classes("p-2").bind_text_from(
-            entry, "sync_status", backward=lambda v: v or "-"
-        )
+    ).props(f'data-testid="file-list-row" data-path="{entry.path}"') as row:
+        with ui.element("td").classes("p-2").style("font-weight: 500;"):
+            ui.label(entry.name)
+        with ui.element("td").classes("p-2 text-right"):
+            ui.label(size_text)
+        with ui.element("td").classes("p-2"):
+            ui.label(modified_text)
+        with ui.element("td").classes("p-2"):
+            ui.label(sync_text)
+        if on_context_menu is not None:
+            with ui.context_menu().props(
+                f'data-testid="file-context-menu" data-path="{entry.path}"'
+            ):
+                ui.menu_item("Open in OS").props(
+                    'data-testid="file-context-open-in-os"'
+                ).on(
+                    "click",
+                    lambda _evt, e=entry: on_context_menu(e, FILE_CONTEXT_OPEN),
+                )
+                ui.menu_item("Copy path").props(
+                    'data-testid="file-context-copy-path"'
+                ).on(
+                    "click",
+                    lambda _evt, e=entry: on_context_menu(e, FILE_CONTEXT_COPY_PATH),
+                )
 
     if on_double_click is not None:
         # NiceGUI doesn't expose row-level dblclick easily; the caller is

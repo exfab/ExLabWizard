@@ -112,3 +112,15 @@ flow test.
 | `/wizard/equipment` | `wizard-equipment-signal` | radio | Pick 'sentinel_file' or 'manifest' completeness signal | Swaps the filename input between sentinel and manifest naming. |
 | `/wizard/equipment` | `wizard-equipment-confirm` | button | Click 'Confirm' on the review step | Posts the assembled EquipmentConfig via POST /config/equipment. |
 | `/wizard/equipment` | `wizard-equipment-cancel` | button | Click 'Cancel' on any wizard step | Discards the wizard and returns to /main. |
+
+## File explorer
+
+| Route | Test ID | Element | Action | Outcome |
+|---|---|---|---|---|
+| `/main?view=explorer` | `tree-context-edit-equipment` | menu item | Right-click an owned-equipment tree node and choose 'Edit equipment…' | Deep-links into Settings → Equipment List with the equipment pre-selected. |
+| `/main?view=explorer` | `tree-context-remove-equipment` | menu item | Right-click an owned-equipment tree node and choose 'Remove…' | Deep-links into Settings → Equipment List with the equipment pre-selected. |
+| `/main?view=explorer` | `run-context-force-sync` | menu item | Right-click a run tree node and choose 'Force sync' | Re-enqueues the run for NAS sync via the operations router. |
+| `/main?view=explorer` | `run-context-clear-verified` | menu item | Right-click a run tree node and choose 'Clear verified' | Clears the run from the local cache after the orchestrator verifies the NAS copy. |
+| `/main?view=explorer` | `run-context-view-log` | menu item | Right-click a run tree node and choose 'View log' | Opens the per-run log viewer. |
+| `/main?view=explorer` | `file-context-open-in-os` | menu item | Right-click a file-list row and choose 'Open in OS' | Asks the OS to open the file in its default application. |
+| `/main?view=explorer` | `file-context-copy-path` | menu item | Right-click a file-list row and choose 'Copy path' | Copies the file's absolute path to the system clipboard. |

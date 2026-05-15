@@ -235,6 +235,19 @@ def _render_seeded_tree(ui: Any, test_state: TestState) -> None:
         FindingLocation,
         travelling_badges,
     )
+    from exlab_wizard.ui.components.tree_context_menu import (
+        render_equipment_context_menu,
+        render_run_context_menu,
+    )
+
+    def _tree_action(node_id: str, action: str) -> None:
+        test_state.last_action = f"tree.{action}:{node_id}"
+        # Decision 4A: edit / remove deep-link into Settings with the
+        # equipment pre-selected.
+        ui.navigate.to(f"/settings?active=equipment&equipment_id={node_id}")
+
+    def _run_action(run_path: str, action: str) -> None:
+        test_state.last_action = f"run.{action}:{run_path}"
 
     nodes = [
         ("EQ1", "EQ1", "equipment"),
@@ -244,11 +257,25 @@ def _render_seeded_tree(ui: Any, test_state: TestState) -> None:
         ("RELAY_EQX", "RELAY_EQX", "received_equipment"),
     ]
     for node_id, label, kind in nodes:
-        ui.label(label).props(
+        row = ui.label(label).props(
             f'data-testid="tree-node-{kind}" data-node-id="{node_id}"'
-        ).style("cursor: pointer; font-family: var(--font-mono);").on(
-            "click", lambda _e, nid=node_id: _select(ui, test_state, nid)
-        )
+        ).style("cursor: pointer; font-family: var(--font-mono);")
+        row.on("click", lambda _e, nid=node_id: _select(ui, test_state, nid))
+        # Redesign §4.6 / decision 4A: owned-equipment context menu
+        # surfaces Edit / Remove which deep-link into Settings;
+        # received-equipment nodes have no context menu (decision 3).
+        if kind == "equipment":
+            with row:
+                render_equipment_context_menu(
+                    equipment_id=node_id,
+                    on_action=_tree_action,
+                )
+        elif kind == "run":
+            with row:
+                render_run_context_menu(
+                    run_path=node_id,
+                    on_action=_run_action,
+                )
     # Travelling-badge banner: if findings are seeded, compute the badge
     # for the root equipment so the e2e flow can assert.
     if test_state.seeded_findings:
@@ -277,7 +304,13 @@ def _render_centre_file_list_seeded(ui: Any, test_state: TestState) -> None:
             'data-testid="file-list-empty"'
         )
         return
-    rows = test_state.folder_feeds.get(test_state.selected_node, [])
+    # Default to a synthetic two-file feed for any selected node so the
+    # context-menu flow has rows to right-click. The test can override
+    # by populating ``test_state.folder_feeds`` for specific nodes.
+    rows = test_state.folder_feeds.get(
+        test_state.selected_node,
+        [("scan.tif", 1024, "synced"), ("metadata.json", 256, "pending")],
+    )
     entries = [
         FileListEntry(
             name=name,
@@ -289,7 +322,14 @@ def _render_centre_file_list_seeded(ui: Any, test_state: TestState) -> None:
         )
         for (name, size, sync) in rows
     ]
-    render_file_list(state=FileListState(path=test_state.selected_node, entries=entries))
+
+    def _file_action(entry: FileListEntry, action: str) -> None:
+        test_state.last_action = f"file.{action}:{entry.path}"
+
+    render_file_list(
+        state=FileListState(path=test_state.selected_node, entries=entries),
+        on_context_menu=_file_action,
+    )
 
 
 def _render_right_pane_seeded(ui: Any, test_state: TestState) -> None:
