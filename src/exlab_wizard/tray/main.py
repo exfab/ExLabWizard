@@ -318,13 +318,18 @@ def _bootstrap_test_config(config_path: Path, *, include_samples: bool) -> None:
 
     # Pre-create the preseeded sub-directories so first-launch path lookups
     # (template scans, plugin discovery) do not fail on a missing tree.
+    # ``if sub`` guards against an empty-string slipping through: ``Path("")``
+    # resolves to CWD and ``mkdir`` would silently succeed there. The current
+    # code populates every field explicitly from ``sandbox / <subdir>``, so
+    # this is defensive against a future refactor of the field defaults.
     for sub in (
         paths_cfg.templates_dir,
         paths_cfg.plugin_dir,
         paths_cfg.local_root,
         orchestrator_cfg.staging_root,
     ):
-        ensure_dir(Path(sub))
+        if sub:
+            ensure_dir(Path(sub))
 
     _log.info("test mode: wrote starter config [path=%s]", str(config_path))
 
