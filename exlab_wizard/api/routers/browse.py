@@ -16,6 +16,7 @@ audit-mode walks; §4.5). ``creation.json`` is decoded via
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,7 @@ from exlab_wizard.constants import (
 from exlab_wizard.io import read_msgspec_json
 from exlab_wizard.logging import get_logger
 from exlab_wizard.paths import creation_json_path, is_run_dir, is_test_run_dir
+from exlab_wizard.utils.time import dt_to_iso
 
 __all__ = [
     "EquipmentNode",
@@ -259,7 +261,7 @@ def build_browse_router() -> APIRouter:
                     path=entry.path,
                     is_dir=is_dir,
                     size_bytes=None if is_dir else stat.st_size,
-                    modified_iso=_iso_from_epoch(stat.st_mtime),
+                    modified_iso=dt_to_iso(datetime.fromtimestamp(stat.st_mtime, tz=UTC)),
                     sync_status=_per_file_sync_status(Path(entry.path)),
                 )
             )
@@ -433,16 +435,6 @@ def _relay_label_from_first_run(equipment_dir: Path, fallback: str) -> str:
                     return payload.orchestrator.equipment_label
                 return fallback
     return fallback
-
-
-def _iso_from_epoch(epoch: float) -> str:
-    """Format an epoch float as an ISO-8601 UTC string."""
-    from datetime import datetime, timezone
-
-    return (
-        datetime.fromtimestamp(epoch, tz=timezone.utc)
-        .strftime("%Y-%m-%dT%H:%M:%SZ")
-    )
 
 
 def _per_file_sync_status(path: Path) -> str | None:

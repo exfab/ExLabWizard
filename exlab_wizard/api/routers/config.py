@@ -37,12 +37,6 @@ __all__ = [
 
 _log = get_logger(__name__)
 
-# Field paths (dotted notation) that must never appear in a GET /config
-# response. The Pydantic model never stores secrets directly (passwords
-# live in the keyring), but the redaction list is encoded here so adding
-# a future secret field is a one-line change.
-_REDACTED_FIELDS: frozenset[str] = frozenset()
-
 
 class ConfigUpdateResponse(BaseModel):
     """``PUT /config`` response with the new setup state."""
@@ -80,12 +74,12 @@ def build_config_router() -> APIRouter:
     async def get_config(request: Request) -> Config:
         deps = require_deps(request)
         config = getattr(deps, "config", None)
-        if config is None:
-            # Empty default config is the right shape when no config.yaml
-            # exists on disk. Frontend treats this the same as
-            # INCOMPLETE_NO_CONFIG.
-            return Config()
-        return _redact(config)
+        # Empty default config is the right shape when no config.yaml
+        # exists on disk. Frontend treats this the same as
+        # INCOMPLETE_NO_CONFIG. The Config model carries no in-band
+        # secrets (passwords live in the keyring) so no redaction pass
+        # is needed here.
+        return config if config is not None else Config()
 
     @router.put("/config", response_model=ConfigUpdateResponse)
     async def put_config(request: Request, body: Config) -> ConfigUpdateResponse:
@@ -162,20 +156,6 @@ def build_config_router() -> APIRouter:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _redact(config: Config) -> Config:
-    """Return ``config`` with secret fields blanked out.
-
-    The current ``Config`` model carries no in-band secrets (LIMS / NAS
-    passwords live in the keyring), so this is a no-op pass-through.
-    The function is kept so the redaction policy lives in one place;
-    when future fields land they are added to :data:`_REDACTED_FIELDS`
-    and zeroed here.
-    """
-    if not _REDACTED_FIELDS:
-        return config
-    return config
 
 
 async def _await_or_call(callable_: Any, *args: Any) -> Any:

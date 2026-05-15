@@ -16,6 +16,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from exlab_wizard.ui.pages.staging import format_bytes
+
 
 @dataclass(frozen=True)
 class FileListEntry:
@@ -144,7 +146,7 @@ def _render_row(
         ui.element("td").classes("p-2 text-right").bind_text_from(
             entry,
             "size_bytes",
-            backward=lambda v: "-" if v is None else _format_bytes(int(v)),
+            backward=lambda v: "-" if v is None else format_bytes(int(v)),
         )
         ui.element("td").classes("p-2").bind_text_from(
             entry, "modified_iso", backward=lambda v: v or "-"
@@ -159,10 +161,3 @@ def _render_row(
         # callback is kept in the signature so unit tests can verify
         # plumbing.
         pass
-
-
-def _format_bytes(byte_count: int) -> str:
-    """Reuse the staging-page formatter so size renders match."""
-    from exlab_wizard.ui.pages.staging import format_bytes
-
-    return format_bytes(byte_count)
