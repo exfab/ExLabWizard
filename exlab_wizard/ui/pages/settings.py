@@ -436,62 +436,11 @@ def _render_section_body(
             ui.button("Quit ExLab-Wizard now").props("flat")
 
 
-def build_equipment_config(
-    *,
-    equipment_id: str,
-    label: str,
-    local_root: str,
-    nas_root: str,
-    completeness_signal: str,
-    sentinel_filename: str,
-    manifest_filename: str,
-    transport_type: str,
-    rclone_remote: str,
-    rclone_remote_path: str,
-    ssh_target: str,
-    ssh_key_path: str,
-    rsync_remote_path: str,
-) -> EquipmentConfig:
-    """Assemble a validated :class:`EquipmentConfig` from raw form fields.
-
-    Covers the full §9 equipment surface: either completeness signal
-    (``sentinel_file`` / ``manifest``) and either transport (``rclone``
-    / ``rsync_ssh``). Pydantic validation (equipment-id regex, the
-    signal/filename cross-check, transport required fields) raises if
-    the inputs do not form a valid entry -- the caller surfaces that to
-    the operator.
-    """
-    signal = CompletenessSignal(completeness_signal)
-    transport: RcloneTransport | RsyncSshTransport
-    if transport_type == "rsync_ssh":
-        transport = RsyncSshTransport(
-            type="rsync_ssh",
-            ssh_target=ssh_target.strip(),
-            ssh_key_path=ssh_key_path.strip() or "~/.ssh/id_ed25519",
-            remote_path=rsync_remote_path.strip(),
-        )
-    else:
-        transport = RcloneTransport(
-            type="rclone",
-            rclone_remote=rclone_remote.strip(),
-            rclone_remote_path=rclone_remote_path.strip(),
-        )
-    return EquipmentConfig(
-        id=equipment_id.strip(),
-        label=label.strip(),
-        local_root=local_root.strip(),
-        nas_root=nas_root.strip(),
-        completeness_signal=signal,
-        sentinel_filename=(
-            sentinel_filename.strip() or None
-            if signal is CompletenessSignal.SENTINEL_FILE
-            else None
-        ),
-        manifest_filename=(
-            manifest_filename.strip() or None if signal is CompletenessSignal.MANIFEST else None
-        ),
-        transport=transport,
-    )
+# Redesign §6: the canonical equipment-config assembler now lives in
+# ``ui/equipment_form`` so both the wizard and Settings can share it.
+# This module re-exports it for backward compatibility with existing
+# callers / imports.
+from exlab_wizard.ui.equipment_form import build_equipment_config  # noqa: F401
 
 
 def _render_equipment_section(draft: Config) -> None:
