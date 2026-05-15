@@ -276,6 +276,7 @@ def _bootstrap_test_config(config_path: Path, *, include_samples: bool) -> None:
         OrchestratorConfig,
         PathsConfig,
     )
+    from exlab_wizard.paths import ensure_dir
 
     sandbox = config_path.parent  # e.g. ~/Library/Application Support/exlab-wizard-test
     paths_cfg = PathsConfig(
@@ -323,7 +324,7 @@ def _bootstrap_test_config(config_path: Path, *, include_samples: bool) -> None:
         paths_cfg.local_root,
         orchestrator_cfg.staging_root,
     ):
-        Path(sub).mkdir(parents=True, exist_ok=True)
+        ensure_dir(Path(sub))
 
     _log.info("test mode: wrote starter config [path=%s]", str(config_path))
 

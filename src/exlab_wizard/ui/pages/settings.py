@@ -1,7 +1,8 @@
 """Settings dialog (Frontend Spec §7).
 
-Two-pane modal with a left vertical-nav and a right content area. Nine
-sections; setup-incomplete mode auto-selects the first incomplete one.
+Two-pane modal with a left vertical-nav and a right content area. Eight
+sections (``operators`` is deferred pending the chip editor);
+setup-incomplete mode auto-selects the first incomplete one.
 """
 
 from __future__ import annotations

@@ -458,21 +458,21 @@ def test_parse_argv_samples_without_test_errors(
     assert "--add-test-samples requires --test" in captured.err
 
 
-def test_main_test_flag_sets_env_and_bootstraps_config(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """``main(["--test"])`` sets EXLAB_WIZARD_TEST_MODE=1 and writes a starter config.
+@pytest.fixture
+def test_mode_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Sandbox ``main(["--test", ...])`` into ``tmp_path``.
 
-    The env var must be set *before* any paths.py helper is called so the
-    state-dir lookup and config-path lookup both land under the suffixed
-    sandbox. We stub ``_build_default_components`` and ``TrayApp.run`` so
-    no real server boots.
+    Redirects ``Path.home()`` and pins ``sys.platform=linux`` so the Linux
+    branch of ``os_config_path()`` resolves under ``tmp_path/.config``.
+    Clears XDG / APPDATA inheritance and the test-mode env var so each
+    test asserts its own state. Stubs ``configure_logging``,
+    ``_build_default_components``, and ``TrayApp.run`` so no real
+    server / tray boots. Returns ``tmp_path`` for convenience.
     """
     from exlab_wizard import paths
     from exlab_wizard.tray import main as tray_main
 
     monkeypatch.delenv(paths.TEST_MODE_ENV, raising=False)
-    # Redirect HOME so os_config_path() / ensure_state_dir() land in tmp_path.
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "APPDATA", "LOCALAPPDATA"):
         monkeypatch.delenv(var, raising=False)
@@ -481,19 +481,30 @@ def test_main_test_flag_sets_env_and_bootstraps_config(
     monkeypatch.setattr(tray_main, "configure_logging", lambda: None)
     monkeypatch.setattr(tray_main, "_build_default_components", lambda **_: _make_tray())
     monkeypatch.setattr(TrayApp, "run", lambda self, **_: 0)
+    return tmp_path
+
+
+def test_main_test_flag_sets_env_and_bootstraps_config(test_mode_env: Path) -> None:
+    """``main(["--test"])`` sets EXLAB_WIZARD_TEST_MODE=1 and writes a starter config.
+
+    The env var must be set *before* any paths.py helper is called so the
+    state-dir lookup and config-path lookup both land under the suffixed
+    sandbox.
+    """
+    from exlab_wizard import paths
+    from exlab_wizard.config.loader import load_config
+    from exlab_wizard.tray import main as tray_main
 
     rc = tray_main.main(["--test"])
     assert rc == 0
     assert os.environ[paths.TEST_MODE_ENV] == "1"
 
     # Config landed under the '-test' sandbox.
-    cfg_path = tmp_path / ".config" / "exlab-wizard-test" / "config.yaml"
+    cfg_path = test_mode_env / ".config" / "exlab-wizard-test" / "config.yaml"
     assert cfg_path.is_file()
 
     # The written config has the sandbox paths and an empty LIMS (user must
     # still implement the LMS endpoint via Settings).
-    from exlab_wizard.config.loader import load_config
-
     cfg = load_config(cfg_path)
     sandbox = cfg_path.parent
     assert cfg.paths.local_root == str(sandbox / "local")
@@ -510,24 +521,11 @@ def test_main_test_flag_sets_env_and_bootstraps_config(
         assert (sandbox / sub).is_dir()
 
 
-def test_main_test_does_not_overwrite_existing_config(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_main_test_does_not_overwrite_existing_config(test_mode_env: Path) -> None:
     """Re-running ``--test`` must preserve any edits the user made in-session."""
-    from exlab_wizard import paths
     from exlab_wizard.tray import main as tray_main
 
-    monkeypatch.delenv(paths.TEST_MODE_ENV, raising=False)
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "APPDATA", "LOCALAPPDATA"):
-        monkeypatch.delenv(var, raising=False)
-    monkeypatch.setattr("sys.platform", "linux")
-
-    monkeypatch.setattr(tray_main, "configure_logging", lambda: None)
-    monkeypatch.setattr(tray_main, "_build_default_components", lambda **_: _make_tray())
-    monkeypatch.setattr(TrayApp, "run", lambda self, **_: 0)
-
-    cfg_path = tmp_path / ".config" / "exlab-wizard-test" / "config.yaml"
+    cfg_path = test_mode_env / ".config" / "exlab-wizard-test" / "config.yaml"
     cfg_path.parent.mkdir(parents=True)
     sentinel = "paths:\n  local_root: /already/here\n"
     cfg_path.write_text(sentinel, encoding="utf-8")
@@ -538,48 +536,22 @@ def test_main_test_does_not_overwrite_existing_config(
     assert cfg_path.read_text(encoding="utf-8") == sentinel
 
 
-def test_main_test_with_samples_adds_equipment(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    from exlab_wizard import paths
+def test_main_test_with_samples_adds_equipment(test_mode_env: Path) -> None:
+    from exlab_wizard.config.loader import load_config
     from exlab_wizard.tray import main as tray_main
-
-    monkeypatch.delenv(paths.TEST_MODE_ENV, raising=False)
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "APPDATA", "LOCALAPPDATA"):
-        monkeypatch.delenv(var, raising=False)
-    monkeypatch.setattr("sys.platform", "linux")
-
-    monkeypatch.setattr(tray_main, "configure_logging", lambda: None)
-    monkeypatch.setattr(tray_main, "_build_default_components", lambda **_: _make_tray())
-    monkeypatch.setattr(TrayApp, "run", lambda self, **_: 0)
 
     tray_main.main(["--test", "--add-test-samples"])
 
-    from exlab_wizard.config.loader import load_config
-
-    cfg = load_config(tmp_path / ".config" / "exlab-wizard-test" / "config.yaml")
+    cfg = load_config(test_mode_env / ".config" / "exlab-wizard-test" / "config.yaml")
     assert len(cfg.equipment) == 1
     assert cfg.equipment[0].id == "TESTRIG"
 
 
-def test_main_without_test_does_not_set_env(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_main_without_test_does_not_set_env(test_mode_env: Path) -> None:
     """Sanity: running without --test leaves the env var unset and writes no test config."""
     from exlab_wizard import paths
     from exlab_wizard.tray import main as tray_main
 
-    monkeypatch.delenv(paths.TEST_MODE_ENV, raising=False)
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "APPDATA", "LOCALAPPDATA"):
-        monkeypatch.delenv(var, raising=False)
-    monkeypatch.setattr("sys.platform", "linux")
-
-    monkeypatch.setattr(tray_main, "configure_logging", lambda: None)
-    monkeypatch.setattr(tray_main, "_build_default_components", lambda **_: _make_tray())
-    monkeypatch.setattr(TrayApp, "run", lambda self, **_: 0)
-
     tray_main.main([])
     assert paths.TEST_MODE_ENV not in os.environ
-    assert not (tmp_path / ".config" / "exlab-wizard-test").exists()
+    assert not (test_mode_env / ".config" / "exlab-wizard-test").exists()
