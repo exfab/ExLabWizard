@@ -20,7 +20,7 @@ mount layer wires the on-confirm callback to the config router.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from exlab_wizard.config.models import EquipmentConfig
@@ -173,16 +173,7 @@ def render_wizard_equipment(
                 "color: var(--color-muted); margin-bottom: var(--sp-3);"
             ).props(f'data-testid="wizard-equipment-step-{s.active_step}"')
 
-            if s.active_step == "identity":
-                _render_identity_step(s)
-            elif s.active_step == "paths":
-                _render_paths_step(s)
-            elif s.active_step == "sync_mode":
-                _render_sync_mode_step(s)
-            elif s.active_step == "signal":
-                _render_signal_step(s)
-            elif s.active_step == "review":
-                _render_review_step(s)
+            _STEP_RENDERERS[s.active_step](s)
 
             with ui.row().classes("items-center w-full").style(
                 "margin-top: var(--sp-4); gap: var(--sp-2);"
@@ -345,3 +336,12 @@ def _render_review_step(state: EquipmentWizardState) -> None:
         ui.label(f"Error: {state.last_error}").style(
             "color: var(--color-danger);"
         ).props('data-testid="wizard-equipment-error"')
+
+
+_STEP_RENDERERS: dict[str, Callable[[EquipmentWizardState], None]] = {
+    "identity": _render_identity_step,
+    "paths": _render_paths_step,
+    "sync_mode": _render_sync_mode_step,
+    "signal": _render_signal_step,
+    "review": _render_review_step,
+}

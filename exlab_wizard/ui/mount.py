@@ -309,7 +309,7 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             _render_unavailable(
                 ui,
                 "Staging unavailable",
-                "Orchestrator mode is disabled or the staging watcher is not running.",
+                "No config is wired on this app instance.",
             )
             return None
         return staging_page.render_staging_dock(state)
@@ -456,15 +456,10 @@ def _apply_autostart(deps: Any, enabled: bool) -> None:
 def _build_main_state(deps: Any) -> Any:
     from exlab_wizard.ui.pages import main as main_page
 
-    setup_incomplete = not _is_setup_ready(deps)
     # Redesign §3.1: orchestrator pipeline is always active; the staging
-    # surface always renders. The orchestrator_enabled flag on
-    # MainPageState is now always True; it remains for the staging-dock
-    # render path until Phase 8 rebuilds the main page.
-    return main_page.MainPageState(
-        setup_incomplete=setup_incomplete,
-        orchestrator_enabled=True,
-    )
+    # surface always renders, so MainPageState.orchestrator_enabled keeps
+    # its True default.
+    return main_page.MainPageState(setup_incomplete=not _is_setup_ready(deps))
 
 
 def _missing_setup_sections(deps: Any) -> tuple[str, ...]:

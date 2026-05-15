@@ -419,11 +419,11 @@ class StagingWatcher:
         if signal_kind is None:
             return False
         match signal_kind:
-            case CompletenessSignal.SENTINEL_FILE | CompletenessSignal.SENTINEL_FILE.value:
+            case CompletenessSignal.SENTINEL_FILE:
                 if not sentinel_filename:
                     return False
                 return (loc.run_path / sentinel_filename).is_file()
-            case CompletenessSignal.MANIFEST | CompletenessSignal.MANIFEST.value:
+            case CompletenessSignal.MANIFEST:
                 if not manifest_filename:
                     return False
                 return _manifest_satisfied(
@@ -435,7 +435,7 @@ class StagingWatcher:
     async def _completeness_signal_for(
         self,
         loc: _RunLocator,
-    ) -> tuple[CompletenessSignal | str | None, str | None, str | None]:
+    ) -> tuple[CompletenessSignal | None, str | None, str | None]:
         """Resolve the completeness-signal triple for ``loc``.
 
         For owned equipment (``loc.equipment_id`` is in the local

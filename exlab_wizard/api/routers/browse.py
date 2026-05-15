@@ -330,27 +330,20 @@ def _path_is_under_allowed_root(path: Path, config: Any) -> bool:
     """
     if config is None:
         return False
-    candidates: list[str] = []
     paths_block = getattr(config, "paths", None)
-    if paths_block is not None:
-        for attr in ("local_root", "templates_dir", "plugin_dir"):
-            val = getattr(paths_block, attr, "")
-            if val:
-                candidates.append(val)
     orch = getattr(config, "orchestrator", None)
+    candidates = [
+        getattr(paths_block, attr, "") for attr in ("local_root", "templates_dir", "plugin_dir")
+    ] if paths_block is not None else []
     if orch is not None:
-        val = getattr(orch, "staging_root", "")
-        if val:
-            candidates.append(val)
+        candidates.append(getattr(orch, "staging_root", ""))
     for root in candidates:
-        try:
-            resolved_root = Path(root).resolve()
-        except OSError:
+        if not root:
             continue
         try:
-            path.relative_to(resolved_root)
-            return True
-        except ValueError:
+            if path.is_relative_to(Path(root).resolve()):
+                return True
+        except OSError:
             continue
     return False
 
@@ -358,16 +351,13 @@ def _path_is_under_allowed_root(path: Path, config: Any) -> bool:
 def _build_equipment_node(entry: Any, local_root: Path) -> EquipmentNode:
     equipment_dir = local_root / entry.id
     projects = _scan_projects(equipment_dir) if equipment_dir.exists() else []
-    sync_mode = (
-        entry.sync_mode.value
-        if hasattr(entry.sync_mode, "value")
-        else str(entry.sync_mode)
-    )
+    # ``entry.sync_mode`` is a :class:`SyncMode` StrEnum; ``str(...)`` returns
+    # the bare value (``"nas"`` / ``"stage"``).
     return EquipmentNode(
         id=entry.id,
         label=entry.label or entry.id,
         path=str(equipment_dir),
-        sync_mode=sync_mode,
+        sync_mode=str(entry.sync_mode),
         relay=False,
         projects=projects,
     )

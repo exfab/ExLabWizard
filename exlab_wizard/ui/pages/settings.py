@@ -12,12 +12,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from exlab_wizard.config.models import (
-    Config,
-    EquipmentConfig,
-    RcloneTransport,
-    RsyncSshTransport,
-)
+from exlab_wizard.config.models import Config
 from exlab_wizard.constants import CompletenessSignal
 from exlab_wizard.logging import get_logger
 from exlab_wizard.ui import notifications

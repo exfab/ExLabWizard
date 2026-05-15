@@ -33,7 +33,6 @@ from exlab_wizard.config.models import (
     EquipmentConfig,
     OrchestratorConfig,
     OrchestratorStagingCleanup,
-    OrchestratorStagingTransport,
     PathsConfig,
     RcloneTransport,
 )

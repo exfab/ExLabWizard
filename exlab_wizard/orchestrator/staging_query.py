@@ -85,16 +85,14 @@ def list_staged_runs(
 
     Sort order: most recent activity first.
     """
-    root_value = (
-        staging_root
-        if staging_root is not None
-        else Path(config.orchestrator.staging_root)
-        if config.orchestrator.staging_root
-        else None
-    )
-    if root_value is None or not root_value.exists():
+    if staging_root is not None:
+        root = staging_root
+    elif config.orchestrator.staging_root:
+        root = Path(config.orchestrator.staging_root)
+    else:
         return []
-    root = root_value
+    if not root.exists():
+        return []
     now = utc_now_or(now_utc)
     rows = [
         summary
