@@ -1,5 +1,5 @@
 # Local Sphinx build output (regenerated on every build).
-_build/
+build/
 
 # Auto-generated autosummary stub pages (recreated by sphinx-build).
-api/_generated/
+source/api/_generated/

@@ -23,7 +23,7 @@ repos:
       - id: mypy
         # Mypy needs the project deps available to resolve imports; we run it against the
         # package source only (tests are typed loosely). Additional stubs go in additional_dependencies.
-        files: ^exlab_wizard/
+        files: ^src/exlab_wizard/
         additional_dependencies:
           - "pydantic>=2.6"
 
@@ -34,14 +34,14 @@ repos:
         entry: 'logging\.getLogger\('
         language: pygrep
         types: [python]
-        exclude: '^exlab_wizard/logging/manager\.py$'
+        exclude: '^src/exlab_wizard/logging/manager\.py$'
 
       - id: no-direct-ui-notify
         name: Forbid direct ui.notify outside ui/notifications.py
         entry: '\bui\.notify\('
         language: pygrep
         types: [python]
-        exclude: '^exlab_wizard/ui/notifications\.py$'
+        exclude: '^src/exlab_wizard/ui/notifications\.py$'
 
       - id: no-em-dash
         name: Forbid em dashes (DESIGN.md absolute constraint)

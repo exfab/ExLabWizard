@@ -762,7 +762,7 @@ def test_no_stray_ui_notify_calls_in_ui_package() -> None:
 
     from pathlib import Path
 
-    package_root = Path(__file__).resolve().parents[3] / "exlab_wizard" / "ui"
+    package_root = Path(__file__).resolve().parents[3] / "src" / "exlab_wizard" / "ui"
     violations: list[str] = []
     for py_file in package_root.rglob("*.py"):
         if py_file.name == "notifications.py":

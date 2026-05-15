@@ -156,9 +156,9 @@ def test_spec_references_entry_executable(exe_name: str) -> None:
 @pytest.mark.parametrize(
     "script_path",
     [
-        "exlab_wizard/tray/main.py",
-        "exlab_wizard/window/main.py",
-        "exlab_wizard/__main__.py",
+        "src/exlab_wizard/tray/main.py",
+        "src/exlab_wizard/window/main.py",
+        "src/exlab_wizard/__main__.py",
     ],
 )
 def test_spec_references_entry_script(script_path: str) -> None:

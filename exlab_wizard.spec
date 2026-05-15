@@ -39,7 +39,9 @@ REPO_ROOT = Path(".").resolve()
 
 # Read the version from the package so the binary's metadata matches
 # ``pyproject.toml`` automatically. Backend Spec §15.6.
-sys.path.insert(0, str(REPO_ROOT))
+# Src-layout: the package lives under ``src/`` so prepend that directory
+# rather than the repo root.
+sys.path.insert(0, str(REPO_ROOT / "src"))
 from exlab_wizard import __version__ as APP_VERSION  # noqa: E402
 
 # CFBundleIdentifier on macOS. Backend Spec §15.1 / §15.7.1.
@@ -49,9 +51,9 @@ APP_NAME = "ExLab-Wizard"
 # Three entry-point script paths (all live under the package). Each
 # script wraps a ``main()`` callable so PyInstaller can produce a thin
 # launcher that drops directly into our code.
-ENTRY_TRAY = "exlab_wizard/tray/main.py"
-ENTRY_WINDOW = "exlab_wizard/window/main.py"
-ENTRY_CLI = "exlab_wizard/__main__.py"
+ENTRY_TRAY = "src/exlab_wizard/tray/main.py"
+ENTRY_WINDOW = "src/exlab_wizard/window/main.py"
+ENTRY_CLI = "src/exlab_wizard/__main__.py"
 
 # Output executable names (per the §15.1 table). PyInstaller writes
 # these into ``dist/`` together with the shared ``_internal/`` directory.
@@ -230,7 +232,7 @@ def _make_analysis(script: str) -> "Analysis":  # type: ignore[name-defined]
     """Construct a PyInstaller ``Analysis`` for one entry-point script."""
     return Analysis(  # noqa: F821 -- injected by PyInstaller
         [script],
-        pathex=[str(REPO_ROOT)],
+        pathex=[str(REPO_ROOT / "src")],
         binaries=BINARIES,
         datas=DATAS,
         hiddenimports=HIDDEN_IMPORTS,

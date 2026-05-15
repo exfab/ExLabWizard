@@ -4,8 +4,8 @@ The configuration wires the autodoc + autosummary pipeline against the
 ``exlab_wizard`` package, the MyST + sphinx-design extensions for
 authoring user-facing pages in Markdown, and the pydata-sphinx-theme for
 HTML output. The build is invoked via ``make html`` (Makefile) on POSIX
-or ``make.bat html`` on Windows; CI uses ``sphinx-build -W -b html docs
-docs/_build/html``.
+or ``make.bat html`` on Windows; CI uses ``sphinx-build -W -b html
+docs/source docs/build/html`` (standard sphinx-quickstart --sep layout).
 """
 
 from __future__ import annotations
@@ -16,7 +16,10 @@ import sys
 from pathlib import Path
 
 # Make the package importable so autodoc can resolve ``exlab_wizard``.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Src-layout: this file is at ``<repo>/docs/source/conf.py``, so three
+# ``.parent`` hops reach the repo root, then ``/ "src"`` picks up the
+# package directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 # Pre-import the FastAPI app surface so that downstream autosummary
 # imports of submodules under exlab_wizard.cache (notably
@@ -71,7 +74,6 @@ nitpicky = False
 # -- the user guide already documents the UX with screenshots -- so it
 # is excluded rather than wired into a toctree.
 exclude_patterns = [
-    "_build",
     "Thumbs.db",
     ".DS_Store",
     "UX_INTERACTIONS.md",
@@ -235,7 +237,7 @@ myst_substitutions = {
 # ---------------------------------------------------------------------------
 
 html_theme = "pydata_sphinx_theme"
-html_logo = "../assets/ExLabWizardLogo.svg"
+html_logo = "../../assets/ExLabWizardLogo.svg"
 html_static_path = ["_static"]
 html_title = f"{project} {release}"
 
