@@ -310,9 +310,9 @@ def _render_project_step_fields(
             # No LIMS connection and no offline catalogue: manual entry is
             # the only path, but it is a deliberate choice behind a gate
             # button rather than the silent default.
-            ui.label(
-                "No LIMS connection or offline catalogue is available."
-            ).style("color: var(--color-muted);")
+            ui.label("No LIMS connection or offline catalogue is available.").style(
+                "color: var(--color-muted);"
+            )
             manual_id = (
                 ui.input(
                     label="LIMS project short ID (PROJ-NNNN)",

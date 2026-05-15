@@ -10,10 +10,10 @@ Three endpoints back the orchestrator's staging panel:
 * ``POST /staging/{run_path}/clear`` -- delete the local staging copy
   of a sync-verified run (the manual-mode action from §13.7).
 
-All three return ``503`` with ``{"code": "orchestrator_disabled"}``
-when ``config.orchestrator.enabled`` is False -- the router is only
-mounted when the flag is True (see :func:`api.app.create_app`), but the
-guard is kept here so a misconfigured deployment surfaces a clear error.
+All three return ``503`` with ``{"code": "internal_error"}`` when no
+``Config`` is wired on the app (Redesign §3.1 made the orchestrator
+pipeline unconditional, so the legacy ``orchestrator.enabled`` toggle
+is gone).
 """
 
 from __future__ import annotations
@@ -108,7 +108,7 @@ def build_staging_router() -> APIRouter:
     @router.get("/staging", response_model=StagingListResponse)
     async def get_staging(request: Request) -> StagingListResponse:
         deps = require_deps(request)
-        config = _require_orchestrator_enabled(deps)
+        config = _require_config(deps)
         rows = list_staged_runs(config=config, now_utc=utc_now())
         return StagingListResponse(runs=[_row_from_summary(s) for s in rows])
 
@@ -118,7 +118,7 @@ def build_staging_router() -> APIRouter:
     )
     async def post_force_sync(request: Request, run_path: str) -> ForceSyncResponse:
         deps = require_deps(request)
-        _require_orchestrator_enabled(deps)
+        _require_config(deps)
         nas_sync = _require_nas_sync(deps)
         path = Path(run_path)
         handle = await nas_sync.enqueue(path)
@@ -143,7 +143,7 @@ def build_staging_router() -> APIRouter:
     )
     async def post_clear(request: Request, run_path: str) -> ClearResponse:
         deps = require_deps(request)
-        config = _require_orchestrator_enabled(deps)
+        config = _require_config(deps)
         ingest_writer = _require_ingest_writer(deps)
         path = Path(run_path)
         # Defensive check: the spec only allows clearing sync-verified
@@ -206,23 +206,19 @@ def _row_from_summary(summary: StagedRunSummary) -> StagedRunRow:
     )
 
 
-def _require_orchestrator_enabled(deps: Any) -> Config:
-    """Return the live :class:`Config` after asserting orchestrator mode.
+def _require_config(deps: Any) -> Config:
+    """Return the live :class:`Config` or raise 503 when no config is wired.
 
-    Returns 503 with ``code: "orchestrator_disabled"`` per the spec when
-    ``config.orchestrator.enabled`` is False (or when no config is wired).
+    Redesign §3.1: the orchestrator pipeline is always active, so the
+    staging endpoints only need to check that a config is present.
     """
     config = getattr(deps, "config", None)
-    if config is None or not config.orchestrator.enabled:
+    if config is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
-                "code": "orchestrator_disabled",
-                "message": (
-                    "the orchestrator is not enabled on this workstation; "
-                    "set orchestrator.enabled to true in config.yaml to use "
-                    "this endpoint"
-                ),
+                "code": "internal_error",
+                "message": "config is not wired on this app instance",
             },
         )
     return config

@@ -31,6 +31,7 @@ from exlab_wizard.constants import (
     README_FIELDS_JSON_NAME,
     RUN_DATE_STRFTIME,
     RUN_DIR_PREFIX,
+    RUNS_DIR_NAME,
     TEST_RUN_DIR_PREFIX,
     TEST_RUNS_DIR_NAME,
     WINDOWS_ILLEGAL_CHARS,
@@ -318,17 +319,22 @@ def compose_run_path(
 ) -> Path:
     """Compose the absolute on-disk path for a new run.
 
-    Paths follow Backend Spec §3:
+    Paths follow Backend Spec §3 with the GUI/Orchestrator Redesign §3.4
+    ``Runs/`` symmetry update:
 
-    - experimental: ``<local_root>/<EQUIPMENT_ID>/<project name>/Run_<DATE>/``
+    - experimental: ``<local_root>/<EQUIPMENT_ID>/<project name>/Runs/Run_<DATE>/``
     - test:         ``<local_root>/<EQUIPMENT_ID>/<project name>/TestRuns/TestRun_<DATE>/``
 
     The ``<project name>`` segment is the human-readable LIMS name used
     verbatim (§3.2). Validates ``equipment_id`` via
     :func:`canonicalize_equipment_id` and ``project_name`` via
     :func:`validate_project_name`. ``run_date`` is stamped via
-    ``run_date.strftime(RUN_DATE_STRFTIME)`` to produce the ISO 8601 leaf
-    with colons replaced by hyphens.
+    ``run_date.strftime(RUN_DATE_STRFTIME)``; the redesign drops seconds
+    in favour of minute precision, so two runs created on the same
+    instrument within the same minute resolve to the same path. Copier's
+    ``overwrite=False`` (User Interaction Spec §5, gate 6) rejects the
+    second creation rather than clobbering — v1 surfaces this as a hard
+    failure the operator retries.
     """
     canonicalize_equipment_id(equipment_id)
     validate_project_name(project_name)
@@ -336,7 +342,7 @@ def compose_run_path(
     project_dir = Path(local_root) / equipment_id / project_name
     if run_kind is RunKind.TEST:
         return project_dir / TEST_RUNS_DIR_NAME / f"{TEST_RUN_DIR_PREFIX}{stamp}"
-    return project_dir / f"{RUN_DIR_PREFIX}{stamp}"
+    return project_dir / RUNS_DIR_NAME / f"{RUN_DIR_PREFIX}{stamp}"
 
 
 def compose_project_path(
@@ -419,6 +425,8 @@ def evaluate_setup_state(
         return SetupState.INCOMPLETE_NO_CONFIG
     if not _paths_complete(config):
         return SetupState.INCOMPLETE_MISSING_PATHS
+    if not _orchestrator_identity_complete(config):
+        return SetupState.INCOMPLETE_NO_ORCHESTRATOR
     if not config.equipment:
         return SetupState.INCOMPLETE_NO_EQUIPMENT
     if not _lims_slot_satisfied(config, keyring_password_present=keyring_password_present):
@@ -426,6 +434,15 @@ def evaluate_setup_state(
     if not lims_reachable:
         return SetupState.INCOMPLETE_LIMS_UNREACHABLE
     return SetupState.READY
+
+
+def _orchestrator_identity_complete(config: Config) -> bool:
+    """Return True when this device has an orchestrator label + staging root.
+
+    Redesign §3.1: the staging pipeline is always active so both fields
+    are always required (no longer gated on a removed ``enabled`` flag).
+    """
+    return bool(config.orchestrator.label and config.orchestrator.staging_root)
 
 
 def setup_state_missing(state: SetupState, config: Config | None) -> list[dict[str, str]]:
@@ -443,9 +460,26 @@ def setup_state_missing(state: SetupState, config: Config | None) -> list[dict[s
         return [{"field": "equipment", "reason": "empty"}]
     if state is SetupState.INCOMPLETE_MISSING_PATHS:
         return _missing_paths_fields(config)
+    if state is SetupState.INCOMPLETE_NO_ORCHESTRATOR:
+        return _missing_orchestrator_fields(config)
     if state is SetupState.INCOMPLETE_NO_LIMS:
         return _missing_lims_fields(config)
     return []
+
+
+def _missing_orchestrator_fields(config: Config | None) -> list[dict[str, str]]:
+    """Redesign §3.1: ``label`` + ``staging_root`` are required."""
+    if config is None:
+        return [
+            {"field": "orchestrator.label", "reason": "missing"},
+            {"field": "orchestrator.staging_root", "reason": "missing"},
+        ]
+    out: list[dict[str, str]] = []
+    if not config.orchestrator.label:
+        out.append({"field": "orchestrator.label", "reason": "missing"})
+    if not config.orchestrator.staging_root:
+        out.append({"field": "orchestrator.staging_root", "reason": "missing"})
+    return out
 
 
 def _missing_paths_fields(config: Config | None) -> list[dict[str, str]]:
@@ -488,6 +522,10 @@ def setup_state_next_action(state: SetupState) -> SetupNextAction | None:
     """
     match state:
         case SetupState.INCOMPLETE_NO_CONFIG | SetupState.INCOMPLETE_MISSING_PATHS:
+            return SetupNextAction.SET_PATHS
+        case SetupState.INCOMPLETE_NO_ORCHESTRATOR:
+            # Redesign §3.1: label + staging_root fold into an early
+            # Settings section. SET_PATHS routes to that section.
             return SetupNextAction.SET_PATHS
         case SetupState.INCOMPLETE_NO_EQUIPMENT:
             return SetupNextAction.ADD_EQUIPMENT

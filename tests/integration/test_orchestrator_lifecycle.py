@@ -33,7 +33,6 @@ from exlab_wizard.config.models import (
     EquipmentConfig,
     OrchestratorConfig,
     OrchestratorStagingCleanup,
-    OrchestratorStagingTransport,
     PathsConfig,
     RcloneTransport,
 )
@@ -131,15 +130,9 @@ def _make_config(
                     rclone_remote_path="/srv/nas",
                     bandwidth=BandwidthConfig(),
                 ),
-                orchestrator_staging_transport=OrchestratorStagingTransport(
-                    type="smb_mount",
-                    mount_point="/mnt/staging",
-                    staging_subpath="staging",
-                ),
             ),
         ],
         orchestrator=OrchestratorConfig(
-            enabled=True,
             label="ORCH",
             staging_root=str(staging_root),
             staging_cleanup=OrchestratorStagingCleanup(

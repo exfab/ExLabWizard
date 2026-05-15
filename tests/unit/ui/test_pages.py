@@ -34,11 +34,17 @@ def test_welcome_card_spec_default_autostart_on() -> None:
 
 
 def test_welcome_card_three_bullets() -> None:
-    """Three bullets describing what the app does."""
+    """Three bullets describing what the app does.
+
+    Redesign decision 2: bullets reworded for the multi-equipment /
+    file-explorer framing. The earlier LIMS-centric bullet collapsed
+    into the second (live-folder-view) framing; NAS sync still
+    references hard-tier findings.
+    """
 
     spec = welcome.welcome_card_spec()
     assert len(spec.bullets) == 3
-    assert any("LIMS" in b for b in spec.bullets)
+    assert any("equipment" in b.lower() for b in spec.bullets)
     assert any("NAS sync" in b for b in spec.bullets)
 
 

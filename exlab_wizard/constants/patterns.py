@@ -55,8 +55,10 @@ PLUGIN_NAME_PATTERN: re.Pattern[str] = re.compile(PLUGIN_NAME_REGEX)
 
 # strftime format used when stamping a run directory. ISO 8601 with the
 # colons replaced by hyphens so the result is portable across Windows/macOS
-# filesystems. Backend Spec §3.
-RUN_DATE_STRFTIME: str = "%Y-%m-%dT%H-%M-%S"
+# filesystems. GUI/Orchestrator Redesign Spec §3.4 dropped seconds in
+# favour of minute precision; same-minute creation collisions surface as a
+# hard Copier ``overwrite=False`` failure rather than auto-disambiguating.
+RUN_DATE_STRFTIME: str = "%Y-%m-%dT%H-%M"
 
 # Directory-name prefix for an experimental run. Backend Spec §3.
 RUN_DIR_PREFIX: str = "Run_"
@@ -64,8 +66,11 @@ RUN_DIR_PREFIX: str = "Run_"
 # Directory-name prefix for a test run. Backend Spec §3.
 TEST_RUN_DIR_PREFIX: str = "TestRun_"
 
-# Sub-directory name (under the equipment root) holding test runs.
-# Backend Spec §3.
+# Sub-directory name (under the project) holding experimental runs.
+# Redesign Spec §3.4 — symmetric with TestRuns/.
+RUNS_DIR_NAME: str = "Runs"
+
+# Sub-directory name (under the project) holding test runs. Backend Spec §3.
 TEST_RUNS_DIR_NAME: str = "TestRuns"
 
 # Windows-reserved file/directory base names. Comparison MUST be case

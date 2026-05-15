@@ -27,8 +27,8 @@ from exlab_wizard.validator.engine import Validator
 
 def _build_creation(
     *,
-    local_path: str = "/data/EQ1/PROJ-0042/Run_2026-04-17T14-32-00",
-    nas_path: str = "/srv/nas/EQ1/PROJ-0042/Run_2026-04-17T14-32-00",
+    local_path: str = "/data/EQ1/PROJ-0042/Runs/Run_2026-04-17T14-32-00",
+    nas_path: str = "/srv/nas/EQ1/PROJ-0042/Runs/Run_2026-04-17T14-32-00",
     overrides: list[dict] | None = None,
 ) -> CreationJson:
     return CreationJson(
@@ -61,7 +61,7 @@ def validator() -> Validator:
 
 def test_clean_run_is_eligible(tmp_path: Path, validator: Validator) -> None:
     """A creation with no validator findings is eligible for sync."""
-    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Run_2026-04-17T14-32-00"
+    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Runs" / "Run_2026-04-17T14-32-00"
     run_dir.mkdir(parents=True)
     (run_dir / ".exlab-wizard").mkdir()
     creation_path = run_dir / ".exlab-wizard" / "creation.json"
@@ -77,7 +77,7 @@ def test_clean_run_is_eligible(tmp_path: Path, validator: Validator) -> None:
 
 def test_hard_finding_blocks(tmp_path: Path, validator: Validator) -> None:
     """An unresolved-placeholder token in the path triggers a block."""
-    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Run_<run_date>"
+    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Runs" / "Run_<run_date>"
     run_dir.mkdir(parents=True)
     (run_dir / ".exlab-wizard").mkdir()
     creation_path = run_dir / ".exlab-wizard" / "creation.json"
@@ -93,7 +93,7 @@ def test_hard_finding_blocks(tmp_path: Path, validator: Validator) -> None:
 
 def test_active_override_unblocks(tmp_path: Path, validator: Validator) -> None:
     """An active override matching the finding's rule unblocks sync."""
-    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Run_<run_date>"
+    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Runs" / "Run_<run_date>"
     run_dir.mkdir(parents=True)
     (run_dir / ".exlab-wizard").mkdir()
     creation_path = run_dir / ".exlab-wizard" / "creation.json"
@@ -129,7 +129,7 @@ def test_active_override_unblocks(tmp_path: Path, validator: Validator) -> None:
 
 def test_revoked_override_does_not_unblock(tmp_path: Path, validator: Validator) -> None:
     """An override that has been revoked does NOT unblock sync."""
-    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Run_<run_date>"
+    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Runs" / "Run_<run_date>"
     run_dir.mkdir(parents=True)
     (run_dir / ".exlab-wizard").mkdir()
     creation_path = run_dir / ".exlab-wizard" / "creation.json"
@@ -171,7 +171,7 @@ def test_soft_finding_does_not_block(tmp_path: Path, validator: Validator) -> No
     test exercises the absence-of-blocking-finding path with a clean
     structural input.
     """
-    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Run_2026-04-17T14-32-00"
+    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Runs" / "Run_2026-04-17T14-32-00"
     run_dir.mkdir(parents=True)
     creation_path = run_dir / ".exlab-wizard" / "creation.json"
     creation = _build_creation(local_path=str(run_dir))

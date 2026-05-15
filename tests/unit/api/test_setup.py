@@ -26,6 +26,8 @@ from exlab_wizard.constants import SetupState
 
 
 def _ready_config() -> Config:
+    from exlab_wizard.config.models import OrchestratorConfig
+
     return Config(
         paths=PathsConfig(
             templates_dir="/tpl",
@@ -48,6 +50,7 @@ def _ready_config() -> Config:
             )
         ],
         lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),
+        orchestrator=OrchestratorConfig(label="LAB-1", staging_root="/staging"),
     )
 
 
@@ -72,11 +75,20 @@ def test_is_creation_blocked_treats_lims_unreachable_as_soft() -> None:
 
 def test_setup_state_gate_returns_503_in_incomplete_states() -> None:
     """Each non-soft INCOMPLETE_* state returns a 503 with the right code."""
+    from exlab_wizard.config.models import OrchestratorConfig
+
     test_cases = [
         (None, "incomplete_no_config"),
         (Config(), "incomplete_missing_paths"),
         (
             Config(paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d")),
+            "incomplete_no_orchestrator",
+        ),
+        (
+            Config(
+                paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
+                orchestrator=OrchestratorConfig(label="LAB", staging_root="/s"),
+            ),
             "incomplete_no_equipment",
         ),
     ]

@@ -55,7 +55,6 @@ def _make_ingest(*, current_state: IngestState, history: list[dict]) -> IngestJs
 def _orchestrator_config(*, mode: str, retain_hours: int = 24) -> Config:
     return Config(
         orchestrator=OrchestratorConfig(
-            enabled=True,
             label="ORCH-01",
             staging_root="/staging",
             staging_cleanup=OrchestratorStagingCleanup(

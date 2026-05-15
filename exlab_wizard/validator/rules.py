@@ -35,6 +35,7 @@ from exlab_wizard.constants import (
     PLACEHOLDER_JINJA_BLOCK_PATTERN,
     PLACEHOLDER_JINJA_VAR_PATTERN,
     RUN_DIR_PREFIX,
+    RUNS_DIR_NAME,
     TEST_RUN_DIR_PREFIX,
     TEST_RUNS_DIR_NAME,
     WINDOWS_ILLEGAL_CHARS,
@@ -344,10 +345,11 @@ def check_mode_prefix_mismatch(
     """§8.1.3: detect three-way disagreement between ``run_kind``, leaf
     prefix, and parent folder.
 
-    Hard-tier. Triple-agreement contract:
+    Hard-tier. Triple-agreement contract (Redesign §3.4 puts experimental
+    runs under ``Runs/`` symmetric with test runs under ``TestRuns/``):
 
     - ``run_kind="experimental"`` <=> leaf prefix ``Run_`` <=> parent
-      != ``TestRuns/``
+      == ``Runs/``
     - ``run_kind="test"`` <=> leaf prefix ``TestRun_`` <=> parent
       == ``TestRuns/``
 
@@ -361,6 +363,7 @@ def check_mode_prefix_mismatch(
     leaf_says_test = is_test_run_dir(leaf_dir_name)
     leaf_says_experimental = is_run_dir(leaf_dir_name) and not leaf_says_test
     parent_is_test_runs = parent_dir_name == TEST_RUNS_DIR_NAME
+    parent_is_runs = parent_dir_name == RUNS_DIR_NAME
 
     def _make_finding(matched_token: str, detail: str) -> dict[str, Any]:
         return {
@@ -386,7 +389,15 @@ def check_mode_prefix_mismatch(
                 _make_finding(
                     TEST_RUNS_DIR_NAME,
                     f"creation.json run_kind='experimental' requires parent "
-                    f"!= {TEST_RUNS_DIR_NAME!r} but parent is {parent_dir_name!r}.",
+                    f"== {RUNS_DIR_NAME!r} but parent is {parent_dir_name!r}.",
+                )
+            )
+        elif not parent_is_runs:
+            findings.append(
+                _make_finding(
+                    str(parent_dir_name),
+                    f"creation.json run_kind='experimental' requires parent "
+                    f"== {RUNS_DIR_NAME!r} but parent is {parent_dir_name!r}.",
                 )
             )
     elif creation_run_kind == RunKind.TEST.value:

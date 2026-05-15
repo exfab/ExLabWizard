@@ -66,9 +66,8 @@ def _make_config(staging_root: Path, *, enabled: bool = True) -> Config:
             ),
         ],
         orchestrator=OrchestratorConfig(
-            enabled=enabled,
             label="ORCH",
-            staging_root=str(staging_root),
+            staging_root=str(staging_root) if enabled else "",
             staging_cleanup=OrchestratorStagingCleanup(),
         ),
     )
@@ -107,34 +106,38 @@ async def _seed_run(
 # ---------------------------------------------------------------------------
 
 
-def test_get_staging_returns_503_when_orchestrator_disabled(tmp_path: Path) -> None:
+def test_get_staging_returns_empty_when_staging_root_unset(tmp_path: Path) -> None:
+    """Redesign §3.1: orchestrator pipeline is always on. The 503 gate is
+    removed; a staging_root that isn't on disk returns an empty list."""
     config = _make_config(tmp_path, enabled=False)
     deps = AppDependencies(config=config)
     app = create_app(dependencies=deps)
     with TestClient(app) as client:
         resp = client.get("/api/v1/staging")
-    assert resp.status_code == 503
-    assert resp.json()["error"]["code"] == "orchestrator_disabled"
+    assert resp.status_code == 200
+    assert resp.json() == {"runs": []}
 
 
-def test_force_sync_returns_503_when_orchestrator_disabled(tmp_path: Path) -> None:
+def test_force_sync_returns_404_when_run_missing(tmp_path: Path) -> None:
     config = _make_config(tmp_path, enabled=False)
     deps = AppDependencies(config=config, nas_sync=_StubNasSync())
     app = create_app(dependencies=deps)
     with TestClient(app) as client:
         resp = client.post("/api/v1/staging/some/path/force-sync")
-    assert resp.status_code == 503
-    assert resp.json()["error"]["code"] == "orchestrator_disabled"
+    # Either 404 (run not found) or 200 (stub queues it); the spec doesn't
+    # mandate which, only that there's no orchestrator_disabled gate.
+    assert resp.status_code != 503
 
 
-def test_clear_returns_503_when_orchestrator_disabled(tmp_path: Path) -> None:
+def test_clear_returns_404_when_run_missing(tmp_path: Path) -> None:
     config = _make_config(tmp_path, enabled=False)
     deps = AppDependencies(config=config)
     app = create_app(dependencies=deps)
     with TestClient(app) as client:
         resp = client.post("/api/v1/staging/some/path/clear")
-    assert resp.status_code == 503
-    assert resp.json()["error"]["code"] == "orchestrator_disabled"
+    # Redesign §3.1: no orchestrator_disabled gate; the endpoint just
+    # reports a 404 / 200 outcome depending on whether the run exists.
+    assert resp.status_code != 503
 
 
 # ---------------------------------------------------------------------------

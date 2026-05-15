@@ -117,6 +117,7 @@ def _full_config_dict() -> dict:
                 "completeness_signal": "sentinel_file",
                 "sentinel_filename": "acquisition_complete.flag",
                 "manifest_filename": None,
+                "sync_mode": "nas",
                 "transport": {
                     "type": "rclone",
                     "rclone_remote": "lab-nas",
@@ -142,6 +143,7 @@ def _full_config_dict() -> dict:
                 "completeness_signal": "manifest",
                 "sentinel_filename": None,
                 "manifest_filename": "run_manifest.json",
+                "sync_mode": "nas",
                 "transport": {
                     "type": "rsync_ssh",
                     "ssh_target": "labuser@nas01.lab.example",
@@ -189,9 +191,8 @@ def _full_config_dict() -> dict:
         "plugins": {"allow_network": False},
         "sync": {"enabled": True, "retry_attempts": 3},
         "orchestrator": {
-            "enabled": False,
-            "label": "",
-            "staging_root": "",
+            "label": "Lab Acquisition Station 01",
+            "staging_root": "/staging",
             "staging_cleanup": {"mode": "manual", "retain_hours": 24},
         },
     }
@@ -585,6 +586,101 @@ def test_equipment_orchestrator_staging_transport_optional() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Per-equipment sync_mode (Redesign §3.2)
+# ---------------------------------------------------------------------------
+
+
+def _orch_staging_transport_dict() -> dict:
+    return {
+        "type": "smb_mount",
+        "mount_point": "/mnt/orch-staging",
+        "staging_subpath": "incoming/EQ1",
+    }
+
+
+def test_sync_mode_defaults_to_nas_when_absent() -> None:
+    eq = EquipmentConfig.model_validate(_equipment_dict())
+    assert eq.sync_mode.value == "nas"
+
+
+def test_sync_mode_nas_requires_transport_block() -> None:
+    bad = _equipment_dict()
+    bad["sync_mode"] = "nas"
+    bad["transport"] = None
+    with pytest.raises(ValidationError) as info:
+        EquipmentConfig.model_validate(bad)
+    assert "transport" in str(info.value)
+
+
+def test_sync_mode_nas_forbids_orchestrator_staging_transport() -> None:
+    bad = _equipment_dict()
+    bad["sync_mode"] = "nas"
+    bad["orchestrator_staging_transport"] = _orch_staging_transport_dict()
+    with pytest.raises(ValidationError) as info:
+        EquipmentConfig.model_validate(bad)
+    assert "orchestrator_staging_transport" in str(info.value)
+
+
+def test_sync_mode_stage_requires_orchestrator_staging_transport() -> None:
+    bad = _equipment_dict()
+    bad["sync_mode"] = "stage"
+    bad["transport"] = None
+    with pytest.raises(ValidationError) as info:
+        EquipmentConfig.model_validate(bad)
+    assert "orchestrator_staging_transport" in str(info.value)
+
+
+def test_sync_mode_stage_forbids_transport_block() -> None:
+    bad = _equipment_dict()
+    bad["sync_mode"] = "stage"
+    bad["orchestrator_staging_transport"] = _orch_staging_transport_dict()
+    # transport is still set by _equipment_dict() default
+    with pytest.raises(ValidationError) as info:
+        EquipmentConfig.model_validate(bad)
+    assert "transport" in str(info.value)
+
+
+def test_sync_mode_stage_with_only_orchestrator_transport_is_valid() -> None:
+    spec = _equipment_dict()
+    spec["sync_mode"] = "stage"
+    spec["transport"] = None
+    spec["orchestrator_staging_transport"] = _orch_staging_transport_dict()
+    eq = EquipmentConfig.model_validate(spec)
+    assert eq.sync_mode.value == "stage"
+    assert eq.transport is None
+    assert eq.orchestrator_staging_transport is not None
+
+
+def test_sync_mode_serializes_to_string() -> None:
+    spec = _equipment_dict()
+    spec["sync_mode"] = "nas"
+    eq = EquipmentConfig.model_validate(spec)
+    dumped = eq.model_dump(mode="python")
+    assert dumped["sync_mode"] == "nas"
+
+
+def test_sync_mode_rejects_unknown_value() -> None:
+    bad = _equipment_dict()
+    bad["sync_mode"] = "rclone"  # bogus
+    with pytest.raises(ValidationError):
+        EquipmentConfig.model_validate(bad)
+
+
+def test_sync_mode_stage_round_trip_via_dict() -> None:
+    """Build a stage-mode EquipmentConfig from a dict, dump it, compare."""
+    spec = _equipment_dict()
+    spec["sync_mode"] = "stage"
+    spec["transport"] = None
+    spec["orchestrator_staging_transport"] = _orch_staging_transport_dict()
+    eq = EquipmentConfig.model_validate(spec)
+    dumped = eq.model_dump(mode="python")
+    assert dumped["sync_mode"] == "stage"
+    assert dumped["transport"] is None
+    assert dumped["orchestrator_staging_transport"]["type"] == "smb_mount"
+    assert dumped["orchestrator_staging_transport"]["mount_point"] == "/mnt/orch-staging"
+
+
+# ---------------------------------------------------------------------------
 # NASCleanupConfig
 # ---------------------------------------------------------------------------
 
@@ -757,8 +853,10 @@ def test_orchestrator_staging_cleanup_rejects_unknown_mode() -> None:
 
 
 def test_orchestrator_config_defaults() -> None:
+    """Redesign §3.1: the ``enabled`` toggle is removed; ``label`` and
+    ``staging_root`` default to empty (and join the setup-incomplete
+    gate at the top-level config)."""
     cfg = OrchestratorConfig()
-    assert cfg.enabled is False
     assert cfg.label == ""
     assert cfg.staging_root == ""
     assert cfg.staging_cleanup.mode == "manual"
@@ -772,7 +870,11 @@ def test_orchestrator_config_defaults() -> None:
 def test_config_fully_default_is_valid() -> None:
     cfg = Config()
     assert cfg.equipment == []
-    assert cfg.orchestrator.enabled is False
+    # Redesign §3.1: ``enabled`` is removed; the staging pipeline is
+    # always active. ``label`` / ``staging_root`` default to empty and
+    # trip the setup-incomplete gate.
+    assert cfg.orchestrator.label == ""
+    assert cfg.orchestrator.staging_root == ""
 
 
 def test_unique_equipment_ids_required() -> None:
@@ -804,45 +906,49 @@ def test_distinct_equipment_ids_accepted() -> None:
     assert [e.id for e in cfg.equipment] == ["CONFOCAL_01", "FLOW_01"]
 
 
-def test_orchestrator_enabled_requires_label() -> None:
-    with pytest.raises(ValidationError):
-        Config.model_validate(
-            {
-                "orchestrator": {
-                    "enabled": True,
-                    "label": "",
-                    "staging_root": "/staging",
-                }
-            }
-        )
-
-
-def test_orchestrator_enabled_requires_staging_root() -> None:
-    with pytest.raises(ValidationError):
+def test_orchestrator_legacy_enabled_field_rejected() -> None:
+    """Redesign §3.1: the ``enabled`` toggle is removed; old configs
+    that carry it now fail validation with ``extra_forbidden``."""
+    with pytest.raises(ValidationError) as info:
         Config.model_validate(
             {
                 "orchestrator": {
                     "enabled": True,
                     "label": "Lab Acquisition Station 01",
-                    "staging_root": "",
+                    "staging_root": "/staging",
                 }
             }
         )
+    assert "enabled" in str(info.value)
 
 
-def test_orchestrator_enabled_with_both_fields_is_valid() -> None:
+def test_orchestrator_label_and_staging_root_load_independently() -> None:
+    """They can be empty at load time (the setup-incomplete gate trips,
+    not the Pydantic validator); a populated config still validates."""
     cfg = Config.model_validate(
         {
             "orchestrator": {
-                "enabled": True,
+                "label": "Lab Acquisition Station 01",
+                "staging_root": "/staging",
+            }
+        }
+    )
+    assert cfg.orchestrator.label == "Lab Acquisition Station 01"
+    assert cfg.orchestrator.staging_root == "/staging"
+
+
+def test_orchestrator_with_both_fields_is_valid() -> None:
+    cfg = Config.model_validate(
+        {
+            "orchestrator": {
                 "label": "Lab Acquisition Station 01",
                 "staging_root": "/staging",
                 "staging_cleanup": {"mode": "manual", "retain_hours": 24},
             }
         }
     )
-    assert cfg.orchestrator.enabled is True
     assert cfg.orchestrator.label == "Lab Acquisition Station 01"
+    assert cfg.orchestrator.staging_root == "/staging"
 
 
 def test_config_rejects_unknown_top_level_key() -> None:

@@ -79,11 +79,14 @@ ERROR_CODES: frozenset[str] = frozenset(
         "nas_sync_failed",
         "schema_major_mismatch",
         "equipment_id_invalid",
+        "equipment_id_conflict",
         "field_too_long",
         "disk_space_insufficient",
         "plugin_host_unavailable",
         "orchestrator_disabled",
         "staging_not_sync_verified",
+        "folder_not_found",
+        "permission_denied",
         "internal_error",
     }
 )

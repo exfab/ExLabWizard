@@ -25,6 +25,7 @@ from exlab_wizard.config.models import (
     EquipmentConfig,
     LIMSConfig,
     OperatorsConfig,
+    OrchestratorConfig,
     PathsConfig,
     RcloneTransport,
     READMEConfig,
@@ -72,6 +73,7 @@ def ready_config(tmp_path: Path) -> Config:
         operators=OperatorsConfig(allowlist=["asmith"]),
         readme=READMEConfig(defaults=[]),
         lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),
+        orchestrator=OrchestratorConfig(label="LAB", staging_root=str(tmp_path / "staging")),
     )
 
 
@@ -183,6 +185,14 @@ async def test_setup_status_each_incomplete_state() -> None:
         (
             Config(
                 paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
+            ),
+            "incomplete_no_orchestrator",
+            "set_paths",
+        ),
+        (
+            Config(
+                paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
+                orchestrator=OrchestratorConfig(label="LAB", staging_root="/s"),
             ),
             "incomplete_no_equipment",
             "add_equipment",
@@ -326,6 +336,7 @@ async def test_put_config_validates_and_updates_state(tmp_path: Path) -> None:
             plugin_dir=str(tmp_path / "plugins"),
             local_root=str(tmp_path / "data"),
         ),
+        orchestrator=OrchestratorConfig(label="LAB", staging_root=str(tmp_path / "staging")),
     )
     async with await _client(app) as ac:
         response = await ac.put("/api/v1/config", json=new_config.model_dump(mode="json"))

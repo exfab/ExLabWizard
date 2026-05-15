@@ -165,9 +165,9 @@ class StagingWatcher:
         """
         if self._task is not None and not self._task.done():
             return
-        if not self._config.orchestrator.enabled:
-            _log.debug("StagingWatcher.start: orchestrator disabled, no-op")
-            return
+        # Redesign §3.1: orchestrator pipeline is always active. The watcher
+        # starts unconditionally; it stays a no-op when the configured
+        # staging_root does not exist (handled per-poll in poll_once).
         self._stopping = False
         self._task = asyncio.create_task(self._loop(), name="exlab-staging-watcher")
         _log.info(
@@ -262,7 +262,7 @@ class StagingWatcher:
         current = IngestState(ingest.current_state)
         match current:
             case IngestState.STAGING:
-                if self._completeness_signal_present(loc):
+                if await self._completeness_signal_present(loc):
                     files, bytes_received = self._count_files_and_bytes(run_path)
                     await self._advance(
                         loc,
@@ -397,7 +397,7 @@ class StagingWatcher:
         if asyncio.iscoroutine(result):
             await result
 
-    def _completeness_signal_present(self, loc: _RunLocator) -> bool:
+    async def _completeness_signal_present(self, loc: _RunLocator) -> bool:
         """Return True if the equipment's configured signal is present.
 
         The check is per-equipment per §13.5:
@@ -406,23 +406,58 @@ class StagingWatcher:
           exists in the run leaf.
         * ``manifest`` -- a file with ``equipment.manifest_filename``
           exists AND every file it lists is present with the right size.
+
+        Redesign §3.3: if the equipment isn't in this device's local
+        registry (received-equipment path), the signal config travels
+        with the pushed ``creation.json`` ``orchestrator`` block so the
+        watcher can auto-discover what to look for without a per-equipment
+        config of its own.
         """
-        equipment = self._equipment_by_id.get(loc.equipment_id)
-        if equipment is None:
+        signal_kind, sentinel_filename, manifest_filename = await self._completeness_signal_for(loc)
+        if signal_kind is None:
             return False
-        match equipment.completeness_signal:
-            case CompletenessSignal.SENTINEL_FILE.value:
-                if not equipment.sentinel_filename:
+        match signal_kind:
+            case CompletenessSignal.SENTINEL_FILE:
+                if not sentinel_filename:
                     return False
-                return (loc.run_path / equipment.sentinel_filename).is_file()
-            case CompletenessSignal.MANIFEST.value:
-                if not equipment.manifest_filename:
+                return (loc.run_path / sentinel_filename).is_file()
+            case CompletenessSignal.MANIFEST:
+                if not manifest_filename:
                     return False
                 return _manifest_satisfied(
-                    loc.run_path / equipment.manifest_filename,
+                    loc.run_path / manifest_filename,
                     loc.run_path,
                 )
         return False
+
+    async def _completeness_signal_for(
+        self,
+        loc: _RunLocator,
+    ) -> tuple[CompletenessSignal | None, str | None, str | None]:
+        """Resolve the completeness-signal triple for ``loc``.
+
+        For owned equipment (``loc.equipment_id`` is in the local
+        registry), reads from ``EquipmentConfig``. For received equipment
+        (Redesign §3.3 auto-discovery), falls back to the
+        ``orchestrator`` block of the pushed ``creation.json`` which
+        carries the relay-discovery fields. Returns ``(None, None, None)``
+        if neither source has the info.
+        """
+        equipment = self._equipment_by_id.get(loc.equipment_id)
+        if equipment is not None:
+            return (
+                equipment.completeness_signal,
+                equipment.sentinel_filename,
+                equipment.manifest_filename,
+            )
+        creation = await self._read_creation_safe(loc.creation_path)
+        if creation is None or creation.orchestrator is None:
+            return (None, None, None)
+        return (
+            creation.orchestrator.completeness_signal,
+            creation.orchestrator.sentinel_filename,
+            creation.orchestrator.manifest_filename,
+        )
 
     # ------------------------------------------------------------------ scanning
 

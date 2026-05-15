@@ -84,6 +84,9 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         welcome as welcome_page,
     )
     from exlab_wizard.ui.pages import (
+        wizard_equipment as wizard_equipment_page,
+    )
+    from exlab_wizard.ui.pages import (
         wizard_project as wizard_project_page,
     )
 
@@ -172,6 +175,47 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         if _restart_gate(deps, ui):
             return None
         return _render_run_wizard(deps, RunKind.TEST, ui)
+
+    @ui.page("/wizard/equipment")
+    def _wizard_equipment() -> Any:
+        """Redesign §6 — Add-Equipment wizard route."""
+        deps = _deps()
+        if _restart_gate(deps, ui):
+            return None
+        state = wizard_equipment_page.EquipmentWizardState()
+
+        def _on_advance(current_step: str) -> None:
+            idx = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS.index(current_step)
+            if idx + 1 < len(wizard_equipment_page.EQUIPMENT_WIZARD_STEPS):
+                state.active_step = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS[idx + 1]
+                ui.navigate.to("/wizard/equipment")
+
+        def _on_back(current_step: str) -> None:
+            idx = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS.index(current_step)
+            if idx > 0:
+                state.active_step = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS[idx - 1]
+                ui.navigate.to("/wizard/equipment")
+
+        def _on_confirm(eq: Any) -> None:
+            # Posts through the config router. The actual HTTP wiring is
+            # supplied by the deps' append-equipment callable; tests can
+            # stub it.
+            append = getattr(deps, "append_equipment", None) if deps is not None else None
+            if append is not None:
+                try:
+                    append(eq)
+                except Exception as exc:
+                    _show_toast(ui, f"Could not add equipment: {exc}", positive=False)
+                    return
+            ui.navigate.to("/main")
+
+        return wizard_equipment_page.render_wizard_equipment(
+            state=state,
+            on_advance=_on_advance,
+            on_back=_on_back,
+            on_confirm=_on_confirm,
+            on_cancel=lambda: ui.navigate.to("/main"),
+        )
 
     @ui.page("/templates")
     def _templates() -> Any:
@@ -265,7 +309,7 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             _render_unavailable(
                 ui,
                 "Staging unavailable",
-                "Orchestrator mode is disabled or the staging watcher is not running.",
+                "No config is wired on this app instance.",
             )
             return None
         return staging_page.render_staging_dock(state)
@@ -412,15 +456,10 @@ def _apply_autostart(deps: Any, enabled: bool) -> None:
 def _build_main_state(deps: Any) -> Any:
     from exlab_wizard.ui.pages import main as main_page
 
-    setup_incomplete = not _is_setup_ready(deps)
-    orchestrator_enabled = False
-    config = getattr(deps, "config", None) if deps is not None else None
-    if config is not None:
-        orchestrator_enabled = bool(getattr(config.orchestrator, "enabled", False))
-    return main_page.MainPageState(
-        setup_incomplete=setup_incomplete,
-        orchestrator_enabled=orchestrator_enabled,
-    )
+    # Redesign §3.1: orchestrator pipeline is always active; the staging
+    # surface always renders, so MainPageState.orchestrator_enabled keeps
+    # its True default.
+    return main_page.MainPageState(setup_incomplete=not _is_setup_ready(deps))
 
 
 def _missing_setup_sections(deps: Any) -> tuple[str, ...]:
@@ -710,8 +749,10 @@ def _build_staging_state(deps: Any) -> Any:
     from exlab_wizard.ui.pages import staging as staging_page
 
     config = getattr(deps, "config", None) if deps is not None else None
-    if config is None or not getattr(config.orchestrator, "enabled", False):
+    if config is None:
         return None
+    # Redesign §3.1: orchestrator pipeline is always active; missing
+    # staging_root surfaces as an empty staging dock, not a None panel.
     try:
         from exlab_wizard.orchestrator.staging_query import list_staged_runs
 

@@ -53,6 +53,9 @@ from exlab_wizard.ui.pages import (
     welcome as welcome_page,
 )
 from exlab_wizard.ui.pages import (
+    wizard_equipment as wizard_equipment_page,
+)
+from exlab_wizard.ui.pages import (
     wizard_project as wizard_project_page,
 )
 from exlab_wizard.ui.pages import (
@@ -78,6 +81,19 @@ class TestState:
     # LIMS credential field: the keyring is mocked by this attribute --
     # ``None`` means "not set", a string is the captured password.
     lims_password: str | None = None
+    # Redesign §6 — captured payload from the Add-Equipment wizard's
+    # confirm step. ``None`` means the wizard hasn't confirmed yet.
+    appended_equipment: Any = None
+    # Redesign §4 — selected tree node id, used by the file-explorer
+    # view to decide which folder-feed payload + metadata to render.
+    selected_node: str | None = None
+    selected_node_kind: str | None = None
+    selected_node_is_received: bool = False
+    # Seeded folder-feed payload keyed by tree-node id; the test app
+    # serves these as the centre-pane file list.
+    folder_feeds: dict[str, list[tuple[str, int, str | None]]] = field(default_factory=dict)
+    # Seeded findings that the travelling-badge flow consumes (path → tier).
+    seeded_findings: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _read_query(request_url: str) -> dict[str, list[str]]:
@@ -85,6 +101,283 @@ def _read_query(request_url: str) -> dict[str, list[str]]:
     if "?" not in request_url:
         return {}
     return parse_qs(request_url.split("?", 1)[1])
+
+
+def _render_file_explorer_view(ui: Any, test_state: TestState, *, setup: int = 0) -> None:
+    """Redesign §4 file-explorer view, mounted at /main?view=explorer.
+
+    Seeds a deterministic tree + folder-feed payload so the Playwright
+    flows can drive selection, breadcrumb navigation, metadata pane
+    rendering, and the travelling-badge surface without a real
+    filesystem.
+    """
+    from exlab_wizard.ui.components.breadcrumb import render_breadcrumb
+
+    state = main_page.MainPageState(
+        setup_incomplete=bool(setup),
+        orchestrator_enabled=True,
+        selected_node=test_state.selected_node,
+        selected_node_kind=test_state.selected_node_kind,
+        selected_node_is_received=test_state.selected_node_is_received,
+        folder_feed_path=test_state.selected_node,
+    )
+
+    # ------------------------------------------------------------------
+    # Header toolbar (mirrors render_file_explorer_page but inline so the
+    # test app can stub the callbacks). Every toolbar button carries the
+    # spec's testid contract.
+    # ------------------------------------------------------------------
+    with (
+        ui.header()
+        .classes("items-center")
+        .style(
+            "background: var(--color-surface); "
+            "border-bottom: 1px solid var(--color-rule); padding: 12px 24px;"
+        )
+    ):
+        ui.label("ExLab-Wizard").style(
+            "font-family: var(--font-display); color: var(--color-heading);"
+        )
+        ui.space()
+        np_btn = ui.button(
+            "New Project", on_click=lambda _e: ui.navigate.to("/wizard/project")
+        ).props('color=primary data-testid="toolbar-new-project"')
+        nr_btn = ui.button("New Run", on_click=lambda _e: ui.navigate.to("/wizard/run")).props(
+            'color=primary data-testid="toolbar-new-run"'
+        )
+        ntr_btn = ui.button(
+            "New Test Run", on_click=lambda _e: ui.navigate.to("/wizard/test-run")
+        ).props('color=warning data-testid="toolbar-new-test-run"')
+        if state.selected_node_is_received:
+            for btn in (np_btn, nr_btn, ntr_btn):
+                btn.props("disable")
+        ui.button("Add Equipment", on_click=lambda _e: ui.navigate.to("/wizard/equipment")).props(
+            'color=primary data-testid="toolbar-add-equipment"'
+        )
+        ui.button("Refresh", on_click=lambda _e: ui.navigate.to("/main?view=explorer")).props(
+            'flat data-testid="toolbar-refresh"'
+        )
+        ui.button("Settings", on_click=lambda _e: ui.navigate.to("/settings")).props(
+            'flat data-testid="toolbar-settings"'
+        )
+
+    render_breadcrumb(
+        selected_node=state.selected_node,
+        on_navigate=lambda nid: _select(ui, test_state, nid),
+    )
+
+    # ------------------------------------------------------------------
+    # Three-region splitter.
+    # ------------------------------------------------------------------
+    with ui.splitter(value=20).classes("w-full h-full") as outer_split:
+        with outer_split.before, ui.column().classes("w-full p-3").style("gap: 0.5rem;"):
+            ui.input(label="Search").props('data-testid="main-search"').style("width: 100%;")
+            _render_seeded_tree(ui, test_state)
+        with outer_split.after, ui.splitter(value=60).classes("w-full h-full") as centre_split:
+            with centre_split.before:
+                _render_centre_file_list_seeded(ui, test_state)
+            with centre_split.after:
+                _render_right_pane_seeded(ui, test_state)
+
+    # Footer status bar.
+    with (
+        ui.footer().style(
+            "background: var(--color-bg); border-top: 1px solid var(--color-rule); "
+            "padding: 0 16px; min-height: 24px;"
+        ),
+        ui.row().classes("items-center w-full"),
+    ):
+        ui.label("Sync").props('data-testid="footer-sync-segment"')
+        ui.label("Validator").props('data-testid="footer-validator-segment"').on(
+            "click", lambda _e: _select(ui, test_state, "EQ1")
+        )
+        ui.label("LIMS").props('data-testid="footer-lims-segment"')
+        ui.label("Staging").props('data-testid="footer-staging-segment"')
+        ui.button(
+            "Clear verified runs",
+            on_click=lambda _e: setattr(test_state, "last_action", "clear_verified"),
+        ).props('flat data-testid="footer-clear-verified"')
+
+
+def _select(ui: Any, test_state: TestState, node_id: str) -> None:
+    """Mirror render_file_explorer_page's selection dispatch."""
+    test_state.selected_node = node_id
+    # Classify by the node id's shape so the metadata pane chooses the
+    # right renderer.
+    if "/" not in node_id:
+        # equipment-level node
+        if node_id.startswith("RELAY_"):
+            test_state.selected_node_kind = "received_equipment"
+            test_state.selected_node_is_received = True
+        else:
+            test_state.selected_node_kind = "equipment"
+            test_state.selected_node_is_received = False
+    elif "Run_" in node_id or "TestRun_" in node_id:
+        test_state.selected_node_kind = "run"
+    else:
+        test_state.selected_node_kind = "project"
+    ui.navigate.to("/main?view=explorer")
+
+
+def _render_seeded_tree(ui: Any, test_state: TestState) -> None:
+    """Render a deterministic tree the e2e flows can drive."""
+    from exlab_wizard.ui.components.travelling_badge import (
+        FindingLocation,
+        travelling_badges,
+    )
+    from exlab_wizard.ui.components.tree_context_menu import (
+        render_equipment_context_menu,
+        render_run_context_menu,
+    )
+
+    def _tree_action(node_id: str, action: str) -> None:
+        test_state.last_action = f"tree.{action}:{node_id}"
+        # Decision 4A: edit / remove deep-link into Settings with the
+        # equipment pre-selected.
+        ui.navigate.to(f"/settings?active=equipment&equipment_id={node_id}")
+
+    def _run_action(run_path: str, action: str) -> None:
+        test_state.last_action = f"run.{action}:{run_path}"
+
+    nodes = [
+        ("EQ1", "EQ1", "equipment"),
+        ("EQ1/PROJ-0001", "  PROJ-0001", "project"),
+        ("EQ1/PROJ-0001/Runs", "    Runs/", "runs_folder"),
+        ("EQ1/PROJ-0001/Runs/Run_2026-05-14T09-22", "      Run_2026-05-14T09-22", "run"),
+        ("RELAY_EQX", "RELAY_EQX", "received_equipment"),
+    ]
+    for node_id, label, kind in nodes:
+        row = (
+            ui.label(label)
+            .props(f'data-testid="tree-node-{kind}" data-node-id="{node_id}"')
+            .style("cursor: pointer; font-family: var(--font-mono);")
+        )
+        row.on("click", lambda _e, nid=node_id: _select(ui, test_state, nid))
+        # Redesign §4.6 / decision 4A: owned-equipment context menu
+        # surfaces Edit / Remove which deep-link into Settings;
+        # received-equipment nodes have no context menu (decision 3).
+        if kind == "equipment":
+            with row:
+                render_equipment_context_menu(
+                    equipment_id=node_id,
+                    on_action=_tree_action,
+                )
+        elif kind == "run":
+            with row:
+                render_run_context_menu(
+                    run_path=node_id,
+                    on_action=_run_action,
+                )
+    # Travelling-badge banner: if findings are seeded, compute the badge
+    # for the root equipment so the e2e flow can assert.
+    if test_state.seeded_findings:
+        findings = [
+            FindingLocation(path=path, tier=tier) for (path, tier) in test_state.seeded_findings
+        ]
+        badges = travelling_badges(findings, fold_state={})
+        for node_id, props in badges.items():
+            ui.label(f"{props.color}:{props.count}").props(
+                f'data-testid="tree-badge" data-node-id="{node_id}" '
+                f'data-color="{props.color}" data-count="{props.count}"'
+            )
+
+
+def _render_centre_file_list_seeded(ui: Any, test_state: TestState) -> None:
+    """Centre-pane file list driven by the seeded folder_feeds payload."""
+    from exlab_wizard.ui.components.file_list import (
+        FileListEntry,
+        FileListState,
+        render_file_list,
+    )
+
+    if test_state.selected_node is None:
+        ui.label("Select a folder in the tree to see its contents.").props(
+            'data-testid="file-list-empty"'
+        )
+        return
+    # Default to a synthetic two-file feed for any selected node so the
+    # context-menu flow has rows to right-click. The test can override
+    # by populating ``test_state.folder_feeds`` for specific nodes.
+    rows = test_state.folder_feeds.get(
+        test_state.selected_node,
+        [("scan.tif", 1024, "synced"), ("metadata.json", 256, "pending")],
+    )
+    entries = [
+        FileListEntry(
+            name=name,
+            path=f"{test_state.selected_node}/{name}",
+            is_dir=False,
+            size_bytes=size,
+            modified_iso="2026-05-14T09:22:00Z",
+            sync_status=sync,
+        )
+        for (name, size, sync) in rows
+    ]
+
+    def _file_action(entry: FileListEntry, action: str) -> None:
+        test_state.last_action = f"file.{action}:{entry.path}"
+
+    render_file_list(
+        state=FileListState(path=test_state.selected_node, entries=entries),
+        on_context_menu=_file_action,
+    )
+
+
+def _render_right_pane_seeded(ui: Any, test_state: TestState) -> None:
+    """Right-pane metadata + problems tabs."""
+    from exlab_wizard.ui.components.metadata_pane import (
+        MetadataPaneState,
+        render_metadata_pane,
+    )
+
+    with ui.tabs() as tabs:
+        ui.tab("metadata", "Metadata").props('data-testid="tab-metadata"')
+        ui.tab("problems", "Problems").props('data-testid="tab-problems"')
+    with ui.tab_panels(tabs, value="metadata").classes("w-full"):
+        with ui.tab_panel("metadata"):
+            payload: dict[str, Any] = {}
+            if test_state.selected_node_kind == "equipment":
+                payload = {
+                    "id": "EQ1",
+                    "label": "Confocal Microscope 1",
+                    "sync_mode": "stage" if "stage" in (test_state.selected_node or "") else "nas",
+                    "local_root": "/data/lab",
+                    "nas_root": "//nas/lab",
+                    "completeness_signal": "sentinel_file",
+                }
+            elif test_state.selected_node_kind == "received_equipment":
+                payload = {
+                    "id": "RELAY_EQX",
+                    "label": "Relayed Confocal",
+                    "source_host": "labpc-04",
+                }
+            elif test_state.selected_node_kind == "run":
+                payload = {
+                    "label": "Demo run",
+                    "name": test_state.selected_node.rsplit("/", 1)[-1],
+                    "run_kind": "experimental",
+                    "operator": "asmith",
+                    "objective": "demo",
+                    "template": "default",
+                    "created_at": "2026-05-14T09:22:00Z",
+                    "lims_project": "PROJ-0001",
+                    "sync_status": "synced",
+                    "path": test_state.selected_node,
+                }
+            render_metadata_pane(
+                state=MetadataPaneState(
+                    selected_node=test_state.selected_node,
+                    node_kind=test_state.selected_node_kind,
+                    payload=payload,
+                ),
+                on_run_staging_action=lambda path, action: setattr(
+                    test_state, "last_action", f"run.{action}:{path}"
+                ),
+            )
+        with ui.tab_panel("problems"):
+            ui.label(f"Showing {len(test_state.seeded_findings)} findings").props(
+                'data-testid="problems-summary"'
+            )
 
 
 def build_test_app() -> FastAPI:
@@ -132,7 +425,24 @@ def build_test_app() -> FastAPI:
     # Main window (Flow 05, parts of others)
     # ----------------------------------------------------------------------
     @ui.page("/main")
-    def main_index(setup: int = 0, orchestrator: int = 0) -> None:
+    def main_index(
+        setup: int = 0,
+        orchestrator: int = 0,
+        view: str = "",
+        seed_finding: str = "",
+    ) -> None:
+        if view == "explorer":
+            if seed_finding:
+                # Parse comma-separated <path>:<tier> pairs the
+                # travelling-badge flow consumes.
+                pairs: list[tuple[str, str]] = []
+                for entry in seed_finding.split(","):
+                    if ":" in entry:
+                        p, t = entry.rsplit(":", 1)
+                        pairs.append((p, t))
+                test_state.seeded_findings = pairs
+            _render_file_explorer_view(ui, test_state, setup=setup)
+            return
         from exlab_wizard.constants import IngestState
         from exlab_wizard.orchestrator.staging_query import StagedRunSummary
         from exlab_wizard.ui.components import tree as tree_component
@@ -276,6 +586,49 @@ def build_test_app() -> FastAPI:
 
         wizard_run_page.render_run_wizard(
             state=s, on_submit=_submit, on_cancel=lambda: ui.navigate.to("/main")
+        )
+
+    # ----------------------------------------------------------------------
+    # Add-Equipment wizard (Flow 16 -- Redesign §6)
+    # ----------------------------------------------------------------------
+    @ui.page("/wizard/equipment")
+    def wizard_equipment_index(step: str = "identity") -> None:
+        state = wizard_equipment_page.EquipmentWizardState(
+            active_step=step or "identity",
+            equipment_id="FLOW_99",
+            label="Flow Cytometer 99",
+            local_root="/data",
+            nas_root="/srv/nas",
+            rclone_remote="lab-nas",
+            rclone_remote_path="lab/FLOW_99",
+            sentinel_filename="done.flag",
+        )
+
+        def _advance(current: str) -> None:
+            idx = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS.index(current)
+            if idx + 1 < len(wizard_equipment_page.EQUIPMENT_WIZARD_STEPS):
+                ui.navigate.to(
+                    f"/wizard/equipment?step={wizard_equipment_page.EQUIPMENT_WIZARD_STEPS[idx + 1]}"
+                )
+
+        def _back(current: str) -> None:
+            idx = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS.index(current)
+            if idx > 0:
+                ui.navigate.to(
+                    f"/wizard/equipment?step={wizard_equipment_page.EQUIPMENT_WIZARD_STEPS[idx - 1]}"
+                )
+
+        def _confirm(eq: Any) -> None:
+            test_state.appended_equipment = eq
+            test_state.last_action = "wizard.equipment.confirm"
+            ui.label("Equipment added").props('data-testid="wizard-equipment-success"')
+
+        wizard_equipment_page.render_wizard_equipment(
+            state=state,
+            on_advance=_advance,
+            on_back=_back,
+            on_confirm=_confirm,
+            on_cancel=lambda: ui.navigate.to("/main"),
         )
 
     # ----------------------------------------------------------------------
