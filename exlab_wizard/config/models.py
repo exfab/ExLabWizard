@@ -39,6 +39,7 @@ from exlab_wizard.constants import (
     FieldType,
     OrchestratorTransportType,
     StagingCleanupMode,
+    SyncMode,
 )
 from exlab_wizard.errors import ConfigError
 
@@ -292,7 +293,15 @@ class OrchestratorStagingTransport(BaseModel):
 
 
 class EquipmentConfig(BaseModel):
-    """One ``equipment:`` list entry. Backend Spec §9."""
+    """One ``equipment:`` list entry. Backend Spec §9.
+
+    ``sync_mode`` (Redesign Spec §3.2) is the per-equipment role this device
+    plays for the equipment: ``nas`` means this device acquires runs and syncs
+    them directly to the NAS (requires ``transport``); ``stage`` means this
+    device acquires runs and pushes them to a connected PC's staging area
+    (requires ``orchestrator_staging_transport``). The two transport fields
+    are mutually exclusive — exactly one is populated, dictated by the mode.
+    """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -303,12 +312,17 @@ class EquipmentConfig(BaseModel):
     completeness_signal: CompletenessSignal
     sentinel_filename: str | None = None
     manifest_filename: str | None = None
-    transport: EquipmentTransport
+    sync_mode: SyncMode = SyncMode.NAS
+    transport: EquipmentTransport | None = None
     orchestrator_staging_transport: OrchestratorStagingTransport | None = None
 
     @field_serializer("completeness_signal")
     def _serialize_completeness_signal(self, value: CompletenessSignal) -> str:
         # Emit the bare string so YAML/JSON dumps round-trip the wire format.
+        return value.value
+
+    @field_serializer("sync_mode")
+    def _serialize_sync_mode(self, value: SyncMode) -> str:
         return value.value
 
     @field_validator("id")
@@ -338,6 +352,37 @@ class EquipmentConfig(BaseModel):
                     msg = (
                         "equipment.completeness_signal == 'manifest' "
                         "requires a non-empty manifest_filename"
+                    )
+                    raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _sync_mode_dictates_transport(self) -> EquipmentConfig:
+        match self.sync_mode:
+            case SyncMode.NAS:
+                if self.transport is None:
+                    msg = (
+                        "equipment.sync_mode == 'nas' requires a 'transport' "
+                        "block"
+                    )
+                    raise ValueError(msg)
+                if self.orchestrator_staging_transport is not None:
+                    msg = (
+                        "equipment.sync_mode == 'nas' must not declare "
+                        "'orchestrator_staging_transport'"
+                    )
+                    raise ValueError(msg)
+            case SyncMode.STAGE:
+                if self.orchestrator_staging_transport is None:
+                    msg = (
+                        "equipment.sync_mode == 'stage' requires an "
+                        "'orchestrator_staging_transport' block"
+                    )
+                    raise ValueError(msg)
+                if self.transport is not None:
+                    msg = (
+                        "equipment.sync_mode == 'stage' must not declare "
+                        "a 'transport' block"
                     )
                     raise ValueError(msg)
         return self

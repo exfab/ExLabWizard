@@ -146,6 +146,20 @@ class TransportType(StrEnum):
     RSYNC_SSH = "rsync_ssh"
 
 
+class SyncMode(StrEnum):
+    """Per-equipment sync role. GUI/Orchestrator Redesign Spec §3.2.
+
+    Replaces the device-level orchestrator-mode toggle. Stored under
+    ``sync_mode`` on each ``EquipmentConfig`` entry. An equipment is never
+    both: ``nas`` requires ``transport`` and forbids
+    ``orchestrator_staging_transport``; ``stage`` requires
+    ``orchestrator_staging_transport`` and forbids ``transport``.
+    """
+
+    NAS = "nas"
+    STAGE = "stage"
+
+
 class CompletenessSignal(StrEnum):
     """How a directory signals that its contents are finalized.
 

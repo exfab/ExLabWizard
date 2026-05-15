@@ -19,6 +19,7 @@ equipment:
     nas_root: "//nas01/lab"
     completeness_signal: "sentinel_file"
     sentinel_filename: "acquisition_complete.flag"
+    sync_mode: "nas"
     transport:
       type: "rclone"
       rclone_remote: "lab-nas"

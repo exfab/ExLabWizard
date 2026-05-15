@@ -24,6 +24,7 @@ equipment:
     nas_root: "//nas01/lab"                     # shared equipment-first root on NAS (display value)
     completeness_signal: "sentinel_file"
     sentinel_filename: "acquisition_complete.flag"
+    sync_mode: "nas"                            # this device syncs runs straight to the NAS (Redesign §3.2)
     transport:
       type: "rclone"                            # local-to-NAS transport for NASSync (§7.1)
       rclone_remote: "lab-nas"                  # remote name from rclone.conf
@@ -38,6 +39,7 @@ equipment:
     nas_root: "/mnt/nas/lab"
     completeness_signal: "manifest"
     manifest_filename: "run_manifest.json"
+    sync_mode: "nas"                            # this device syncs runs straight to the NAS (Redesign §3.2)
     transport:
       type: "rsync_ssh"                         # local-to-NAS transport for NASSync (§7.1)
       ssh_target: "labuser@nas01.lab.example"

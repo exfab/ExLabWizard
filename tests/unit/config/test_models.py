@@ -117,6 +117,7 @@ def _full_config_dict() -> dict:
                 "completeness_signal": "sentinel_file",
                 "sentinel_filename": "acquisition_complete.flag",
                 "manifest_filename": None,
+                "sync_mode": "nas",
                 "transport": {
                     "type": "rclone",
                     "rclone_remote": "lab-nas",
@@ -142,6 +143,7 @@ def _full_config_dict() -> dict:
                 "completeness_signal": "manifest",
                 "sentinel_filename": None,
                 "manifest_filename": "run_manifest.json",
+                "sync_mode": "nas",
                 "transport": {
                     "type": "rsync_ssh",
                     "ssh_target": "labuser@nas01.lab.example",
@@ -582,6 +584,87 @@ def test_equipment_nas_root_must_be_non_empty() -> None:
 def test_equipment_orchestrator_staging_transport_optional() -> None:
     eq = EquipmentConfig.model_validate(_equipment_dict())
     assert eq.orchestrator_staging_transport is None
+
+
+# ---------------------------------------------------------------------------
+# Per-equipment sync_mode (Redesign §3.2)
+# ---------------------------------------------------------------------------
+
+
+def _orch_staging_transport_dict() -> dict:
+    return {
+        "type": "smb_mount",
+        "mount_point": "/mnt/orch-staging",
+        "staging_subpath": "incoming/EQ1",
+    }
+
+
+def test_sync_mode_defaults_to_nas_when_absent() -> None:
+    eq = EquipmentConfig.model_validate(_equipment_dict())
+    assert eq.sync_mode.value == "nas"
+
+
+def test_sync_mode_nas_requires_transport_block() -> None:
+    bad = _equipment_dict()
+    bad["sync_mode"] = "nas"
+    bad["transport"] = None
+    with pytest.raises(ValidationError) as info:
+        EquipmentConfig.model_validate(bad)
+    assert "transport" in str(info.value)
+
+
+def test_sync_mode_nas_forbids_orchestrator_staging_transport() -> None:
+    bad = _equipment_dict()
+    bad["sync_mode"] = "nas"
+    bad["orchestrator_staging_transport"] = _orch_staging_transport_dict()
+    with pytest.raises(ValidationError) as info:
+        EquipmentConfig.model_validate(bad)
+    assert "orchestrator_staging_transport" in str(info.value)
+
+
+def test_sync_mode_stage_requires_orchestrator_staging_transport() -> None:
+    bad = _equipment_dict()
+    bad["sync_mode"] = "stage"
+    bad["transport"] = None
+    with pytest.raises(ValidationError) as info:
+        EquipmentConfig.model_validate(bad)
+    assert "orchestrator_staging_transport" in str(info.value)
+
+
+def test_sync_mode_stage_forbids_transport_block() -> None:
+    bad = _equipment_dict()
+    bad["sync_mode"] = "stage"
+    bad["orchestrator_staging_transport"] = _orch_staging_transport_dict()
+    # transport is still set by _equipment_dict() default
+    with pytest.raises(ValidationError) as info:
+        EquipmentConfig.model_validate(bad)
+    assert "transport" in str(info.value)
+
+
+def test_sync_mode_stage_with_only_orchestrator_transport_is_valid() -> None:
+    spec = _equipment_dict()
+    spec["sync_mode"] = "stage"
+    spec["transport"] = None
+    spec["orchestrator_staging_transport"] = _orch_staging_transport_dict()
+    eq = EquipmentConfig.model_validate(spec)
+    assert eq.sync_mode.value == "stage"
+    assert eq.transport is None
+    assert eq.orchestrator_staging_transport is not None
+
+
+def test_sync_mode_serializes_to_string() -> None:
+    spec = _equipment_dict()
+    spec["sync_mode"] = "nas"
+    eq = EquipmentConfig.model_validate(spec)
+    dumped = eq.model_dump(mode="python")
+    assert dumped["sync_mode"] == "nas"
+
+
+def test_sync_mode_rejects_unknown_value() -> None:
+    bad = _equipment_dict()
+    bad["sync_mode"] = "rclone"  # bogus
+    with pytest.raises(ValidationError):
+        EquipmentConfig.model_validate(bad)
 
 
 # ---------------------------------------------------------------------------

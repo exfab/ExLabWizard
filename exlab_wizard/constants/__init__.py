@@ -37,6 +37,7 @@ from exlab_wizard.constants.enums import (
     SetupState,
     StagingCleanupMode,
     SyncHandleState,
+    SyncMode,
     SyncStatus,
     TemplateType,
     Tier,

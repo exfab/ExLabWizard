@@ -43,6 +43,7 @@ from msgspec import json as msgspec_json
 from msgspec import structs as msgspec_structs
 
 from exlab_wizard.constants import (
+    CompletenessSignal,
     CreationLevel,
     IngestState,
     LIMSProjectSource,
@@ -161,17 +162,28 @@ class OrchestratorBlock(
     omit_defaults=True,
     forbid_unknown_fields=False,
 ):
-    """Orchestrator-mode metadata. Spec §11.3 / §13.
+    """Orchestrator-mode metadata. Spec §11.3 / §13 / Redesign Spec §3.3.
 
-    Absent (not null) at the parent-struct level when the wizard is
-    running in single-equipment mode -- ``CreationJson.orchestrator``
-    is ``None`` in that case and ``omit_defaults=True`` keeps the
-    field out of the encoded JSON entirely.
+    Always present on a v1 ``creation.json``; the redesign collapses the
+    single-equipment / orchestrator distinction into a per-equipment sync
+    role and the orchestrator block always carries the producing device's
+    identity.
+
+    The ``equipment_label`` / ``completeness_signal`` /
+    ``sentinel_filename`` / ``manifest_filename`` fields travel with the
+    push so the receiving orchestrator can auto-discover received
+    equipment (Redesign Spec §3.3) without a per-equipment registry of
+    its own. They are optional for forward-compat with creation.json
+    files written by earlier writers.
     """
 
     enabled: bool
     host: str
     label: str
+    equipment_label: str = ""
+    completeness_signal: CompletenessSignal | None = None
+    sentinel_filename: str | None = None
+    manifest_filename: str | None = None
 
 
 # ---------------------------------------------------------------------------

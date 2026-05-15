@@ -131,11 +131,6 @@ def _make_config(
                     rclone_remote_path="/srv/nas",
                     bandwidth=BandwidthConfig(),
                 ),
-                orchestrator_staging_transport=OrchestratorStagingTransport(
-                    type="smb_mount",
-                    mount_point="/mnt/staging",
-                    staging_subpath="staging",
-                ),
             ),
         ],
         orchestrator=OrchestratorConfig(

@@ -151,6 +151,45 @@ def test_creation_json_orchestrator_block_omitted_when_none() -> None:
     assert '"orchestrator"' not in encoded
 
 
+def test_orchestrator_block_carries_relay_discovery_fields() -> None:
+    """Redesign §3.3: pushed creation.json carries the equipment label +
+    completeness signal so the orchestrator can auto-discover received
+    equipment without a per-equipment registry of its own."""
+    payload = _minimal_creation_json(
+        orchestrator=OrchestratorBlock(
+            enabled=True,
+            host="labpc-04",
+            label="Lab Acquisition Station 01",
+            equipment_label="Confocal Microscope 1",
+            completeness_signal="sentinel_file",
+            sentinel_filename="acquisition_complete.flag",
+        ),
+    )
+    encoded = msgspec_json.encode(payload)
+    decoded = msgspec_json.decode(encoded, type=CreationJson)
+    assert decoded.orchestrator is not None
+    assert decoded.orchestrator.equipment_label == "Confocal Microscope 1"
+    assert decoded.orchestrator.completeness_signal == "sentinel_file"
+    assert decoded.orchestrator.sentinel_filename == "acquisition_complete.flag"
+    assert decoded.orchestrator.manifest_filename is None
+
+
+def test_orchestrator_block_relay_fields_default_to_empty_or_none() -> None:
+    """Older creation.json files (no relay fields) decode cleanly."""
+    payload = _minimal_creation_json(
+        orchestrator=OrchestratorBlock(
+            enabled=True, host="labpc-04", label="Lab Acquisition Station 01"
+        ),
+    )
+    encoded = msgspec_json.encode(payload)
+    decoded = msgspec_json.decode(encoded, type=CreationJson)
+    assert decoded.orchestrator is not None
+    assert decoded.orchestrator.equipment_label == ""
+    assert decoded.orchestrator.completeness_signal is None
+    assert decoded.orchestrator.sentinel_filename is None
+    assert decoded.orchestrator.manifest_filename is None
+
+
 def test_creation_json_default_sync_status_is_pending() -> None:
     payload = _minimal_creation_json()
     assert payload.sync_status == "pending"
