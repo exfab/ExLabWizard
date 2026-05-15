@@ -69,6 +69,7 @@ from exlab_wizard.config.models import ValidatorConfig
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
     README_FILE_NAME,
+    RUNS_DIR_NAME,
     TEST_RUNS_DIR_NAME,
     VALIDATOR_BINARY_DETECT_BYTES,
     AuditScopeKind,
@@ -580,11 +581,17 @@ class Validator:
         """Classify a directory's role in an equipment subtree.
 
         Equipment root is depth 0; first child is the project (depth 1);
-        the next level depends on the shape:
+        the next level depends on the shape (Redesign §3.4 puts
+        experimental runs under a ``Runs/`` marker folder symmetric with
+        ``TestRuns/``):
 
-        - ``Run_*`` -> ``DirectoryLevel.RUN``
-        - ``TestRuns`` -> ``DirectoryLevel.TEST_RUNS`` (the marker folder)
+        - ``Runs`` -> ``DirectoryLevel.RUNS`` (marker folder)
+        - ``TestRuns`` -> ``DirectoryLevel.TEST_RUNS`` (marker folder)
+        - ``Runs/Run_*`` -> ``DirectoryLevel.RUN``
         - ``TestRuns/TestRun_*`` -> ``DirectoryLevel.TEST_RUN``
+        - misplaced ``Run_*`` directly under project (no ``Runs/``
+          parent) -> ``DirectoryLevel.RUN`` so the mode-prefix-mismatch
+          rule still picks it up as a hard finding.
         - anything else (depth >= 2 not matching the patterns) ->
           ``DirectoryLevel.OTHER`` (unmanaged sub-folder under a project / run)
         """
@@ -601,12 +608,21 @@ class Validator:
             name = parts[1]
             if name == TEST_RUNS_DIR_NAME:
                 return DirectoryLevel.TEST_RUNS
+            if name == RUNS_DIR_NAME:
+                return DirectoryLevel.RUNS
             if is_run_dir(name):
+                # Misplaced Run_* directly under the project (not inside
+                # Runs/) — still classify as RUN so the mode-prefix-
+                # mismatch rule fires.
                 return DirectoryLevel.RUN
             return DirectoryLevel.OTHER
         if len(parts) == 3 and parts[1] == TEST_RUNS_DIR_NAME:
             if is_test_run_dir(parts[2]):
                 return DirectoryLevel.TEST_RUN
+            return DirectoryLevel.OTHER
+        if len(parts) == 3 and parts[1] == RUNS_DIR_NAME:
+            if is_run_dir(parts[2]):
+                return DirectoryLevel.RUN
             return DirectoryLevel.OTHER
         return DirectoryLevel.OTHER
 
@@ -627,6 +643,7 @@ class Validator:
         if level in {
             DirectoryLevel.RUN,
             DirectoryLevel.TEST_RUN,
+            DirectoryLevel.RUNS,
             DirectoryLevel.TEST_RUNS,
             DirectoryLevel.PROJECT,
         }:
@@ -640,6 +657,8 @@ class Validator:
             return str(directory)
         parts = rel.parts
         if len(parts) >= 3 and parts[1] == TEST_RUNS_DIR_NAME:
+            return str(Path(equipment_root_abs) / Path(*parts[:3]))
+        if len(parts) >= 3 and parts[1] == RUNS_DIR_NAME:
             return str(Path(equipment_root_abs) / Path(*parts[:3]))
         if len(parts) >= 2 and is_run_dir(parts[1]):
             return str(Path(equipment_root_abs) / Path(*parts[:2]))

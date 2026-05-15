@@ -100,7 +100,7 @@ def _make_creation(local_path: Path) -> CreationJson:
 
 
 async def _populate_run(local_root: Path) -> Path:
-    run_dir = local_root / "EQ1" / "PROJ-0042" / "Run_2026-04-17T14-32-00"
+    run_dir = local_root / "EQ1" / "PROJ-0042" / "Runs" / "Run_2026-04-17T14-32-00"
     run_dir.mkdir(parents=True)
     (run_dir / "data.bin").write_bytes(b"payload-bytes")
     (run_dir / "subdir").mkdir()

@@ -31,6 +31,7 @@ from exlab_wizard.constants import (
     README_FIELDS_JSON_NAME,
     RUN_DATE_STRFTIME,
     RUN_DIR_PREFIX,
+    RUNS_DIR_NAME,
     TEST_RUN_DIR_PREFIX,
     TEST_RUNS_DIR_NAME,
     WINDOWS_ILLEGAL_CHARS,
@@ -318,17 +319,22 @@ def compose_run_path(
 ) -> Path:
     """Compose the absolute on-disk path for a new run.
 
-    Paths follow Backend Spec §3:
+    Paths follow Backend Spec §3 with the GUI/Orchestrator Redesign §3.4
+    ``Runs/`` symmetry update:
 
-    - experimental: ``<local_root>/<EQUIPMENT_ID>/<project name>/Run_<DATE>/``
+    - experimental: ``<local_root>/<EQUIPMENT_ID>/<project name>/Runs/Run_<DATE>/``
     - test:         ``<local_root>/<EQUIPMENT_ID>/<project name>/TestRuns/TestRun_<DATE>/``
 
     The ``<project name>`` segment is the human-readable LIMS name used
     verbatim (§3.2). Validates ``equipment_id`` via
     :func:`canonicalize_equipment_id` and ``project_name`` via
     :func:`validate_project_name`. ``run_date`` is stamped via
-    ``run_date.strftime(RUN_DATE_STRFTIME)`` to produce the ISO 8601 leaf
-    with colons replaced by hyphens.
+    ``run_date.strftime(RUN_DATE_STRFTIME)``; the redesign drops seconds
+    in favour of minute precision, so two runs created on the same
+    instrument within the same minute resolve to the same path. Copier's
+    ``overwrite=False`` (User Interaction Spec §5, gate 6) rejects the
+    second creation rather than clobbering — v1 surfaces this as a hard
+    failure the operator retries.
     """
     canonicalize_equipment_id(equipment_id)
     validate_project_name(project_name)
@@ -336,7 +342,7 @@ def compose_run_path(
     project_dir = Path(local_root) / equipment_id / project_name
     if run_kind is RunKind.TEST:
         return project_dir / TEST_RUNS_DIR_NAME / f"{TEST_RUN_DIR_PREFIX}{stamp}"
-    return project_dir / f"{RUN_DIR_PREFIX}{stamp}"
+    return project_dir / RUNS_DIR_NAME / f"{RUN_DIR_PREFIX}{stamp}"
 
 
 def compose_project_path(

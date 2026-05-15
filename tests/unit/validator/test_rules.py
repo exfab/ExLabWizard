@@ -346,13 +346,27 @@ def test_safe_project_name_passes(name: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_experimental_with_run_prefix_and_non_test_parent_passes() -> None:
+def test_experimental_with_run_prefix_under_runs_parent_passes() -> None:
+    """Redesign §3.4: experimental run leaf parented by ``Runs`` is valid."""
+    findings = check_mode_prefix_mismatch(
+        leaf_dir_name="Run_2024-01-01T10-00-00",
+        parent_dir_name="Runs",
+        creation_run_kind="experimental",
+    )
+    assert findings == []
+
+
+def test_experimental_with_run_prefix_at_project_level_fires() -> None:
+    """Redesign §3.4: a misplaced ``Run_*`` directly under the project (not
+    under ``Runs/``) is now a hard mode_prefix_mismatch."""
     findings = check_mode_prefix_mismatch(
         leaf_dir_name="Run_2024-01-01T10-00-00",
         parent_dir_name="PROJ-0001",
         creation_run_kind="experimental",
     )
-    assert findings == []
+    assert len(findings) == 1
+    assert findings[0]["rule"] == "mode_prefix_mismatch"
+    assert findings[0]["matched_token"] == "PROJ-0001"
 
 
 def test_experimental_with_test_run_prefix_fires() -> None:

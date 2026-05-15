@@ -266,11 +266,13 @@ class DirectoryLevel(StrEnum):
     """Result of classifying a directory in the validator engine.
 
     Used internally by the validator scope walk; not persisted. Backend
-    Spec §8.1.
+    Spec §8.1. ``RUNS`` is the GUI/Orchestrator Redesign §3.4 marker
+    folder symmetric with ``TEST_RUNS``.
     """
 
     EQUIPMENT = "equipment"
     PROJECT = "project"
+    RUNS = "runs"
     RUN = "run"
     TEST_RUN = "test_run"
     TEST_RUNS = "test_runs"

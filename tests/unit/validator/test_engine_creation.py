@@ -43,7 +43,7 @@ def _clean_input(**overrides: object) -> CreationValidationInput:
     The empty file lists keep the file-side rules silent.
     """
     base: dict[str, object] = {
-        "proposed_path": "/data/lab/CONFOCAL_01/PROJ-0042/Run_2026-04-17T14-32-00",
+        "proposed_path": "/data/lab/CONFOCAL_01/PROJ-0042/Runs/Run_2026-04-17T14-32-00",
         "variables": {"project_name": "Cortex Q3 Pilot"},
         "file_names": ("README.md", "metadata.csv"),
         "file_contents": {
@@ -83,8 +83,8 @@ def _clean_input(**overrides: object) -> CreationValidationInput:
 
 
 def test_split_path_segments_posix_path() -> None:
-    parts = _split_path_segments("/data/lab/CONFOCAL_01/PROJ-0042/Run_2026")
-    assert parts == ["data", "lab", "CONFOCAL_01", "PROJ-0042", "Run_2026"]
+    parts = _split_path_segments("/data/lab/CONFOCAL_01/PROJ-0042/Runs/Run_2026")
+    assert parts == ["data", "lab", "CONFOCAL_01", "PROJ-0042", "Runs", "Run_2026"]
 
 
 def test_split_path_segments_windows_path() -> None:
@@ -153,7 +153,7 @@ def test_unresolved_placeholder_in_path_segment_triggers_finding() -> None:
     """An angle-bracket identifier in a path segment fires §8.1.1."""
     findings = Validator().validate_creation(
         _clean_input(
-            proposed_path="/data/lab/CONFOCAL_01/PROJ-0042/Run_<run_date>",
+            proposed_path="/data/lab/CONFOCAL_01/PROJ-0042/Runs/Run_<run_date>",
             file_names=(),
             file_contents={},
         )
@@ -226,7 +226,7 @@ def test_run_leaf_with_test_run_kind_triggers_mode_prefix_mismatch() -> None:
     """A ``Run_`` leaf paired with ``run_kind='test'`` fires §8.1.3."""
     findings = Validator().validate_creation(
         _clean_input(
-            proposed_path="/data/lab/CONFOCAL_01/PROJ-0042/Run_2026-04-17T14-32-00",
+            proposed_path="/data/lab/CONFOCAL_01/PROJ-0042/Runs/Run_2026-04-17T14-32-00",
             run_kind="test",
         )
     )
@@ -321,7 +321,7 @@ def test_multiple_findings_aggregate_in_one_call() -> None:
     """A single bundle that trips multiple rules surfaces all findings."""
     findings = Validator().validate_creation(
         _clean_input(
-            proposed_path="/data/lab/CONFOCAL_01/PROJ-0042/Run_<run_date>",
+            proposed_path="/data/lab/CONFOCAL_01/PROJ-0042/Runs/Run_<run_date>",
             run_kind="test",
             file_names=("README.md", "bad?name.txt"),
             file_contents={
@@ -344,7 +344,7 @@ def test_findings_are_sorted_with_hard_tier_first() -> None:
     findings = Validator().validate_creation(
         _clean_input(
             # Hard: unresolved placeholder in path.
-            proposed_path="/data/lab/CONFOCAL_01/PROJ-0042/Run_<run_date>",
+            proposed_path="/data/lab/CONFOCAL_01/PROJ-0042/Runs/Run_<run_date>",
             # Soft: required field missing.
             template_required_field_ids=("sample_type",),
             readme_fields={
@@ -367,7 +367,7 @@ def test_findings_sorted_lexicographically_within_same_tier() -> None:
     """Within one tier, findings sort by (rule, offending_path)."""
     findings = Validator().validate_creation(
         _clean_input(
-            proposed_path="/data/lab/CONFOCAL_01/PROJ-0042/Run_<run_date>",
+            proposed_path="/data/lab/CONFOCAL_01/PROJ-0042/Runs/Run_<run_date>",
             run_kind="test",
         )
     )
@@ -385,7 +385,7 @@ def test_findings_sorted_lexicographically_within_same_tier() -> None:
 
 def test_findings_carry_run_path_from_proposed_path() -> None:
     """Engine stamps run_path on every finding from the input."""
-    proposed = "/data/lab/CONFOCAL_01/PROJ-0042/Run_<run_date>"
+    proposed = "/data/lab/CONFOCAL_01/PROJ-0042/Runs/Run_<run_date>"
     findings = Validator().validate_creation(_clean_input(proposed_path=proposed))
     assert findings  # there is at least one finding
     for f in findings:
@@ -396,7 +396,7 @@ def test_findings_default_audit_flags_to_false() -> None:
     """Audit-only flags default to False at creation time."""
     findings = Validator().validate_creation(
         _clean_input(
-            proposed_path="/data/lab/CONFOCAL_01/PROJ-0042/Run_<run_date>",
+            proposed_path="/data/lab/CONFOCAL_01/PROJ-0042/Runs/Run_<run_date>",
         )
     )
     assert findings
@@ -409,7 +409,7 @@ def test_findings_are_finding_instances() -> None:
     """The engine returns :class:`Finding` instances (not dicts)."""
     findings = Validator().validate_creation(
         _clean_input(
-            proposed_path="/data/lab/CONFOCAL_01/PROJ-0042/Run_<run_date>",
+            proposed_path="/data/lab/CONFOCAL_01/PROJ-0042/Runs/Run_<run_date>",
         )
     )
     for f in findings:

@@ -385,7 +385,8 @@ def test_canonicalize_equipment_id_does_not_mutate_input() -> None:
 
 
 _RUN_DATE = datetime(2026, 4, 17, 14, 32, 0)
-_EXPECTED_STAMP = "2026-04-17T14-32-00"
+# Redesign §3.4: minute precision (seconds dropped).
+_EXPECTED_STAMP = "2026-04-17T14-32"
 # The <project>/ segment is the human-readable LIMS name, used verbatim. §3.2.
 _PROJECT_NAME = "Cortex Q3 Pilot"
 
@@ -398,7 +399,9 @@ def test_compose_run_path_experimental(tmp_path: Path) -> None:
         run_kind=RunKind.EXPERIMENTAL,
         run_date=_RUN_DATE,
     )
-    expected = tmp_path / "CONFOCAL_01" / _PROJECT_NAME / f"Run_{_EXPECTED_STAMP}"
+    expected = (
+        tmp_path / "CONFOCAL_01" / _PROJECT_NAME / "Runs" / f"Run_{_EXPECTED_STAMP}"
+    )
     assert result == expected
 
 
@@ -415,7 +418,10 @@ def test_compose_run_path_test(tmp_path: Path) -> None:
 
 
 def test_compose_run_path_strftime_format() -> None:
-    """The leaf is ISO 8601 with colons replaced by hyphens. §3.1."""
+    """The leaf is ISO 8601 with colons replaced by hyphens. §3.1.
+
+    Redesign §3.4: minute precision; seconds are dropped.
+    """
     when = datetime(2030, 12, 31, 23, 59, 59)
     result = compose_run_path(
         local_root=Path("/data/lab"),
@@ -424,8 +430,42 @@ def test_compose_run_path_strftime_format() -> None:
         run_kind=RunKind.EXPERIMENTAL,
         run_date=when,
     )
-    assert result.name == "Run_2030-12-31T23-59-59"
+    assert result.name == "Run_2030-12-31T23-59"
     assert ":" not in result.name
+
+
+def test_compose_run_path_experimental_under_runs_subdir() -> None:
+    """Redesign §3.4: experimental runs live under <project>/Runs/Run_*."""
+    result = compose_run_path(
+        local_root=Path("/data/lab"),
+        equipment_id="FLOW_01",
+        project_name=_PROJECT_NAME,
+        run_kind=RunKind.EXPERIMENTAL,
+        run_date=_RUN_DATE,
+    )
+    assert result.parent.name == "Runs"
+    assert result.parent.parent.name == _PROJECT_NAME
+
+
+def test_compose_run_path_same_minute_collision_returns_same_path() -> None:
+    """Redesign §3.4: two runs in the same minute resolve to the same
+    path (Copier overwrite=False rejects the second creation)."""
+    first = compose_run_path(
+        local_root=Path("/data/lab"),
+        equipment_id="FLOW_01",
+        project_name=_PROJECT_NAME,
+        run_kind=RunKind.EXPERIMENTAL,
+        run_date=datetime(2026, 4, 17, 14, 32, 5),
+    )
+    second = compose_run_path(
+        local_root=Path("/data/lab"),
+        equipment_id="FLOW_01",
+        project_name=_PROJECT_NAME,
+        run_kind=RunKind.EXPERIMENTAL,
+        run_date=datetime(2026, 4, 17, 14, 32, 55),
+    )
+    assert first == second
+    assert first.name == "Run_2026-04-17T14-32"
 
 
 def test_compose_run_path_rejects_invalid_equipment_id(tmp_path: Path) -> None:

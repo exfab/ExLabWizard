@@ -112,7 +112,8 @@ def _make_clean_tree(
     """
     equipment_root = tmp_path / equipment_id
     project_dir = equipment_root / project_name
-    run_dir = project_dir / run_leaf
+    # Redesign §3.4: experimental runs live under <project>/Runs/.
+    run_dir = project_dir / "Runs" / run_leaf
     run_dir.mkdir(parents=True)
 
     _write_creation_json(
@@ -487,10 +488,10 @@ def test_audit_scope_equipment_id_resolves_to_configured_root(tmp_path: Path) ->
     """``{"kind": "equipment_id", ...}`` walks only the matching subtree."""
     equipment_root_a = tmp_path / "CONFOCAL_01"
     equipment_root_b = tmp_path / "OTHER_EQUIP"
-    (equipment_root_a / "PROJ-0042" / "Run_2026-04-17T14-32-00").mkdir(parents=True)
-    (equipment_root_b / "PROJ-0099" / "Run_<placeholder>").mkdir(parents=True)
+    (equipment_root_a / "PROJ-0042" / "Runs" / "Run_2026-04-17T14-32-00").mkdir(parents=True)
+    (equipment_root_b / "PROJ-0099" / "Runs" / "Run_<placeholder>").mkdir(parents=True)
     _write_creation_json(
-        equipment_root_a / "PROJ-0042" / "Run_2026-04-17T14-32-00",
+        equipment_root_a / "PROJ-0042" / "Runs" / "Run_2026-04-17T14-32-00",
         _build_creation_json_dict(level="run"),
     )
     _write_creation_json(
@@ -498,7 +499,7 @@ def test_audit_scope_equipment_id_resolves_to_configured_root(tmp_path: Path) ->
         _build_creation_json_dict(level="project"),
     )
     _write_creation_json(
-        equipment_root_b / "PROJ-0099" / "Run_<placeholder>",
+        equipment_root_b / "PROJ-0099" / "Runs" / "Run_<placeholder>",
         _build_creation_json_dict(level="run"),
     )
     _write_creation_json(
@@ -549,14 +550,14 @@ def test_audit_scope_all_walks_every_configured_equipment(tmp_path: Path) -> Non
     """``{"kind": "all"}`` aggregates findings across every equipment root."""
     equipment_root_a = tmp_path / "CONFOCAL_01"
     equipment_root_b = tmp_path / "OTHER_EQUIP"
-    (equipment_root_a / "PROJ-0042" / "Run_<a>").mkdir(parents=True)
-    (equipment_root_b / "PROJ-0099" / "Run_<b>").mkdir(parents=True)
+    (equipment_root_a / "PROJ-0042" / "Runs" / "Run_<a>").mkdir(parents=True)
+    (equipment_root_b / "PROJ-0099" / "Runs" / "Run_<b>").mkdir(parents=True)
     _write_creation_json(
         equipment_root_a / "PROJ-0042",
         _build_creation_json_dict(level="project"),
     )
     _write_creation_json(
-        equipment_root_a / "PROJ-0042" / "Run_<a>",
+        equipment_root_a / "PROJ-0042" / "Runs" / "Run_<a>",
         _build_creation_json_dict(level="run"),
     )
     _write_creation_json(
@@ -564,7 +565,7 @@ def test_audit_scope_all_walks_every_configured_equipment(tmp_path: Path) -> Non
         _build_creation_json_dict(level="project"),
     )
     _write_creation_json(
-        equipment_root_b / "PROJ-0099" / "Run_<b>",
+        equipment_root_b / "PROJ-0099" / "Runs" / "Run_<b>",
         _build_creation_json_dict(level="run"),
     )
 
@@ -696,7 +697,7 @@ def test_audit_includes_staging_root_when_orchestrator_on(tmp_path: Path) -> Non
     equipment_root = tmp_path / "CONFOCAL_01"
     equipment_root.mkdir()
     staging_root = tmp_path / "staging"
-    staging_run = staging_root / "PROJ-0042" / "Run_<staged>"
+    staging_run = staging_root / "PROJ-0042" / "Runs" / "Run_<staged>"
     staging_run.mkdir(parents=True)
     _write_creation_json(staging_run, _build_creation_json_dict(level="run"))
 
