@@ -16,11 +16,11 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
 from exlab_wizard.api._dependencies import require_deps
-from exlab_wizard.config.models import Config
+from exlab_wizard.config.models import Config, EquipmentConfig
 from exlab_wizard.constants import SetupState
 from exlab_wizard.logging import get_logger
 from exlab_wizard.paths import (
@@ -29,7 +29,11 @@ from exlab_wizard.paths import (
     setup_state_next_action,
 )
 
-__all__ = ["ConfigUpdateResponse", "build_config_router"]
+__all__ = [
+    "ConfigUpdateResponse",
+    "EquipmentAppendResponse",
+    "build_config_router",
+]
 
 _log = get_logger(__name__)
 
@@ -45,6 +49,23 @@ class ConfigUpdateResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    state: str
+    missing: list[dict[str, str]]
+    next_action: str | None
+    ready: bool
+
+
+class EquipmentAppendResponse(BaseModel):
+    """``POST /config/equipment`` response: the new setup state + appended id.
+
+    Redesign §6: the Add-Equipment wizard posts a single new
+    ``EquipmentConfig``; the router validates it, persists, and
+    re-evaluates the setup-incomplete state.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    appended_id: str
     state: str
     missing: list[dict[str, str]]
     next_action: str | None
@@ -82,6 +103,53 @@ def build_config_router() -> APIRouter:
             keyring_password_present=getattr(deps, "keyring_password_present", True),
         )
         return ConfigUpdateResponse(
+            state=state.value,
+            missing=setup_state_missing(state, deps.config),
+            next_action=setup_state_next_action(state),
+            ready=state is SetupState.READY,
+        )
+
+    @router.post(
+        "/config/equipment",
+        response_model=EquipmentAppendResponse,
+    )
+    async def append_equipment(
+        request: Request, body: EquipmentConfig
+    ) -> EquipmentAppendResponse:
+        """Append a validated ``EquipmentConfig`` to the live config.
+
+        Redesign §6: the Add-Equipment wizard's confirm step posts here.
+        Duplicate IDs are rejected with a structured error per §10.
+        """
+        deps = require_deps(request)
+        config = getattr(deps, "config", None) or Config()
+        for entry in config.equipment:
+            if entry.id == body.id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "equipment_id_conflict",
+                        "message": (
+                            f"equipment id {body.id!r} already exists in config"
+                        ),
+                    },
+                )
+        new_equipment = list(config.equipment) + [body]
+        # model_validate re-runs the cross-field invariants (unique-id check
+        # etc.) on the merged config.
+        new_config = config.model_copy(update={"equipment": new_equipment})
+        Config.model_validate(new_config.model_dump(mode="python"))
+        saver = getattr(deps, "save_config", None)
+        if saver is not None:
+            await _await_or_call(saver, new_config)
+        deps.config = new_config
+        state = evaluate_setup_state(
+            deps.config,
+            lims_reachable=getattr(deps, "lims_reachable", True),
+            keyring_password_present=getattr(deps, "keyring_password_present", True),
+        )
+        return EquipmentAppendResponse(
+            appended_id=body.id,
             state=state.value,
             missing=setup_state_missing(state, deps.config),
             next_action=setup_state_next_action(state),
