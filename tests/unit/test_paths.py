@@ -280,6 +280,82 @@ def test_default_orchestrator_staging_root_windows(
 
 
 # ---------------------------------------------------------------------------
+# Test-mode suffix (EXLAB_WIZARD_TEST_MODE=1)
+# ---------------------------------------------------------------------------
+#
+# When ``EXLAB_WIZARD_TEST_MODE=1`` is set the OS-path helpers must direct
+# every root into a parallel ``exlab-wizard-test`` sandbox, so
+# ``exlab-wizard-tray --test`` exercises features without touching the
+# operator's real config / state / cache / log directories. One test per
+# helper per platform branch would be overkill; one test per helper on a
+# representative platform plus a Windows spot-check on the orchestrator
+# default covers the wiring.
+
+
+def test_test_mode_suffixes_os_config_path(
+    monkeypatch: pytest.MonkeyPatch, fake_home: Path
+) -> None:
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setenv("EXLAB_WIZARD_TEST_MODE", "1")
+    expected = fake_home / "Library" / "Application Support" / "exlab-wizard-test" / "config.yaml"
+    assert os_config_path() == expected
+
+
+def test_test_mode_suffixes_os_state_path(
+    monkeypatch: pytest.MonkeyPatch, fake_home: Path
+) -> None:
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setenv("EXLAB_WIZARD_TEST_MODE", "1")
+    expected = fake_home / ".local" / "state" / "exlab-wizard-test"
+    assert os_state_path() == expected
+
+
+def test_test_mode_suffixes_os_cache_path(
+    monkeypatch: pytest.MonkeyPatch, fake_home: Path
+) -> None:
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setenv("EXLAB_WIZARD_TEST_MODE", "1")
+    expected = fake_home / ".cache" / "exlab-wizard-test"
+    assert os_cache_path() == expected
+
+
+def test_test_mode_suffixes_os_central_log_path(
+    monkeypatch: pytest.MonkeyPatch, fake_home: Path
+) -> None:
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setenv("EXLAB_WIZARD_TEST_MODE", "1")
+    expected = fake_home / "Library" / "Logs" / "exlab-wizard-test" / "app.log"
+    assert os_central_log_path() == expected
+
+
+def test_test_mode_suffixes_orchestrator_default_windows(
+    monkeypatch: pytest.MonkeyPatch, fake_home: Path
+) -> None:
+    """POSIX returns the fixed ``/staging``; only Windows weaves APP_NAME in."""
+    monkeypatch.setattr("sys.platform", "win32")
+    monkeypatch.setenv("EXLAB_WIZARD_TEST_MODE", "1")
+    local = fake_home / "AppData" / "Local"
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    assert default_orchestrator_staging_root() == local / "exlab-wizard-test" / "staging"
+
+
+def test_test_mode_off_does_not_suffix(
+    monkeypatch: pytest.MonkeyPatch, fake_home: Path
+) -> None:
+    """Unset / non-'1' values must leave the real OS dirs untouched."""
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.delenv("EXLAB_WIZARD_TEST_MODE", raising=False)
+    assert os_config_path() == (
+        fake_home / "Library" / "Application Support" / "exlab-wizard" / "config.yaml"
+    )
+    monkeypatch.setenv("EXLAB_WIZARD_TEST_MODE", "0")
+    # The contract is strict equality to "1"; anything else falls back to APP_NAME.
+    assert os_config_path() == (
+        fake_home / "Library" / "Application Support" / "exlab-wizard" / "config.yaml"
+    )
+
+
+# ---------------------------------------------------------------------------
 # ensure_dir / ensure_state_dir / ensure_central_log_dir
 # ---------------------------------------------------------------------------
 
