@@ -278,3 +278,20 @@ def test_get_tree_includes_sync_mode_on_equipment(tmp_path: Path) -> None:
     assert body["equipment"][0]["sync_mode"] == "nas"
     assert body["equipment"][0]["relay"] is False
     assert body["received_equipment"] == []
+
+
+def test_get_folder_rejects_path_outside_configured_roots(tmp_path: Path) -> None:
+    """Path-confinement guard: only the configured local_root /
+    staging_root / templates / plugins are listable via GET /folder."""
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("nope")
+    deps = AppDependencies(config=_config_with_local_root(local_root))
+    app = create_app(dependencies=deps)
+    client = TestClient(app)
+    response = client.get(f"/api/v1/folder/{outside}")
+    assert response.status_code == 403
+    body = response.json()
+    assert body["error"]["code"] == "permission_denied"

@@ -189,14 +189,38 @@ def build_browse_router() -> APIRouter:
         response_model=FolderResponse,
         dependencies=[Depends(setup_state_gate)],
     )
-    async def get_folder(folder_path: str) -> FolderResponse:
+    async def get_folder(request: Request, folder_path: str) -> FolderResponse:
         """Return the immediate contents of one folder.
 
         Redesign §5: drives the centre-pane live file feed; 2-3s poll
-        from the UI. Returns 404 when the folder no longer exists.
+        from the UI. Returns 404 when the folder no longer exists,
+        403 when the path falls outside the configured roots
+        (local_root / staging_root / templates / plugins).
         """
-        path = Path(folder_path)
-        if not path.exists() or not path.is_dir():
+        deps = require_deps(request)
+        config = getattr(deps, "config", None)
+        try:
+            path = Path(folder_path).resolve(strict=True)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "folder_not_found",
+                    "message": f"folder does not exist: {folder_path}",
+                },
+            ) from exc
+        if not _path_is_under_allowed_root(path, config):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "permission_denied",
+                    "message": (
+                        f"path {path} is outside the configured local_root "
+                        "/ staging_root / templates / plugins roots"
+                    ),
+                },
+            )
+        if not path.is_dir():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={
@@ -207,6 +231,14 @@ def build_browse_router() -> APIRouter:
         entries: list[FolderEntry] = []
         try:
             scandir_entries = list(os.scandir(path))
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "folder_not_found",
+                    "message": f"folder vanished during scan: {path}",
+                },
+            ) from exc
         except (PermissionError, OSError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -286,6 +318,41 @@ def build_browse_router() -> APIRouter:
 # ---------------------------------------------------------------------------
 
 
+def _path_is_under_allowed_root(path: Path, config: Any) -> bool:
+    """Return True if ``path`` is under any of the configured roots.
+
+    Redesign §5 / §10: GET /folder is sandboxed to the configured
+    local_root, staging_root, templates_dir, and plugin_dir to prevent
+    arbitrary host-path enumeration via the API. ``path`` must be the
+    already-resolved absolute form (no symlink-escape via ``..``).
+    """
+    if config is None:
+        return False
+    candidates: list[str] = []
+    paths_block = getattr(config, "paths", None)
+    if paths_block is not None:
+        for attr in ("local_root", "templates_dir", "plugin_dir"):
+            val = getattr(paths_block, attr, "")
+            if val:
+                candidates.append(val)
+    orch = getattr(config, "orchestrator", None)
+    if orch is not None:
+        val = getattr(orch, "staging_root", "")
+        if val:
+            candidates.append(val)
+    for root in candidates:
+        try:
+            resolved_root = Path(root).resolve()
+        except OSError:
+            continue
+        try:
+            path.relative_to(resolved_root)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 def _build_equipment_node(entry: Any, local_root: Path) -> EquipmentNode:
     equipment_dir = local_root / entry.id
     projects = _scan_projects(equipment_dir) if equipment_dir.exists() else []
@@ -350,24 +417,21 @@ def _build_received_equipment_nodes(config: Any) -> list[RelayEquipmentNode]:
 def _relay_label_from_first_run(equipment_dir: Path, fallback: str) -> str:
     """Best-effort: read the first creation.json under this equipment to
     pick up the relay ``equipment_label`` field set by the producer."""
-    try:
-        for project_dir in _iter_run_or_project_subdirs(equipment_dir):
-            for kind_dir in _iter_run_or_project_subdirs(Path(project_dir.path)):
-                if kind_dir.name not in (RUNS_DIR_NAME, TEST_RUNS_DIR_NAME):
-                    continue
-                for leaf in _iter_run_or_project_subdirs(Path(kind_dir.path)):
+    for project_dir in _iter_run_or_project_subdirs(equipment_dir):
+        for kind_dir in _iter_run_or_project_subdirs(Path(project_dir.path)):
+            if kind_dir.name not in (RUNS_DIR_NAME, TEST_RUNS_DIR_NAME):
+                continue
+            for leaf in _iter_run_or_project_subdirs(Path(kind_dir.path)):
+                try:
                     cache = creation_json_path(Path(leaf.path))
                     if not cache.exists():
                         continue
-                    try:
-                        payload = read_msgspec_json(cache, CreationJson)
-                    except (msgspec.DecodeError, msgspec.ValidationError):
-                        continue
-                    if payload.orchestrator and payload.orchestrator.equipment_label:
-                        return payload.orchestrator.equipment_label
-                    return fallback
-    except OSError:
-        pass
+                    payload = read_msgspec_json(cache, CreationJson)
+                except (msgspec.DecodeError, msgspec.ValidationError, OSError):
+                    continue
+                if payload.orchestrator and payload.orchestrator.equipment_label:
+                    return payload.orchestrator.equipment_label
+                return fallback
     return fallback
 
 
@@ -397,16 +461,18 @@ def _per_file_sync_status(path: Path) -> str | None:
     """
     if path.is_dir():
         return None
-    # Walk up to find a Run_*/.exlab-wizard/creation.json
+    # Walk up to find a Run_*/.exlab-wizard/creation.json. The bound (10)
+    # tolerates typical instrument output tree depths (Run/data/raw/
+    # series/frames/...) without becoming pathological for misrooted paths.
     current = path.parent
-    for _ in range(6):  # bounded climb
-        cache_path = creation_json_path(current)
-        if cache_path.exists():
-            try:
+    for _ in range(10):
+        try:
+            cache_path = creation_json_path(current)
+            if cache_path.exists():
                 payload = read_msgspec_json(cache_path, CreationJson)
                 return payload.sync_status
-            except (msgspec.DecodeError, msgspec.ValidationError):
-                return None
+        except (msgspec.DecodeError, msgspec.ValidationError, OSError):
+            return None
         if current.parent == current:
             break
         current = current.parent
