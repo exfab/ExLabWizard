@@ -231,7 +231,10 @@ def test_missing_sections_when_deps_none() -> None:
 
 
 def test_missing_sections_when_config_none() -> None:
-    assert mount._missing_setup_sections(_deps()) == ("paths", "lims", "operators")
+    # ``operators`` is deferred (chip editor not yet wired); it must not
+    # surface in the setup-incomplete tuple or it would push the operator
+    # into a placeholder section before they reach the main GUI.
+    assert mount._missing_setup_sections(_deps()) == ("paths", "lims")
 
 
 def test_missing_sections_with_paths_unset() -> None:

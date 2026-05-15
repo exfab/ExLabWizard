@@ -19,7 +19,7 @@ SETTINGS_SECTIONS = (
     "lims",
     "equipment",
     "nas_cleanup",
-    "operators",
+    # "operators" is deferred until the chip editor lands.
     "validator",
     "logging",
     "orchestrator",

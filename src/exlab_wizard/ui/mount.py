@@ -473,7 +473,10 @@ def _missing_setup_sections(deps: Any) -> tuple[str, ...]:
         return ("paths", "lims")
     config = getattr(deps, "config", None)
     if config is None:
-        return ("paths", "lims", "operators")
+        # ``operators`` is intentionally omitted: the chip editor is
+        # deferred, and surfacing it here forced the operator into a
+        # placeholder section before they could reach the main GUI.
+        return ("paths", "lims")
     missing: list[str] = []
     if not config.paths.local_root or not config.paths.templates_dir:
         missing.append("paths")

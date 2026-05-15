@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import os
 import signal
 import sys
 import threading
@@ -199,6 +200,15 @@ def _parse_argv(argv: list[str] | None) -> argparse.Namespace:
     - ``--no-autostart-prompt`` -- silently accepted; reserved for a
       future surface that suppresses the welcome card's autostart
       affordance during automated launches. Discarded today.
+    - ``--test`` -- redirect every OS directory (config, state, cache,
+      central log) into a parallel ``exlab-wizard-test`` sandbox and
+      bootstrap a starter ``config.yaml`` whose path-typed fields all
+      point under it. The LIMS endpoint is intentionally left blank
+      so the operator still wires that integration through Settings.
+      Persistent across launches; ``rm -rf`` the sandbox to reset.
+    - ``--add-test-samples`` -- only meaningful with ``--test``.
+      Seeds the bootstrap config with one sample equipment entry so
+      the wizard is runnable end-to-end without manual setup.
     """
     parser = argparse.ArgumentParser(prog="exlab-wizard-tray", add_help=True)
     parser.add_argument(
@@ -216,7 +226,106 @@ def _parse_argv(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Suppress the welcome card autostart prompt (no-op today; reserved).",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help=(
+            "Redirect OS directories to an 'exlab-wizard-test' sandbox and "
+            "bootstrap a starter config.yaml. Persistent across launches; "
+            "rm -rf the sandbox to reset."
+        ),
+    )
+    parser.add_argument(
+        "--add-test-samples",
+        action="store_true",
+        help=(
+            "Only meaningful with --test: seed the starter config with one "
+            "sample equipment entry so the wizard is runnable end-to-end."
+        ),
+    )
+    args = parser.parse_args(argv)
+    if args.add_test_samples and not args.test:
+        parser.error("--add-test-samples requires --test")
+    return args
+
+
+def _bootstrap_test_config(config_path: Path, *, include_samples: bool) -> None:
+    """Write a starter test ``config.yaml`` if one does not already exist.
+
+    Called from ``main()`` only when ``--test`` is passed. Preseeds every
+    path-typed field under the test sandbox so the wizard runs without
+    manual Settings entry; LIMS endpoint and email are intentionally left
+    blank so the operator still wires that integration through the live
+    Settings UI. With ``include_samples=True`` (``--add-test-samples``),
+    one minimal valid equipment entry is added so the wizard can complete
+    end-to-end without further setup.
+
+    Existing test configs are never overwritten -- the sandbox is
+    persistent across launches and the user resets it by deleting the
+    suffixed directory.
+    """
+    if config_path.exists():
+        return
+
+    # Lazy imports to keep the tray module's import graph light. These
+    # only land when --test is actually used.
+    from exlab_wizard.config.loader import save_config
+    from exlab_wizard.config.models import (
+        Config,
+        EquipmentConfig,
+        OrchestratorConfig,
+        PathsConfig,
+    )
+
+    sandbox = config_path.parent  # e.g. ~/Library/Application Support/exlab-wizard-test
+    paths_cfg = PathsConfig(
+        templates_dir=str(sandbox / "templates"),
+        plugin_dir=str(sandbox / "plugins"),
+        local_root=str(sandbox / "local"),
+    )
+    orchestrator_cfg = OrchestratorConfig(
+        label="test-workstation",
+        staging_root=str(sandbox / "staging"),
+    )
+    equipment: list[EquipmentConfig] = []
+    if include_samples:
+        equipment.append(
+            EquipmentConfig.model_validate(
+                {
+                    "id": "TESTRIG",
+                    "label": "Test Rig",
+                    "local_root": str(sandbox / "local" / "TESTRIG"),
+                    "nas_root": str(sandbox / "nas" / "TESTRIG"),
+                    "completeness_signal": "sentinel_file",
+                    "sentinel_filename": "done.flag",
+                    "sync_mode": "nas",
+                    "transport": {
+                        "type": "rclone",
+                        "rclone_remote": "test-nas",
+                        "rclone_remote_path": "test/TESTRIG",
+                    },
+                }
+            )
+        )
+
+    cfg = Config(
+        paths=paths_cfg,
+        orchestrator=orchestrator_cfg,
+        equipment=equipment,
+    )
+    save_config(config_path, cfg)
+
+    # Pre-create the preseeded sub-directories so first-launch path lookups
+    # (template scans, plugin discovery) do not fail on a missing tree.
+    for sub in (
+        paths_cfg.templates_dir,
+        paths_cfg.plugin_dir,
+        paths_cfg.local_root,
+        orchestrator_cfg.staging_root,
+    ):
+        Path(sub).mkdir(parents=True, exist_ok=True)
+
+    _log.info("test mode: wrote starter config [path=%s]", str(config_path))
 
 
 def _run_smoke(state_dir: Path) -> int:
@@ -265,11 +374,26 @@ def main(argv: list[str] | None = None) -> int:
 
         print(__version__)
         return 0
+
+    # --test must set the env var BEFORE importing any paths.py helper so
+    # ensure_state_dir() / os_config_path() / configure_logging() all see
+    # the suffixed sandbox. The window subprocess WindowLauncher spawns
+    # inherits this env var, so test mode propagates without extra plumbing.
+    if args.test:
+        from exlab_wizard import paths
+
+        os.environ[paths.TEST_MODE_ENV] = "1"
+
     configure_logging()
 
-    from exlab_wizard.paths import ensure_state_dir
+    from exlab_wizard.paths import ensure_state_dir, os_config_path
 
     state_dir = ensure_state_dir()
+    if args.test:
+        _bootstrap_test_config(
+            os_config_path(),
+            include_samples=args.add_test_samples,
+        )
     if args.smoke:
         return _run_smoke(state_dir)
 
