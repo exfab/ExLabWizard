@@ -114,14 +114,19 @@ symmetric with `TestRuns/`:
 <equipment>/
   <project>/
     Runs/
-      Run_<YYYY-MM-DDTHH-MM-SS>/
+      Run_<YYYY-MM-DDTHH-MM>/
     TestRuns/
-      TestRun_<YYYY-MM-DDTHH-MM-SS>/
+      TestRun_<YYYY-MM-DDTHH-MM>/
 ```
 
-Leaf-folder prefixes (`Run_` / `TestRun_`) are unchanged. Because the app is
-undeployed there is no migration — this is simply the v1 convention. Affected
-areas:
+Leaf-folder prefixes (`Run_` / `TestRun_`) are unchanged. Run-folder timestamps
+use **minute precision** (`<YYYY-MM-DDTHH-MM>` — seconds dropped). Two runs
+created on the same instrument within the same minute resolve to the same path;
+for v1 this is a **hard failure** — Copier's `overwrite=False` (User Interaction
+Spec §5, gate 6) rejects the second creation rather than clobbering, and the
+operator retries. Automatic same-minute disambiguation is deferred to a later
+version. Because the app is undeployed there is no migration — this is simply
+the v1 convention. Affected areas:
 
 - Directory-convention spec (Design Spec §3).
 - Path composition (`paths.py`, `controller/creation.py`).
@@ -141,7 +146,7 @@ Three regions in a splitter, plus chrome:
 
 ```
 ┌─ Header toolbar: New Project · New Run · New Test Run · Add Equipment · Refresh · Settings ─┐
-├─ Breadcrumb bar: CONFOCAL_01 / UCR-000-I-D_WHEELDON / Runs / Run_2026-05-14T09-22-00 ───────┤
+├─ Breadcrumb bar: CONFOCAL_01 / UCR-000-I-D_WHEELDON / Runs / Run_2026-05-14T09-22 ──────────┤
 │ ┌── Left ──┐ ┌──────── Centre ────────┐ ┌──── Right (collapsible) ────┐                    │
 │ │ search   │ │ live file list of the  │ │ [Metadata] [Problems (n)]   │                    │
 │ │ chips    │ │ selected folder        │ │ node-type-aware content     │                    │
@@ -413,6 +418,12 @@ rather than hand-waving it.
   without `sync_mode`) fails validation with a clear `ConfigError`; since the
   app is undeployed this only affects local fixtures, which are updated as part
   of the work.
+- **Same-minute run-folder collision** — because run-folder timestamps are
+  minute-precision (§3.4), a second run created on the same instrument within
+  the same minute resolves to an already-existing path; Copier's
+  `overwrite=False` (User Interaction Spec §5, gate 6) rejects it with a
+  structured "destination exists" error. v1 surfaces this as a hard failure the
+  operator retries; there is no automatic same-minute disambiguation.
 
 ---
 
