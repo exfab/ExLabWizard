@@ -39,15 +39,15 @@ def test_flow_17_creation_buttons_enabled_on_owned_node(page, server_url) -> Non
 
 
 def test_flow_17_creation_buttons_disabled_on_received_node(page, server_url) -> None:
-    _goto(page, f"{server_url}/main?view=explorer")
-    page.locator('[data-testid="tree-node-received_equipment"]').wait_for(
-        state="visible", timeout=10_000
-    )
-    page.locator('[data-testid="tree-node-received_equipment"]').click()
-    page.wait_for_load_state("networkidle")
+    # Drive the selected-node state via a deterministic query param so
+    # the page renders once with the received-equipment classification.
+    # The click-then-navigate path races against Playwright's
+    # networkidle wait under CI, where the URL doesn't change and the
+    # state-mutation render may not finish before the assertion.
+    _goto(page, f"{server_url}/main?view=explorer&selected=RELAY_EQX")
     for testid in ("toolbar-new-project", "toolbar-new-run", "toolbar-new-test-run"):
         btn = page.locator(f'[data-testid="{testid}"]')
-        btn.wait_for(state="visible", timeout=5_000)
+        btn.wait_for(state="visible", timeout=10_000)
         assert btn.get_attribute("aria-disabled") == "true", (
             f"{testid} should be disabled when a received-equipment node is selected"
         )

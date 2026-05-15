@@ -304,7 +304,7 @@ def _capability_plan() -> list[tuple[str, list[dict[str, Any]]]]:
             [
                 {
                     "step_id": "01_overview",
-                    "route": "/main",
+                    "route": "/main?view=explorer",
                     "wait_selector": '[data-testid="toolbar-add-equipment"]',
                 },
             ],

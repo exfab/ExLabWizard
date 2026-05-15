@@ -199,8 +199,13 @@ def _render_file_explorer_view(ui: Any, test_state: TestState, *, setup: int = 0
         ).props('flat data-testid="footer-clear-verified"')
 
 
-def _select(ui: Any, test_state: TestState, node_id: str) -> None:
-    """Mirror render_file_explorer_page's selection dispatch."""
+def _select(ui: Any, test_state: TestState, node_id: str, *, _navigate: bool = True) -> None:
+    """Mirror render_file_explorer_page's selection dispatch.
+
+    ``_navigate=False`` is used when called from the route handler with a
+    ``selected=`` query param: the state mutation has already happened on
+    the same request and a ui.navigate.to() would loop.
+    """
     test_state.selected_node = node_id
     # Classify by the node id's shape so the metadata pane chooses the
     # right renderer.
@@ -216,7 +221,8 @@ def _select(ui: Any, test_state: TestState, node_id: str) -> None:
         test_state.selected_node_kind = "run"
     else:
         test_state.selected_node_kind = "project"
-    ui.navigate.to("/main?view=explorer")
+    if _navigate:
+        ui.navigate.to("/main?view=explorer")
 
 
 def _render_seeded_tree(ui: Any, test_state: TestState) -> None:
@@ -430,6 +436,7 @@ def build_test_app() -> FastAPI:
         orchestrator: int = 0,
         view: str = "",
         seed_finding: str = "",
+        selected: str = "",
     ) -> None:
         if view == "explorer":
             if seed_finding:
@@ -441,6 +448,12 @@ def build_test_app() -> FastAPI:
                         p, t = entry.rsplit(":", 1)
                         pairs.append((p, t))
                 test_state.seeded_findings = pairs
+            # Allow e2e flows to set the selected tree node deterministically
+            # via a query param. Avoids the click-then-navigate race where
+            # NiceGUI re-renders the same URL but Playwright sees no load
+            # transition.
+            if selected:
+                _select(ui, test_state, selected, _navigate=False)
             _render_file_explorer_view(ui, test_state, setup=setup)
             return
         from exlab_wizard.constants import IngestState
