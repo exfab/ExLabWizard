@@ -341,8 +341,7 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
         testid="wizard-project-lims-id",
         element="input",
         action="Type the LIMS project short ID (PROJ-NNNN)",
-        outcome="Sets the project short_id. Hidden until the manual-entry "
-        "gate is clicked.",
+        outcome="Sets the project short_id. Hidden until the manual-entry gate is clicked.",
     ),
     UXInteraction(
         flow="New project",

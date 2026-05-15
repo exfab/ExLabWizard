@@ -22,7 +22,7 @@ import pytest
 PLAYWRIGHT_AVAILABLE = True
 PLAYWRIGHT_IMPORT_ERROR: str | None = None
 try:
-    from playwright.sync_api import sync_playwright
+    import playwright.sync_api  # noqa: F401 -- presence probe
 except ImportError as exc:  # pragma: no cover
     PLAYWRIGHT_AVAILABLE = False
     PLAYWRIGHT_IMPORT_ERROR = str(exc)
@@ -57,10 +57,17 @@ def _make_seeded_server(tmp_path: Path, findings: list[tuple[str, str]]):
     }
     proc = subprocess.Popen(
         [
-            sys.executable, "-m", "uvicorn",
+            sys.executable,
+            "-m",
+            "uvicorn",
             "tests.e2e._test_app:create_app_factory",
-            "--factory", "--host", "127.0.0.1",
-            "--port", str(port), "--log-level", "warning",
+            "--factory",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--log-level",
+            "warning",
         ],
         env=env,
         stdout=subprocess.DEVNULL,

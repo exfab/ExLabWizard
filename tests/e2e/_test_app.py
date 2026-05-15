@@ -53,13 +53,13 @@ from exlab_wizard.ui.pages import (
     welcome as welcome_page,
 )
 from exlab_wizard.ui.pages import (
+    wizard_equipment as wizard_equipment_page,
+)
+from exlab_wizard.ui.pages import (
     wizard_project as wizard_project_page,
 )
 from exlab_wizard.ui.pages import (
     wizard_run as wizard_run_page,
-)
-from exlab_wizard.ui.pages import (
-    wizard_equipment as wizard_equipment_page,
 )
 
 
@@ -112,23 +112,6 @@ def _render_file_explorer_view(ui: Any, test_state: TestState, *, setup: int = 0
     filesystem.
     """
     from exlab_wizard.ui.components.breadcrumb import render_breadcrumb
-    from exlab_wizard.ui.components.file_list import (
-        FileListEntry,
-        FileListState,
-        render_file_list,
-    )
-    from exlab_wizard.ui.components.metadata_pane import (
-        MetadataPaneState,
-        render_metadata_pane,
-        NODE_KIND_EQUIPMENT,
-        NODE_KIND_RECEIVED_EQUIPMENT,
-        NODE_KIND_RUN,
-        NODE_KIND_PROJECT,
-    )
-    from exlab_wizard.ui.components.travelling_badge import (
-        FindingLocation,
-        travelling_badges,
-    )
 
     state = main_page.MainPageState(
         setup_incomplete=bool(setup),
@@ -144,9 +127,13 @@ def _render_file_explorer_view(ui: Any, test_state: TestState, *, setup: int = 0
     # test app can stub the callbacks). Every toolbar button carries the
     # spec's testid contract.
     # ------------------------------------------------------------------
-    with ui.header().classes("items-center").style(
-        "background: var(--color-surface); "
-        "border-bottom: 1px solid var(--color-rule); padding: 12px 24px;"
+    with (
+        ui.header()
+        .classes("items-center")
+        .style(
+            "background: var(--color-surface); "
+            "border-bottom: 1px solid var(--color-rule); padding: 12px 24px;"
+        )
     ):
         ui.label("ExLab-Wizard").style(
             "font-family: var(--font-display); color: var(--color-heading);"
@@ -155,24 +142,24 @@ def _render_file_explorer_view(ui: Any, test_state: TestState, *, setup: int = 0
         np_btn = ui.button(
             "New Project", on_click=lambda _e: ui.navigate.to("/wizard/project")
         ).props('color=primary data-testid="toolbar-new-project"')
-        nr_btn = ui.button(
-            "New Run", on_click=lambda _e: ui.navigate.to("/wizard/run")
-        ).props('color=primary data-testid="toolbar-new-run"')
+        nr_btn = ui.button("New Run", on_click=lambda _e: ui.navigate.to("/wizard/run")).props(
+            'color=primary data-testid="toolbar-new-run"'
+        )
         ntr_btn = ui.button(
             "New Test Run", on_click=lambda _e: ui.navigate.to("/wizard/test-run")
         ).props('color=warning data-testid="toolbar-new-test-run"')
         if state.selected_node_is_received:
             for btn in (np_btn, nr_btn, ntr_btn):
                 btn.props("disable")
-        ui.button(
-            "Add Equipment", on_click=lambda _e: ui.navigate.to("/wizard/equipment")
-        ).props('color=primary data-testid="toolbar-add-equipment"')
+        ui.button("Add Equipment", on_click=lambda _e: ui.navigate.to("/wizard/equipment")).props(
+            'color=primary data-testid="toolbar-add-equipment"'
+        )
         ui.button("Refresh", on_click=lambda _e: ui.navigate.to("/main?view=explorer")).props(
             'flat data-testid="toolbar-refresh"'
         )
-        ui.button(
-            "Settings", on_click=lambda _e: ui.navigate.to("/settings")
-        ).props('flat data-testid="toolbar-settings"')
+        ui.button("Settings", on_click=lambda _e: ui.navigate.to("/settings")).props(
+            'flat data-testid="toolbar-settings"'
+        )
 
     render_breadcrumb(
         selected_node=state.selected_node,
@@ -186,18 +173,20 @@ def _render_file_explorer_view(ui: Any, test_state: TestState, *, setup: int = 0
         with outer_split.before, ui.column().classes("w-full p-3").style("gap: 0.5rem;"):
             ui.input(label="Search").props('data-testid="main-search"').style("width: 100%;")
             _render_seeded_tree(ui, test_state)
-        with outer_split.after:
-            with ui.splitter(value=60).classes("w-full h-full") as centre_split:
-                with centre_split.before:
-                    _render_centre_file_list_seeded(ui, test_state)
-                with centre_split.after:
-                    _render_right_pane_seeded(ui, test_state)
+        with outer_split.after, ui.splitter(value=60).classes("w-full h-full") as centre_split:
+            with centre_split.before:
+                _render_centre_file_list_seeded(ui, test_state)
+            with centre_split.after:
+                _render_right_pane_seeded(ui, test_state)
 
     # Footer status bar.
-    with ui.footer().style(
-        "background: var(--color-bg); border-top: 1px solid var(--color-rule); "
-        "padding: 0 16px; min-height: 24px;"
-    ), ui.row().classes("items-center w-full"):
+    with (
+        ui.footer().style(
+            "background: var(--color-bg); border-top: 1px solid var(--color-rule); "
+            "padding: 0 16px; min-height: 24px;"
+        ),
+        ui.row().classes("items-center w-full"),
+    ):
         ui.label("Sync").props('data-testid="footer-sync-segment"')
         ui.label("Validator").props('data-testid="footer-validator-segment"').on(
             "click", lambda _e: _select(ui, test_state, "EQ1")
@@ -205,7 +194,8 @@ def _render_file_explorer_view(ui: Any, test_state: TestState, *, setup: int = 0
         ui.label("LIMS").props('data-testid="footer-lims-segment"')
         ui.label("Staging").props('data-testid="footer-staging-segment"')
         ui.button(
-            "Clear verified runs", on_click=lambda _e: setattr(test_state, "last_action", "clear_verified")
+            "Clear verified runs",
+            on_click=lambda _e: setattr(test_state, "last_action", "clear_verified"),
         ).props('flat data-testid="footer-clear-verified"')
 
 
@@ -257,9 +247,11 @@ def _render_seeded_tree(ui: Any, test_state: TestState) -> None:
         ("RELAY_EQX", "RELAY_EQX", "received_equipment"),
     ]
     for node_id, label, kind in nodes:
-        row = ui.label(label).props(
-            f'data-testid="tree-node-{kind}" data-node-id="{node_id}"'
-        ).style("cursor: pointer; font-family: var(--font-mono);")
+        row = (
+            ui.label(label)
+            .props(f'data-testid="tree-node-{kind}" data-node-id="{node_id}"')
+            .style("cursor: pointer; font-family: var(--font-mono);")
+        )
         row.on("click", lambda _e, nid=node_id: _select(ui, test_state, nid))
         # Redesign §4.6 / decision 4A: owned-equipment context menu
         # surfaces Edit / Remove which deep-link into Settings;
@@ -280,8 +272,7 @@ def _render_seeded_tree(ui: Any, test_state: TestState) -> None:
     # for the root equipment so the e2e flow can assert.
     if test_state.seeded_findings:
         findings = [
-            FindingLocation(path=path, tier=tier)
-            for (path, tier) in test_state.seeded_findings
+            FindingLocation(path=path, tier=tier) for (path, tier) in test_state.seeded_findings
         ]
         badges = travelling_badges(findings, fold_state={})
         for node_id, props in badges.items():
@@ -355,7 +346,11 @@ def _render_right_pane_seeded(ui: Any, test_state: TestState) -> None:
                     "completeness_signal": "sentinel_file",
                 }
             elif test_state.selected_node_kind == "received_equipment":
-                payload = {"id": "RELAY_EQX", "label": "Relayed Confocal", "source_host": "labpc-04"}
+                payload = {
+                    "id": "RELAY_EQX",
+                    "label": "Relayed Confocal",
+                    "source_host": "labpc-04",
+                }
             elif test_state.selected_node_kind == "run":
                 payload = {
                     "label": "Demo run",
@@ -380,9 +375,9 @@ def _render_right_pane_seeded(ui: Any, test_state: TestState) -> None:
                 ),
             )
         with ui.tab_panel("problems"):
-            ui.label(
-                f"Showing {len(test_state.seeded_findings)} findings"
-            ).props('data-testid="problems-summary"')
+            ui.label(f"Showing {len(test_state.seeded_findings)} findings").props(
+                'data-testid="problems-summary"'
+            )
 
 
 def build_test_app() -> FastAPI:

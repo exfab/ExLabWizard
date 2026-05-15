@@ -12,7 +12,6 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-
 # Minimum gap between two FS walks. Tunable; the spec just asks they not
 # both walk "in the same tick".
 COALESCE_WINDOW_S: float = 1.0

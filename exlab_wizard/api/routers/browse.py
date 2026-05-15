@@ -203,7 +203,7 @@ def build_browse_router() -> APIRouter:
         deps = require_deps(request)
         config = getattr(deps, "config", None)
         try:
-            path = Path(folder_path).resolve(strict=True)
+            path = Path(folder_path).resolve(strict=True)  # noqa: ASYNC240 -- one-shot stat
         except FileNotFoundError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -333,9 +333,11 @@ def _path_is_under_allowed_root(path: Path, config: Any) -> bool:
         return False
     paths_block = getattr(config, "paths", None)
     orch = getattr(config, "orchestrator", None)
-    candidates = [
-        getattr(paths_block, attr, "") for attr in ("local_root", "templates_dir", "plugin_dir")
-    ] if paths_block is not None else []
+    candidates = (
+        [getattr(paths_block, attr, "") for attr in ("local_root", "templates_dir", "plugin_dir")]
+        if paths_block is not None
+        else []
+    )
     if orch is not None:
         candidates.append(getattr(orch, "staging_root", ""))
     for root in candidates:
@@ -505,9 +507,7 @@ def _build_project_node(project_dir: Path) -> ProjectNode:
         if entry.name == RUNS_DIR_NAME:
             # Redesign §3.4: experimental runs live under <project>/Runs/.
             runs.extend(
-                _scan_run_children(
-                    Path(entry.path), kind="experimental", prefix_check=is_run_dir
-                )
+                _scan_run_children(Path(entry.path), kind="experimental", prefix_check=is_run_dir)
             )
             continue
         if is_run_dir(entry.name):

@@ -76,8 +76,10 @@ def test_flow_24_received_equipment_has_no_context_menu(page, server_url) -> Non
     relay.wait_for(state="visible", timeout=10_000)
     _open_context(page, relay)
     # Neither the edit nor the remove menu items should appear.
-    assert page.locator('[data-testid="tree-context-edit-equipment"]').count() == 0 or \
-        not page.locator('[data-testid="tree-context-edit-equipment"]').first.is_visible()
+    assert (
+        page.locator('[data-testid="tree-context-edit-equipment"]').count() == 0
+        or not page.locator('[data-testid="tree-context-edit-equipment"]').first.is_visible()
+    )
 
 
 def test_flow_24_run_context_menu_items_render(page, server_url) -> None:
@@ -85,15 +87,11 @@ def test_flow_24_run_context_menu_items_render(page, server_url) -> None:
     run = page.locator('[data-testid="tree-node-run"]')
     run.wait_for(state="visible", timeout=10_000)
     _open_context(page, run)
-    page.locator('[data-testid="run-context-force-sync"]').wait_for(
-        state="visible", timeout=5_000
-    )
+    page.locator('[data-testid="run-context-force-sync"]').wait_for(state="visible", timeout=5_000)
     page.locator('[data-testid="run-context-clear-verified"]').wait_for(
         state="visible", timeout=5_000
     )
-    page.locator('[data-testid="run-context-view-log"]').wait_for(
-        state="visible", timeout=5_000
-    )
+    page.locator('[data-testid="run-context-view-log"]').wait_for(state="visible", timeout=5_000)
 
 
 def test_flow_24_file_list_row_context_menu(page, server_url) -> None:
@@ -105,9 +103,5 @@ def test_flow_24_file_list_row_context_menu(page, server_url) -> None:
     row = page.locator('[data-testid="file-list-row"]').first
     row.wait_for(state="visible", timeout=10_000)
     _open_context(page, row)
-    page.locator('[data-testid="file-context-open-in-os"]').wait_for(
-        state="visible", timeout=5_000
-    )
-    page.locator('[data-testid="file-context-copy-path"]').wait_for(
-        state="visible", timeout=5_000
-    )
+    page.locator('[data-testid="file-context-open-in-os"]').wait_for(state="visible", timeout=5_000)
+    page.locator('[data-testid="file-context-copy-path"]').wait_for(state="visible", timeout=5_000)

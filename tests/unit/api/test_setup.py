@@ -27,6 +27,7 @@ from exlab_wizard.constants import SetupState
 
 def _ready_config() -> Config:
     from exlab_wizard.config.models import OrchestratorConfig
+
     return Config(
         paths=PathsConfig(
             templates_dir="/tpl",
@@ -85,9 +86,7 @@ def test_setup_state_gate_returns_503_in_incomplete_states() -> None:
         ),
         (
             Config(
-                paths=PathsConfig(
-                    templates_dir="/t", plugin_dir="/p", local_root="/d"
-                ),
+                paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
                 orchestrator=OrchestratorConfig(label="LAB", staging_root="/s"),
             ),
             "incomplete_no_equipment",

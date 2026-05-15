@@ -44,9 +44,7 @@ from exlab_wizard.constants import enums
         ),
         (
             enums.DirectoryLevel,
-            frozenset(
-                {"equipment", "project", "runs", "run", "test_run", "test_runs", "other"}
-            ),
+            frozenset({"equipment", "project", "runs", "run", "test_run", "test_runs", "other"}),
         ),
         (enums.Platform, frozenset({"macos", "windows", "linux"})),
         (

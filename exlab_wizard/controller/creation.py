@@ -50,9 +50,9 @@ from exlab_wizard.api.schemas import (
     PluginIsolation,
     TemplateBlock,
 )
-from exlab_wizard.cache.ingest_writer import default_host
 from exlab_wizard.cache.creation_writer import CreationWriter
 from exlab_wizard.cache.equipment import EquipmentCacheWriter
+from exlab_wizard.cache.ingest_writer import default_host
 from exlab_wizard.cache.log_writer import append_log_line, format_log_line
 from exlab_wizard.config.models import Config
 from exlab_wizard.constants import (
@@ -966,9 +966,7 @@ class CreationController:
         # label + completeness-signal info so a receiving orchestrator
         # can auto-discover the relayed equipment without a per-equipment
         # config of its own.
-        eq = next(
-            (e for e in self._config.equipment if e.id == req.equipment_id), None
-        )
+        eq = next((e for e in self._config.equipment if e.id == req.equipment_id), None)
         orchestrator_block = OrchestratorBlock(
             enabled=True,
             host=default_host(),

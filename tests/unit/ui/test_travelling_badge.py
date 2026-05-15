@@ -46,11 +46,7 @@ def test_badge_lands_on_leaf_when_fully_expanded() -> None:
         "EQ_A/PROJ-0001/Runs": True,
     }
     badges = travelling_badges(findings, fold)
-    assert badges == {
-        "EQ_A/PROJ-0001/Runs/Run_2026-05-14T09-22": BadgeProps(
-            color="red", count=1
-        )
-    }
+    assert badges == {"EQ_A/PROJ-0001/Runs/Run_2026-05-14T09-22": BadgeProps(color="red", count=1)}
 
 
 def test_red_beats_amber_when_aggregated_on_same_node() -> None:

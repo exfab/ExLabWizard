@@ -8,9 +8,9 @@ from fastapi.testclient import TestClient
 
 from exlab_wizard.api import AppDependencies, create_app
 from exlab_wizard.config.models import (
-    OrchestratorConfig,
     Config,
     EquipmentConfig,
+    OrchestratorConfig,
     PathsConfig,
     RcloneTransport,
 )
@@ -126,9 +126,7 @@ def test_append_equipment_persists_and_re_evaluates_state() -> None:
             },
         }
     )
-    response = client.post(
-        "/api/v1/config/equipment", json=new_eq.model_dump(mode="json")
-    )
+    response = client.post("/api/v1/config/equipment", json=new_eq.model_dump(mode="json"))
     assert response.status_code == 200
     body = response.json()
     assert body["appended_id"] == "FLOW_99"
@@ -155,9 +153,7 @@ def test_append_equipment_rejects_duplicate_id() -> None:
             },
         }
     )
-    response = client.post(
-        "/api/v1/config/equipment", json=duplicate.model_dump(mode="json")
-    )
+    response = client.post("/api/v1/config/equipment", json=duplicate.model_dump(mode="json"))
     assert response.status_code == 409
     body = response.json()
     assert body["error"]["code"] == "equipment_id_conflict"

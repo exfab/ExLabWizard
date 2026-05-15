@@ -25,11 +25,11 @@ from collections.abc import Callable
 from typing import Any
 
 __all__ = [
+    "RUN_CONTEXT_CLEAR_VERIFIED",
+    "RUN_CONTEXT_FORCE_SYNC",
+    "RUN_CONTEXT_VIEW_LOG",
     "TREE_CONTEXT_EDIT_EQUIPMENT",
     "TREE_CONTEXT_REMOVE_EQUIPMENT",
-    "RUN_CONTEXT_FORCE_SYNC",
-    "RUN_CONTEXT_CLEAR_VERIFIED",
-    "RUN_CONTEXT_VIEW_LOG",
     "render_equipment_context_menu",
     "render_run_context_menu",
 ]
@@ -51,7 +51,7 @@ def render_equipment_context_menu(
     *,
     equipment_id: str,
     on_action: Callable[[str, str], None],
-) -> Any:
+) -> Any:  # pragma: no cover -- NiceGUI render, driven by e2e
     """Render the right-click menu for an owned-equipment tree node.
 
     The callback receives ``(equipment_id, action)``; the mount layer
@@ -65,15 +65,11 @@ def render_equipment_context_menu(
     with ui.context_menu().props(
         f'data-testid="tree-context-menu" data-node-id="{equipment_id}"'
     ) as menu:
-        ui.menu_item("Edit equipment…").props(
-            'data-testid="tree-context-edit-equipment"'
-        ).on(
+        ui.menu_item("Edit equipment…").props('data-testid="tree-context-edit-equipment"').on(
             "click",
             lambda _evt: on_action(equipment_id, TREE_CONTEXT_EDIT_EQUIPMENT),
         )
-        ui.menu_item("Remove…").props(
-            'data-testid="tree-context-remove-equipment"'
-        ).on(
+        ui.menu_item("Remove…").props('data-testid="tree-context-remove-equipment"').on(
             "click",
             lambda _evt: on_action(equipment_id, TREE_CONTEXT_REMOVE_EQUIPMENT),
         )
@@ -84,7 +80,7 @@ def render_run_context_menu(
     *,
     run_path: str,
     on_action: Callable[[str, str], None],
-) -> Any:
+) -> Any:  # pragma: no cover -- NiceGUI render, driven by e2e
     """Render the right-click menu for a run tree node.
 
     The callback receives ``(run_path, action)``. The three actions
@@ -99,21 +95,15 @@ def render_run_context_menu(
     with ui.context_menu().props(
         f'data-testid="run-context-menu" data-run-path="{run_path}"'
     ) as menu:
-        ui.menu_item("Force sync").props(
-            'data-testid="run-context-force-sync"'
-        ).on(
+        ui.menu_item("Force sync").props('data-testid="run-context-force-sync"').on(
             "click",
             lambda _evt: on_action(run_path, RUN_CONTEXT_FORCE_SYNC),
         )
-        ui.menu_item("Clear verified").props(
-            'data-testid="run-context-clear-verified"'
-        ).on(
+        ui.menu_item("Clear verified").props('data-testid="run-context-clear-verified"').on(
             "click",
             lambda _evt: on_action(run_path, RUN_CONTEXT_CLEAR_VERIFIED),
         )
-        ui.menu_item("View log").props(
-            'data-testid="run-context-view-log"'
-        ).on(
+        ui.menu_item("View log").props('data-testid="run-context-view-log"').on(
             "click",
             lambda _evt: on_action(run_path, RUN_CONTEXT_VIEW_LOG),
         )

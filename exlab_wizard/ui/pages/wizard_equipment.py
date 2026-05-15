@@ -97,18 +97,10 @@ def can_advance(state: EquipmentWizardState) -> bool:
         case "sync_mode":
             if state.sync_mode == "nas":
                 if state.transport_type == "rclone":
-                    return bool(
-                        state.rclone_remote.strip()
-                        and state.rclone_remote_path.strip()
-                    )
-                return bool(
-                    state.ssh_target.strip() and state.rsync_remote_path.strip()
-                )
+                    return bool(state.rclone_remote.strip() and state.rclone_remote_path.strip())
+                return bool(state.ssh_target.strip() and state.rsync_remote_path.strip())
             # stage
-            return bool(
-                state.staging_mount_point.strip()
-                and state.staging_subpath.strip()
-            )
+            return bool(state.staging_mount_point.strip() and state.staging_subpath.strip())
         case "signal":
             if state.completeness_signal == "sentinel_file":
                 return bool(state.sentinel_filename.strip())
@@ -154,7 +146,7 @@ def render_wizard_equipment(
     on_back: Callable[[str], None] | None = None,
     on_confirm: Callable[[EquipmentConfig], None] | None = None,
     on_cancel: Callable[[], None] | None = None,
-) -> Any:
+) -> Any:  # pragma: no cover -- NiceGUI render, driven by e2e
     """Render the Add-Equipment wizard. Pure render function.
 
     Rendered as a full-page card (not a dialog) since the wizard has its
@@ -169,9 +161,7 @@ def render_wizard_equipment(
     except Exception:
         return {"state": s}
 
-    with ui.card().classes("w-full h-full p-6").props(
-        'data-testid="wizard-equipment"'
-    ) as dialog:
+    with ui.card().classes("w-full h-full p-6").props('data-testid="wizard-equipment"') as dialog:
         ui.label("Add Equipment").style(
             "font-family: var(--font-display); font-size: var(--text-lg); "
             "color: var(--color-heading); font-weight: 600;"
@@ -182,17 +172,19 @@ def render_wizard_equipment(
 
         _STEP_RENDERERS[s.active_step](s)
 
-        with ui.row().classes("items-center w-full").style(
-            "margin-top: var(--sp-4); gap: var(--sp-2);"
+        with (
+            ui.row()
+            .classes("items-center w-full")
+            .style("margin-top: var(--sp-4); gap: var(--sp-2);")
         ):
             if on_cancel is not None:
-                ui.button("Cancel").props(
-                    'flat data-testid="wizard-equipment-cancel"'
-                ).on("click", lambda _evt: on_cancel())
+                ui.button("Cancel").props('flat data-testid="wizard-equipment-cancel"').on(
+                    "click", lambda _evt: on_cancel()
+                )
             if s.active_step != EQUIPMENT_WIZARD_STEPS[0] and on_back is not None:
-                ui.button("Back").props(
-                    'flat data-testid="wizard-equipment-back"'
-                ).on("click", lambda _evt: on_back(s.active_step))
+                ui.button("Back").props('flat data-testid="wizard-equipment-back"').on(
+                    "click", lambda _evt: on_back(s.active_step)
+                )
             ui.space()
             if s.active_step == "review":
                 ui.button("Confirm").props(
@@ -202,9 +194,7 @@ def render_wizard_equipment(
                     lambda _evt: _maybe_confirm(s, on_confirm),
                 )
             else:
-                btn = ui.button("Next").props(
-                    'color=primary data-testid="wizard-equipment-next"'
-                )
+                btn = ui.button("Next").props('color=primary data-testid="wizard-equipment-next"')
                 if on_advance is not None:
                     btn.on("click", lambda _evt: on_advance(s.active_step))
                 if not can_advance(s):
@@ -215,7 +205,7 @@ def render_wizard_equipment(
 def _maybe_confirm(
     state: EquipmentWizardState,
     on_confirm: Callable[[EquipmentConfig], None] | None,
-) -> None:
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     if on_confirm is None:
         return
     try:
@@ -227,7 +217,9 @@ def _maybe_confirm(
     state.confirmed = True
 
 
-def _render_identity_step(state: EquipmentWizardState) -> None:
+def _render_identity_step(
+    state: EquipmentWizardState,
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     try:
         from nicegui import ui
     except Exception:
@@ -235,25 +227,27 @@ def _render_identity_step(state: EquipmentWizardState) -> None:
     ui.input(label="Equipment ID (^[A-Z][A-Z0-9_]*$)").props(
         'data-testid="wizard-equipment-id"'
     ).bind_value(state, "equipment_id")
-    ui.input(label="Label").props('data-testid="wizard-equipment-label"').bind_value(
-        state, "label"
-    )
+    ui.input(label="Label").props('data-testid="wizard-equipment-label"').bind_value(state, "label")
 
 
-def _render_paths_step(state: EquipmentWizardState) -> None:
+def _render_paths_step(
+    state: EquipmentWizardState,
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     try:
         from nicegui import ui
     except Exception:
         return
-    ui.input(label="Local root").props(
-        'data-testid="wizard-equipment-local-root"'
-    ).bind_value(state, "local_root")
-    ui.input(label="NAS root").props(
-        'data-testid="wizard-equipment-nas-root"'
-    ).bind_value(state, "nas_root")
+    ui.input(label="Local root").props('data-testid="wizard-equipment-local-root"').bind_value(
+        state, "local_root"
+    )
+    ui.input(label="NAS root").props('data-testid="wizard-equipment-nas-root"').bind_value(
+        state, "nas_root"
+    )
 
 
-def _render_sync_mode_step(state: EquipmentWizardState) -> None:
+def _render_sync_mode_step(
+    state: EquipmentWizardState,
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     try:
         from nicegui import ui
     except Exception:
@@ -284,9 +278,7 @@ def _render_sync_mode_step(state: EquipmentWizardState) -> None:
                 'data-testid="wizard-equipment-rsync-remote-path"'
             ).bind_value(state, "rsync_remote_path")
     else:  # stage
-        ui.radio(
-            ["smb_mount", "file_transfer"], value=state.staging_transport_type
-        ).props(
+        ui.radio(["smb_mount", "file_transfer"], value=state.staging_transport_type).props(
             'data-testid="wizard-equipment-staging-transport-type"'
         ).bind_value(state, "staging_transport_type")
         ui.input(label="Mount point").props(
@@ -297,7 +289,9 @@ def _render_sync_mode_step(state: EquipmentWizardState) -> None:
         ).bind_value(state, "staging_subpath")
 
 
-def _render_signal_step(state: EquipmentWizardState) -> None:
+def _render_signal_step(
+    state: EquipmentWizardState,
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     try:
         from nicegui import ui
     except Exception:
@@ -315,14 +309,14 @@ def _render_signal_step(state: EquipmentWizardState) -> None:
         ).bind_value(state, "manifest_filename")
 
 
-def _render_review_step(state: EquipmentWizardState) -> None:
+def _render_review_step(
+    state: EquipmentWizardState,
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     try:
         from nicegui import ui
     except Exception:
         return
-    ui.label("Review your equipment configuration:").style(
-        "color: var(--color-muted);"
-    )
+    ui.label("Review your equipment configuration:").style("color: var(--color-muted);")
     with ui.column().style("font-family: var(--font-mono);"):
         ui.label(f"ID: {state.equipment_id}")
         ui.label(f"Label: {state.label}")
@@ -340,9 +334,9 @@ def _render_review_step(state: EquipmentWizardState) -> None:
             + (state.sentinel_filename or state.manifest_filename)
         )
     if state.last_error:
-        ui.label(f"Error: {state.last_error}").style(
-            "color: var(--color-danger);"
-        ).props('data-testid="wizard-equipment-error"')
+        ui.label(f"Error: {state.last_error}").style("color: var(--color-danger);").props(
+            'data-testid="wizard-equipment-error"'
+        )
 
 
 _STEP_RENDERERS: dict[str, Callable[[EquipmentWizardState], None]] = {

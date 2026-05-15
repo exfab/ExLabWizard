@@ -420,7 +420,13 @@ class NASSyncClient:
         # Transition QUEUED -> RUNNING.
         await self._queue.transition(job.id, SyncJobState.RUNNING)
 
-        # Compute bandwidth cap for this attempt.
+        # Compute bandwidth cap for this attempt. Redesign §3.2: only
+        # nas-mode equipment reach the NAS sync queue (the EquipmentConfig
+        # validator guarantees transport is set when sync_mode == 'nas');
+        # the None case is defensive.
+        assert equipment.transport is not None, (
+            f"nas-mode equipment {equipment.id!r} must carry a transport block"
+        )
         bwlimit = effective_bandwidth_limit_kibps(
             equipment.transport.bandwidth, now_local=datetime.now()
         )

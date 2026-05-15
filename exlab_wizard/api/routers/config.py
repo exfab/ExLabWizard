@@ -107,9 +107,7 @@ def build_config_router() -> APIRouter:
         "/config/equipment",
         response_model=EquipmentAppendResponse,
     )
-    async def append_equipment(
-        request: Request, body: EquipmentConfig
-    ) -> EquipmentAppendResponse:
+    async def append_equipment(request: Request, body: EquipmentConfig) -> EquipmentAppendResponse:
         """Append a validated ``EquipmentConfig`` to the live config.
 
         Redesign §6: the Add-Equipment wizard's confirm step posts here.
@@ -123,12 +121,10 @@ def build_config_router() -> APIRouter:
                     status_code=status.HTTP_409_CONFLICT,
                     detail={
                         "code": "equipment_id_conflict",
-                        "message": (
-                            f"equipment id {body.id!r} already exists in config"
-                        ),
+                        "message": (f"equipment id {body.id!r} already exists in config"),
                     },
                 )
-        new_equipment = list(config.equipment) + [body]
+        new_equipment = [*config.equipment, body]
         # model_validate re-runs the cross-field invariants (unique-id check
         # etc.) on the merged config.
         new_config = config.model_copy(update={"equipment": new_equipment})

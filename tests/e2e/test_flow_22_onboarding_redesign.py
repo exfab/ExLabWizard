@@ -46,6 +46,4 @@ def test_flow_22_welcome_to_add_equipment(page, server_url) -> None:
 
 def test_flow_22_main_window_has_add_equipment_in_toolbar(page, server_url) -> None:
     _goto(page, f"{server_url}/main?view=explorer")
-    page.locator('[data-testid="toolbar-add-equipment"]').wait_for(
-        state="visible", timeout=10_000
-    )
+    page.locator('[data-testid="toolbar-add-equipment"]').wait_for(state="visible", timeout=10_000)

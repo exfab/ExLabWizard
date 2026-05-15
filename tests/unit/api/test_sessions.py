@@ -28,6 +28,7 @@ from exlab_wizard.controller.state_machine import Phase, SessionState
 
 def _ready_config() -> Config:
     from exlab_wizard.config.models import OrchestratorConfig
+
     return Config(
         paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
         equipment=[

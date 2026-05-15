@@ -15,7 +15,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # Node-kind discriminators consumed by the dispatcher.
 NODE_KIND_EQUIPMENT = "equipment"
 NODE_KIND_RECEIVED_EQUIPMENT = "received_equipment"
@@ -40,7 +39,7 @@ def render_metadata_pane(
     *,
     state: MetadataPaneState,
     on_run_staging_action: Callable[[str, str], None] | None = None,
-) -> Any:
+) -> Any:  # pragma: no cover -- NiceGUI render, driven by e2e
     """Render the right-pane Metadata content for ``state.selected_node``.
 
     Dispatches to one of the per-kind renderers. ``on_run_staging_action``
@@ -52,9 +51,12 @@ def render_metadata_pane(
     except Exception:
         return {"state": state}
 
-    with ui.column().classes("w-full p-4").style("gap: 0.5rem;").props(
-        'data-testid="metadata-pane"'
-    ) as container:
+    with (
+        ui.column()
+        .classes("w-full p-4")
+        .style("gap: 0.5rem;")
+        .props('data-testid="metadata-pane"') as container
+    ):
         if state.selected_node is None or state.node_kind is None:
             ui.label("Select a node to see its metadata.").props(
                 'data-testid="metadata-pane-empty"'
@@ -73,27 +75,23 @@ def render_metadata_pane(
         elif state.node_kind == NODE_KIND_RECEIVED_RUN:
             _render_received_run(state.payload)
         else:
-            ui.label(f"Unknown node kind: {state.node_kind}").style(
-                "color: var(--color-muted);"
-            )
+            ui.label(f"Unknown node kind: {state.node_kind}").style("color: var(--color-muted);")
     return container
 
 
-def _kv(key: str, value: Any) -> None:
+def _kv(key: str, value: Any) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     try:
         from nicegui import ui
     except Exception:
         return
     with ui.row().classes("items-center w-full"):
-        ui.label(f"{key}:").style(
-            "color: var(--color-muted); width: 12rem; min-width: 12rem;"
-        )
-        ui.label(str(value) if value is not None else "-").style(
-            "font-family: var(--font-mono);"
-        )
+        ui.label(f"{key}:").style("color: var(--color-muted); width: 12rem; min-width: 12rem;")
+        ui.label(str(value) if value is not None else "-").style("font-family: var(--font-mono);")
 
 
-def _render_equipment(payload: dict[str, Any]) -> None:
+def _render_equipment(
+    payload: dict[str, Any],
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     try:
         from nicegui import ui
     except Exception:
@@ -118,7 +116,9 @@ def _render_equipment(payload: dict[str, Any]) -> None:
         )
 
 
-def _render_received_equipment(payload: dict[str, Any]) -> None:
+def _render_received_equipment(
+    payload: dict[str, Any],
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     try:
         from nicegui import ui
     except Exception:
@@ -127,9 +127,7 @@ def _render_received_equipment(payload: dict[str, Any]) -> None:
         "font-family: var(--font-display); font-size: var(--text-md); "
         "color: var(--color-heading); font-weight: 600;"
     )
-    ui.element("span").props(
-        'data-testid="metadata-relay-badge"'
-    ).style(
+    ui.element("span").props('data-testid="metadata-relay-badge"').style(
         "background: var(--color-info); color: var(--color-on-info); "
         "padding: 2px 8px; border-radius: 4px; font-size: var(--text-xs);"
     )
@@ -138,7 +136,9 @@ def _render_received_equipment(payload: dict[str, Any]) -> None:
     _kv("Equipment label", payload.get("label"))
 
 
-def _render_project(payload: dict[str, Any]) -> None:
+def _render_project(
+    payload: dict[str, Any],
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     _kv("Name", payload.get("name"))
     _kv("LIMS short id", payload.get("short_id"))
     _kv("Objective", payload.get("objective"))
@@ -146,7 +146,9 @@ def _render_project(payload: dict[str, Any]) -> None:
     _kv("Test run count", payload.get("test_run_count"))
 
 
-def _render_runs_folder(kind: str, payload: dict[str, Any]) -> None:
+def _render_runs_folder(
+    kind: str, payload: dict[str, Any]
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     try:
         from nicegui import ui
     except Exception:
@@ -163,7 +165,7 @@ def _render_run(
     payload: dict[str, Any],
     *,
     on_run_staging_action: Callable[[str, str], None] | None,
-) -> None:
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     try:
         from nicegui import ui
     except Exception:
@@ -182,27 +184,23 @@ def _render_run(
     if on_run_staging_action is not None:
         with ui.row().classes("items-center").style("gap: 0.5rem; margin-top: 0.5rem;"):
             run_path = payload.get("path", "")
-            ui.button("Force sync").props(
-                'flat data-testid="metadata-run-force-sync"'
-            ).on(
+            ui.button("Force sync").props('flat data-testid="metadata-run-force-sync"').on(
                 "click",
                 lambda _evt: on_run_staging_action(run_path, "force_sync"),
             )
-            ui.button("Clear verified").props(
-                'flat data-testid="metadata-run-clear-verified"'
-            ).on(
+            ui.button("Clear verified").props('flat data-testid="metadata-run-clear-verified"').on(
                 "click",
                 lambda _evt: on_run_staging_action(run_path, "clear_verified"),
             )
-            ui.button("View log").props(
-                'flat data-testid="metadata-run-view-log"'
-            ).on(
+            ui.button("View log").props('flat data-testid="metadata-run-view-log"').on(
                 "click",
                 lambda _evt: on_run_staging_action(run_path, "view_log"),
             )
 
 
-def _render_received_run(payload: dict[str, Any]) -> None:
+def _render_received_run(
+    payload: dict[str, Any],
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     _kv("Run path", payload.get("path"))
     _kv("Lifecycle state", payload.get("ingest_state"))
     _kv("Files received", payload.get("files_received"))

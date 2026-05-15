@@ -17,7 +17,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-
 # Default poll cadence; the spec bounds it to ~2-3s.
 FOLDER_FEED_POLL_INTERVAL_S: float = 2.5
 
@@ -60,17 +59,15 @@ class FolderFeed:
         await self.stop()
         self._state.path = path
         self._state.paused = False
-        self._task = asyncio.create_task(
-            self._loop(), name=f"exlab-folder-feed:{path}"
-        )
+        self._task = asyncio.create_task(self._loop(), name=f"exlab-folder-feed:{path}")
 
     async def stop(self) -> None:
         if self._task is not None:
             self._task.cancel()
-            try:
+            import contextlib as _ctx
+
+            with _ctx.suppress(asyncio.CancelledError, Exception):
                 await self._task
-            except (asyncio.CancelledError, Exception):
-                pass
             self._task = None
         self._state.path = None
 

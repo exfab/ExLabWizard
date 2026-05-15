@@ -71,6 +71,7 @@ def _make_equipment(equipment_id: str = "CONFOCAL_01") -> EquipmentConfig:
 def _make_orchestrator():  # type: ignore[no-untyped-def]
     """Minimal orchestrator identity (Redesign §3.1) for setup-state fixtures."""
     from exlab_wizard.config.models import OrchestratorConfig
+
     return OrchestratorConfig(
         label="Lab Acquisition Station 01",
         staging_root="/staging",
@@ -85,6 +86,7 @@ def _ready_config() -> Config:
     here so the setup-state evaluator returns READY.
     """
     from exlab_wizard.config.models import OrchestratorConfig
+
     return Config(
         paths=PathsConfig(
             templates_dir="/srv/templates",
@@ -418,9 +420,7 @@ def test_compose_run_path_experimental(tmp_path: Path) -> None:
         run_kind=RunKind.EXPERIMENTAL,
         run_date=_RUN_DATE,
     )
-    expected = (
-        tmp_path / "CONFOCAL_01" / _PROJECT_NAME / "Runs" / f"Run_{_EXPECTED_STAMP}"
-    )
+    expected = tmp_path / "CONFOCAL_01" / _PROJECT_NAME / "Runs" / f"Run_{_EXPECTED_STAMP}"
     assert result == expected
 
 

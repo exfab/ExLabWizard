@@ -730,9 +730,7 @@ class _FakeLimsClient:
 
 
 async def test_lims_projects_uses_live_lims() -> None:
-    client = _FakeLimsClient(
-        [SimpleNamespace(short_id="PROJ-9", name="Live Project", uid="uid-9")]
-    )
+    client = _FakeLimsClient([SimpleNamespace(short_id="PROJ-9", name="Live Project", uid="uid-9")])
     deps = _deps(config=_config(), lims_client=client, lims_reachable=True)
     assert await mount._lims_projects(deps) == [
         {
@@ -746,9 +744,7 @@ async def test_lims_projects_uses_live_lims() -> None:
 
 
 async def test_lims_projects_skips_live_lims_when_unreachable() -> None:
-    client = _FakeLimsClient(
-        [SimpleNamespace(short_id="PROJ-9", name="Live Project", uid="uid-9")]
-    )
+    client = _FakeLimsClient([SimpleNamespace(short_id="PROJ-9", name="Live Project", uid="uid-9")])
     deps = _deps(config=_config(), lims_client=client, lims_reachable=False)
     assert await mount._lims_projects(deps) == []
     assert client.calls == 0

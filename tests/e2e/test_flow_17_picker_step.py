@@ -24,7 +24,9 @@ def _goto(page, url: str, *, retries: int = 2) -> None:
 
 def test_flow_17_creation_buttons_enabled_on_owned_node(page, server_url) -> None:
     _goto(page, f"{server_url}/main?view=explorer")
-    page.locator('[data-testid="tree-node-equipment"]').first.wait_for(state="visible", timeout=10_000)
+    page.locator('[data-testid="tree-node-equipment"]').first.wait_for(
+        state="visible", timeout=10_000
+    )
     # Click the owned equipment node.
     page.locator('[data-testid="tree-node-equipment"]').first.click()
     page.wait_for_load_state("networkidle")

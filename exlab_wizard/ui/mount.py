@@ -84,10 +84,10 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         welcome as welcome_page,
     )
     from exlab_wizard.ui.pages import (
-        wizard_project as wizard_project_page,
+        wizard_equipment as wizard_equipment_page,
     )
     from exlab_wizard.ui.pages import (
-        wizard_equipment as wizard_equipment_page,
+        wizard_project as wizard_project_page,
     )
 
     def _deps() -> Any:

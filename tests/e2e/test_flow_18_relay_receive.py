@@ -37,6 +37,4 @@ def test_flow_18_received_metadata_shows_relay_badge(page, server_url) -> None:
     page.wait_for_load_state("networkidle")
     # The metadata-pane's relay badge is the receiver's visible cue.
     page.locator('[data-testid="metadata-pane"]').wait_for(state="visible", timeout=5_000)
-    page.locator('[data-testid="metadata-relay-badge"]').wait_for(
-        state="visible", timeout=5_000
-    )
+    page.locator('[data-testid="metadata-relay-badge"]').wait_for(state="visible", timeout=5_000)

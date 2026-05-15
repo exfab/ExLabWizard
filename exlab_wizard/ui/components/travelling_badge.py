@@ -13,11 +13,11 @@ returned ``BadgeProps`` to paint the badges.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable, Literal
+from typing import Literal
 
 from exlab_wizard.constants.enums import Tier
-
 
 BadgeColor = Literal["red", "amber"]
 

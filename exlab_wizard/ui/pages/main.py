@@ -276,7 +276,7 @@ def render_file_explorer_page(
     on_file_context_action: Callable[[Any, str], None] | None = None,
     state: MainPageState | None = None,
     hierarchy: dict | None = None,
-) -> Any:
+) -> Any:  # pragma: no cover -- NiceGUI render, driven by e2e
     """Render the rebuilt three-region file-explorer main window.
 
     GUI/Orchestrator Redesign §4. Header toolbar + breadcrumb + splitter
@@ -294,7 +294,9 @@ def render_file_explorer_page(
     from exlab_wizard.ui.components.breadcrumb import render_breadcrumb
 
     with (
-        ui.header().classes("items-center").style(
+        ui.header()
+        .classes("items-center")
+        .style(
             "background: var(--color-surface); "
             "border-bottom: 1px solid var(--color-rule); "
             "padding: var(--sp-3) var(--sp-6);"
@@ -316,15 +318,15 @@ def render_file_explorer_page(
         nr_btn = ui.button("New Run", on_click=lambda _evt: on_open_new_run()).props(
             'color=primary data-testid="toolbar-new-run"'
         )
-        ntr_btn = ui.button(
-            "New Test Run", on_click=lambda _evt: on_open_new_test_run()
-        ).props('color=warning data-testid="toolbar-new-test-run"')
+        ntr_btn = ui.button("New Test Run", on_click=lambda _evt: on_open_new_test_run()).props(
+            'color=warning data-testid="toolbar-new-test-run"'
+        )
         if s.selected_node_is_received:
             for btn in (np_btn, nr_btn, ntr_btn):
                 btn.props("disable")
-        ui.button(
-            "Add Equipment", on_click=lambda _evt: on_open_add_equipment()
-        ).props('color=primary data-testid="toolbar-add-equipment"')
+        ui.button("Add Equipment", on_click=lambda _evt: on_open_add_equipment()).props(
+            'color=primary data-testid="toolbar-add-equipment"'
+        )
         ui.button("Refresh", on_click=lambda _evt: on_refresh()).props(
             'flat data-testid="toolbar-refresh"'
         )
@@ -357,9 +359,7 @@ def render_file_explorer_page(
     # collapse toggle is wired by the caller via on_toggle_right_pane.
     with ui.splitter(value=20).classes("w-full h-full") as outer_split:
         with outer_split.before, ui.column().classes("w-full p-3").style("gap: 0.5rem;"):
-            ui.input(label="Search").props('data-testid="main-search"').style(
-                "width: 100%;"
-            )
+            ui.input(label="Search").props('data-testid="main-search"').style("width: 100%;")
             filter_chips.filter_chips(_default_chips(), state=s.chip_state)
             build_tree(
                 hierarchy=hierarchy or {},
@@ -372,9 +372,7 @@ def render_file_explorer_page(
             else:
                 with ui.splitter(value=60).classes("w-full h-full") as centre_split:
                     with centre_split.before:
-                        _render_centre_file_list(
-                            s, on_file_context_action=on_file_context_action
-                        )
+                        _render_centre_file_list(s, on_file_context_action=on_file_context_action)
                     with centre_split.after:
                         _render_right_pane(
                             s,
@@ -391,18 +389,22 @@ def render_file_explorer_page(
             ui.row().classes("items-center w-full"),
         ):
             status_bar_segment.status_bar_segment(
-                label="Sync", state=status_bar_segment.SEGMENT_NORMAL,
+                label="Sync",
+                state=status_bar_segment.SEGMENT_NORMAL,
             )
             status_bar_segment.status_bar_segment(
-                label="Validator", state=status_bar_segment.SEGMENT_NORMAL,
+                label="Validator",
+                state=status_bar_segment.SEGMENT_NORMAL,
             )
             status_bar_segment.status_bar_segment(
-                label="LIMS", state=status_bar_segment.SEGMENT_NORMAL,
+                label="LIMS",
+                state=status_bar_segment.SEGMENT_NORMAL,
             )
             # Footer Staging segment with bulk-clear-verified popover
             # (§4.6: the bottom dock's bulk action relocates here).
             status_bar_segment.status_bar_segment(
-                label="Staging", state=status_bar_segment.SEGMENT_NORMAL,
+                label="Staging",
+                state=status_bar_segment.SEGMENT_NORMAL,
             ).props('data-testid="footer-staging-segment"')
             if on_clear_verified is not None:
                 ui.button("Clear verified runs", on_click=lambda _evt: on_clear_verified()).props(
@@ -414,7 +416,7 @@ def _render_centre_file_list(
     state: MainPageState,
     *,
     on_file_context_action: Callable[[Any, str], None] | None = None,
-) -> None:
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     """Render the centre-pane file list (Redesign §4.3).
 
     Each row carries a right-click context menu (*Open in OS* /
@@ -446,7 +448,7 @@ def _render_right_pane(
     state: MainPageState,
     *,
     on_run_staging_action: Callable[[str, str], None] | None,
-) -> None:
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     """Render the right Metadata / Problems pane (Redesign §4.4)."""
     from exlab_wizard.ui.components.metadata_pane import (
         MetadataPaneState,

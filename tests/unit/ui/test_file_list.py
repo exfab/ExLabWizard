@@ -8,7 +8,9 @@ from exlab_wizard.ui.components.file_list import (
 )
 
 
-def _entry(path: str, *, size: int = 100, modified: str = "2026-05-14T00:00:00Z", sync: str | None = None) -> FileListEntry:
+def _entry(
+    path: str, *, size: int = 100, modified: str = "2026-05-14T00:00:00Z", sync: str | None = None
+) -> FileListEntry:
     return FileListEntry(
         name=path.rsplit("/", 1)[-1],
         path=path,

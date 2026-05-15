@@ -68,15 +68,11 @@ def walk_run_leaves(staging_root: Path) -> list[Path]:
             for child in iter_subdirs(project_dir):
                 if child.name == TEST_RUNS_DIR_NAME:
                     leaves.extend(
-                        run_dir
-                        for run_dir in iter_subdirs(child)
-                        if is_test_run_dir(run_dir.name)
+                        run_dir for run_dir in iter_subdirs(child) if is_test_run_dir(run_dir.name)
                     )
                 elif child.name == RUNS_DIR_NAME:
                     leaves.extend(
-                        run_dir
-                        for run_dir in iter_subdirs(child)
-                        if is_run_dir(run_dir.name)
+                        run_dir for run_dir in iter_subdirs(child) if is_run_dir(run_dir.name)
                     )
                 elif is_run_dir(child.name):
                     # Misplaced Run_* directly under the project — surface

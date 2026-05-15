@@ -96,9 +96,7 @@ def build_equipment_config(
             else None
         ),
         manifest_filename=(
-            manifest_filename.strip() or None
-            if signal is CompletenessSignal.MANIFEST
-            else None
+            manifest_filename.strip() or None if signal is CompletenessSignal.MANIFEST else None
         ),
         sync_mode=mode,
         transport=transport,

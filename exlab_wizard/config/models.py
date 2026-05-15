@@ -361,10 +361,7 @@ class EquipmentConfig(BaseModel):
         match self.sync_mode:
             case SyncMode.NAS:
                 if self.transport is None:
-                    msg = (
-                        "equipment.sync_mode == 'nas' requires a 'transport' "
-                        "block"
-                    )
+                    msg = "equipment.sync_mode == 'nas' requires a 'transport' block"
                     raise ValueError(msg)
                 if self.orchestrator_staging_transport is not None:
                     msg = (
@@ -380,10 +377,7 @@ class EquipmentConfig(BaseModel):
                     )
                     raise ValueError(msg)
                 if self.transport is not None:
-                    msg = (
-                        "equipment.sync_mode == 'stage' must not declare "
-                        "a 'transport' block"
-                    )
+                    msg = "equipment.sync_mode == 'stage' must not declare a 'transport' block"
                     raise ValueError(msg)
         return self
 

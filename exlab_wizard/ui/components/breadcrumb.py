@@ -41,7 +41,7 @@ def render_breadcrumb(
     *,
     selected_node: str | None,
     on_navigate: Callable[[str], None] | None = None,
-) -> Any:
+) -> Any:  # pragma: no cover -- NiceGUI render, driven by e2e
     """Render the breadcrumb row. Pure render function.
 
     Each segment is a clickable label; the callback receives the
@@ -54,21 +54,28 @@ def render_breadcrumb(
     except Exception:
         return {"segments": segments}
 
-    with ui.row().classes("items-center").style(
-        "padding: var(--sp-2) var(--sp-4); "
-        "background: var(--color-bg-subtle); "
-        "border-bottom: 1px solid var(--color-rule); "
-        "font-family: var(--font-mono); font-size: var(--text-sm);"
-    ).props('data-testid="breadcrumb"') as container:
+    with (
+        ui.row()
+        .classes("items-center")
+        .style(
+            "padding: var(--sp-2) var(--sp-4); "
+            "background: var(--color-bg-subtle); "
+            "border-bottom: 1px solid var(--color-rule); "
+            "font-family: var(--font-mono); font-size: var(--text-sm);"
+        )
+        .props('data-testid="breadcrumb"') as container
+    ):
         if not segments:
             ui.label("(no selection)").style("color: var(--color-muted);")
             return container
         for idx, seg in enumerate(segments):
             if idx > 0:
                 ui.label("/").style("color: var(--color-muted); margin: 0 4px;")
-            label = ui.label(seg.label).props(
-                f'data-testid="breadcrumb-segment" data-node-id="{seg.node_id}"'
-            ).style("cursor: pointer; color: var(--color-link);")
+            label = (
+                ui.label(seg.label)
+                .props(f'data-testid="breadcrumb-segment" data-node-id="{seg.node_id}"')
+                .style("cursor: pointer; color: var(--color-link);")
+            )
             if on_navigate is not None:
                 label.on("click", lambda _evt, nid=seg.node_id: on_navigate(nid))
     return container

@@ -22,7 +22,6 @@ from typing import Any
 
 from exlab_wizard.ui.pages.staging import format_bytes
 
-
 # Action discriminators consumed by the on_context_menu callback.
 FILE_CONTEXT_OPEN = "open_in_os"
 FILE_CONTEXT_COPY_PATH = "copy_path"
@@ -98,7 +97,7 @@ def render_file_list(
     state: FileListState,
     on_double_click: Callable[[FileListEntry], None] | None = None,
     on_context_menu: Callable[[FileListEntry, str], None] | None = None,
-) -> Any:
+) -> Any:  # pragma: no cover -- NiceGUI render, driven by e2e
     """Render the centre-pane file list. Pure render function.
 
     Double-clicking a folder navigates into it; double-clicking a file
@@ -117,9 +116,12 @@ def render_file_list(
                 "color: var(--color-muted); padding: var(--sp-3);"
             ).props('data-testid="file-list-empty"')
             return container
-        with ui.element("table").classes("w-full").style(
-            "border-collapse: collapse; font-family: var(--font-mono);"
-        ).props('data-testid="file-list-table"'):
+        with (
+            ui.element("table")
+            .classes("w-full")
+            .style("border-collapse: collapse; font-family: var(--font-mono);")
+            .props('data-testid="file-list-table"')
+        ):
             for entry in state.entries:
                 _render_row(
                     entry,
@@ -136,22 +138,20 @@ def _render_row(
     is_new: bool,
     on_double_click: Callable[[FileListEntry], None] | None,
     on_context_menu: Callable[[FileListEntry, str], None] | None,
-) -> None:
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     try:
         from nicegui import ui
     except Exception:
         return
-    highlight = (
-        "background: var(--color-highlight); "
-        if is_new
-        else ""
-    )
+    highlight = "background: var(--color-highlight); " if is_new else ""
     size_text = "-" if entry.size_bytes is None else format_bytes(int(entry.size_bytes))
     modified_text = entry.modified_iso or "-"
     sync_text = entry.sync_status or "-"
-    with ui.element("tr").style(
-        f"{highlight}border-bottom: 1px solid var(--color-rule);"
-    ).props(f'data-testid="file-list-row" data-path="{entry.path}"') as row:
+    with (
+        ui.element("tr")
+        .style(f"{highlight}border-bottom: 1px solid var(--color-rule);")
+        .props(f'data-testid="file-list-row" data-path="{entry.path}"')
+    ):
         with ui.element("td").classes("p-2").style("font-weight: 500;"):
             ui.label(entry.name)
         with ui.element("td").classes("p-2 text-right"):
@@ -164,15 +164,11 @@ def _render_row(
             with ui.context_menu().props(
                 f'data-testid="file-context-menu" data-path="{entry.path}"'
             ):
-                ui.menu_item("Open in OS").props(
-                    'data-testid="file-context-open-in-os"'
-                ).on(
+                ui.menu_item("Open in OS").props('data-testid="file-context-open-in-os"').on(
                     "click",
                     lambda _evt, e=entry: on_context_menu(e, FILE_CONTEXT_OPEN),
                 )
-                ui.menu_item("Copy path").props(
-                    'data-testid="file-context-copy-path"'
-                ).on(
+                ui.menu_item("Copy path").props('data-testid="file-context-copy-path"').on(
                     "click",
                     lambda _evt, e=entry: on_context_menu(e, FILE_CONTEXT_COPY_PATH),
                 )

@@ -22,9 +22,7 @@ def _goto(page, url: str, *, retries: int = 2) -> None:
 
 def test_flow_23_footer_staging_segment_renders(page, server_url) -> None:
     _goto(page, f"{server_url}/main?view=explorer")
-    page.locator('[data-testid="footer-staging-segment"]').wait_for(
-        state="visible", timeout=10_000
-    )
+    page.locator('[data-testid="footer-staging-segment"]').wait_for(state="visible", timeout=10_000)
 
 
 def test_flow_23_bulk_clear_verified_action_present(page, server_url) -> None:

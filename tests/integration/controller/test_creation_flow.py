@@ -233,9 +233,7 @@ async def test_full_experimental_run_creation_happy_path(tmp_path: Path) -> None
     final = await _drain_to_done(controller, handle.session_id)
     assert final["state"] is SessionState.DONE
 
-    expected_run = (
-        local_root / "EQ1" / "Cortex Q3 Pilot" / "Runs" / "Run_2026-04-17T14-32"
-    )
+    expected_run = local_root / "EQ1" / "Cortex Q3 Pilot" / "Runs" / "Run_2026-04-17T14-32"
     assert expected_run.is_dir()
     cache_path = expected_run / CACHE_DIR_NAME / CREATION_JSON_NAME
     decoded = msgspec.json.decode(cache_path.read_bytes(), type=CreationJson)
@@ -266,9 +264,7 @@ async def test_same_minute_run_creation_collision_is_hard_failure(
     final2 = await _drain_to_done(controller, handle2.session_id)
     assert final2["state"] is SessionState.FAILED
     # The first run's data must still be intact.
-    expected_first = (
-        local_root / "EQ1" / "Cortex Q3 Pilot" / "Runs" / "Run_2026-04-17T14-32"
-    )
+    expected_first = local_root / "EQ1" / "Cortex Q3 Pilot" / "Runs" / "Run_2026-04-17T14-32"
     assert expected_first.is_dir()
 
 
@@ -296,9 +292,7 @@ async def test_test_run_creation_uses_test_runs_subdir_and_marks_run_kind(
     final = await _drain_to_done(controller, handle.session_id)
     assert final["state"] is SessionState.DONE
 
-    expected_dir = (
-        local_root / "EQ1" / "Cortex Q3 Pilot" / "TestRuns" / "TestRun_2026-04-17T14-32"
-    )
+    expected_dir = local_root / "EQ1" / "Cortex Q3 Pilot" / "TestRuns" / "TestRun_2026-04-17T14-32"
     assert expected_dir.is_dir()
     cache_path = expected_dir / CACHE_DIR_NAME / CREATION_JSON_NAME
     decoded = msgspec.json.decode(cache_path.read_bytes(), type=CreationJson)
@@ -593,9 +587,7 @@ _exlab_run_scope: "experimental"
     assert final["state"] is SessionState.DONE
 
     # The on-disk creation.json should have sync_status = blocked_by_validation.
-    expected_run_dir = next(
-        (local_root / "EQ1" / "Cortex Q3 Pilot" / "Runs").glob("Run_*")
-    )
+    expected_run_dir = next((local_root / "EQ1" / "Cortex Q3 Pilot" / "Runs").glob("Run_*"))
     cache_path = expected_run_dir / CACHE_DIR_NAME / CREATION_JSON_NAME
     decoded = msgspec.json.decode(cache_path.read_bytes(), type=CreationJson)
     assert decoded.sync_status == SyncStatus.BLOCKED_BY_VALIDATION.value

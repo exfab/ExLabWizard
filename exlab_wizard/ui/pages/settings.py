@@ -435,7 +435,7 @@ def _render_section_body(
 # ``ui/equipment_form`` so both the wizard and Settings can share it.
 # This module re-exports it for backward compatibility with existing
 # callers / imports.
-from exlab_wizard.ui.equipment_form import build_equipment_config  # noqa: F401
+from exlab_wizard.ui.equipment_form import build_equipment_config  # noqa: E402
 
 
 def _render_equipment_section(draft: Config) -> None:
@@ -460,9 +460,7 @@ def _render_equipment_section(draft: Config) -> None:
             if draft.equipment:
                 for entry in draft.equipment:
                     transport_summary = (
-                        entry.transport.type
-                        if entry.transport is not None
-                        else "stage"
+                        entry.transport.type if entry.transport is not None else "stage"
                     )
                     ui.label(
                         f"{entry.id} -- {entry.label} "

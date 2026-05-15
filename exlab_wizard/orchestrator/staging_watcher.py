@@ -413,9 +413,7 @@ class StagingWatcher:
         watcher can auto-discover what to look for without a per-equipment
         config of its own.
         """
-        signal_kind, sentinel_filename, manifest_filename = (
-            await self._completeness_signal_for(loc)
-        )
+        signal_kind, sentinel_filename, manifest_filename = await self._completeness_signal_for(loc)
         if signal_kind is None:
             return False
         match signal_kind:
