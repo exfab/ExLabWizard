@@ -548,12 +548,19 @@ def _build_main_query(selected: str, right_pane: str) -> str:
 
     Omits each param when empty so the URL stays clean for default state.
     Used by every callback that re-navigates to /main with mutated state.
+    Values are URL-encoded so node ids with spaces (project names like
+    ``Cortex Q3 Pilot``) or other special characters survive the round
+    trip back through the FastAPI query parser. The path separator
+    ``/`` is intentionally preserved (``safe="/"``) so the encoded id
+    stays human-readable in the address bar.
     """
+    from urllib.parse import quote
+
     parts: list[str] = []
     if selected:
-        parts.append(f"selected={selected}")
+        parts.append(f"selected={quote(selected, safe='/')}")
     if right_pane:
-        parts.append(f"right_pane={right_pane}")
+        parts.append(f"right_pane={quote(right_pane, safe='/')}")
     return ("?" + "&".join(parts)) if parts else ""
 
 
@@ -564,21 +571,33 @@ def _classify_node(node_id: str | None, hierarchy: dict[Any, Any]) -> tuple[str 
     by node-id prefix against the hierarchy keys (equipment ids), then
     checks the path depth to discriminate equipment / project / run.
 
-    Returns ``(None, False)`` for an unselected node.
+    Returns ``(None, False)`` for an unselected node or for a node id
+    whose root equipment isn't in the hierarchy (defensive: the URL
+    came from elsewhere, or the config changed since the link was
+    captured).
     """
     if not node_id:
         return None, False
     from exlab_wizard.ui.components import tree as ui_tree
 
+    owned_ids: set[str] = set()
     relay_ids: set[str] = set()
     for equipment_node in hierarchy:
-        if isinstance(equipment_node, ui_tree.EquipmentNode) and equipment_node.relay:
+        if not isinstance(equipment_node, ui_tree.EquipmentNode):
+            continue
+        if equipment_node.relay:
             relay_ids.add(equipment_node.equipment_id)
+        else:
+            owned_ids.add(equipment_node.equipment_id)
     root = node_id.split("/", 1)[0]
+    if root not in owned_ids and root not in relay_ids:
+        # The id's root equipment isn't in this device's tree -- treat
+        # as unselected so the page doesn't render half-baked state.
+        return None, False
     is_received = root in relay_ids
     if "/" not in node_id:
         kind = "received_equipment" if is_received else "equipment"
-    elif "TestRun_" in node_id or "/Run_" in node_id or node_id.startswith("Run_"):
+    elif "TestRun_" in node_id or "/Run_" in node_id:
         kind = "run"
     else:
         kind = "project"

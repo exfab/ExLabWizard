@@ -967,6 +967,18 @@ def test_build_main_query_omits_empty_params() -> None:
     assert mount._build_main_query("EQ1", "collapsed") == "?selected=EQ1&right_pane=collapsed"
 
 
+def test_build_main_query_url_encodes_special_chars() -> None:
+    """Project names with spaces / special chars survive the round trip."""
+    # Spaces in the project name get percent-encoded; path slashes stay
+    # readable so the address bar shows the hierarchical id.
+    out = mount._build_main_query("EQ1/Cortex Q3 Pilot", "")
+    assert out == "?selected=EQ1/Cortex%20Q3%20Pilot"
+    # An ampersand or question mark in a node id would otherwise break
+    # the query parser; encoding guards against that.
+    assert "&" not in mount._build_main_query("oddly&named", "")[len("?selected="):]
+    assert "?" not in mount._build_main_query("with?q", "")[len("?selected="):]
+
+
 def test_classify_node_returns_none_for_empty_selection() -> None:
     assert mount._classify_node(None, {}) == (None, False)
     assert mount._classify_node("", {}) == (None, False)
@@ -992,6 +1004,22 @@ def test_classify_node_discriminates_kinds() -> None:
     # A node under a relay root keeps the relay-equipment flag set so
     # the toolbar's New-Project/Run/Test-Run buttons stay disabled.
     assert mount._classify_node("RELAY_EQX/proj", hierarchy) == ("project", True)
+
+
+def test_classify_node_rejects_unknown_root() -> None:
+    """A node id whose root is not in the hierarchy returns ``(None, False)``.
+
+    Guards against half-rendered pages when the URL captures an id
+    from a different device's tree, or the config changed between the
+    operator's link and the current session.
+    """
+    from exlab_wizard.ui.components import tree as ui_tree
+
+    hierarchy = {ui_tree.EquipmentNode(equipment_id="EQ1", relay=False): {}}
+    assert mount._classify_node("EQ_STRANGER", hierarchy) == (None, False)
+    assert mount._classify_node("EQ_STRANGER/proj", hierarchy) == (None, False)
+    # Empty hierarchy: every node id is rejected.
+    assert mount._classify_node("EQ1", {}) == (None, False)
 
 
 def test_build_metadata_payload_returns_empty_when_node_missing() -> None:
