@@ -277,22 +277,17 @@ def to_nicegui_nodes(nodes: Iterable[TreeNode]) -> list[dict[str, Any]]:
 # Quasar ``q-tree`` does not honour an ``icon`` / ``img`` field on plain
 # node dicts; per-node images must come through a scoped slot template.
 # The ``default-header`` template renders the per-row sync icon (when
-# present), emits the data-testid / data-node-id attributes the
-# Playwright flows assert on, and -- when ``relay``-aware -- attaches a
-# Quasar ``q-menu`` with the right-click items per node kind:
-#
-# * owned equipment -> Edit equipment / Remove (Redesign §4.6, dec. 4A)
-# * received equipment -> no menu (decision 3, intentionally bare)
-# * run (experimental or test) -> Force sync / Clear verified / View log
-#
-# Each ``q-item`` dispatches a native ``CustomEvent`` named
-# ``tree-context-action`` carrying ``{node_id, kind, action}`` so the
-# Python listener attached to the tree element in :func:`build_tree`
-# can route the action to the operator-supplied callback. We use a
-# native CustomEvent (not Vue's ``$emit``) because Quasar tree slots
-# render menu items inside a popover portal at body level; native
-# events bubble through the document and reach the tree's wrapper
-# regardless of where the menu portal is mounted.
+# present) and emits the data-testid / data-node-id attributes the
+# Playwright flows assert on. Right-click context menus are NOT inlined
+# in the slot because Quasar's ``q-menu`` mounts in a body-level
+# Teleport portal, which breaks both DOM-event bubbling back to the
+# tree wrapper and Vue ``$emit`` forwarding through scoped-slot scope.
+# Instead :func:`build_tree` renders one Python-side ``ui.menu()`` per
+# context-eligible node after the tree mounts, anchoring each menu to
+# its row via Quasar's ``target`` selector pointing at the row's
+# unique ``[data-node-id="..."]``. Menu items are plain ``ui.menu_item``
+# calls whose ``on_click`` lambdas run server-side, so no JS bridging
+# is needed.
 _TREE_DEFAULT_HEADER_SLOT = (
     '<div class="row items-center" style="gap: 0.4rem">'
     '<img v-if="props.node.sync_icon" :src="props.node.sync_icon" '
@@ -304,60 +299,86 @@ _TREE_DEFAULT_HEADER_SLOT = (
     ":data-sync-status=\"props.node.sync_status || ''\">"
     "{{ props.node.label }}"
     "</span>"
-    # Owned-equipment context menu (Edit / Remove deep-link to Settings).
-    "<q-menu v-if=\"props.node.kind === 'equipment'\" "
-    'context-menu touch-position auto-close '
-    ':data-testid="\'tree-context-menu\'" '
-    ':data-node-id="props.node.id">'
-    '<q-list dense>'
-    '<q-item clickable v-close-popup '
-    'data-testid="tree-context-edit-equipment" '
-    "@click=\"$el.dispatchEvent(new CustomEvent('tree-context-action', "
-    "{detail: {node_id: props.node.id, kind: props.node.kind, action: 'edit_equipment'}, "
-    'bubbles: true}))">'
-    '<q-item-section>Edit equipment…</q-item-section>'
-    '</q-item>'
-    '<q-item clickable v-close-popup '
-    'data-testid="tree-context-remove-equipment" '
-    "@click=\"$el.dispatchEvent(new CustomEvent('tree-context-action', "
-    "{detail: {node_id: props.node.id, kind: props.node.kind, action: 'remove_equipment'}, "
-    'bubbles: true}))">'
-    '<q-item-section>Remove…</q-item-section>'
-    '</q-item>'
-    '</q-list>'
-    '</q-menu>'
-    # Run context menu (Force sync / Clear verified / View log).
-    "<q-menu v-if=\"props.node.kind === 'run_experimental' "
-    "|| props.node.kind === 'run_test'\" "
-    'context-menu touch-position auto-close '
-    ':data-testid="\'run-context-menu\'" '
-    ':data-run-path="props.node.id">'
-    '<q-list dense>'
-    '<q-item clickable v-close-popup '
-    'data-testid="run-context-force-sync" '
-    "@click=\"$el.dispatchEvent(new CustomEvent('tree-context-action', "
-    "{detail: {node_id: props.node.id, kind: props.node.kind, action: 'force_sync'}, "
-    'bubbles: true}))">'
-    '<q-item-section>Force sync</q-item-section>'
-    '</q-item>'
-    '<q-item clickable v-close-popup '
-    'data-testid="run-context-clear-verified" '
-    "@click=\"$el.dispatchEvent(new CustomEvent('tree-context-action', "
-    "{detail: {node_id: props.node.id, kind: props.node.kind, action: 'clear_verified'}, "
-    'bubbles: true}))">'
-    '<q-item-section>Clear verified</q-item-section>'
-    '</q-item>'
-    '<q-item clickable v-close-popup '
-    'data-testid="run-context-view-log" '
-    "@click=\"$el.dispatchEvent(new CustomEvent('tree-context-action', "
-    "{detail: {node_id: props.node.id, kind: props.node.kind, action: 'view_log'}, "
-    'bubbles: true}))">'
-    '<q-item-section>View log</q-item-section>'
-    '</q-item>'
-    '</q-list>'
-    '</q-menu>'
     "</div>"
 )
+
+
+def _iter_nodes(nodes: Iterable[TreeNode]) -> Iterable[TreeNode]:
+    """Yield every node in ``nodes``, depth-first, including children."""
+    for node in nodes:
+        yield node
+        yield from _iter_nodes(node.children)
+
+
+def _selector_for_node_id(node_id: str) -> str:
+    """Build the Quasar ``target`` selector for a node row.
+
+    ``node_id`` is the on-disk path segment used in the tree (e.g.
+    ``EQ1/PROJ-0001/Run_2026-05-07``); the slot template emits it on
+    the row's ``data-node-id`` attribute. CSS attribute selectors
+    require backslash-escaping for any ``\\``, ``"``, ``/`` is safe.
+    """
+    escaped = node_id.replace("\\", "\\\\").replace('"', '\\"')
+    return f'[data-node-id="{escaped}"]'
+
+
+def _render_node_context_menus(
+    nodes: Iterable[TreeNode],
+    *,
+    on_equipment_context_action: Callable[[str, str], None] | None,
+    on_run_context_action: Callable[[str, str], None] | None,
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
+    """Render per-node Quasar context menus anchored by ``data-node-id``.
+
+    Iterates every owned-equipment / run node (received_equipment
+    deliberately has no menu per Redesign §3.3 decision 3) and emits a
+    ``ui.menu`` configured as a context menu targeting that node's
+    row. The menu items' ``on_click`` lambdas route to the
+    operator-supplied callbacks server-side; no JavaScript event
+    bridging is involved.
+    """
+    try:
+        from nicegui import ui
+    except Exception:
+        return
+
+    for node in _iter_nodes(nodes):
+        if node.kind == KIND_EQUIPMENT and on_equipment_context_action is not None:
+            target = _selector_for_node_id(node.node_id)
+            with ui.menu().props(
+                f'context-menu touch-position auto-close target="{target}"'
+            ).props(f'data-testid="tree-context-menu" data-node-id="{node.node_id}"'):
+                ui.menu_item(
+                    "Edit equipment…",
+                    on_click=lambda _evt, nid=node.node_id: on_equipment_context_action(
+                        nid, "edit_equipment"
+                    ),
+                ).props('data-testid="tree-context-edit-equipment"')
+                ui.menu_item(
+                    "Remove…",
+                    on_click=lambda _evt, nid=node.node_id: on_equipment_context_action(
+                        nid, "remove_equipment"
+                    ),
+                ).props('data-testid="tree-context-remove-equipment"')
+        elif node.kind in _RUN_KINDS and on_run_context_action is not None:
+            target = _selector_for_node_id(node.node_id)
+            with ui.menu().props(
+                f'context-menu touch-position auto-close target="{target}"'
+            ).props(f'data-testid="run-context-menu" data-run-path="{node.node_id}"'):
+                ui.menu_item(
+                    "Force sync",
+                    on_click=lambda _evt, p=node.node_id: on_run_context_action(p, "force_sync"),
+                ).props('data-testid="run-context-force-sync"')
+                ui.menu_item(
+                    "Clear verified",
+                    on_click=lambda _evt, p=node.node_id: on_run_context_action(
+                        p, "clear_verified"
+                    ),
+                ).props('data-testid="run-context-clear-verified"')
+                ui.menu_item(
+                    "View log",
+                    on_click=lambda _evt, p=node.node_id: on_run_context_action(p, "view_log"),
+                ).props('data-testid="run-context-view-log"')
 
 
 def build_tree(
@@ -408,20 +429,9 @@ def build_tree(
 
         tree.on_select(_selected)
     if on_equipment_context_action is not None or on_run_context_action is not None:
-
-        def _context_action(event: Any) -> None:
-            # ``event.args`` is the CustomEvent.detail dict the slot
-            # template attaches to ``tree-context-action`` dispatches.
-            args = getattr(event, "args", None) or {}
-            kind = args.get("kind", "")
-            node_id = args.get("node_id", "")
-            action = args.get("action", "")
-            if not node_id or not action:
-                return
-            if kind == KIND_EQUIPMENT and on_equipment_context_action is not None:
-                on_equipment_context_action(node_id, action)
-            elif kind in _RUN_KINDS and on_run_context_action is not None:
-                on_run_context_action(node_id, action)
-
-        tree.on("tree-context-action", _context_action)
+        _render_node_context_menus(
+            nodes,
+            on_equipment_context_action=on_equipment_context_action,
+            on_run_context_action=on_run_context_action,
+        )
     return tree

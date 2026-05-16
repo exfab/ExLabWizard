@@ -758,34 +758,67 @@ def test_to_nicegui_nodes_emits_testid_kind() -> None:
     assert {kid["testid_kind"] for kid in run_kids} == {"run"}
 
 
-def test_slot_template_emits_testid_data_node_id_and_context_menus() -> None:
-    """The ``default-header`` Vue template includes the per-node testids,
-    the ``data-node-id`` anchor, and the conditional context-menu blocks
-    each Playwright flow asserts on.
+def test_slot_template_emits_testid_and_data_node_id() -> None:
+    """The ``default-header`` template emits per-row anchors the
+    Playwright flows target and the Python-side context-menu renderer
+    selects on.
     """
 
     slot = tree._TREE_DEFAULT_HEADER_SLOT
-    # Per-node testid + data-node-id (Playwright targets these).
+    # Per-node testid the e2e selectors assert (tree-node-equipment,
+    # tree-node-run, tree-node-received_equipment, tree-node-project).
     assert "'tree-node-' + props.node.testid_kind" in slot
-    assert ":data-node-id=\"props.node.id\"" in slot
-    # Owned-equipment context menu items.
-    assert "data-testid=\"tree-context-edit-equipment\"" in slot
-    assert "data-testid=\"tree-context-remove-equipment\"" in slot
-    # Run context-menu items.
-    assert "data-testid=\"run-context-force-sync\"" in slot
-    assert "data-testid=\"run-context-clear-verified\"" in slot
-    assert "data-testid=\"run-context-view-log\"" in slot
-    # The owned-equipment menu must be gated to ``kind === 'equipment'``
-    # so received_equipment rows render without a menu (decision 3).
-    assert "props.node.kind === 'equipment'" in slot
-    # The run menu must fire for either run kind so test runs share the
-    # Force-sync / Clear-verified / View-log surface.
-    assert "props.node.kind === 'run_experimental'" in slot
-    assert "props.node.kind === 'run_test'" in slot
-    # Native CustomEvent bridge -- the slot dispatches
-    # ``tree-context-action`` so the Python listener registered on the
-    # tree element receives ``{node_id, kind, action}`` via event.args.
-    assert "new CustomEvent('tree-context-action'" in slot
+    # data-node-id is the unique row anchor q-menu's ``target`` selector
+    # binds to so per-node context menus rendered outside the tree
+    # attach to the right row.
+    assert ':data-node-id="props.node.id"' in slot
+    # The slot itself never references any context-menu testids -- those
+    # are emitted by the Python-side per-node ui.menu() calls in
+    # _render_node_context_menus(), not by the Vue template (because
+    # q-menu would render inside a body-level portal and break event
+    # propagation back to the tree wrapper).
+    assert "tree-context-edit-equipment" not in slot
+    assert "run-context-force-sync" not in slot
+
+
+def test_selector_for_node_id_escapes_quotes() -> None:
+    """Node ids with embedded ``"`` are escaped so the CSS selector
+    Quasar's q-menu uses doesn't break.
+    """
+
+    plain = tree._selector_for_node_id("EQ1/PROJ-0001/Run_2026-05-07")
+    assert plain == '[data-node-id="EQ1/PROJ-0001/Run_2026-05-07"]'
+    # The escape guards a path with a quote in it (not realistic for
+    # the disk schema today, but a cheap safety net).
+    with_quote = tree._selector_for_node_id('EQ1/odd"name')
+    assert '\\"' in with_quote
+    # Backslashes likewise need doubling so they're forwarded as a
+    # literal backslash to the CSS attribute selector.
+    with_bs = tree._selector_for_node_id("EQ1\\odd")
+    assert "\\\\" in with_bs
+
+
+def test_iter_nodes_yields_depth_first() -> None:
+    """``_iter_nodes`` visits each node before its children so the per-
+    node context-menu renderer reaches every owned-equipment and run
+    in the tree.
+    """
+
+    equipment = tree.EquipmentNode(equipment_id="EQ1")
+    project = tree.ProjectNode(short_id="PROJ-1", name="Cortex")
+    run_a = tree.RunNode(directory_name="Run_A", run_kind="experimental")
+    run_b = tree.RunNode(directory_name="Run_B", run_kind="test")
+    nodes = tree.build_nodes(
+        hierarchy={equipment: {project: [run_a, run_b]}},
+        filters=tree.TreeFilters(),
+    )
+    flat = [n.node_id for n in tree._iter_nodes(nodes)]
+    assert flat == [
+        "EQ1",
+        "EQ1/Cortex",
+        "EQ1/Cortex/Run_A",
+        "EQ1/Cortex/Run_B",
+    ]
 
 
 # ---------------------------------------------------------------------------
