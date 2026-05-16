@@ -952,3 +952,175 @@ async def test_submit_run_builds_request_and_runs(tmp_path: Path) -> None:
     assert request.project_name == "Cortex Q3 Pilot"
     assert request.template_path == tmp_path / "run_exp"
     assert nav.navigated == ["/main"]
+
+
+# ---------------------------------------------------------------------------
+# Helpers added for the file-explorer /main rewire
+# ---------------------------------------------------------------------------
+
+
+def test_build_main_query_omits_empty_params() -> None:
+    """Both empty -> empty string. One present -> single param."""
+    assert mount._build_main_query("", "") == ""
+    assert mount._build_main_query("EQ1", "") == "?selected=EQ1"
+    assert mount._build_main_query("", "collapsed") == "?right_pane=collapsed"
+    assert mount._build_main_query("EQ1", "collapsed") == "?selected=EQ1&right_pane=collapsed"
+
+
+def test_classify_node_returns_none_for_empty_selection() -> None:
+    assert mount._classify_node(None, {}) == (None, False)
+    assert mount._classify_node("", {}) == (None, False)
+
+
+def test_classify_node_discriminates_kinds() -> None:
+    """Equipment / project / run / received_equipment all classify correctly."""
+    from exlab_wizard.ui.components import tree as ui_tree
+
+    hierarchy = {
+        ui_tree.EquipmentNode(equipment_id="EQ1", relay=False): {},
+        ui_tree.EquipmentNode(equipment_id="RELAY_EQX", relay=True): {},
+    }
+    assert mount._classify_node("EQ1", hierarchy) == ("equipment", False)
+    assert mount._classify_node("RELAY_EQX", hierarchy) == ("received_equipment", True)
+    assert mount._classify_node("EQ1/PROJ-0001", hierarchy) == ("project", False)
+    assert mount._classify_node(
+        "EQ1/PROJ-0001/Run_2026-05-07", hierarchy
+    ) == ("run", False)
+    assert mount._classify_node(
+        "EQ1/PROJ-0001/TestRuns/TestRun_2026-05-08", hierarchy
+    ) == ("run", False)
+    # A node under a relay root keeps the relay-equipment flag set so
+    # the toolbar's New-Project/Run/Test-Run buttons stay disabled.
+    assert mount._classify_node("RELAY_EQX/proj", hierarchy) == ("project", True)
+
+
+def test_build_metadata_payload_returns_empty_when_node_missing() -> None:
+    assert mount._build_metadata_payload(None, None, None) == {}
+    assert mount._build_metadata_payload("EQ1", None, _deps()) == {}
+    assert mount._build_metadata_payload("EQ1", "equipment", _deps(config=None)) == {}
+
+
+def test_build_metadata_payload_owned_equipment_reads_config() -> None:
+    """An equipment node payload pulls fields from config.equipment[id]."""
+    equipment = SimpleNamespace(
+        id="EQ1",
+        label="Confocal Microscope 1",
+        sync_mode="nas",
+        local_root="/data/EQ1",
+        nas_root="//nas/EQ1",
+        completeness_signal="sentinel_file",
+    )
+    config = _config(equipment=(equipment,))
+    payload = mount._build_metadata_payload("EQ1", "equipment", _deps(config=config))
+    assert payload["id"] == "EQ1"
+    assert payload["label"] == "Confocal Microscope 1"
+    assert payload["sync_mode"] == "nas"
+    assert payload["local_root"] == "/data/EQ1"
+    assert payload["nas_root"] == "//nas/EQ1"
+    assert payload["completeness_signal"] == "sentinel_file"
+
+
+def test_build_metadata_payload_unknown_equipment_id_returns_empty() -> None:
+    """Asking for a node that isn't in config.equipment returns ``{}``."""
+    config = _config(equipment=())
+    payload = mount._build_metadata_payload("EQX", "equipment", _deps(config=config))
+    assert payload == {}
+
+
+def test_build_metadata_payload_project_scans_run_counts(tmp_path: Path) -> None:
+    """The project payload counts Run_* and TestRun_* directories."""
+    from exlab_wizard.constants import RUN_DIR_PREFIX, TEST_RUN_DIR_PREFIX
+
+    project_dir = tmp_path / "EQ1" / "Cortex Q3"
+    runs_dir = project_dir / "Runs"
+    test_runs_dir = project_dir / "TestRuns"
+    runs_dir.mkdir(parents=True)
+    test_runs_dir.mkdir(parents=True)
+    (runs_dir / f"{RUN_DIR_PREFIX}2026-05-01").mkdir()
+    (runs_dir / f"{RUN_DIR_PREFIX}2026-05-02").mkdir()
+    (test_runs_dir / f"{TEST_RUN_DIR_PREFIX}2026-05-03").mkdir()
+    config = _config(local_root=str(tmp_path))
+    payload = mount._build_metadata_payload(
+        "EQ1/Cortex Q3", "project", _deps(config=config)
+    )
+    assert payload["run_count"] == 2
+    assert payload["test_run_count"] == 1
+    assert payload["name"] == "Cortex Q3"
+
+
+def test_build_metadata_payload_run_parses_creation_json(tmp_path: Path) -> None:
+    """The run payload decodes creation.json into the metadata fields."""
+    from datetime import UTC, datetime
+
+    import msgspec
+
+    from exlab_wizard.api.schemas import (
+        CreationJson,
+        LimsProjectBlock,
+        PathsBlock,
+        TemplateBlock,
+    )
+    from exlab_wizard.constants import CACHE_DIR_NAME, CREATION_JSON_NAME, CREATION_JSON_VERSION
+
+    run_dir = tmp_path / "EQ1" / "Cortex Q3" / "Runs" / "Run_2026-05-07"
+    cache = run_dir / CACHE_DIR_NAME
+    cache.mkdir(parents=True)
+    payload_obj = CreationJson(
+        schema_version=CREATION_JSON_VERSION,
+        created_at=datetime(2026, 5, 7, 10, 0, 0, tzinfo=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        created_by="asmith",
+        level="run",
+        run_kind="experimental",
+        lims_project=LimsProjectBlock(
+            uid="x", short_id="PROJ-0042", name_at_creation="Cortex Run", source="live"
+        ),
+        template=TemplateBlock(
+            name="basic", version="1.0.0", source_path="/tpl/basic", run_scope="experimental"
+        ),
+        variables={},
+        paths=PathsBlock(local=str(run_dir), nas="/srv/nas/EQ1"),
+        sync_status="pending",
+    )
+    (cache / CREATION_JSON_NAME).write_bytes(msgspec.json.encode(payload_obj))
+    config = _config(local_root=str(tmp_path))
+    out = mount._build_metadata_payload(str(run_dir), "run", _deps(config=config))
+    assert out["operator"] == "asmith"
+    assert out["template"] == "basic"
+    assert out["sync_status"] == "pending"
+    assert out["lims_project"] == "PROJ-0042"
+    assert out["label"] == "Cortex Run"
+    assert out["run_kind"] == "experimental"
+    assert out["path"] == str(run_dir)
+
+
+def test_build_metadata_payload_run_missing_creation_returns_path_only(tmp_path: Path) -> None:
+    """A run dir without a creation.json yields {path, name}, not crash."""
+    run_dir = tmp_path / "EQ1" / "Cortex Q3" / "Runs" / "Run_2026-05-09"
+    run_dir.mkdir(parents=True)
+    config = _config(local_root=str(tmp_path))
+    payload = mount._build_metadata_payload(str(run_dir), "run", _deps(config=config))
+    assert payload == {"path": str(run_dir), "name": run_dir.name}
+
+
+def test_build_main_state_threads_selection_into_state() -> None:
+    """The selected-node fields end up on MainPageState for the renderer."""
+    state = mount._build_main_state(
+        _deps(),
+        selected_node="EQ1/Cortex",
+        node_kind="project",
+        is_received=False,
+        right_pane_collapsed=True,
+    )
+    assert state.selected_node == "EQ1/Cortex"
+    assert state.selected_node_kind == "project"
+    assert state.selected_node_is_received is False
+    assert state.right_pane_collapsed is True
+    assert state.folder_feed_path == "EQ1/Cortex"
+
+
+def test_open_in_os_returns_false_on_unhandled_platform(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unknown sys.platform falls through to False so the toast can warn."""
+    monkeypatch.setattr("sys.platform", "exotic-os")
+    assert mount._open_in_os("/some/path") is False
