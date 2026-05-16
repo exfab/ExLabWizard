@@ -39,11 +39,24 @@ _log = get_logger(__name__)
 
 # Node kinds.
 KIND_EQUIPMENT = "equipment"
+KIND_RECEIVED_EQUIPMENT = "received_equipment"
 KIND_PROJECT = "project"
 KIND_RUN_EXPERIMENTAL = "run_experimental"
 KIND_RUN_TEST = "run_test"
 
 _RUN_KINDS: frozenset[str] = frozenset({KIND_RUN_EXPERIMENTAL, KIND_RUN_TEST})
+_EQUIPMENT_KINDS: frozenset[str] = frozenset({KIND_EQUIPMENT, KIND_RECEIVED_EQUIPMENT})
+
+# Map internal kind to the testid suffix the Playwright flows expect.
+# Both run_experimental and run_test collapse to "run" (the e2e contract
+# treats them interchangeably for selection / context-menu purposes).
+_TESTID_KIND_BY_KIND: dict[str, str] = {
+    KIND_EQUIPMENT: "equipment",
+    KIND_RECEIVED_EQUIPMENT: "received_equipment",
+    KIND_PROJECT: "project",
+    KIND_RUN_EXPERIMENTAL: "run",
+    KIND_RUN_TEST: "run",
+}
 
 # Static URLs served by ``ui/theme.py:register_static_assets``.
 SYNC_ICON_LOCAL_URL = "/assets/sync_local.svg"
@@ -63,6 +76,10 @@ class TreeFilters:
 @dataclass(frozen=True)
 class EquipmentNode:
     equipment_id: str
+    # Redesign §3.3: relay equipment (received from another workstation)
+    # renders the same row but disables creation actions and uses a
+    # different context-menu surface (none, per decision 3).
+    relay: bool = False
 
 
 @dataclass(frozen=True)
@@ -204,7 +221,7 @@ def build_nodes(
             TreeNode(
                 node_id=equipment.equipment_id,
                 label=equipment.equipment_id,
-                kind=KIND_EQUIPMENT,
+                kind=KIND_RECEIVED_EQUIPMENT if equipment.relay else KIND_EQUIPMENT,
                 children=tuple(project_nodes),
             )
         )
@@ -232,6 +249,11 @@ def to_nicegui_nodes(nodes: Iterable[TreeNode]) -> list[dict[str, Any]]:
     Run rows additionally carry a ``sync_icon`` URL string and a
     ``sync_status`` string used by the ``default-header`` scoped-slot
     template attached in :func:`build_tree`.
+
+    Each row also carries a ``testid_kind`` field — the suffix the
+    Playwright flows expect on ``data-testid="tree-node-<suffix>"``.
+    Both run kinds collapse to ``"run"`` so the e2e selectors can
+    treat experimental and test runs interchangeably.
     """
 
     out: list[dict[str, Any]] = []
@@ -240,6 +262,7 @@ def to_nicegui_nodes(nodes: Iterable[TreeNode]) -> list[dict[str, Any]]:
             "id": node.node_id,
             "label": node.label,
             "kind": node.kind,
+            "testid_kind": _TESTID_KIND_BY_KIND.get(node.kind, node.kind),
             "badges": list(node.badges),
             "children": to_nicegui_nodes(node.children),
         }
@@ -253,17 +276,86 @@ def to_nicegui_nodes(nodes: Iterable[TreeNode]) -> list[dict[str, Any]]:
 
 # Quasar ``q-tree`` does not honour an ``icon`` / ``img`` field on plain
 # node dicts; per-node images must come through a scoped slot template.
-# We drop in a single ``default-header`` template that renders the run's
-# sync icon (when present) immediately to the left of the node label.
+# The ``default-header`` template renders the per-row sync icon (when
+# present), emits the data-testid / data-node-id attributes the
+# Playwright flows assert on, and -- when ``relay``-aware -- attaches a
+# Quasar ``q-menu`` with the right-click items per node kind:
+#
+# * owned equipment -> Edit equipment / Remove (Redesign §4.6, dec. 4A)
+# * received equipment -> no menu (decision 3, intentionally bare)
+# * run (experimental or test) -> Force sync / Clear verified / View log
+#
+# Each ``q-item`` dispatches a native ``CustomEvent`` named
+# ``tree-context-action`` carrying ``{node_id, kind, action}`` so the
+# Python listener attached to the tree element in :func:`build_tree`
+# can route the action to the operator-supplied callback. We use a
+# native CustomEvent (not Vue's ``$emit``) because Quasar tree slots
+# render menu items inside a popover portal at body level; native
+# events bubble through the document and reach the tree's wrapper
+# regardless of where the menu portal is mounted.
 _TREE_DEFAULT_HEADER_SLOT = (
     '<div class="row items-center" style="gap: 0.4rem">'
     '<img v-if="props.node.sync_icon" :src="props.node.sync_icon" '
     'style="width: 1rem; height: 1rem; flex-shrink: 0;" '
     ":alt=\"props.node.sync_status || ''\" />"
-    '<span :data-kind="props.node.kind" '
+    "<span :data-testid=\"'tree-node-' + props.node.testid_kind\" "
+    ':data-node-id="props.node.id" '
+    ':data-kind="props.node.kind" '
     ":data-sync-status=\"props.node.sync_status || ''\">"
     "{{ props.node.label }}"
     "</span>"
+    # Owned-equipment context menu (Edit / Remove deep-link to Settings).
+    "<q-menu v-if=\"props.node.kind === 'equipment'\" "
+    'context-menu touch-position auto-close '
+    ':data-testid="\'tree-context-menu\'" '
+    ':data-node-id="props.node.id">'
+    '<q-list dense>'
+    '<q-item clickable v-close-popup '
+    'data-testid="tree-context-edit-equipment" '
+    "@click=\"$el.dispatchEvent(new CustomEvent('tree-context-action', "
+    "{detail: {node_id: props.node.id, kind: props.node.kind, action: 'edit_equipment'}, "
+    'bubbles: true}))">'
+    '<q-item-section>Edit equipment…</q-item-section>'
+    '</q-item>'
+    '<q-item clickable v-close-popup '
+    'data-testid="tree-context-remove-equipment" '
+    "@click=\"$el.dispatchEvent(new CustomEvent('tree-context-action', "
+    "{detail: {node_id: props.node.id, kind: props.node.kind, action: 'remove_equipment'}, "
+    'bubbles: true}))">'
+    '<q-item-section>Remove…</q-item-section>'
+    '</q-item>'
+    '</q-list>'
+    '</q-menu>'
+    # Run context menu (Force sync / Clear verified / View log).
+    "<q-menu v-if=\"props.node.kind === 'run_experimental' "
+    "|| props.node.kind === 'run_test'\" "
+    'context-menu touch-position auto-close '
+    ':data-testid="\'run-context-menu\'" '
+    ':data-run-path="props.node.id">'
+    '<q-list dense>'
+    '<q-item clickable v-close-popup '
+    'data-testid="run-context-force-sync" '
+    "@click=\"$el.dispatchEvent(new CustomEvent('tree-context-action', "
+    "{detail: {node_id: props.node.id, kind: props.node.kind, action: 'force_sync'}, "
+    'bubbles: true}))">'
+    '<q-item-section>Force sync</q-item-section>'
+    '</q-item>'
+    '<q-item clickable v-close-popup '
+    'data-testid="run-context-clear-verified" '
+    "@click=\"$el.dispatchEvent(new CustomEvent('tree-context-action', "
+    "{detail: {node_id: props.node.id, kind: props.node.kind, action: 'clear_verified'}, "
+    'bubbles: true}))">'
+    '<q-item-section>Clear verified</q-item-section>'
+    '</q-item>'
+    '<q-item clickable v-close-popup '
+    'data-testid="run-context-view-log" '
+    "@click=\"$el.dispatchEvent(new CustomEvent('tree-context-action', "
+    "{detail: {node_id: props.node.id, kind: props.node.kind, action: 'view_log'}, "
+    'bubbles: true}))">'
+    '<q-item-section>View log</q-item-section>'
+    '</q-item>'
+    '</q-list>'
+    '</q-menu>'
     "</div>"
 )
 
@@ -272,6 +364,8 @@ def build_tree(
     *,
     hierarchy: dict[EquipmentNode, dict[ProjectNode, list[RunNode]]],
     on_select: Callable[[str], None] | None = None,
+    on_equipment_context_action: Callable[[str, str], None] | None = None,
+    on_run_context_action: Callable[[str, str], None] | None = None,
     filters: TreeFilters | None = None,
     expand_all: bool = False,
 ) -> Any:
@@ -283,6 +377,15 @@ def build_tree(
     ``expand_all`` toggles Quasar's ``default-expand-all`` prop -- used
     by e2e tests that need every node visible in the DOM without
     having to click expand carets.
+
+    ``on_equipment_context_action`` and ``on_run_context_action``
+    receive ``(node_id, action)`` when the operator picks an item from
+    the per-row right-click menu (Redesign §4.6, dec. 4A). Action
+    strings match the constants in
+    :mod:`exlab_wizard.ui.components.tree_context_menu`
+    (``edit_equipment`` / ``remove_equipment`` /
+    ``force_sync`` / ``clear_verified`` / ``view_log``). Received-
+    equipment rows never raise these callbacks (no context menu).
     """
 
     f = filters or TreeFilters()
@@ -304,4 +407,21 @@ def build_tree(
             on_select(event.value)
 
         tree.on_select(_selected)
+    if on_equipment_context_action is not None or on_run_context_action is not None:
+
+        def _context_action(event: Any) -> None:
+            # ``event.args`` is the CustomEvent.detail dict the slot
+            # template attaches to ``tree-context-action`` dispatches.
+            args = getattr(event, "args", None) or {}
+            kind = args.get("kind", "")
+            node_id = args.get("node_id", "")
+            action = args.get("action", "")
+            if not node_id or not action:
+                return
+            if kind == KIND_EQUIPMENT and on_equipment_context_action is not None:
+                on_equipment_context_action(node_id, action)
+            elif kind in _RUN_KINDS and on_run_context_action is not None:
+                on_run_context_action(node_id, action)
+
+        tree.on("tree-context-action", _context_action)
     return tree

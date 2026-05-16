@@ -716,6 +716,79 @@ def test_to_nicegui_nodes_equipment_and_project_have_no_sync_icon() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Redesign §3.3 / §4.6: relay equipment + per-node testids + context menus.
+# ---------------------------------------------------------------------------
+
+
+def test_equipment_node_relay_flag_emits_received_equipment_kind() -> None:
+    """An ``EquipmentNode(relay=True)`` builds a ``received_equipment`` row."""
+
+    owned = tree.EquipmentNode(equipment_id="CONFOCAL_01")
+    relay = tree.EquipmentNode(equipment_id="RELAY_EQX", relay=True)
+    nodes = tree.build_nodes(
+        hierarchy={owned: {}, relay: {}},
+        filters=tree.TreeFilters(),
+    )
+    by_id = {n.node_id: n for n in nodes}
+    assert by_id["CONFOCAL_01"].kind == tree.KIND_EQUIPMENT
+    assert by_id["RELAY_EQX"].kind == tree.KIND_RECEIVED_EQUIPMENT
+
+
+def test_to_nicegui_nodes_emits_testid_kind() -> None:
+    """Each row carries a ``testid_kind`` matching the Playwright contract."""
+
+    owned = tree.EquipmentNode(equipment_id="EQ1")
+    relay = tree.EquipmentNode(equipment_id="RELAY_EQX", relay=True)
+    project = tree.ProjectNode(short_id="PROJ-1", name="Cortex Q3")
+    exp_run = tree.RunNode(directory_name="Run_2026-05-07", run_kind="experimental")
+    test_run = tree.RunNode(directory_name="TestRun_2026-05-08", run_kind="test")
+    payload = tree.to_nicegui_nodes(
+        tree.build_nodes(
+            hierarchy={owned: {project: [exp_run, test_run]}, relay: {}},
+            filters=tree.TreeFilters(),
+        )
+    )
+    by_id = {p["id"]: p for p in payload}
+    assert by_id["EQ1"]["testid_kind"] == "equipment"
+    assert by_id["RELAY_EQX"]["testid_kind"] == "received_equipment"
+    assert by_id["EQ1"]["children"][0]["testid_kind"] == "project"
+    # Both run kinds collapse to "run" so the e2e suite's
+    # data-testid="tree-node-run" selectors match either kind.
+    run_kids = by_id["EQ1"]["children"][0]["children"]
+    assert {kid["testid_kind"] for kid in run_kids} == {"run"}
+
+
+def test_slot_template_emits_testid_data_node_id_and_context_menus() -> None:
+    """The ``default-header`` Vue template includes the per-node testids,
+    the ``data-node-id`` anchor, and the conditional context-menu blocks
+    each Playwright flow asserts on.
+    """
+
+    slot = tree._TREE_DEFAULT_HEADER_SLOT
+    # Per-node testid + data-node-id (Playwright targets these).
+    assert "'tree-node-' + props.node.testid_kind" in slot
+    assert ":data-node-id=\"props.node.id\"" in slot
+    # Owned-equipment context menu items.
+    assert "data-testid=\"tree-context-edit-equipment\"" in slot
+    assert "data-testid=\"tree-context-remove-equipment\"" in slot
+    # Run context-menu items.
+    assert "data-testid=\"run-context-force-sync\"" in slot
+    assert "data-testid=\"run-context-clear-verified\"" in slot
+    assert "data-testid=\"run-context-view-log\"" in slot
+    # The owned-equipment menu must be gated to ``kind === 'equipment'``
+    # so received_equipment rows render without a menu (decision 3).
+    assert "props.node.kind === 'equipment'" in slot
+    # The run menu must fire for either run kind so test runs share the
+    # Force-sync / Clear-verified / View-log surface.
+    assert "props.node.kind === 'run_experimental'" in slot
+    assert "props.node.kind === 'run_test'" in slot
+    # Native CustomEvent bridge -- the slot dispatches
+    # ``tree-context-action`` so the Python listener registered on the
+    # tree element receives ``{node_id, kind, action}`` via event.args.
+    assert "new CustomEvent('tree-context-action'" in slot
+
+
+# ---------------------------------------------------------------------------
 # Smoke: factories return a payload outside a NiceGUI app context
 # ---------------------------------------------------------------------------
 
