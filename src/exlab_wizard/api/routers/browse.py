@@ -52,6 +52,7 @@ __all__ = [
     "TreeResponse",
     "build_browse_router",
     "build_hierarchy_dict",
+    "build_received_equipment_nodes",
     "scan_folder_sync",
 ]
 
@@ -217,7 +218,7 @@ def build_browse_router() -> APIRouter:
             _build_equipment_node(entry, Path(config.paths.local_root))
             for entry in config.equipment
         ]
-        received = _build_received_equipment_nodes(config)
+        received = build_received_equipment_nodes(config)
         return TreeResponse(equipment=nodes, received_equipment=received)
 
     @router.get(
@@ -404,7 +405,7 @@ def _build_equipment_node(entry: Any, local_root: Path) -> EquipmentNode:
     )
 
 
-def _build_received_equipment_nodes(config: Any) -> list[RelayEquipmentNode]:
+def build_received_equipment_nodes(config: Any) -> list[RelayEquipmentNode]:
     """Walk the staging root and surface received-equipment nodes.
 
     Redesign §3.3: auto-discovered from the runs the orchestrator has
@@ -717,7 +718,7 @@ def build_hierarchy_dict(config: Any) -> dict[Any, dict[Any, list[Any]]]:
             relay=False,
         )
         hierarchy[ui_equipment] = _projects_for_ui_tree(api_equipment.projects)
-    for api_relay in _build_received_equipment_nodes(config):
+    for api_relay in build_received_equipment_nodes(config):
         ui_equipment = ui_tree.EquipmentNode(
             equipment_id=api_relay.id,
             relay=True,

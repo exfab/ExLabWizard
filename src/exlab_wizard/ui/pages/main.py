@@ -166,11 +166,7 @@ def render_file_explorer_page(
             "color: var(--color-heading); font-weight: 600;"
         )
         ui.space()
-        # Decision 1: creation buttons are disabled when a received-
-        # equipment node is selected. The buttons remain always
-        # clickable otherwise; an internal picker step in the wizard
-        # asks for equipment+project when there is no valid owned-node
-        # selection.
+        # Redesign decision 1: creation buttons disable on received-equipment.
         np_btn = ui.button("New Project", on_click=lambda _evt: on_open_new_project()).props(
             'color=primary data-testid="toolbar-new-project"'
         )
@@ -214,13 +210,9 @@ def render_file_explorer_page(
         notifications.clear_banner(notifications.BannerId.SETUP_INCOMPLETE)
     banner_stack.banner_stack(notifications.ContainerId.GLOBAL)
 
-    # The single dispatcher on_tree_context_action receives
-    # (node_id, action) for owned-equipment Edit / Remove AND for run
-    # Force-sync / Clear-verified / View-log: build_tree fans the
-    # equipment vs. run context-menu callbacks into the same signature,
-    # so the mount layer routes by action verb. on_run_staging_action
-    # stays as a separate callback for the metadata-pane's own
-    # action surface (which uses a (path, action) signature too).
+    # Run-row context-menu items share the metadata-pane's
+    # (path, action) callback signature, so the tree's run-context
+    # actions route into on_run_staging_action via this thin shim.
     def _route_run_context(node_id: str, action: str) -> None:
         if on_run_staging_action is not None:
             on_run_staging_action(node_id, action)

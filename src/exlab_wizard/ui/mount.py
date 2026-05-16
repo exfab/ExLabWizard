@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -629,10 +630,10 @@ def _build_metadata_payload(
             return _metadata_for_project(node_id, config)
         if node_kind == "run":
             return _metadata_for_run(node_id)
+        return {}
     except Exception as exc:
         _log.warning("metadata payload build failed for %s (%s): %s", node_id, node_kind, exc)
         return {}
-    return {}
 
 
 def _metadata_for_owned_equipment(node_id: str, config: Any) -> dict[str, Any]:
@@ -655,7 +656,7 @@ def _metadata_for_relay_equipment(node_id: str, config: Any) -> dict[str, Any]:
     """Return the relay-equipment payload (label, source_host)."""
     from exlab_wizard.api.routers import browse as _browse
 
-    for relay in _browse._build_received_equipment_nodes(config):
+    for relay in _browse.build_received_equipment_nodes(config):
         if relay.id == node_id:
             return {
                 "id": relay.id,
@@ -681,31 +682,15 @@ def _metadata_for_project(node_id: str, config: Any) -> dict[str, Any]:
     equipment_id, project_name = parts
     local_root = Path(getattr(config.paths, "local_root", "") or "")
     project_dir = local_root / equipment_id / project_name
-    run_count = 0
-    test_run_count = 0
-    if project_dir.exists():
-        for sub in project_dir.iterdir():
-            if not sub.is_dir():
-                continue
-            if sub.name == "Runs":
-                run_count = sum(
-                    1
-                    for child in sub.iterdir()
-                    if child.is_dir() and child.name.startswith(RUN_DIR_PREFIX)
-                )
-            elif sub.name == "TestRuns":
-                test_run_count = sum(
-                    1
-                    for child in sub.iterdir()
-                    if child.is_dir() and child.name.startswith(TEST_RUN_DIR_PREFIX)
-                )
+    run_count = _count_dir_children(project_dir / "Runs", RUN_DIR_PREFIX)
+    test_run_count = _count_dir_children(project_dir / "TestRuns", TEST_RUN_DIR_PREFIX)
     objective = ""
-    readme_path = project_dir / README_FILE_NAME
-    if readme_path.exists():
-        try:
-            objective = readme_path.read_text(encoding="utf-8").splitlines()[0][:120]
-        except OSError:
-            objective = ""
+    try:
+        objective = (project_dir / README_FILE_NAME).read_text(encoding="utf-8").splitlines()[0][
+            :120
+        ]
+    except (FileNotFoundError, OSError, IndexError):
+        objective = ""
     return {
         "name": project_name,
         "short_id": project_name,
@@ -713,6 +698,21 @@ def _metadata_for_project(node_id: str, config: Any) -> dict[str, Any]:
         "run_count": run_count,
         "test_run_count": test_run_count,
     }
+
+
+def _count_dir_children(parent: Path, prefix: str) -> int:
+    """Count immediate child directories of ``parent`` whose names start
+    with ``prefix``. Returns 0 when ``parent`` is missing / unreadable.
+    """
+    try:
+        with os.scandir(parent) as iterator:
+            return sum(
+                1
+                for entry in iterator
+                if entry.name.startswith(prefix) and entry.is_dir(follow_symlinks=False)
+            )
+    except (FileNotFoundError, NotADirectoryError, PermissionError):
+        return 0
 
 
 def _metadata_for_run(node_id: str) -> dict[str, Any]:
@@ -842,13 +842,18 @@ def _run_staging_action(deps: Any, path: str, action: str, ui: Any) -> None:
     (no HTTP round trip from the same Python interpreter).
     """
     from exlab_wizard.cache.ingest_writer import IngestWriter
+    from exlab_wizard.ui.components.tree_context_menu import (
+        RUN_CONTEXT_CLEAR_VERIFIED,
+        RUN_CONTEXT_FORCE_SYNC,
+        RUN_CONTEXT_VIEW_LOG,
+    )
 
     config = getattr(deps, "config", None) if deps is not None else None
     if config is None:
         _show_toast(ui, "Staging action unavailable: no config", positive=False)
         return
     run_path = Path(path)
-    if action == "force_sync":
+    if action == RUN_CONTEXT_FORCE_SYNC:
         nas_sync = getattr(deps, "nas_sync", None) if deps is not None else None
         if nas_sync is None:
             _show_toast(ui, "Force-sync unavailable: NAS sync not wired", positive=False)
@@ -865,7 +870,7 @@ def _run_staging_action(deps: Any, path: str, action: str, ui: Any) -> None:
 
         _spawn_background(_do_enqueue())
         return
-    if action == "clear_verified":
+    if action == RUN_CONTEXT_CLEAR_VERIFIED:
         ingest_writer = getattr(deps, "ingest_writer", None) or IngestWriter()
         from exlab_wizard.orchestrator.cleanup import clear_run
 
@@ -885,7 +890,7 @@ def _run_staging_action(deps: Any, path: str, action: str, ui: Any) -> None:
 
         _spawn_background(_do_clear())
         return
-    if action == "view_log":
+    if action == RUN_CONTEXT_VIEW_LOG:
         _open_log_dialog(run_path, ui)
         return
     _show_toast(ui, f"Unknown staging action: {action}", positive=False)
@@ -980,10 +985,10 @@ def _open_log_dialog(run_path: Path, ui: Any) -> None:
     import msgspec
 
     from exlab_wizard.api.schemas import IngestJson
-    from exlab_wizard.constants import CACHE_DIR_NAME, INGEST_JSON_NAME
     from exlab_wizard.io import read_msgspec_json
+    from exlab_wizard.paths import ingest_json_path
 
-    ingest_path = run_path / CACHE_DIR_NAME / INGEST_JSON_NAME
+    ingest_path = ingest_json_path(run_path)
     if not ingest_path.exists():
         _show_toast(ui, "No log: ingest.json not found", positive=False)
         return

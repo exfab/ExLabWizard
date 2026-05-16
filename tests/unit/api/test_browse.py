@@ -439,7 +439,7 @@ def test_build_hierarchy_dict_includes_owned_and_relay_equipment(tmp_path: Path)
     (eq1_dir / "PROJ-0001").mkdir()
 
     # A relay equipment with one project, surfaced via the staging root.
-    # _build_received_equipment_nodes only emits a relay node when the
+    # build_received_equipment_nodes only emits a relay node when the
     # equipment dir has at least one project subdirectory (an empty
     # relay dir is skipped).
     relay_root = tmp_path / "staging"
@@ -448,7 +448,7 @@ def test_build_hierarchy_dict_includes_owned_and_relay_equipment(tmp_path: Path)
 
     config = _config_with_local_root(local_root)
     # Re-point staging_root onto our seeded relay tree so
-    # _build_received_equipment_nodes finds RELAY_EQX.
+    # build_received_equipment_nodes finds RELAY_EQX.
     config.orchestrator.staging_root = str(relay_root)
 
     hierarchy = browse.build_hierarchy_dict(config)
