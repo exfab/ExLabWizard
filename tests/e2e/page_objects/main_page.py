@@ -54,16 +54,36 @@ class MainPage:
         return self._page.get_by_test_id("toolbar-refresh")
 
     @property
+    def toolbar_add_equipment(self) -> Locator:
+        """Toolbar Add-Equipment button (Redesign §4 / §6)."""
+        return self._page.get_by_test_id("toolbar-add-equipment")
+
+    @property
     def search_box(self) -> Locator:
         """The tree search input (§6.2.1)."""
         return self._page.get_by_test_id("main-search")
 
     @property
-    def tab_details(self) -> Locator:
-        """Details tab (§6.2.3)."""
-        return self._page.get_by_test_id("tab-details")
+    def tab_metadata(self) -> Locator:
+        """Metadata tab (Redesign §4.4)."""
+        return self._page.get_by_test_id("tab-metadata")
 
     @property
     def tab_problems(self) -> Locator:
-        """Problems tab (§6.2.3)."""
+        """Problems tab (§6.2.3 / Redesign §4.4)."""
         return self._page.get_by_test_id("tab-problems")
+
+    @property
+    def toggle_right_pane(self) -> Locator:
+        """Right-pane collapse toggle (Redesign §4)."""
+        return self._page.get_by_test_id("toggle-right-pane")
+
+    @property
+    def footer_clear_verified(self) -> Locator:
+        """Footer bulk Clear-verified button (Redesign §4.6)."""
+        return self._page.get_by_test_id("footer-clear-verified")
+
+    @property
+    def footer_staging_segment(self) -> Locator:
+        """Footer Staging status segment (Redesign §4.6)."""
+        return self._page.get_by_test_id("footer-staging-segment")

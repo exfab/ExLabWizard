@@ -295,3 +295,201 @@ def test_get_folder_rejects_path_outside_configured_roots(tmp_path: Path) -> Non
     assert response.status_code == 403
     body = response.json()
     assert body["error"]["code"] == "permission_denied"
+
+
+# ---------------------------------------------------------------------------
+# GET /run/{path}/log -- Redesign §4.6 View-log surface
+# ---------------------------------------------------------------------------
+
+
+def _write_ingest_json(
+    run_dir: Path,
+    *,
+    current_state: str,
+    history: list[dict],
+) -> None:
+    from exlab_wizard.api.schemas import IngestJson
+    from exlab_wizard.cache.ingest_writer import IngestWriter
+    from exlab_wizard.constants import INGEST_JSON_NAME, INGEST_JSON_VERSION
+
+    cache = run_dir / CACHE_DIR_NAME
+    cache.mkdir(parents=True, exist_ok=True)
+    payload = msgspec.convert(
+        {
+            "schema_version": INGEST_JSON_VERSION,
+            "project_name": "PROJ-0001",
+            "equipment_id": "EQ1",
+            "run_kind": "experimental",
+            "run_path": str(run_dir),
+            "transport": "smb_mount",
+            "current_state": current_state,
+            "history": history,
+        },
+        type=IngestJson,
+    )
+    # Use synchronous write since the IngestWriter's async API requires
+    # an event loop here; msgspec encoded payload + write_bytes is fine
+    # for test fixtures.
+    _ = IngestWriter  # keep import for type/intent clarity
+    (cache / INGEST_JSON_NAME).write_bytes(msgspec.json.encode(payload))
+
+
+def test_get_run_log_returns_history_entries(tmp_path: Path) -> None:
+    """A staged run's ingest.json history is surfaced as the log."""
+    from exlab_wizard.constants import IngestState
+
+    run_dir = tmp_path / "data" / "EQ1" / "PROJ-0001" / "Run_2026-05-01T10-00-00"
+    run_dir.mkdir(parents=True)
+    _write_ingest_json(
+        run_dir,
+        current_state=IngestState.SYNC_VERIFIED.value,
+        history=[
+            {
+                "state": IngestState.STAGING.value,
+                "at": "2026-05-01T10:00:00Z",
+                "host": "h1",
+            },
+            {
+                "state": IngestState.COMPLETE.value,
+                "at": "2026-05-01T10:30:00Z",
+                "host": "h1",
+                "files_received": 12,
+            },
+            {
+                "state": IngestState.SYNC_QUEUED.value,
+                "at": "2026-05-01T10:31:00Z",
+                "host": "h1",
+            },
+            {
+                "state": IngestState.SYNC_VERIFIED.value,
+                "at": "2026-05-01T10:35:00Z",
+                "host": "h1",
+            },
+        ],
+    )
+    deps = AppDependencies(config=_config_with_local_root(tmp_path / "data"))
+    app = create_app(dependencies=deps)
+    client = TestClient(app)
+    resp = client.get(f"/api/v1/run/{run_dir}/log")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["path"] == str(run_dir)
+    assert body["current_state"] == IngestState.SYNC_VERIFIED.value
+    assert len(body["history"]) == 4
+    states = [entry["state"] for entry in body["history"]]
+    assert states == [
+        IngestState.STAGING.value,
+        IngestState.COMPLETE.value,
+        IngestState.SYNC_QUEUED.value,
+        IngestState.SYNC_VERIFIED.value,
+    ]
+    # Extra ingest fields (e.g. files_received) come through as payload.
+    assert body["history"][1]["payload"] == {"files_received": 12}
+
+
+def test_get_run_log_404_when_ingest_missing(tmp_path: Path) -> None:
+    """A run without an ingest.json returns 404 ``ingest_not_found``."""
+    deps = AppDependencies(config=_config_with_local_root(tmp_path))
+    app = create_app(dependencies=deps)
+    client = TestClient(app)
+    resp = client.get(f"/api/v1/run/{tmp_path}/nope/log")
+    assert resp.status_code == 404
+    # Reuses the existing ``session_not_found`` code -- same allowlist as
+    # the run-detail endpoint (creation.json missing vs ingest.json
+    # missing share semantics: the run record is unreadable).
+    assert resp.json()["error"]["code"] == "session_not_found"
+
+
+def test_get_run_log_422_when_ingest_malformed(tmp_path: Path) -> None:
+    """A corrupt ingest.json surfaces 422 from msgspec."""
+    run_dir = tmp_path / "data" / "EQ1" / "PROJ-0001" / "Run_x"
+    cache = run_dir / CACHE_DIR_NAME
+    cache.mkdir(parents=True)
+    from exlab_wizard.constants import INGEST_JSON_NAME
+
+    (cache / INGEST_JSON_NAME).write_bytes(b"{not-valid-json")
+    deps = AppDependencies(config=_config_with_local_root(tmp_path / "data"))
+    app = create_app(dependencies=deps)
+    client = TestClient(app)
+    resp = client.get(f"/api/v1/run/{run_dir}/log")
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# build_hierarchy_dict / scan_folder_sync -- consumed by NiceGUI mount
+# ---------------------------------------------------------------------------
+
+
+def test_build_hierarchy_dict_returns_empty_when_config_missing() -> None:
+    from exlab_wizard.api.routers import browse
+
+    assert browse.build_hierarchy_dict(None) == {}
+
+
+def test_build_hierarchy_dict_includes_owned_and_relay_equipment(tmp_path: Path) -> None:
+    """The nested dict surfaces both owned and received-equipment roots
+    with their relay flag set appropriately."""
+    from exlab_wizard.api.routers import browse
+    from exlab_wizard.ui.components import tree as ui_tree
+
+    local_root = tmp_path / "data"
+    eq1_dir = local_root / "EQ1"
+    eq1_dir.mkdir(parents=True)
+    # Project under owned equipment so the helper has something to nest.
+    (eq1_dir / "PROJ-0001").mkdir()
+
+    # A relay equipment with one project, surfaced via the staging root.
+    # build_received_equipment_nodes only emits a relay node when the
+    # equipment dir has at least one project subdirectory (an empty
+    # relay dir is skipped).
+    relay_root = tmp_path / "staging"
+    relay_dir = relay_root / "RELAY_EQX" / "PROJ-Relay"
+    relay_dir.mkdir(parents=True)
+
+    config = _config_with_local_root(local_root)
+    # Re-point staging_root onto our seeded relay tree so
+    # build_received_equipment_nodes finds RELAY_EQX.
+    config.orchestrator.staging_root = str(relay_root)
+
+    hierarchy = browse.build_hierarchy_dict(config)
+    # Two equipment roots present (one owned, one relay).
+    eq_ids = {(k.equipment_id, k.relay) for k in hierarchy}
+    assert ("EQ1", False) in eq_ids
+    assert ("RELAY_EQX", True) in eq_ids
+    # Keys are the ui_tree dataclass instances (not the API EquipmentNode).
+    for key in hierarchy:
+        assert isinstance(key, ui_tree.EquipmentNode)
+
+
+def test_scan_folder_sync_lists_immediate_contents(tmp_path: Path) -> None:
+    """``scan_folder_sync`` shares the same shape as the route handler."""
+    from exlab_wizard.api.routers import browse
+
+    local_root = tmp_path / "data"
+    sub = local_root / "EQ1"
+    sub.mkdir(parents=True)
+    (sub / "file.txt").write_text("hello")
+    (sub / "child").mkdir()
+    config = _config_with_local_root(local_root)
+    resp = browse.scan_folder_sync(str(sub), config)
+    names = {entry.name for entry in resp.entries}
+    assert names == {"file.txt", "child"}
+    by_name = {entry.name: entry for entry in resp.entries}
+    assert by_name["file.txt"].is_dir is False
+    assert by_name["child"].is_dir is True
+    assert resp.path == str(sub.resolve())
+
+
+def test_scan_folder_sync_raises_404_for_missing_path(tmp_path: Path) -> None:
+    """A missing folder raises the same 404 HTTPException the route does."""
+    from fastapi import HTTPException
+
+    from exlab_wizard.api.routers import browse
+
+    config = _config_with_local_root(tmp_path)
+    try:
+        browse.scan_folder_sync(str(tmp_path / "nope"), config)
+    except HTTPException as exc:
+        assert exc.status_code == 404
+    else:  # pragma: no cover -- defensive
+        raise AssertionError("expected HTTPException")

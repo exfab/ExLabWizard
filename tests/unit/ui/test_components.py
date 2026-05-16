@@ -716,6 +716,112 @@ def test_to_nicegui_nodes_equipment_and_project_have_no_sync_icon() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Redesign §3.3 / §4.6: relay equipment + per-node testids + context menus.
+# ---------------------------------------------------------------------------
+
+
+def test_equipment_node_relay_flag_emits_received_equipment_kind() -> None:
+    """An ``EquipmentNode(relay=True)`` builds a ``received_equipment`` row."""
+
+    owned = tree.EquipmentNode(equipment_id="CONFOCAL_01")
+    relay = tree.EquipmentNode(equipment_id="RELAY_EQX", relay=True)
+    nodes = tree.build_nodes(
+        hierarchy={owned: {}, relay: {}},
+        filters=tree.TreeFilters(),
+    )
+    by_id = {n.node_id: n for n in nodes}
+    assert by_id["CONFOCAL_01"].kind == tree.KIND_EQUIPMENT
+    assert by_id["RELAY_EQX"].kind == tree.KIND_RECEIVED_EQUIPMENT
+
+
+def test_to_nicegui_nodes_emits_testid_kind() -> None:
+    """Each row carries a ``testid_kind`` matching the Playwright contract."""
+
+    owned = tree.EquipmentNode(equipment_id="EQ1")
+    relay = tree.EquipmentNode(equipment_id="RELAY_EQX", relay=True)
+    project = tree.ProjectNode(short_id="PROJ-1", name="Cortex Q3")
+    exp_run = tree.RunNode(directory_name="Run_2026-05-07", run_kind="experimental")
+    test_run = tree.RunNode(directory_name="TestRun_2026-05-08", run_kind="test")
+    payload = tree.to_nicegui_nodes(
+        tree.build_nodes(
+            hierarchy={owned: {project: [exp_run, test_run]}, relay: {}},
+            filters=tree.TreeFilters(),
+        )
+    )
+    by_id = {p["id"]: p for p in payload}
+    assert by_id["EQ1"]["testid_kind"] == "equipment"
+    assert by_id["RELAY_EQX"]["testid_kind"] == "received_equipment"
+    assert by_id["EQ1"]["children"][0]["testid_kind"] == "project"
+    # Both run kinds collapse to "run" so the e2e suite's
+    # data-testid="tree-node-run" selectors match either kind.
+    run_kids = by_id["EQ1"]["children"][0]["children"]
+    assert {kid["testid_kind"] for kid in run_kids} == {"run"}
+
+
+def test_slot_template_emits_testid_and_data_node_id() -> None:
+    """The ``default-header`` template emits per-row anchors the
+    Playwright flows target and the Python-side context-menu renderer
+    selects on.
+    """
+
+    slot = tree._TREE_DEFAULT_HEADER_SLOT
+    # Per-node testid the e2e selectors assert (tree-node-equipment,
+    # tree-node-run, tree-node-received_equipment, tree-node-project).
+    assert "'tree-node-' + props.node.testid_kind" in slot
+    # data-node-id is the unique row anchor q-menu's ``target`` selector
+    # binds to so per-node context menus rendered outside the tree
+    # attach to the right row.
+    assert ':data-node-id="props.node.id"' in slot
+    # The slot itself never references any context-menu testids -- those
+    # are emitted by the Python-side per-node ui.menu() calls in
+    # _render_node_context_menus(), not by the Vue template (because
+    # q-menu would render inside a body-level portal and break event
+    # propagation back to the tree wrapper).
+    assert "tree-context-edit-equipment" not in slot
+    assert "run-context-force-sync" not in slot
+
+
+def test_selector_for_node_id_escapes_quotes() -> None:
+    """Node ids with embedded ``"`` are escaped so the CSS selector
+    Quasar's q-menu uses doesn't break.
+    """
+
+    plain = tree._selector_for_node_id("EQ1/PROJ-0001/Run_2026-05-07")
+    assert plain == '[data-node-id="EQ1/PROJ-0001/Run_2026-05-07"]'
+    # The escape guards a path with a quote in it (not realistic for
+    # the disk schema today, but a cheap safety net).
+    with_quote = tree._selector_for_node_id('EQ1/odd"name')
+    assert '\\"' in with_quote
+    # Backslashes likewise need doubling so they're forwarded as a
+    # literal backslash to the CSS attribute selector.
+    with_bs = tree._selector_for_node_id("EQ1\\odd")
+    assert "\\\\" in with_bs
+
+
+def test_iter_nodes_yields_depth_first() -> None:
+    """``_iter_nodes`` visits each node before its children so the per-
+    node context-menu renderer reaches every owned-equipment and run
+    in the tree.
+    """
+
+    equipment = tree.EquipmentNode(equipment_id="EQ1")
+    project = tree.ProjectNode(short_id="PROJ-1", name="Cortex")
+    run_a = tree.RunNode(directory_name="Run_A", run_kind="experimental")
+    run_b = tree.RunNode(directory_name="Run_B", run_kind="test")
+    nodes = tree.build_nodes(
+        hierarchy={equipment: {project: [run_a, run_b]}},
+        filters=tree.TreeFilters(),
+    )
+    flat = [n.node_id for n in tree._iter_nodes(nodes)]
+    assert flat == [
+        "EQ1",
+        "EQ1/Cortex",
+        "EQ1/Cortex/Run_A",
+        "EQ1/Cortex/Run_B",
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Smoke: factories return a payload outside a NiceGUI app context
 # ---------------------------------------------------------------------------
 

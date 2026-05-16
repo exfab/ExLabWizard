@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -37,6 +38,21 @@ __all__ = ["MOUNT_PATH", "mount_ui"]
 _log = get_logger(__name__)
 
 MOUNT_PATH = "/"
+
+# Strong references for the fire-and-forget asyncio tasks the mount
+# spawns (force-sync, clear, bulk clear-verified). asyncio is documented
+# to drop tasks whose only reference is the event loop, so we hold them
+# in a module-level set until they finish to prevent unexpected
+# cancellation under load.
+_BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
+
+
+def _spawn_background(coro: Any) -> asyncio.Task[Any]:
+    """Schedule ``coro`` and keep a strong reference until it finishes."""
+    task = asyncio.create_task(coro)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    return task
 
 
 def mount_ui(app: FastAPI, *, storage_secret: str) -> None:
@@ -130,22 +146,73 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         )
 
     @ui.page("/main")
-    def _main() -> Any:
+    def _main(selected: str = "", right_pane: str = "") -> Any:
         deps = _deps()
         if _restart_gate(deps, ui):
             return None
-        state = _build_main_state(deps)
+        from exlab_wizard.api.routers import browse as _browse
+
+        config = getattr(deps, "config", None)
+        hierarchy = _browse.build_hierarchy_dict(config)
+        selected_path = selected or None
+        node_kind, is_received = _classify_node(selected_path, hierarchy)
+        right_pane_collapsed = right_pane == "collapsed"
+        state = _build_main_state(
+            deps,
+            selected_node=selected_path,
+            node_kind=node_kind,
+            is_received=is_received,
+            right_pane_collapsed=right_pane_collapsed,
+        )
+        metadata_payload = _build_metadata_payload(selected_path, node_kind, deps)
+        # Kick off / rebind the folder feed for the selected path and
+        # gather the most recent payload (empty list on first render or
+        # if the feed hasn't ticked yet).
+        feed_entries = _drive_folder_feed(app, deps, selected_path)
 
         def _refresh() -> None:
-            ui.navigate.to("/main")
+            ui.navigate.to("/main" + _build_main_query(selected, right_pane))
 
-        return main_page.render_main_page(
+        def _on_select_node(node_id: str) -> None:
+            ui.navigate.to("/main" + _build_main_query(node_id, right_pane))
+
+        def _on_toggle_right_pane() -> None:
+            new_pane = "" if right_pane == "collapsed" else "collapsed"
+            ui.navigate.to("/main" + _build_main_query(selected, new_pane))
+
+        def _on_run_staging_action(path: str, action: str) -> None:
+            _run_staging_action(deps, path, action, ui)
+
+        def _on_clear_verified() -> None:
+            _bulk_clear_verified(deps, ui)
+
+        def _on_tree_context_action(node_id: str, action: str) -> None:
+            # Either edit or remove deep-links into Settings with the
+            # equipment pre-selected (Redesign §4.6 / decision 4A).
+            del action  # both actions route to the same destination today
+            ui.navigate.to(f"/settings?active=equipment&equipment_id={node_id}")
+
+        def _on_file_context_action(entry: Any, action: str) -> None:
+            _file_context_action(entry, action, ui)
+
+        return main_page.render_file_explorer_page(
             on_open_new_project=lambda: ui.navigate.to("/wizard/project"),
             on_open_new_run=lambda: ui.navigate.to("/wizard/run"),
             on_open_new_test_run=lambda: ui.navigate.to("/wizard/test-run"),
+            on_open_add_equipment=lambda: ui.navigate.to("/wizard/equipment"),
             on_open_settings=lambda: ui.navigate.to("/settings"),
             on_refresh=_refresh,
+            on_select_node=_on_select_node,
+            on_navigate_breadcrumb=_on_select_node,
+            on_toggle_right_pane=_on_toggle_right_pane,
+            on_run_staging_action=_on_run_staging_action,
+            on_clear_verified=_on_clear_verified,
+            on_tree_context_action=_on_tree_context_action,
+            on_file_context_action=_on_file_context_action,
             state=state,
+            hierarchy=hierarchy,
+            file_list_entries=feed_entries,
+            metadata_payload=metadata_payload,
         )
 
     @ui.page("/wizard/project")
@@ -453,13 +520,503 @@ def _apply_autostart(deps: Any, enabled: bool) -> None:
         _log.warning("autostart toggle failed in welcome: %s", exc)
 
 
-def _build_main_state(deps: Any) -> Any:
+def _build_main_state(
+    deps: Any,
+    *,
+    selected_node: str | None = None,
+    node_kind: str | None = None,
+    is_received: bool = False,
+    right_pane_collapsed: bool = False,
+) -> Any:
     from exlab_wizard.ui.pages import main as main_page
 
     # Redesign §3.1: orchestrator pipeline is always active; the staging
     # surface always renders, so MainPageState.orchestrator_enabled keeps
-    # its True default.
-    return main_page.MainPageState(setup_incomplete=not _is_setup_ready(deps))
+    # its True default. Folder-feed path mirrors the selected node so the
+    # centre pane shows the right folder.
+    return main_page.MainPageState(
+        setup_incomplete=not _is_setup_ready(deps),
+        selected_node=selected_node,
+        selected_node_kind=node_kind,
+        selected_node_is_received=is_received,
+        right_pane_collapsed=right_pane_collapsed,
+        folder_feed_path=selected_node,
+    )
+
+
+def _build_main_query(selected: str, right_pane: str) -> str:
+    """Compose the ``?selected=...&right_pane=...`` query string for /main.
+
+    Omits each param when empty so the URL stays clean for default state.
+    Used by every callback that re-navigates to /main with mutated state.
+    Values are URL-encoded so node ids with spaces (project names like
+    ``Cortex Q3 Pilot``) or other special characters survive the round
+    trip back through the FastAPI query parser. The path separator
+    ``/`` is intentionally preserved (``safe="/"``) so the encoded id
+    stays human-readable in the address bar.
+    """
+    from urllib.parse import quote
+
+    parts: list[str] = []
+    if selected:
+        parts.append(f"selected={quote(selected, safe='/')}")
+    if right_pane:
+        parts.append(f"right_pane={quote(right_pane, safe='/')}")
+    return ("?" + "&".join(parts)) if parts else ""
+
+
+def _classify_node(node_id: str | None, hierarchy: dict[Any, Any]) -> tuple[str | None, bool]:
+    """Map a selected node id to ``(kind, is_received)``.
+
+    Mirrors the shape classifier in ``tests/e2e/_test_app.py``: matches
+    by node-id prefix against the hierarchy keys (equipment ids), then
+    checks the path depth to discriminate equipment / project / run.
+
+    Returns ``(None, False)`` for an unselected node or for a node id
+    whose root equipment isn't in the hierarchy (defensive: the URL
+    came from elsewhere, or the config changed since the link was
+    captured).
+    """
+    if not node_id:
+        return None, False
+    from exlab_wizard.ui.components import tree as ui_tree
+
+    owned_ids: set[str] = set()
+    relay_ids: set[str] = set()
+    for equipment_node in hierarchy:
+        if not isinstance(equipment_node, ui_tree.EquipmentNode):
+            continue
+        if equipment_node.relay:
+            relay_ids.add(equipment_node.equipment_id)
+        else:
+            owned_ids.add(equipment_node.equipment_id)
+    root = node_id.split("/", 1)[0]
+    if root not in owned_ids and root not in relay_ids:
+        # The id's root equipment isn't in this device's tree -- treat
+        # as unselected so the page doesn't render half-baked state.
+        return None, False
+    is_received = root in relay_ids
+    if "/" not in node_id:
+        kind = "received_equipment" if is_received else "equipment"
+    elif "TestRun_" in node_id or "/Run_" in node_id:
+        kind = "run"
+    else:
+        kind = "project"
+    return kind, is_received
+
+
+def _build_metadata_payload(
+    node_id: str | None,
+    node_kind: str | None,
+    deps: Any,
+) -> dict[str, Any]:
+    """Build the metadata-pane payload for the selected node, by kind.
+
+    Returns ``{}`` on any failure -- the metadata pane already tolerates
+    a missing payload and renders the empty state. The shape per kind
+    matches ``src/exlab_wizard/ui/components/metadata_pane.py``.
+    """
+    if not node_id or not node_kind:
+        return {}
+    config = getattr(deps, "config", None) if deps is not None else None
+    if config is None:
+        return {}
+    try:
+        if node_kind == "equipment":
+            return _metadata_for_owned_equipment(node_id, config)
+        if node_kind == "received_equipment":
+            return _metadata_for_relay_equipment(node_id, config)
+        if node_kind == "project":
+            return _metadata_for_project(node_id, config)
+        if node_kind == "run":
+            return _metadata_for_run(node_id)
+        return {}
+    except Exception as exc:
+        _log.warning("metadata payload build failed for %s (%s): %s", node_id, node_kind, exc)
+        return {}
+
+
+def _metadata_for_owned_equipment(node_id: str, config: Any) -> dict[str, Any]:
+    """Project equipment-config fields into the owned-equipment payload."""
+    for entry in getattr(config, "equipment", []):
+        if entry.id != node_id:
+            continue
+        return {
+            "id": entry.id,
+            "label": entry.label or entry.id,
+            "sync_mode": str(getattr(entry, "sync_mode", "")) or "nas",
+            "local_root": entry.local_root or "",
+            "nas_root": entry.nas_root or "",
+            "completeness_signal": getattr(entry, "completeness_signal", "") or "",
+        }
+    return {}
+
+
+def _metadata_for_relay_equipment(node_id: str, config: Any) -> dict[str, Any]:
+    """Return the relay-equipment payload (label, source_host)."""
+    from exlab_wizard.api.routers import browse as _browse
+
+    for relay in _browse.build_received_equipment_nodes(config):
+        if relay.id == node_id:
+            return {
+                "id": relay.id,
+                "label": relay.label or relay.id,
+                "source_host": "",  # populated by the relay producer's creation.json
+            }
+    return {"id": node_id, "label": node_id, "source_host": ""}
+
+
+def _metadata_for_project(node_id: str, config: Any) -> dict[str, Any]:
+    """Derive a project payload from the on-disk project directory.
+
+    ``node_id`` is ``<equipment_id>/<project_name>``. Walks the project
+    dir to count runs / test runs and reads the optional README.md for
+    the objective summary; falls back to empty fields when the dir or
+    README isn't present.
+    """
+    from exlab_wizard.constants import README_FILE_NAME, RUN_DIR_PREFIX, TEST_RUN_DIR_PREFIX
+
+    parts = node_id.split("/", 1)
+    if len(parts) != 2:
+        return {}
+    equipment_id, project_name = parts
+    local_root = Path(getattr(config.paths, "local_root", "") or "")
+    project_dir = local_root / equipment_id / project_name
+    run_count = _count_dir_children(project_dir / "Runs", RUN_DIR_PREFIX)
+    test_run_count = _count_dir_children(project_dir / "TestRuns", TEST_RUN_DIR_PREFIX)
+    objective = ""
+    try:
+        objective = (project_dir / README_FILE_NAME).read_text(encoding="utf-8").splitlines()[0][
+            :120
+        ]
+    except (FileNotFoundError, OSError, IndexError):
+        objective = ""
+    return {
+        "name": project_name,
+        "short_id": project_name,
+        "objective": objective,
+        "run_count": run_count,
+        "test_run_count": test_run_count,
+    }
+
+
+def _count_dir_children(parent: Path, prefix: str) -> int:
+    """Count immediate child directories of ``parent`` whose names start
+    with ``prefix``. Returns 0 when ``parent`` is missing / unreadable.
+    """
+    try:
+        with os.scandir(parent) as iterator:
+            return sum(
+                1
+                for entry in iterator
+                if entry.name.startswith(prefix) and entry.is_dir(follow_symlinks=False)
+            )
+    except (FileNotFoundError, NotADirectoryError, PermissionError):
+        return 0
+
+
+def _metadata_for_run(node_id: str) -> dict[str, Any]:
+    """Decode the run's creation.json into the metadata-pane payload.
+
+    Returns ``{}`` on any parse error so the pane shows the empty state
+    instead of crashing.
+    """
+    import msgspec
+
+    from exlab_wizard.api.schemas import CreationJson
+    from exlab_wizard.io import read_msgspec_json
+    from exlab_wizard.paths import creation_json_path
+
+    run_path = Path(node_id)
+    cache_path = creation_json_path(run_path)
+    if not cache_path.exists():
+        return {"path": str(run_path), "name": run_path.name}
+    try:
+        payload = read_msgspec_json(cache_path, CreationJson)
+    except (msgspec.DecodeError, msgspec.ValidationError):
+        return {"path": str(run_path), "name": run_path.name}
+    return {
+        "label": payload.lims_project.name_at_creation,
+        "name": run_path.name,
+        "run_kind": str(payload.run_kind),
+        "operator": payload.created_by or "",
+        "objective": "",  # creation.json doesn't carry a separate objective today
+        "template": payload.template.name if payload.template else "",
+        "created_at": payload.created_at or "",
+        "lims_project": payload.lims_project.short_id,
+        "sync_status": payload.sync_status or "",
+        "path": str(run_path),
+    }
+
+
+def _drive_folder_feed(app: Any, deps: Any, selected_path: str | None) -> list[Any]:
+    """Mount / rebind the per-tab FolderFeed and return current entries.
+
+    Uses ``app.storage.tab`` so one feed instance lives across navigations
+    within a tab. Switching paths calls ``feed.start(new_path)`` which
+    cancels the prior poll loop and starts a fresh one. Returns the most
+    recent payload as a list of ``FileListEntry`` (empty when the feed
+    hasn't ticked yet for this path).
+    """
+    from exlab_wizard.ui.client import folder_feed, refresh_coordinator
+    from exlab_wizard.ui.components.file_list import FileListEntry
+
+    if selected_path is None:
+        return []
+    try:
+        tab_storage: Any = app.storage.tab
+    except Exception:
+        tab_storage = None
+    coord_key = "folder_feed_coord"
+    feed_key = "folder_feed"
+    coord = None
+    feed = None
+    if tab_storage is not None:
+        coord = tab_storage.get(coord_key)
+        feed = tab_storage.get(feed_key)
+    if coord is None:
+        coord = refresh_coordinator.RefreshCoordinator()
+        if tab_storage is not None:
+            tab_storage[coord_key] = coord
+    if feed is None:
+        feed = folder_feed.FolderFeed(
+            fetch=lambda p: _fetch_folder_async(deps, p, coord),
+        )
+        if tab_storage is not None:
+            tab_storage[feed_key] = feed
+    # Rebind to the current selection if it changed; FolderFeed.start
+    # is idempotent for the same path. Reference is kept on tab storage
+    # so it isn't garbage-collected mid-poll.
+    if feed.state.path != selected_path:
+        _spawn_background(feed.start(selected_path))
+    payload = feed.state.last_payload
+    if payload is None:
+        return []
+    # Payload is a FolderResponse (Pydantic) from scan_folder_sync.
+    entries: list[Any] = []
+    for entry in getattr(payload, "entries", []) or []:
+        entries.append(
+            FileListEntry(
+                name=entry.name,
+                path=entry.path,
+                is_dir=entry.is_dir,
+                size_bytes=entry.size_bytes,
+                modified_iso=entry.modified_iso,
+                sync_status=entry.sync_status,
+            )
+        )
+    return entries
+
+
+async def _fetch_folder_async(deps: Any, path: str, coord: Any) -> Any:
+    """FolderFeed fetch hook. Skips when the tree just walked.
+
+    Runs the synchronous ``scan_folder_sync`` helper in a thread to keep
+    the asyncio loop responsive (matches the codebase's existing
+    cache/equipment.py convention). Returns the raw FolderResponse;
+    transient HTTPException / OSError are swallowed and surface as
+    ``None`` so the feed keeps polling.
+    """
+    if coord is not None and coord.should_skip_folder():
+        return None
+    from exlab_wizard.api.routers import browse as _browse
+
+    config = getattr(deps, "config", None) if deps is not None else None
+    try:
+        result = await asyncio.to_thread(_browse.scan_folder_sync, path, config)
+    except Exception as exc:
+        _log.debug("folder feed scan failed for %s: %s", path, exc)
+        return None
+    if coord is not None:
+        coord.record_folder_refresh()
+    return result
+
+
+def _run_staging_action(deps: Any, path: str, action: str, ui: Any) -> None:
+    """Dispatch a per-run context action to its backend surface.
+
+    Mirrors :func:`api.routers.staging.post_force_sync` /
+    :func:`api.routers.staging.post_clear` /
+    :func:`api.routers.browse.get_run_log` but invokes the underlying
+    primitives directly from the mount so the action stays in-process
+    (no HTTP round trip from the same Python interpreter).
+    """
+    from exlab_wizard.cache.ingest_writer import IngestWriter
+    from exlab_wizard.ui.components.tree_context_menu import (
+        RUN_CONTEXT_CLEAR_VERIFIED,
+        RUN_CONTEXT_FORCE_SYNC,
+        RUN_CONTEXT_VIEW_LOG,
+    )
+
+    config = getattr(deps, "config", None) if deps is not None else None
+    if config is None:
+        _show_toast(ui, "Staging action unavailable: no config", positive=False)
+        return
+    run_path = Path(path)
+    if action == RUN_CONTEXT_FORCE_SYNC:
+        nas_sync = getattr(deps, "nas_sync", None) if deps is not None else None
+        if nas_sync is None:
+            _show_toast(ui, "Force-sync unavailable: NAS sync not wired", positive=False)
+            return
+
+        async def _do_enqueue() -> None:
+            try:
+                await nas_sync.enqueue(run_path)
+            except Exception as exc:
+                _log.exception("force-sync via mount failed")
+                _show_toast(ui, f"Force-sync failed: {exc}", positive=False)
+                return
+            _show_toast(ui, f"Force-sync queued for {run_path.name}", positive=True)
+
+        _spawn_background(_do_enqueue())
+        return
+    if action == RUN_CONTEXT_CLEAR_VERIFIED:
+        ingest_writer = getattr(deps, "ingest_writer", None) or IngestWriter()
+        from exlab_wizard.orchestrator.cleanup import clear_run
+
+        async def _do_clear() -> None:
+            try:
+                files, _bytes = await clear_run(
+                    run_path, config=config, ingest_writer=ingest_writer
+                )
+            except Exception as exc:
+                _log.exception("per-run clear failed")
+                _show_toast(ui, f"Clear failed: {exc}", positive=False)
+                return
+            if files == 0:
+                _show_toast(ui, f"{run_path.name} already cleared", positive=True)
+            else:
+                _show_toast(ui, f"Cleared {files} file(s) from {run_path.name}", positive=True)
+
+        _spawn_background(_do_clear())
+        return
+    if action == RUN_CONTEXT_VIEW_LOG:
+        _open_log_dialog(run_path, ui)
+        return
+    _show_toast(ui, f"Unknown staging action: {action}", positive=False)
+
+
+def _bulk_clear_verified(deps: Any, ui: Any) -> None:
+    """Run the orchestrator's bulk ``clear_all_verified`` helper.
+
+    Wired from the file-explorer footer's *Clear verified runs* button.
+    Same in-process dispatch pattern as the per-run actions.
+    """
+    from exlab_wizard.cache.ingest_writer import IngestWriter
+    from exlab_wizard.orchestrator.cleanup import clear_all_verified
+
+    config = getattr(deps, "config", None) if deps is not None else None
+    if config is None:
+        _show_toast(ui, "Clear-verified unavailable: no config", positive=False)
+        return
+    ingest_writer = getattr(deps, "ingest_writer", None) or IngestWriter()
+
+    async def _do_bulk() -> None:
+        try:
+            cleared = await clear_all_verified(config=config, ingest_writer=ingest_writer)
+        except Exception as exc:
+            _log.exception("bulk clear-verified failed")
+            _show_toast(ui, f"Clear-verified failed: {exc}", positive=False)
+            return
+        if cleared:
+            _show_toast(ui, f"Cleared {len(cleared)} verified run(s)", positive=True)
+        else:
+            _show_toast(ui, "No verified runs to clear", positive=True)
+
+    _spawn_background(_do_bulk())
+
+
+def _file_context_action(entry: Any, action: str, ui: Any) -> None:
+    """Handle ``Open in OS`` / ``Copy path`` from the centre-pane file row."""
+    from exlab_wizard.ui.components.file_list import FILE_CONTEXT_COPY_PATH, FILE_CONTEXT_OPEN
+
+    path = str(getattr(entry, "path", ""))
+    if not path:
+        _show_toast(ui, "No path on file entry", positive=False)
+        return
+    if action == FILE_CONTEXT_OPEN:
+        if _open_in_os(path):
+            _show_toast(ui, f"Opening {Path(path).name}", positive=True)
+        else:
+            _show_toast(ui, "Could not open file in OS", positive=False)
+        return
+    if action == FILE_CONTEXT_COPY_PATH:
+        try:
+            ui.clipboard.write(path)
+        except Exception as exc:
+            _log.warning("clipboard.write failed: %s", exc)
+            _show_toast(ui, "Clipboard unavailable", positive=False)
+            return
+        _show_toast(ui, "Path copied to clipboard", positive=True)
+        return
+    _show_toast(ui, f"Unknown file action: {action}", positive=False)
+
+
+def _open_in_os(path: str) -> bool:
+    """Launch the host OS's default opener for ``path``.
+
+    Returns False on platforms / failures we can't handle so the caller
+    can surface a negative toast. The launch is fire-and-forget so the
+    UI doesn't block waiting for the external app.
+    """
+    import subprocess
+    import sys
+
+    try:
+        if sys.platform.startswith("linux"):
+            subprocess.Popen(["xdg-open", path])
+            return True
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+            return True
+        if sys.platform == "win32":
+            import os as _os
+
+            _os.startfile(path)  # type: ignore[attr-defined]
+            return True
+    except Exception as exc:
+        _log.warning("open_in_os failed for %s: %s", path, exc)
+        return False
+    return False
+
+
+def _open_log_dialog(run_path: Path, ui: Any) -> None:
+    """Open a NiceGUI dialog showing the run's ingest.json history."""
+    import msgspec
+
+    from exlab_wizard.api.schemas import IngestJson
+    from exlab_wizard.io import read_msgspec_json
+    from exlab_wizard.paths import ingest_json_path
+
+    ingest_path = ingest_json_path(run_path)
+    if not ingest_path.exists():
+        _show_toast(ui, "No log: ingest.json not found", positive=False)
+        return
+    try:
+        payload = read_msgspec_json(ingest_path, IngestJson)
+    except (msgspec.DecodeError, msgspec.ValidationError) as exc:
+        _show_toast(ui, f"Log unreadable: {exc}", positive=False)
+        return
+    try:
+        dialog = ui.dialog()
+        with dialog, ui.card().props('data-testid="run-log-dialog"').style(
+            "min-width: 480px; max-width: 720px;"
+        ):
+            ui.label(f"Log: {run_path.name}").style("font-weight: 600;")
+            ui.label(f"State: {payload.current_state}").style("color: var(--color-muted);")
+            with ui.scroll_area().style("max-height: 360px;"):
+                for entry in payload.history:
+                    state_val = entry.get("state", "?") if isinstance(entry, dict) else "?"
+                    at_val = entry.get("at", "") if isinstance(entry, dict) else ""
+                    host_val = entry.get("host", "") if isinstance(entry, dict) else ""
+                    ui.label(f"[{at_val}] {state_val} (host={host_val})").style(
+                        "font-family: var(--font-mono); font-size: 0.85em;"
+                    )
+            ui.button("Close", on_click=dialog.close).props('flat')
+        dialog.open()
+    except Exception as exc:
+        _log.warning("log dialog render failed: %s", exc)
+        _show_toast(ui, "Log dialog unavailable", positive=False)
 
 
 def _missing_setup_sections(deps: Any) -> tuple[str, ...]:

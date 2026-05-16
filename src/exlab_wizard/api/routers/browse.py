@@ -46,9 +46,14 @@ __all__ = [
     "ProjectNode",
     "RelayEquipmentNode",
     "RunDetail",
+    "RunLogEntry",
+    "RunLogResponse",
     "RunNode",
     "TreeResponse",
     "build_browse_router",
+    "build_hierarchy_dict",
+    "build_received_equipment_nodes",
+    "scan_folder_sync",
 ]
 
 _log = get_logger(__name__)
@@ -161,6 +166,35 @@ class RunDetail(BaseModel):
     validation_overrides: list[dict[str, Any]] = []
 
 
+class RunLogEntry(BaseModel):
+    """One row in the ``GET /run/{path}/log`` response.
+
+    The orchestrator does not write per-run log files; the "log" for a
+    run is the state-transition history of its ``ingest.json``. Each
+    history entry carries at minimum ``state`` and ``at``; transient
+    extras (``host``, ``files_received`` on ``complete``, etc.) are
+    forwarded as a free-form payload so the UI can render whatever the
+    orchestrator recorded.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    state: str
+    at: str | None = None
+    host: str | None = None
+    payload: dict[str, Any] = {}
+
+
+class RunLogResponse(BaseModel):
+    """``GET /run/{path}/log`` response (Redesign §4.6 View-log surface)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    current_state: str | None = None
+    history: list[RunLogEntry]
+
+
 # ---------------------------------------------------------------------------
 # Router builder
 # ---------------------------------------------------------------------------
@@ -184,7 +218,7 @@ def build_browse_router() -> APIRouter:
             _build_equipment_node(entry, Path(config.paths.local_root))
             for entry in config.equipment
         ]
-        received = _build_received_equipment_nodes(config)
+        received = build_received_equipment_nodes(config)
         return TreeResponse(equipment=nodes, received_equipment=received)
 
     @router.get(
@@ -202,71 +236,76 @@ def build_browse_router() -> APIRouter:
         """
         deps = require_deps(request)
         config = getattr(deps, "config", None)
-        try:
-            path = Path(folder_path).resolve(strict=True)  # noqa: ASYNC240 -- one-shot stat
-        except FileNotFoundError as exc:
+        return scan_folder_sync(folder_path, config)
+
+    @router.get(
+        "/run/{run_path:path}/log",
+        response_model=RunLogResponse,
+        dependencies=[Depends(setup_state_gate)],
+    )
+    async def get_run_log(run_path: str) -> RunLogResponse:
+        """Return the staged run's ``ingest.json`` history as a log.
+
+        Redesign §4.6 View-log surface. The orchestrator does not write
+        per-run log files; the lifecycle history in
+        ``<run>/.exlab-wizard/ingest.json`` IS the per-run log. Returns
+        404 when ingest.json doesn't exist (the run hasn't been staged
+        yet or has been cleared) and 422 on a parse failure. The
+        ``current_state`` field mirrors the most recent history entry
+        so the UI can show a header before iterating.
+
+        Declared above the ``GET /run/{run_path:path}`` matcher because
+        FastAPI matches routes in declaration order and the ``:path``
+        converter would otherwise swallow the trailing ``/log``.
+        """
+        path = Path(run_path)
+        from exlab_wizard.api.schemas import IngestJson as _IngestJson
+        from exlab_wizard.constants import INGEST_JSON_NAME as _INGEST_JSON_NAME
+
+        ingest_path = path / CACHE_DIR_NAME / _INGEST_JSON_NAME
+        if not ingest_path.exists():
+            # Reuse ``session_not_found`` (same allowlist as the run-
+            # detail endpoint at GET /run/{path}) rather than minting a
+            # new code; semantically the run record is missing in both
+            # cases (creation.json there, ingest.json here).
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={
-                    "code": "folder_not_found",
-                    "message": f"folder does not exist: {folder_path}",
-                },
-            ) from exc
-        if not _path_is_under_allowed_root(path, config):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "code": "permission_denied",
-                    "message": (
-                        f"path {path} is outside the configured local_root "
-                        "/ staging_root / templates / plugins roots"
-                    ),
+                    "code": "session_not_found",
+                    "message": f"ingest.json not found at {ingest_path}",
                 },
             )
-        if not path.is_dir():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "code": "folder_not_found",
-                    "message": f"folder does not exist: {path}",
-                },
-            )
-        entries: list[FolderEntry] = []
         try:
-            scandir_entries = list(os.scandir(path))
-        except FileNotFoundError as exc:
+            payload = read_msgspec_json(ingest_path, _IngestJson)
+        except (msgspec.DecodeError, msgspec.ValidationError) as exc:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={
-                    "code": "folder_not_found",
-                    "message": f"folder vanished during scan: {path}",
+                    "code": "validation_failed",
+                    "message": str(exc),
                 },
             ) from exc
-        except (PermissionError, OSError) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "code": "permission_denied",
-                    "message": f"cannot list {path}: {exc}",
-                },
-            ) from exc
-        for entry in sorted(scandir_entries, key=lambda e: e.name):
-            try:
-                is_dir = entry.is_dir(follow_symlinks=False)
-                stat = entry.stat(follow_symlinks=False)
-            except OSError:
+        history: list[RunLogEntry] = []
+        for raw in payload.history:
+            state = str(raw.get("state", "")) if isinstance(raw, dict) else ""
+            if not state:
                 continue
-            entries.append(
-                FolderEntry(
-                    name=entry.name,
-                    path=entry.path,
-                    is_dir=is_dir,
-                    size_bytes=None if is_dir else stat.st_size,
-                    modified_iso=dt_to_iso(datetime.fromtimestamp(stat.st_mtime, tz=UTC)),
-                    sync_status=_per_file_sync_status(Path(entry.path)),
+            extras = {
+                k: v for k, v in raw.items() if k not in {"state", "at", "host"}
+            } if isinstance(raw, dict) else {}
+            history.append(
+                RunLogEntry(
+                    state=state,
+                    at=raw.get("at") if isinstance(raw, dict) else None,
+                    host=raw.get("host") if isinstance(raw, dict) else None,
+                    payload=extras,
                 )
             )
-        return FolderResponse(path=str(path), entries=entries)
+        return RunLogResponse(
+            path=str(path),
+            current_state=str(payload.current_state) if payload.current_state else None,
+            history=history,
+        )
 
     @router.get(
         "/run/{run_path:path}",
@@ -366,7 +405,7 @@ def _build_equipment_node(entry: Any, local_root: Path) -> EquipmentNode:
     )
 
 
-def _build_received_equipment_nodes(config: Any) -> list[RelayEquipmentNode]:
+def build_received_equipment_nodes(config: Any) -> list[RelayEquipmentNode]:
     """Walk the staging root and surface received-equipment nodes.
 
     Redesign §3.3: auto-discovered from the runs the orchestrator has
@@ -570,3 +609,150 @@ def _read_readme(run_dir: Path) -> str | None:
         return readme_path.read_text(encoding="utf-8")
     except OSError:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Public helpers consumed by the NiceGUI mount
+# ---------------------------------------------------------------------------
+
+
+def scan_folder_sync(folder_path: str, config: Any) -> FolderResponse:
+    """Synchronous core of the ``GET /folder/{path}`` endpoint.
+
+    Extracted so the NiceGUI mount can drive the same scan from a
+    thread via :func:`asyncio.to_thread` (matching the convention in
+    :mod:`exlab_wizard.cache.equipment`). Raises the same FastAPI
+    :class:`HTTPException` instances as the endpoint so the HTTP
+    response code is preserved when called from a router; the
+    NiceGUI mount catches them and renders the appropriate UI state.
+    """
+    try:
+        path = Path(folder_path).resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "folder_not_found",
+                "message": f"folder does not exist: {folder_path}",
+            },
+        ) from exc
+    if not _path_is_under_allowed_root(path, config):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "permission_denied",
+                "message": (
+                    f"path {path} is outside the configured local_root "
+                    "/ staging_root / templates / plugins roots"
+                ),
+            },
+        )
+    if not path.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "folder_not_found",
+                "message": f"folder does not exist: {path}",
+            },
+        )
+    entries: list[FolderEntry] = []
+    try:
+        scandir_entries = list(os.scandir(path))
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "folder_not_found",
+                "message": f"folder vanished during scan: {path}",
+            },
+        ) from exc
+    except (PermissionError, OSError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "permission_denied",
+                "message": f"cannot list {path}: {exc}",
+            },
+        ) from exc
+    for entry in sorted(scandir_entries, key=lambda e: e.name):
+        try:
+            is_dir = entry.is_dir(follow_symlinks=False)
+            stat = entry.stat(follow_symlinks=False)
+        except OSError:
+            continue
+        entries.append(
+            FolderEntry(
+                name=entry.name,
+                path=entry.path,
+                is_dir=is_dir,
+                size_bytes=None if is_dir else stat.st_size,
+                modified_iso=dt_to_iso(datetime.fromtimestamp(stat.st_mtime, tz=UTC)),
+                sync_status=_per_file_sync_status(Path(entry.path)),
+            )
+        )
+    return FolderResponse(path=str(path), entries=entries)
+
+
+def build_hierarchy_dict(config: Any) -> dict[Any, dict[Any, list[Any]]]:
+    """Compose the nested hierarchy dict that ``ui.components.tree.build_tree`` expects.
+
+    The ``GET /tree`` response is a flat shape (lists of equipment and
+    received-equipment models); ``build_tree`` consumes a nested
+    ``dict[EquipmentNode, dict[ProjectNode, list[RunNode]]]`` keyed by
+    :class:`exlab_wizard.ui.components.tree.EquipmentNode` /
+    ``ProjectNode`` / ``RunNode``. This helper bridges the two so the
+    NiceGUI mount doesn't have to re-implement the walk.
+
+    Returns an empty dict when ``config`` is ``None``.
+    """
+    from exlab_wizard.ui.components import tree as ui_tree
+
+    if config is None:
+        return {}
+    hierarchy: dict[Any, dict[Any, list[Any]]] = {}
+    local_root = Path(config.paths.local_root) if config.paths.local_root else Path()
+    for entry in config.equipment:
+        api_equipment = _build_equipment_node(entry, local_root)
+        ui_equipment = ui_tree.EquipmentNode(
+            equipment_id=api_equipment.id,
+            relay=False,
+        )
+        hierarchy[ui_equipment] = _projects_for_ui_tree(api_equipment.projects)
+    for api_relay in build_received_equipment_nodes(config):
+        ui_equipment = ui_tree.EquipmentNode(
+            equipment_id=api_relay.id,
+            relay=True,
+        )
+        hierarchy[ui_equipment] = _projects_for_ui_tree(api_relay.projects)
+    return hierarchy
+
+
+def _projects_for_ui_tree(api_projects: list[ProjectNode]) -> dict[Any, list[Any]]:
+    from exlab_wizard.constants import RunKind
+    from exlab_wizard.ui.components import tree as ui_tree
+
+    out: dict[Any, list[Any]] = {}
+    for api_project in api_projects:
+        ui_project = ui_tree.ProjectNode(
+            short_id=api_project.name,
+            name=api_project.name,
+        )
+        runs: list[Any] = []
+        for api_run in api_project.runs:
+            runs.append(
+                ui_tree.RunNode(
+                    directory_name=api_run.name,
+                    run_kind=RunKind.EXPERIMENTAL,
+                    sync_status=api_run.sync_status,
+                )
+            )
+        for api_test in api_project.test_runs:
+            runs.append(
+                ui_tree.RunNode(
+                    directory_name=api_test.name,
+                    run_kind=RunKind.TEST,
+                    sync_status=api_test.sync_status,
+                )
+            )
+        out[ui_project] = runs
+    return out
