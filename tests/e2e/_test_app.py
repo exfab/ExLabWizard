@@ -103,215 +103,91 @@ def _read_query(request_url: str) -> dict[str, list[str]]:
     return parse_qs(request_url.split("?", 1)[1])
 
 
-def _render_file_explorer_view(ui: Any, test_state: TestState, *, setup: int = 0) -> None:
-    """Redesign §4 file-explorer view, mounted at /main?view=explorer.
+def _classify_test_node(node_id: str) -> tuple[str, bool]:
+    """Same shape classifier the production mount uses, for seeded ids.
 
-    Seeds a deterministic tree + folder-feed payload so the Playwright
-    flows can drive selection, breadcrumb navigation, metadata pane
-    rendering, and the travelling-badge surface without a real
-    filesystem.
+    Returns ``(kind, is_received)`` for a non-empty ``node_id``. Kept
+    local to the test harness so seeded ids that aren't in any
+    hierarchy (e.g. orphan run paths from staged-only fixtures) still
+    classify cleanly.
     """
-    from exlab_wizard.ui.components.breadcrumb import render_breadcrumb
-
-    state = main_page.MainPageState(
-        setup_incomplete=bool(setup),
-        orchestrator_enabled=True,
-        selected_node=test_state.selected_node,
-        selected_node_kind=test_state.selected_node_kind,
-        selected_node_is_received=test_state.selected_node_is_received,
-        folder_feed_path=test_state.selected_node,
-    )
-
-    # ------------------------------------------------------------------
-    # Header toolbar (mirrors render_file_explorer_page but inline so the
-    # test app can stub the callbacks). Every toolbar button carries the
-    # spec's testid contract.
-    # ------------------------------------------------------------------
-    with (
-        ui.header()
-        .classes("items-center")
-        .style(
-            "background: var(--color-surface); "
-            "border-bottom: 1px solid var(--color-rule); padding: 12px 24px;"
-        )
-    ):
-        ui.label("ExLab-Wizard").style(
-            "font-family: var(--font-display); color: var(--color-heading);"
-        )
-        ui.space()
-        np_btn = ui.button(
-            "New Project", on_click=lambda _e: ui.navigate.to("/wizard/project")
-        ).props('color=primary data-testid="toolbar-new-project"')
-        nr_btn = ui.button("New Run", on_click=lambda _e: ui.navigate.to("/wizard/run")).props(
-            'color=primary data-testid="toolbar-new-run"'
-        )
-        ntr_btn = ui.button(
-            "New Test Run", on_click=lambda _e: ui.navigate.to("/wizard/test-run")
-        ).props('color=warning data-testid="toolbar-new-test-run"')
-        if state.selected_node_is_received:
-            for btn in (np_btn, nr_btn, ntr_btn):
-                btn.props("disable")
-        ui.button("Add Equipment", on_click=lambda _e: ui.navigate.to("/wizard/equipment")).props(
-            'color=primary data-testid="toolbar-add-equipment"'
-        )
-        ui.button("Refresh", on_click=lambda _e: ui.navigate.to("/main?view=explorer")).props(
-            'flat data-testid="toolbar-refresh"'
-        )
-        ui.button("Settings", on_click=lambda _e: ui.navigate.to("/settings")).props(
-            'flat data-testid="toolbar-settings"'
-        )
-
-    render_breadcrumb(
-        selected_node=state.selected_node,
-        on_navigate=lambda nid: _select(ui, test_state, nid),
-    )
-
-    # ------------------------------------------------------------------
-    # Three-region splitter.
-    # ------------------------------------------------------------------
-    with ui.splitter(value=20).classes("w-full h-full") as outer_split:
-        with outer_split.before, ui.column().classes("w-full p-3").style("gap: 0.5rem;"):
-            ui.input(label="Search").props('data-testid="main-search"').style("width: 100%;")
-            _render_seeded_tree(ui, test_state)
-        with outer_split.after, ui.splitter(value=60).classes("w-full h-full") as centre_split:
-            with centre_split.before:
-                _render_centre_file_list_seeded(ui, test_state)
-            with centre_split.after:
-                _render_right_pane_seeded(ui, test_state)
-
-    # Footer status bar.
-    with (
-        ui.footer().style(
-            "background: var(--color-bg); border-top: 1px solid var(--color-rule); "
-            "padding: 0 16px; min-height: 24px;"
-        ),
-        ui.row().classes("items-center w-full"),
-    ):
-        ui.label("Sync").props('data-testid="footer-sync-segment"')
-        ui.label("Validator").props('data-testid="footer-validator-segment"').on(
-            "click", lambda _e: _select(ui, test_state, "EQ1")
-        )
-        ui.label("LIMS").props('data-testid="footer-lims-segment"')
-        ui.label("Staging").props('data-testid="footer-staging-segment"')
-        ui.button(
-            "Clear verified runs",
-            on_click=lambda _e: setattr(test_state, "last_action", "clear_verified"),
-        ).props('flat data-testid="footer-clear-verified"')
-
-
-def _select(ui: Any, test_state: TestState, node_id: str, *, _navigate: bool = True) -> None:
-    """Mirror render_file_explorer_page's selection dispatch.
-
-    ``_navigate=False`` is used when called from the route handler with a
-    ``selected=`` query param: the state mutation has already happened on
-    the same request and a ui.navigate.to() would loop.
-    """
-    test_state.selected_node = node_id
-    # Classify by the node id's shape so the metadata pane chooses the
-    # right renderer.
     if "/" not in node_id:
-        # equipment-level node
         if node_id.startswith("RELAY_"):
-            test_state.selected_node_kind = "received_equipment"
-            test_state.selected_node_is_received = True
-        else:
-            test_state.selected_node_kind = "equipment"
-            test_state.selected_node_is_received = False
-    elif "Run_" in node_id or "TestRun_" in node_id:
-        test_state.selected_node_kind = "run"
-    else:
-        test_state.selected_node_kind = "project"
-    if _navigate:
-        ui.navigate.to("/main?view=explorer")
+            return "received_equipment", True
+        return "equipment", False
+    if "Run_" in node_id or "TestRun_" in node_id:
+        return "run", False
+    return "project", False
 
 
-def _render_seeded_tree(ui: Any, test_state: TestState) -> None:
-    """Render a deterministic tree the e2e flows can drive."""
-    from exlab_wizard.ui.components.travelling_badge import (
-        FindingLocation,
-        travelling_badges,
-    )
-    from exlab_wizard.ui.components.tree_context_menu import (
-        render_equipment_context_menu,
-        render_run_context_menu,
-    )
-
-    def _tree_action(node_id: str, action: str) -> None:
-        test_state.last_action = f"tree.{action}:{node_id}"
-        # Decision 4A: edit / remove deep-link into Settings with the
-        # equipment pre-selected.
-        ui.navigate.to(f"/settings?active=equipment&equipment_id={node_id}")
-
-    def _run_action(run_path: str, action: str) -> None:
-        test_state.last_action = f"run.{action}:{run_path}"
-
-    nodes = [
-        ("EQ1", "EQ1", "equipment"),
-        ("EQ1/PROJ-0001", "  PROJ-0001", "project"),
-        ("EQ1/PROJ-0001/Runs", "    Runs/", "runs_folder"),
-        ("EQ1/PROJ-0001/Runs/Run_2026-05-14T09-22", "      Run_2026-05-14T09-22", "run"),
-        ("RELAY_EQX", "RELAY_EQX", "received_equipment"),
-    ]
-    for node_id, label, kind in nodes:
-        row = (
-            ui.label(label)
-            .props(f'data-testid="tree-node-{kind}" data-node-id="{node_id}"')
-            .style("cursor: pointer; font-family: var(--font-mono);")
-        )
-        row.on("click", lambda _e, nid=node_id: _select(ui, test_state, nid))
-        # Redesign §4.6 / decision 4A: owned-equipment context menu
-        # surfaces Edit / Remove which deep-link into Settings;
-        # received-equipment nodes have no context menu (decision 3).
-        if kind == "equipment":
-            with row:
-                render_equipment_context_menu(
-                    equipment_id=node_id,
-                    on_action=_tree_action,
-                )
-        elif kind == "run":
-            with row:
-                render_run_context_menu(
-                    run_path=node_id,
-                    on_action=_run_action,
-                )
-    # Travelling-badge banner: if findings are seeded, compute the badge
-    # for the root equipment so the e2e flow can assert.
-    if test_state.seeded_findings:
-        findings = [
-            FindingLocation(path=path, tier=tier) for (path, tier) in test_state.seeded_findings
-        ]
-        badges = travelling_badges(findings, fold_state={})
-        for node_id, props in badges.items():
-            ui.label(f"{props.color}:{props.count}").props(
-                f'data-testid="tree-badge" data-node-id="{node_id}" '
-                f'data-color="{props.color}" data-count="{props.count}"'
-            )
+def _seeded_metadata_payload(node_id: str | None, node_kind: str | None) -> dict[str, Any]:
+    """Per-node-kind hardcoded payloads the test app threads into the
+    production renderer's ``metadata_payload`` kwarg. Mirrors the
+    seeded shapes the old inline ``_render_right_pane_seeded`` used.
+    """
+    if not node_id or not node_kind:
+        return {}
+    if node_kind == "equipment":
+        return {
+            "id": node_id,
+            "label": "Confocal Microscope 1",
+            "sync_mode": "stage" if "stage" in node_id else "nas",
+            "local_root": "/data/lab",
+            "nas_root": "//nas/lab",
+            "completeness_signal": "sentinel_file",
+        }
+    if node_kind == "received_equipment":
+        return {
+            "id": node_id,
+            "label": "Relayed Confocal",
+            "source_host": "labpc-04",
+        }
+    if node_kind == "run":
+        return {
+            "label": "Demo run",
+            "name": node_id.rsplit("/", 1)[-1],
+            "run_kind": "experimental",
+            "operator": "asmith",
+            "objective": "demo",
+            "template": "default",
+            "created_at": "2026-05-14T09:22:00Z",
+            "lims_project": "PROJ-0001",
+            "sync_status": "synced",
+            "path": node_id,
+        }
+    if node_kind == "project":
+        parts = node_id.split("/", 1)
+        name = parts[1] if len(parts) == 2 else node_id
+        return {
+            "name": name,
+            "short_id": name,
+            "objective": "Demo project objective",
+            "run_count": 2,
+            "test_run_count": 1,
+        }
+    return {}
 
 
-def _render_centre_file_list_seeded(ui: Any, test_state: TestState) -> None:
-    """Centre-pane file list driven by the seeded folder_feeds payload."""
-    from exlab_wizard.ui.components.file_list import (
-        FileListEntry,
-        FileListState,
-        render_file_list,
-    )
+def _seeded_file_entries(
+    test_state: TestState, node_id: str | None
+) -> list[Any]:
+    """Build the centre-pane file rows the test flows assert on.
 
-    if test_state.selected_node is None:
-        ui.label("Select a folder in the tree to see its contents.").props(
-            'data-testid="file-list-empty"'
-        )
-        return
-    # Default to a synthetic two-file feed for any selected node so the
-    # context-menu flow has rows to right-click. The test can override
-    # by populating ``test_state.folder_feeds`` for specific nodes.
+    Returns a default synthetic two-file feed unless the test seeded a
+    specific path via ``test_state.folder_feeds``.
+    """
+    if node_id is None:
+        return []
+    from exlab_wizard.ui.components.file_list import FileListEntry
+
     rows = test_state.folder_feeds.get(
-        test_state.selected_node,
+        node_id,
         [("scan.tif", 1024, "synced"), ("metadata.json", 256, "pending")],
     )
-    entries = [
+    return [
         FileListEntry(
             name=name,
-            path=f"{test_state.selected_node}/{name}",
+            path=f"{node_id}/{name}",
             is_dir=False,
             size_bytes=size,
             modified_iso="2026-05-14T09:22:00Z",
@@ -319,71 +195,6 @@ def _render_centre_file_list_seeded(ui: Any, test_state: TestState) -> None:
         )
         for (name, size, sync) in rows
     ]
-
-    def _file_action(entry: FileListEntry, action: str) -> None:
-        test_state.last_action = f"file.{action}:{entry.path}"
-
-    render_file_list(
-        state=FileListState(path=test_state.selected_node, entries=entries),
-        on_context_menu=_file_action,
-    )
-
-
-def _render_right_pane_seeded(ui: Any, test_state: TestState) -> None:
-    """Right-pane metadata + problems tabs."""
-    from exlab_wizard.ui.components.metadata_pane import (
-        MetadataPaneState,
-        render_metadata_pane,
-    )
-
-    with ui.tabs() as tabs:
-        ui.tab("metadata", "Metadata").props('data-testid="tab-metadata"')
-        ui.tab("problems", "Problems").props('data-testid="tab-problems"')
-    with ui.tab_panels(tabs, value="metadata").classes("w-full"):
-        with ui.tab_panel("metadata"):
-            payload: dict[str, Any] = {}
-            if test_state.selected_node_kind == "equipment":
-                payload = {
-                    "id": "EQ1",
-                    "label": "Confocal Microscope 1",
-                    "sync_mode": "stage" if "stage" in (test_state.selected_node or "") else "nas",
-                    "local_root": "/data/lab",
-                    "nas_root": "//nas/lab",
-                    "completeness_signal": "sentinel_file",
-                }
-            elif test_state.selected_node_kind == "received_equipment":
-                payload = {
-                    "id": "RELAY_EQX",
-                    "label": "Relayed Confocal",
-                    "source_host": "labpc-04",
-                }
-            elif test_state.selected_node_kind == "run":
-                payload = {
-                    "label": "Demo run",
-                    "name": test_state.selected_node.rsplit("/", 1)[-1],
-                    "run_kind": "experimental",
-                    "operator": "asmith",
-                    "objective": "demo",
-                    "template": "default",
-                    "created_at": "2026-05-14T09:22:00Z",
-                    "lims_project": "PROJ-0001",
-                    "sync_status": "synced",
-                    "path": test_state.selected_node,
-                }
-            render_metadata_pane(
-                state=MetadataPaneState(
-                    selected_node=test_state.selected_node,
-                    node_kind=test_state.selected_node_kind,
-                    payload=payload,
-                ),
-                on_run_staging_action=lambda path, action: setattr(
-                    test_state, "last_action", f"run.{action}:{path}"
-                ),
-            )
-        with ui.tab_panel("problems"):
-            ui.label(f"Showing {len(test_state.seeded_findings)} findings").props(
-                'data-testid="problems-summary"'
-            )
 
 
 def build_test_app() -> FastAPI:
@@ -428,48 +239,51 @@ def build_test_app() -> FastAPI:
         )
 
     # ----------------------------------------------------------------------
-    # Main window (Flow 05, parts of others)
+    # Main window — unified to the production redesign (Flow 05, 20, 24, ...)
     # ----------------------------------------------------------------------
     @ui.page("/main")
     def main_index(
         setup: int = 0,
         orchestrator: int = 0,
-        view: str = "",
         seed_finding: str = "",
         selected: str = "",
+        right_pane: str = "",
     ) -> None:
-        if view == "explorer":
-            if seed_finding:
-                # Parse comma-separated <path>:<tier> pairs the
-                # travelling-badge flow consumes.
-                pairs: list[tuple[str, str]] = []
-                for entry in seed_finding.split(","):
-                    if ":" in entry:
-                        p, t = entry.rsplit(":", 1)
-                        pairs.append((p, t))
-                test_state.seeded_findings = pairs
-            # Allow e2e flows to set the selected tree node deterministically
-            # via a query param. Avoids the click-then-navigate race where
-            # NiceGUI re-renders the same URL but Playwright sees no load
-            # transition.
-            if selected:
-                _select(ui, test_state, selected, _navigate=False)
-            _render_file_explorer_view(ui, test_state, setup=setup)
-            return
-        from exlab_wizard.constants import IngestState
-        from exlab_wizard.orchestrator.staging_query import StagedRunSummary
         from exlab_wizard.ui.components import tree as tree_component
 
-        # Reset banner state per navigation so each test sees a fresh tree
+        # Reset banner state per navigation so each test sees a fresh tree.
         notifications.reset_for_tests()
 
+        # Comma-separated <path>:<tier> pairs the travelling-badge flow
+        # consumes via the seeded tree below.
+        if seed_finding:
+            pairs: list[tuple[str, str]] = []
+            for entry in seed_finding.split(","):
+                if ":" in entry:
+                    p, t = entry.rsplit(":", 1)
+                    pairs.append((p, t))
+            test_state.seeded_findings = pairs
+
+        # The query-string-driven selection mirrors the production
+        # mount's wiring so flows can land on a particular row without
+        # a click-then-navigate race.
+        selected_path = selected or None
+        node_kind: str | None = None
+        is_received = False
+        if selected_path:
+            node_kind, is_received = _classify_test_node(selected_path)
+            test_state.selected_node = selected_path
+            test_state.selected_node_kind = node_kind
+            test_state.selected_node_is_received = is_received
+
+        # Hierarchy used by every /main test. Owned EQ1 carries the
+        # local + cleaned + test-run mix that flow 05b's sync-icon
+        # assertions depend on; the relay-flagged RELAY_EQX root
+        # surfaces the received-equipment row flow 18 / 24 target.
         hierarchy: dict[Any, Any] = {
-            tree_component.EquipmentNode("EQ1"): {
+            tree_component.EquipmentNode("EQ1", relay=False): {
                 tree_component.ProjectNode("LIMS-001", "Demo Project"): [
-                    # Local run: no sync_status -> renders sync_local.svg.
                     tree_component.RunNode("Run_2026-05-07", "experimental", "Demo run"),
-                    # Cleaned run: sync_status="cleaned" -> renders sync_cloud.svg
-                    # (data already moved to NAS, only .exlab-wizard/ retained).
                     tree_component.RunNode(
                         directory_name="Run_2026-05-06",
                         run_kind="experimental",
@@ -479,26 +293,25 @@ def build_test_app() -> FastAPI:
                     tree_component.RunNode("TestRun_2026-05-07", "test", "Test run"),
                 ],
             },
+            tree_component.EquipmentNode("RELAY_EQX", relay=True): {
+                tree_component.ProjectNode("PROJ-Relay", "Relayed Project"): [
+                    tree_component.RunNode(
+                        "Run_2026-05-14T09-22", "experimental", "Relayed run"
+                    ),
+                ],
+            },
         }
-        rows: list[StagedRunSummary] = []
-        if orchestrator:
-            rows.append(
-                StagedRunSummary(
-                    path="/staging/EQ1/LIMS-001/Run_2026-05-07",
-                    equipment_id="EQ1",
-                    project_name="LIMS-001",
-                    run_kind="experimental",
-                    current_state=IngestState.STAGING.value,
-                    file_count=12,
-                    byte_total=1048576,
-                    elapsed_seconds_since_last_activity=42,
-                    last_activity_at="2026-05-07T10:00:00Z",
-                )
-            )
+
+        del orchestrator  # accepted for callers; the redesign always renders staging surfaces
+
         state = main_page.MainPageState(
             setup_incomplete=bool(setup),
-            orchestrator_enabled=bool(orchestrator),
-            staging_dock=staging_page.StagingDockState(rows=rows) if orchestrator else None,
+            orchestrator_enabled=True,
+            selected_node=selected_path,
+            selected_node_kind=node_kind,
+            selected_node_is_received=is_received,
+            right_pane_collapsed=(right_pane == "collapsed"),
+            folder_feed_path=selected_path,
         )
 
         def _on_open_new_project() -> None:
@@ -513,21 +326,71 @@ def build_test_app() -> FastAPI:
             test_state.last_action = "open.new_test_run"
             ui.navigate.to("/wizard/test-run")
 
+        def _on_open_add_equipment() -> None:
+            test_state.last_action = "open.add_equipment"
+            ui.navigate.to("/wizard/equipment")
+
         def _on_open_settings() -> None:
             test_state.last_action = "open.settings"
             ui.navigate.to("/settings")
 
         def _on_refresh() -> None:
             test_state.last_action = "refresh"
+            qs_parts: list[str] = []
+            if selected:
+                qs_parts.append(f"selected={selected}")
+            if right_pane:
+                qs_parts.append(f"right_pane={right_pane}")
+            ui.navigate.to("/main" + ("?" + "&".join(qs_parts) if qs_parts else ""))
 
-        main_page.render_main_page(
+        def _on_select_node(node_id: str) -> None:
+            test_state.last_action = f"select:{node_id}"
+            qs = f"selected={node_id}"
+            if right_pane:
+                qs += f"&right_pane={right_pane}"
+            ui.navigate.to(f"/main?{qs}")
+
+        def _on_toggle_right_pane() -> None:
+            new_pane = "" if right_pane == "collapsed" else "collapsed"
+            test_state.last_action = f"toggle_right_pane:{new_pane or 'open'}"
+            qs_parts: list[str] = []
+            if selected:
+                qs_parts.append(f"selected={selected}")
+            if new_pane:
+                qs_parts.append(f"right_pane={new_pane}")
+            ui.navigate.to("/main" + ("?" + "&".join(qs_parts) if qs_parts else ""))
+
+        def _on_run_staging_action(path: str, action: str) -> None:
+            test_state.last_action = f"run.{action}:{path}"
+
+        def _on_clear_verified() -> None:
+            test_state.last_action = "clear_verified"
+
+        def _on_tree_context_action(node_id: str, action: str) -> None:
+            test_state.last_action = f"tree.{action}:{node_id}"
+            ui.navigate.to(f"/settings?active=equipment&equipment_id={node_id}")
+
+        def _on_file_context_action(entry: Any, action: str) -> None:
+            test_state.last_action = f"file.{action}:{entry.path}"
+
+        main_page.render_file_explorer_page(
             on_open_new_project=_on_open_new_project,
             on_open_new_run=_on_open_new_run,
             on_open_new_test_run=_on_open_new_test_run,
+            on_open_add_equipment=_on_open_add_equipment,
             on_open_settings=_on_open_settings,
             on_refresh=_on_refresh,
+            on_select_node=_on_select_node,
+            on_navigate_breadcrumb=_on_select_node,
+            on_toggle_right_pane=_on_toggle_right_pane,
+            on_run_staging_action=_on_run_staging_action,
+            on_clear_verified=_on_clear_verified,
+            on_tree_context_action=_on_tree_context_action,
+            on_file_context_action=_on_file_context_action,
             state=state,
             hierarchy=hierarchy,
+            file_list_entries=_seeded_file_entries(test_state, selected_path),
+            metadata_payload=_seeded_metadata_payload(selected_path, node_kind),
             # Expand the whole tree up front so e2e tests see every run
             # row (and its sync icon) in the DOM without clicking carets.
             tree_expand_all=True,
