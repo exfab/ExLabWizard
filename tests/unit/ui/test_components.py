@@ -785,11 +785,12 @@ def test_slot_template_emits_testid_data_node_id_and_context_menus() -> None:
     # Force-sync / Clear-verified / View-log surface.
     assert "props.node.kind === 'run_experimental'" in slot
     assert "props.node.kind === 'run_test'" in slot
-    # Menu-item clicks dispatch a ``treeContextAction`` CustomEvent on
-    # the tree wrapper; NiceGUI listens via the kebab-case alias.
-    assert "new CustomEvent('treeContextAction'" in slot
-    # The dispatch target is the tree wrapper, selected via testid.
-    assert "data-testid=&quot;main-tree&quot;" in slot
+    # Menu-item clicks emit through NiceGUI's websocket event payload;
+    # dispatching a native DOM CustomEvent from the slot does not reach
+    # the Python-side tree listener.
+    assert "$event.view.socket?.emit(&quot;event&quot;" in slot
+    assert "listener_id:" in slot
+    assert "new CustomEvent" not in slot
 
 
 # ---------------------------------------------------------------------------

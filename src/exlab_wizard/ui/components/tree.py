@@ -282,76 +282,77 @@ def to_nicegui_nodes(nodes: Iterable[TreeNode]) -> list[dict[str, Any]]:
 # (owned equipment / runs) as Vue ``q-menu`` children. Each q-menu
 # auto-attaches to its parent row (no ``target`` selector required, so
 # we sidestep both NiceGUI's props-parser quote handling and Quasar's
-# mount-before-DOM-ready target-resolution race). Menu items dispatch a
-# native ``treeContextAction`` ``CustomEvent`` directly on the q-tree
-# wrapper (selectable via ``[data-testid="main-tree"]``) so the bubble
-# path doesn't matter -- Quasar Teleports q-menu content to a body-
-# level portal, but ``document.querySelector(...).dispatchEvent(...)``
-# fires on the tree element regardless. The build_tree caller subscribes
-# via ``tree.on("tree-context-action", handler, args=["detail"])``;
-# NiceGUI converts the kebab-case name to the camelCase Vue listener
-# ``@treeContextAction`` which matches the dispatched event name and
-# forwards the CustomEvent ``detail`` payload to Python.
+# mount-before-DOM-ready target-resolution race). Menu items emit the
+# concrete NiceGUI websocket event payload for the tree listener. A
+# native DOM CustomEvent is not enough here because NiceGUI's
+# ``element.on`` registers Vue component listeners, and q-menu content
+# is teleported outside the tree row.
 
 
-def _ctx_dispatch(kind: str, action: str) -> str:
-    """Return the Vue ``@click`` expression that fires a context-action event.
+def _ctx_emit(*, tree_id: int, listener_id: str, kind: str, action: str) -> str:
+    """Return the Vue ``@click`` expression that reaches NiceGUI's listener.
 
     Uses ``&quot;`` for inner double quotes so the expression survives
     HTML attribute parsing inside the slot template.
     """
     return (
-        "document.querySelector('[data-testid=&quot;main-tree&quot;]')"
-        ".dispatchEvent(new CustomEvent('treeContextAction', "
-        f"{{detail: {{node_id: props.node.id, kind: '{kind}', action: '{action}'}}}}))"
+        "$event.view.socket?.emit(&quot;event&quot;, "
+        f"{{id: {tree_id}, client_id: $event.view.clientId, listener_id: &quot;{listener_id}&quot;, "
+        "args: [$event.view.JSON.stringify("
+        f"{{node_id: props.node.id, kind: '{kind}', action: '{action}'}}"
+        ")]})"
     )
 
 
-_TREE_DEFAULT_HEADER_SLOT = (
-    '<div class="row items-center" style="gap: 0.4rem">'
-    '<img v-if="props.node.sync_icon" :src="props.node.sync_icon" '
-    'style="width: 1rem; height: 1rem; flex-shrink: 0;" '
-    ":alt=\"props.node.sync_status || ''\" />"
-    "<span :data-testid=\"'tree-node-' + props.node.testid_kind\" "
-    ':data-node-id="props.node.id" '
-    ':data-kind="props.node.kind" '
-    ":data-sync-status=\"props.node.sync_status || ''\">"
-    "{{ props.node.label }}"
-    "</span>"
-    # Owned-equipment context menu (Edit / Remove).
-    "<q-menu v-if=\"props.node.kind === 'equipment'\" context-menu auto-close "
-    'data-testid="tree-context-menu">'
-    "<q-list dense>"
-    '<q-item clickable v-close-popup data-testid="tree-context-edit-equipment" '
-    f'@click="{_ctx_dispatch("equipment", "edit_equipment")}">'
-    "<q-item-section>Edit equipment…</q-item-section>"
-    "</q-item>"
-    '<q-item clickable v-close-popup data-testid="tree-context-remove-equipment" '
-    f'@click="{_ctx_dispatch("equipment", "remove_equipment")}">'
-    "<q-item-section>Remove…</q-item-section>"
-    "</q-item>"
-    "</q-list>"
-    "</q-menu>"
-    # Run context menu (Force sync / Clear verified / View log).
-    "<q-menu v-if=\"props.node.kind === 'run_experimental' || props.node.kind === 'run_test'\" "
-    'context-menu auto-close data-testid="run-context-menu">'
-    "<q-list dense>"
-    '<q-item clickable v-close-popup data-testid="run-context-force-sync" '
-    f'@click="{_ctx_dispatch("run", "force_sync")}">'
-    "<q-item-section>Force sync</q-item-section>"
-    "</q-item>"
-    '<q-item clickable v-close-popup data-testid="run-context-clear-verified" '
-    f'@click="{_ctx_dispatch("run", "clear_verified")}">'
-    "<q-item-section>Clear verified</q-item-section>"
-    "</q-item>"
-    '<q-item clickable v-close-popup data-testid="run-context-view-log" '
-    f'@click="{_ctx_dispatch("run", "view_log")}">'
-    "<q-item-section>View log</q-item-section>"
-    "</q-item>"
-    "</q-list>"
-    "</q-menu>"
-    "</div>"
-)
+def _tree_header_slot(*, tree_id: int, listener_id: str) -> str:
+    return (
+        '<div class="row items-center" style="gap: 0.4rem">'
+        '<img v-if="props.node.sync_icon" :src="props.node.sync_icon" '
+        'style="width: 1rem; height: 1rem; flex-shrink: 0;" '
+        ":alt=\"props.node.sync_status || ''\" />"
+        "<span :data-testid=\"'tree-node-' + props.node.testid_kind\" "
+        ':data-node-id="props.node.id" '
+        ':data-kind="props.node.kind" '
+        ":data-sync-status=\"props.node.sync_status || ''\">"
+        "{{ props.node.label }}"
+        "</span>"
+        # Owned-equipment context menu (Edit / Remove).
+        "<q-menu v-if=\"props.node.kind === 'equipment'\" context-menu auto-close "
+        'data-testid="tree-context-menu">'
+        "<q-list dense>"
+        '<q-item clickable v-close-popup data-testid="tree-context-edit-equipment" '
+        f'@click="{_ctx_emit(tree_id=tree_id, listener_id=listener_id, kind="equipment", action="edit_equipment")}">'
+        "<q-item-section>Edit equipment…</q-item-section>"
+        "</q-item>"
+        '<q-item clickable v-close-popup data-testid="tree-context-remove-equipment" '
+        f'@click="{_ctx_emit(tree_id=tree_id, listener_id=listener_id, kind="equipment", action="remove_equipment")}">'
+        "<q-item-section>Remove…</q-item-section>"
+        "</q-item>"
+        "</q-list>"
+        "</q-menu>"
+        # Run context menu (Force sync / Clear verified / View log).
+        "<q-menu v-if=\"props.node.kind === 'run_experimental' || props.node.kind === 'run_test'\" "
+        'context-menu auto-close data-testid="run-context-menu">'
+        "<q-list dense>"
+        '<q-item clickable v-close-popup data-testid="run-context-force-sync" '
+        f'@click="{_ctx_emit(tree_id=tree_id, listener_id=listener_id, kind="run", action="force_sync")}">'
+        "<q-item-section>Force sync</q-item-section>"
+        "</q-item>"
+        '<q-item clickable v-close-popup data-testid="run-context-clear-verified" '
+        f'@click="{_ctx_emit(tree_id=tree_id, listener_id=listener_id, kind="run", action="clear_verified")}">'
+        "<q-item-section>Clear verified</q-item-section>"
+        "</q-item>"
+        '<q-item clickable v-close-popup data-testid="run-context-view-log" '
+        f'@click="{_ctx_emit(tree_id=tree_id, listener_id=listener_id, kind="run", action="view_log")}">'
+        "<q-item-section>View log</q-item-section>"
+        "</q-item>"
+        "</q-list>"
+        "</q-menu>"
+        "</div>"
+    )
+
+
+_TREE_DEFAULT_HEADER_SLOT = _tree_header_slot(tree_id=0, listener_id="listener")
 
 
 def build_tree(
@@ -391,7 +392,6 @@ def build_tree(
         return payload
 
     tree = ui.tree(payload, label_key="label", node_key="id").props('data-testid="main-tree"')
-    tree.add_slot("default-header", _TREE_DEFAULT_HEADER_SLOT)
     if expand_all:
         # NiceGUI's wrapper for Quasar's expandAll() method.
         tree.expand()
@@ -401,26 +401,30 @@ def build_tree(
             on_select(event.value)
 
         tree.on_select(_selected)
-    if on_equipment_context_action is not None or on_run_context_action is not None:
 
-        def _on_context_action(event: Any) -> None:
-            # NiceGUI extracts ``event.detail`` for us via args=["detail"];
-            # event.args is the detail dict (or wrapped in a 1-tuple list
-            # depending on NiceGUI version).
-            detail = event.args
-            if isinstance(detail, list) and detail:
-                detail = detail[0]
-            if not isinstance(detail, dict):
-                return
-            kind = detail.get("kind", "")
-            node_id = detail.get("node_id", "")
-            action = detail.get("action", "")
-            if not node_id or not action:
-                return
-            if kind == "equipment" and on_equipment_context_action is not None:
-                on_equipment_context_action(node_id, action)
-            elif kind == "run" and on_run_context_action is not None:
-                on_run_context_action(node_id, action)
+    def _on_context_action(event: Any) -> None:
+        detail = event.args
+        if isinstance(detail, list) and detail:
+            detail = detail[0]
+        if not isinstance(detail, dict):
+            return
+        kind = detail.get("kind", "")
+        node_id = detail.get("node_id", "")
+        action = detail.get("action", "")
+        if not node_id or not action:
+            return
+        if kind == "equipment" and on_equipment_context_action is not None:
+            on_equipment_context_action(node_id, action)
+        elif kind == "run" and on_run_context_action is not None:
+            on_run_context_action(node_id, action)
 
-        tree.on("tree-context-action", _on_context_action, args=["detail"])
+    existing_listeners = set(tree._event_listeners)
+    tree.on("tree-context-action", _on_context_action)
+    listener_ids = [key for key in tree._event_listeners if key not in existing_listeners]
+    listener_id = listener_ids[-1] if listener_ids else ""
+
+    tree.add_slot(
+        "default-header",
+        _tree_header_slot(tree_id=tree.id, listener_id=listener_id),
+    )
     return tree
