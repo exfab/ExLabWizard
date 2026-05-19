@@ -301,18 +301,14 @@ def test_test_mode_suffixes_os_config_path(
     assert os_config_path() == expected
 
 
-def test_test_mode_suffixes_os_state_path(
-    monkeypatch: pytest.MonkeyPatch, fake_home: Path
-) -> None:
+def test_test_mode_suffixes_os_state_path(monkeypatch: pytest.MonkeyPatch, fake_home: Path) -> None:
     monkeypatch.setattr("sys.platform", "linux")
     monkeypatch.setenv("EXLAB_WIZARD_TEST_MODE", "1")
     expected = fake_home / ".local" / "state" / "exlab-wizard-test"
     assert os_state_path() == expected
 
 
-def test_test_mode_suffixes_os_cache_path(
-    monkeypatch: pytest.MonkeyPatch, fake_home: Path
-) -> None:
+def test_test_mode_suffixes_os_cache_path(monkeypatch: pytest.MonkeyPatch, fake_home: Path) -> None:
     monkeypatch.setattr("sys.platform", "linux")
     monkeypatch.setenv("EXLAB_WIZARD_TEST_MODE", "1")
     expected = fake_home / ".cache" / "exlab-wizard-test"
@@ -339,9 +335,7 @@ def test_test_mode_suffixes_orchestrator_default_windows(
     assert default_orchestrator_staging_root() == local / "exlab-wizard-test" / "staging"
 
 
-def test_test_mode_off_does_not_suffix(
-    monkeypatch: pytest.MonkeyPatch, fake_home: Path
-) -> None:
+def test_test_mode_off_does_not_suffix(monkeypatch: pytest.MonkeyPatch, fake_home: Path) -> None:
     """Unset / non-'1' values must leave the real OS dirs untouched."""
     monkeypatch.setattr("sys.platform", "darwin")
     monkeypatch.delenv("EXLAB_WIZARD_TEST_MODE", raising=False)
