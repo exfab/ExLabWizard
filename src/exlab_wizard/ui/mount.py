@@ -686,9 +686,9 @@ def _metadata_for_project(node_id: str, config: Any) -> dict[str, Any]:
     test_run_count = _count_dir_children(project_dir / "TestRuns", TEST_RUN_DIR_PREFIX)
     objective = ""
     try:
-        objective = (project_dir / README_FILE_NAME).read_text(encoding="utf-8").splitlines()[0][
-            :120
-        ]
+        objective = (
+            (project_dir / README_FILE_NAME).read_text(encoding="utf-8").splitlines()[0][:120]
+        )
     except (FileNotFoundError, OSError, IndexError):
         objective = ""
     return {
@@ -999,8 +999,11 @@ def _open_log_dialog(run_path: Path, ui: Any) -> None:
         return
     try:
         dialog = ui.dialog()
-        with dialog, ui.card().props('data-testid="run-log-dialog"').style(
-            "min-width: 480px; max-width: 720px;"
+        with (
+            dialog,
+            ui.card()
+            .props('data-testid="run-log-dialog"')
+            .style("min-width: 480px; max-width: 720px;"),
         ):
             ui.label(f"Log: {run_path.name}").style("font-weight: 600;")
             ui.label(f"State: {payload.current_state}").style("color: var(--color-muted);")
@@ -1012,7 +1015,7 @@ def _open_log_dialog(run_path: Path, ui: Any) -> None:
                     ui.label(f"[{at_val}] {state_val} (host={host_val})").style(
                         "font-family: var(--font-mono); font-size: 0.85em;"
                     )
-            ui.button("Close", on_click=dialog.close).props('flat')
+            ui.button("Close", on_click=dialog.close).props("flat")
         dialog.open()
     except Exception as exc:
         _log.warning("log dialog render failed: %s", exc)

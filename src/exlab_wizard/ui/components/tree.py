@@ -345,9 +345,11 @@ def _render_node_context_menus(
     for node in _iter_nodes(nodes):
         if node.kind == KIND_EQUIPMENT and on_equipment_context_action is not None:
             target = _selector_for_node_id(node.node_id)
-            with ui.menu().props(
-                f'context-menu auto-close target="{target}"'
-            ).props(f'data-testid="tree-context-menu" data-node-id="{node.node_id}"'):
+            with (
+                ui.menu()
+                .props(f'context-menu auto-close target="{target}"')
+                .props(f'data-testid="tree-context-menu" data-node-id="{node.node_id}"')
+            ):
                 ui.menu_item(
                     "Edit equipment…",
                     on_click=lambda _evt, nid=node.node_id: on_equipment_context_action(
@@ -362,9 +364,11 @@ def _render_node_context_menus(
                 ).props('data-testid="tree-context-remove-equipment"')
         elif node.kind in _RUN_KINDS and on_run_context_action is not None:
             target = _selector_for_node_id(node.node_id)
-            with ui.menu().props(
-                f'context-menu auto-close target="{target}"'
-            ).props(f'data-testid="run-context-menu" data-run-path="{node.node_id}"'):
+            with (
+                ui.menu()
+                .props(f'context-menu auto-close target="{target}"')
+                .props(f'data-testid="run-context-menu" data-run-path="{node.node_id}"')
+            ):
                 ui.menu_item(
                     "Force sync",
                     on_click=lambda _evt, p=node.node_id: on_run_context_action(p, "force_sync"),

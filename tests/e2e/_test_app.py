@@ -168,9 +168,7 @@ def _seeded_metadata_payload(node_id: str | None, node_kind: str | None) -> dict
     return {}
 
 
-def _seeded_file_entries(
-    test_state: TestState, node_id: str | None
-) -> list[Any]:
+def _seeded_file_entries(test_state: TestState, node_id: str | None) -> list[Any]:
     """Build the centre-pane file rows the test flows assert on.
 
     Returns a default synthetic two-file feed unless the test seeded a
@@ -295,9 +293,7 @@ def build_test_app() -> FastAPI:
             },
             tree_component.EquipmentNode("RELAY_EQX", relay=True): {
                 tree_component.ProjectNode("PROJ-Relay", "Relayed Project"): [
-                    tree_component.RunNode(
-                        "Run_2026-05-14T09-22", "experimental", "Relayed run"
-                    ),
+                    tree_component.RunNode("Run_2026-05-14T09-22", "experimental", "Relayed run"),
                 ],
             },
         }

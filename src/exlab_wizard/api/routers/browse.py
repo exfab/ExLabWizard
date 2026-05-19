@@ -290,9 +290,11 @@ def build_browse_router() -> APIRouter:
             state = str(raw.get("state", "")) if isinstance(raw, dict) else ""
             if not state:
                 continue
-            extras = {
-                k: v for k, v in raw.items() if k not in {"state", "at", "host"}
-            } if isinstance(raw, dict) else {}
+            extras = (
+                {k: v for k, v in raw.items() if k not in {"state", "at", "host"}}
+                if isinstance(raw, dict)
+                else {}
+            )
             history.append(
                 RunLogEntry(
                     state=state,

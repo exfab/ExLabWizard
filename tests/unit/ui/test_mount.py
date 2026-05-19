@@ -975,8 +975,8 @@ def test_build_main_query_url_encodes_special_chars() -> None:
     assert out == "?selected=EQ1/Cortex%20Q3%20Pilot"
     # An ampersand or question mark in a node id would otherwise break
     # the query parser; encoding guards against that.
-    assert "&" not in mount._build_main_query("oddly&named", "")[len("?selected="):]
-    assert "?" not in mount._build_main_query("with?q", "")[len("?selected="):]
+    assert "&" not in mount._build_main_query("oddly&named", "")[len("?selected=") :]
+    assert "?" not in mount._build_main_query("with?q", "")[len("?selected=") :]
 
 
 def test_classify_node_returns_none_for_empty_selection() -> None:
@@ -995,12 +995,11 @@ def test_classify_node_discriminates_kinds() -> None:
     assert mount._classify_node("EQ1", hierarchy) == ("equipment", False)
     assert mount._classify_node("RELAY_EQX", hierarchy) == ("received_equipment", True)
     assert mount._classify_node("EQ1/PROJ-0001", hierarchy) == ("project", False)
-    assert mount._classify_node(
-        "EQ1/PROJ-0001/Run_2026-05-07", hierarchy
-    ) == ("run", False)
-    assert mount._classify_node(
-        "EQ1/PROJ-0001/TestRuns/TestRun_2026-05-08", hierarchy
-    ) == ("run", False)
+    assert mount._classify_node("EQ1/PROJ-0001/Run_2026-05-07", hierarchy) == ("run", False)
+    assert mount._classify_node("EQ1/PROJ-0001/TestRuns/TestRun_2026-05-08", hierarchy) == (
+        "run",
+        False,
+    )
     # A node under a relay root keeps the relay-equipment flag set so
     # the toolbar's New-Project/Run/Test-Run buttons stay disabled.
     assert mount._classify_node("RELAY_EQX/proj", hierarchy) == ("project", True)
@@ -1068,9 +1067,7 @@ def test_build_metadata_payload_project_scans_run_counts(tmp_path: Path) -> None
     (runs_dir / f"{RUN_DIR_PREFIX}2026-05-02").mkdir()
     (test_runs_dir / f"{TEST_RUN_DIR_PREFIX}2026-05-03").mkdir()
     config = _config(local_root=str(tmp_path))
-    payload = mount._build_metadata_payload(
-        "EQ1/Cortex Q3", "project", _deps(config=config)
-    )
+    payload = mount._build_metadata_payload("EQ1/Cortex Q3", "project", _deps(config=config))
     assert payload["run_count"] == 2
     assert payload["test_run_count"] == 1
     assert payload["name"] == "Cortex Q3"

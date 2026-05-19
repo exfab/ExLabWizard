@@ -61,9 +61,7 @@ def test_flow_25_main_route_renders_redesigned_layout(page, server_url) -> None:
     # tab-details. A legacy renderer would fail this assertion.
     page.locator('[data-testid="tab-metadata"]').wait_for(state="visible", timeout=5_000)
     page.locator('[data-testid="tab-problems"]').wait_for(state="visible", timeout=5_000)
-    page.locator('[data-testid="footer-clear-verified"]').wait_for(
-        state="visible", timeout=5_000
-    )
+    page.locator('[data-testid="footer-clear-verified"]').wait_for(state="visible", timeout=5_000)
     # The legacy renderer rendered ``tab-details`` — explicitly assert
     # it's gone so a future revert is caught.
     assert page.locator('[data-testid="tab-details"]').count() == 0
@@ -94,16 +92,12 @@ def test_flow_25_select_node_threads_selected_into_url(page, server_url) -> None
     page.wait_for_url(lambda url: "selected=" in url, timeout=10_000)
 
 
-def test_flow_25_selected_query_renders_centre_and_right_panes(
-    page, server_url
-) -> None:
+def test_flow_25_selected_query_renders_centre_and_right_panes(page, server_url) -> None:
     """Loading /main?selected=EQ1 directly renders the centre + right panes."""
     _goto(page, f"{server_url}/main?selected=EQ1")
     # Centre pane: seeded folder feed shows the default two rows when no
     # specific path is seeded for EQ1.
-    page.locator('[data-testid="file-list-row"]').first.wait_for(
-        state="visible", timeout=5_000
-    )
+    page.locator('[data-testid="file-list-row"]').first.wait_for(state="visible", timeout=5_000)
     # Right pane (metadata tab) renders with the equipment payload.
     page.locator('[data-testid="metadata-pane"]').wait_for(state="visible", timeout=5_000)
 
@@ -127,9 +121,7 @@ def test_flow_25_breadcrumb_navigation_re_navigates_main(page, server_url) -> No
 def test_flow_25_toggle_right_pane_toggles_query_param(page, server_url) -> None:
     """Clicking the right-pane toggle flips ?right_pane=collapsed in the URL."""
     _goto(page, f"{server_url}/main?selected=EQ1")
-    page.locator('[data-testid="toggle-right-pane"]').wait_for(
-        state="visible", timeout=5_000
-    )
+    page.locator('[data-testid="toggle-right-pane"]').wait_for(state="visible", timeout=5_000)
     page.locator('[data-testid="toggle-right-pane"]').click()
     page.wait_for_url(lambda url: "right_pane=collapsed" in url, timeout=10_000)
     # Click again -> the param is removed.
@@ -137,9 +129,7 @@ def test_flow_25_toggle_right_pane_toggles_query_param(page, server_url) -> None
     page.wait_for_url(lambda url: "right_pane=collapsed" not in url, timeout=10_000)
 
 
-def test_flow_25_tree_context_action_deep_links_into_settings(
-    page, server_url
-) -> None:
+def test_flow_25_tree_context_action_deep_links_into_settings(page, server_url) -> None:
     """Owned-equipment Edit menu navigates to /settings with the equipment id.
 
     Routes through ``on_tree_context_action`` -> /settings deep link.
@@ -149,14 +139,10 @@ def test_flow_25_tree_context_action_deep_links_into_settings(
     eq.wait_for(state="visible", timeout=10_000)
     eq.click(button="right")
     page.locator('[data-testid="tree-context-edit-equipment"]').click()
-    page.wait_for_url(
-        lambda url: "/settings" in url and "equipment_id=EQ1" in url, timeout=10_000
-    )
+    page.wait_for_url(lambda url: "/settings" in url and "equipment_id=EQ1" in url, timeout=10_000)
 
 
-def test_flow_25_received_equipment_disables_creation_buttons(
-    page, server_url
-) -> None:
+def test_flow_25_received_equipment_disables_creation_buttons(page, server_url) -> None:
     """Selecting a RELAY_* node disables the New Project/Run/Test-Run buttons.
 
     Verifies MainPageState.selected_node_is_received flows from the URL
