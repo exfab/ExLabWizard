@@ -1,6 +1,6 @@
 """``/staging`` router. Backend Spec §13.7, §13.8.
 
-Three endpoints back the orchestrator's staging panel:
+Four endpoints back the orchestrator's staging panel:
 
 * ``GET /staging`` -- enumerate every staged run with its lifecycle
   state, file count, byte total, and elapsed time since last activity.
@@ -9,8 +9,10 @@ Three endpoints back the orchestrator's staging panel:
   the watcher's polling latency).
 * ``POST /staging/{run_path}/clear`` -- delete the local staging copy
   of a sync-verified run (the manual-mode action from §13.7).
+* ``POST /staging/clear-verified`` -- bulk-clear every sync-verified
+  staged run (Redesign §4.6 footer action).
 
-All three return ``503`` with ``{"code": "internal_error"}`` when no
+All four return ``503`` with ``{"code": "internal_error"}`` when no
 ``Config`` is wired on the app (Redesign §3.1 made the orchestrator
 pipeline unconditional, so the legacy ``orchestrator.enabled`` toggle
 is gone).
@@ -38,6 +40,7 @@ from exlab_wizard.utils.time import utc_now
 
 __all__ = [
     "ClearResponse",
+    "ClearVerifiedResponse",
     "ForceSyncResponse",
     "StagedRunRow",
     "StagingListResponse",
@@ -96,6 +99,14 @@ class ClearResponse(BaseModel):
     bytes_freed: int
 
 
+class ClearVerifiedResponse(BaseModel):
+    """``POST /staging/clear-verified`` response (Redesign §4.6)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    cleared_paths: list[str]
+
+
 # ---------------------------------------------------------------------------
 # Router builder
 # ---------------------------------------------------------------------------
@@ -111,6 +122,34 @@ def build_staging_router() -> APIRouter:
         config = _require_config(deps)
         rows = list_staged_runs(config=config, now_utc=utc_now())
         return StagingListResponse(runs=[_row_from_summary(s) for s in rows])
+
+    @router.post(
+        "/staging/clear-verified",
+        response_model=ClearVerifiedResponse,
+    )
+    async def post_clear_verified(request: Request) -> ClearVerifiedResponse:
+        """Bulk-clear every staged run in ``sync_verified`` state.
+
+        Redesign §4.6: the file-explorer footer's "Clear verified runs"
+        action. Routes through the same
+        :func:`exlab_wizard.orchestrator.cleanup.clear_run` primitive
+        as the per-run endpoint, so failure modes (missing dirs, ingest
+        write errors) behave identically. Returns the list of cleared
+        run paths so the UI can report a count.
+        """
+        deps = require_deps(request)
+        config = _require_config(deps)
+        ingest_writer = _require_ingest_writer(deps)
+        # Deferred import: see the per-run /clear endpoint below for the
+        # cycle-avoidance rationale.
+        from exlab_wizard.orchestrator.cleanup import clear_all_verified
+
+        cleared = await clear_all_verified(
+            config=config,
+            ingest_writer=ingest_writer,
+        )
+        _log.info("clear-verified bulk action: cleared=%d", len(cleared))
+        return ClearVerifiedResponse(cleared_paths=cleared)
 
     @router.post(
         "/staging/{run_path:path}/force-sync",

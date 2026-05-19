@@ -716,6 +716,84 @@ def test_to_nicegui_nodes_equipment_and_project_have_no_sync_icon() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Redesign §3.3 / §4.6: relay equipment + per-node testids + context menus.
+# ---------------------------------------------------------------------------
+
+
+def test_equipment_node_relay_flag_emits_received_equipment_kind() -> None:
+    """An ``EquipmentNode(relay=True)`` builds a ``received_equipment`` row."""
+
+    owned = tree.EquipmentNode(equipment_id="CONFOCAL_01")
+    relay = tree.EquipmentNode(equipment_id="RELAY_EQX", relay=True)
+    nodes = tree.build_nodes(
+        hierarchy={owned: {}, relay: {}},
+        filters=tree.TreeFilters(),
+    )
+    by_id = {n.node_id: n for n in nodes}
+    assert by_id["CONFOCAL_01"].kind == tree.KIND_EQUIPMENT
+    assert by_id["RELAY_EQX"].kind == tree.KIND_RECEIVED_EQUIPMENT
+
+
+def test_to_nicegui_nodes_emits_testid_kind() -> None:
+    """Each row carries a ``testid_kind`` matching the Playwright contract."""
+
+    owned = tree.EquipmentNode(equipment_id="EQ1")
+    relay = tree.EquipmentNode(equipment_id="RELAY_EQX", relay=True)
+    project = tree.ProjectNode(short_id="PROJ-1", name="Cortex Q3")
+    exp_run = tree.RunNode(directory_name="Run_2026-05-07", run_kind="experimental")
+    test_run = tree.RunNode(directory_name="TestRun_2026-05-08", run_kind="test")
+    payload = tree.to_nicegui_nodes(
+        tree.build_nodes(
+            hierarchy={owned: {project: [exp_run, test_run]}, relay: {}},
+            filters=tree.TreeFilters(),
+        )
+    )
+    by_id = {p["id"]: p for p in payload}
+    assert by_id["EQ1"]["testid_kind"] == "equipment"
+    assert by_id["RELAY_EQX"]["testid_kind"] == "received_equipment"
+    assert by_id["EQ1"]["children"][0]["testid_kind"] == "project"
+    # Both run kinds collapse to "run" so the e2e suite's
+    # data-testid="tree-node-run" selectors match either kind.
+    run_kids = by_id["EQ1"]["children"][0]["children"]
+    assert {kid["testid_kind"] for kid in run_kids} == {"run"}
+
+
+def test_slot_template_emits_testid_data_node_id_and_context_menus() -> None:
+    """The ``default-header`` template carries the per-row anchors the
+    Playwright flows target *and* the inline ``q-menu`` blocks the
+    right-click context-menu tests assert on.
+    """
+
+    slot = tree._TREE_DEFAULT_HEADER_SLOT
+    # Per-node testid the e2e selectors assert (tree-node-equipment,
+    # tree-node-run, tree-node-received_equipment, tree-node-project).
+    assert "'tree-node-' + props.node.testid_kind" in slot
+    # data-node-id is the unique row anchor (also surfaces in the
+    # in-pane breadcrumb component for click-to-navigate).
+    assert ':data-node-id="props.node.id"' in slot
+    # Owned-equipment context menu items.
+    assert 'data-testid="tree-context-edit-equipment"' in slot
+    assert 'data-testid="tree-context-remove-equipment"' in slot
+    # Run context-menu items.
+    assert 'data-testid="run-context-force-sync"' in slot
+    assert 'data-testid="run-context-clear-verified"' in slot
+    assert 'data-testid="run-context-view-log"' in slot
+    # The owned-equipment menu is gated to ``kind === 'equipment'`` so
+    # received_equipment rows render without a menu (decision 3).
+    assert "props.node.kind === 'equipment'" in slot
+    # The run menu fires for either run kind so test runs share the
+    # Force-sync / Clear-verified / View-log surface.
+    assert "props.node.kind === 'run_experimental'" in slot
+    assert "props.node.kind === 'run_test'" in slot
+    # Menu-item clicks emit through NiceGUI's websocket event payload;
+    # dispatching a native DOM CustomEvent from the slot does not reach
+    # the Python-side tree listener.
+    assert "$event.view.socket?.emit(&quot;event&quot;" in slot
+    assert "listener_id:" in slot
+    assert "new CustomEvent" not in slot
+
+
+# ---------------------------------------------------------------------------
 # Smoke: factories return a payload outside a NiceGUI app context
 # ---------------------------------------------------------------------------
 

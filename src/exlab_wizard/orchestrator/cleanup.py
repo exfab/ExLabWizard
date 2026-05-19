@@ -31,10 +31,16 @@ from exlab_wizard.constants import (
     StagingCleanupMode,
 )
 from exlab_wizard.logging import get_logger
+from exlab_wizard.orchestrator.staging_query import list_staged_runs
 from exlab_wizard.paths import ingest_json_path
 from exlab_wizard.utils.time import parse_utc_iso_or_none, utc_now_or
 
-__all__ = ["cleanup_eligible", "clear_run", "freed_bytes_and_count"]
+__all__ = [
+    "cleanup_eligible",
+    "clear_all_verified",
+    "clear_run",
+    "freed_bytes_and_count",
+]
 
 _log = get_logger(__name__)
 
@@ -118,6 +124,54 @@ async def clear_run(
         host_label,
     )
     return file_count, bytes_freed
+
+
+async def clear_all_verified(
+    *,
+    config: Config,
+    ingest_writer: IngestWriter,
+    host: str | None = None,
+) -> list[str]:
+    """Clear every staged run currently in ``sync_verified`` state.
+
+    Backend Spec §4.6: the file-explorer footer's *Clear verified runs*
+    bulk action. Walks the staging tree via :func:`list_staged_runs`,
+    filters rows whose ``current_state`` is :data:`IngestState.SYNC_VERIFIED`,
+    and calls :func:`clear_run` on each. Returns the list of run paths
+    (as strings) that were cleared, in the order they were processed,
+    so the API layer can report a count to the operator.
+
+    Errors from a single :func:`clear_run` are logged and skipped; the
+    bulk action proceeds with the remaining rows so one corrupted
+    staging entry can't block the whole sweep.
+    """
+    cleared: list[str] = []
+    for summary in list_staged_runs(config=config):
+        if summary.current_state != IngestState.SYNC_VERIFIED.value:
+            continue
+        run_path = Path(summary.path)
+        try:
+            files, _bytes = await clear_run(
+                run_path,
+                config=config,
+                ingest_writer=ingest_writer,
+                host=host,
+            )
+        except Exception as exc:
+            # The watcher writes a coherent ingest.json before the rmtree
+            # so a mid-clear crash leaves a recoverable state. Bulk
+            # callers can retry; we don't let one failure abort the rest.
+            _log.warning(
+                "clear_all_verified: clear_run failed for %s: %s",
+                run_path,
+                exc,
+            )
+            continue
+        if files > 0:
+            cleared.append(str(run_path))
+    if cleared:
+        _log.info("clear_all_verified: cleared %d run(s)", len(cleared))
+    return cleared
 
 
 def freed_bytes_and_count(run_path: Path) -> tuple[int, int]:

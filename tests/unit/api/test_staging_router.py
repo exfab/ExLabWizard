@@ -247,3 +247,104 @@ def test_clear_endpoint_falls_back_to_default_writer_when_unwired(tmp_path: Path
     body = resp.json()
     assert body["files_freed"] == 0
     assert body["bytes_freed"] == 0
+
+
+# ---------------------------------------------------------------------------
+# POST /staging/clear-verified -- Redesign §4.6 bulk action
+# ---------------------------------------------------------------------------
+
+
+async def test_clear_verified_endpoint_clears_only_sync_verified_runs(
+    tmp_path: Path,
+) -> None:
+    """The bulk endpoint clears every sync_verified run and reports paths."""
+    # Two SYNC_VERIFIED runs + one STAGING run that must remain.
+    verified_a = await _seed_run(tmp_path, state=IngestState.SYNC_VERIFIED)
+    # Second verified run under a separate project so its directory is distinct.
+    second_dir = tmp_path / "EQ1" / "PROJ-0002" / "Run_2026-05-05"
+    second_dir.mkdir(parents=True)
+    (second_dir / "file.bin").write_bytes(b"y" * 50)
+    cache = second_dir / CACHE_DIR_NAME
+    cache.mkdir()
+    payload = msgspec.convert(
+        {
+            "schema_version": INGEST_JSON_VERSION,
+            "project_name": "PROJ-0002",
+            "equipment_id": "EQ1",
+            "run_kind": "experimental",
+            "run_path": str(second_dir),
+            "transport": "smb_mount",
+            "current_state": IngestState.SYNC_VERIFIED.value,
+            "history": [
+                {
+                    "state": IngestState.SYNC_VERIFIED.value,
+                    "at": "2026-05-05T10:00:00Z",
+                    "host": "h",
+                }
+            ],
+        },
+        type=IngestJson,
+    )
+    await IngestWriter().write_ingest(cache / INGEST_JSON_NAME, payload)
+    staging_dir = tmp_path / "EQ2" / "PROJ-0003" / "Run_2026-05-06"
+    staging_dir.mkdir(parents=True)
+    (staging_dir / "raw.bin").write_bytes(b"z" * 25)
+    staging_cache = staging_dir / CACHE_DIR_NAME
+    staging_cache.mkdir()
+    staging_payload = msgspec.convert(
+        {
+            "schema_version": INGEST_JSON_VERSION,
+            "project_name": "PROJ-0003",
+            "equipment_id": "EQ2",
+            "run_kind": "experimental",
+            "run_path": str(staging_dir),
+            "transport": "smb_mount",
+            "current_state": IngestState.STAGING.value,
+            "history": [
+                {
+                    "state": IngestState.STAGING.value,
+                    "at": "2026-05-06T10:00:00Z",
+                    "host": "h",
+                }
+            ],
+        },
+        type=IngestJson,
+    )
+    await IngestWriter().write_ingest(staging_cache / INGEST_JSON_NAME, staging_payload)
+
+    config = _make_config(tmp_path)
+    deps = AppDependencies(config=config, ingest_writer=IngestWriter())
+    app = create_app(dependencies=deps)
+    with TestClient(app) as client:
+        resp = client.post("/api/v1/staging/clear-verified")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body["cleared_paths"]) == {str(verified_a), str(second_dir)}
+    assert not verified_a.exists()
+    assert not second_dir.exists()
+    # The STAGING run must NOT be touched by the bulk action.
+    assert staging_dir.exists()
+
+
+def test_clear_verified_endpoint_returns_empty_when_no_verified_runs(
+    tmp_path: Path,
+) -> None:
+    """No SYNC_VERIFIED rows -> empty cleared_paths, no error."""
+    config = _make_config(tmp_path)  # empty staging_root
+    deps = AppDependencies(config=config, ingest_writer=IngestWriter())
+    app = create_app(dependencies=deps)
+    with TestClient(app) as client:
+        resp = client.post("/api/v1/staging/clear-verified")
+    assert resp.status_code == 200
+    assert resp.json() == {"cleared_paths": []}
+
+
+def test_clear_verified_endpoint_returns_503_when_config_unwired(tmp_path: Path) -> None:
+    """A deps without a config raises the standard 503."""
+    del tmp_path
+    deps = AppDependencies(config=None)
+    app = create_app(dependencies=deps)
+    with TestClient(app) as client:
+        resp = client.post("/api/v1/staging/clear-verified")
+    assert resp.status_code == 503

@@ -27,6 +27,7 @@ from exlab_wizard.constants import (
 )
 from exlab_wizard.orchestrator.cleanup import (
     cleanup_eligible,
+    clear_all_verified,
     clear_run,
     freed_bytes_and_count,
 )
@@ -266,3 +267,129 @@ def test_freed_bytes_and_count_includes_all_nested_files(tmp_path: Path) -> None
     files, total = freed_bytes_and_count(tmp_path)
     assert files == 2
     assert total == 35
+
+
+# ---------------------------------------------------------------------------
+# clear_all_verified -- Redesign §4.6 bulk action
+# ---------------------------------------------------------------------------
+
+
+async def _seed_run_in_state(
+    staging_root: Path,
+    *,
+    equipment_id: str,
+    project_name: str,
+    run_dir_name: str,
+    state: IngestState,
+    writer: IngestWriter,
+) -> Path:
+    """Helper: create a staged run directory with an ingest.json in ``state``."""
+    run_dir = staging_root / equipment_id / project_name / run_dir_name
+    run_dir.mkdir(parents=True)
+    (run_dir / "data.bin").write_bytes(b"x" * 512)
+    cache_dir = run_dir / CACHE_DIR_NAME
+    cache_dir.mkdir()
+    payload = msgspec.convert(
+        {
+            "schema_version": INGEST_JSON_VERSION,
+            "project_name": project_name,
+            "equipment_id": equipment_id,
+            "run_kind": "experimental",
+            "run_path": f"{equipment_id}/{project_name}/{run_dir_name}",
+            "transport": "smb_mount",
+            "current_state": state.value,
+            "history": [
+                {"state": state.value, "at": "2026-04-17T14:32:00Z", "host": "h"},
+            ],
+        },
+        type=IngestJson,
+    )
+    await writer.write_ingest(cache_dir / INGEST_JSON_NAME, payload)
+    return run_dir
+
+
+async def test_clear_all_verified_clears_only_sync_verified_rows(tmp_path: Path) -> None:
+    writer = IngestWriter()
+    config = Config(
+        orchestrator=OrchestratorConfig(
+            label="ORCH-01",
+            staging_root=str(tmp_path),
+            staging_cleanup=OrchestratorStagingCleanup(
+                mode=StagingCleanupMode.MANUAL.value,
+            ),
+        ),
+    )
+
+    verified_a = await _seed_run_in_state(
+        tmp_path,
+        equipment_id="EQ1",
+        project_name="PROJ-A",
+        run_dir_name="Run_2026-05-01",
+        state=IngestState.SYNC_VERIFIED,
+        writer=writer,
+    )
+    verified_b = await _seed_run_in_state(
+        tmp_path,
+        equipment_id="EQ1",
+        project_name="PROJ-A",
+        run_dir_name="Run_2026-05-02",
+        state=IngestState.SYNC_VERIFIED,
+        writer=writer,
+    )
+    staging = await _seed_run_in_state(
+        tmp_path,
+        equipment_id="EQ2",
+        project_name="PROJ-B",
+        run_dir_name="Run_2026-05-03",
+        state=IngestState.STAGING,
+        writer=writer,
+    )
+
+    cleared = await clear_all_verified(config=config, ingest_writer=writer)
+
+    # Only the two SYNC_VERIFIED rows are cleared; the STAGING row stays.
+    assert {Path(p) for p in cleared} == {verified_a, verified_b}
+    assert not verified_a.exists()
+    assert not verified_b.exists()
+    assert staging.exists()
+
+
+async def test_clear_all_verified_returns_empty_list_when_no_verified_runs(
+    tmp_path: Path,
+) -> None:
+    writer = IngestWriter()
+    config = Config(
+        orchestrator=OrchestratorConfig(
+            label="ORCH-01",
+            staging_root=str(tmp_path),
+            staging_cleanup=OrchestratorStagingCleanup(
+                mode=StagingCleanupMode.MANUAL.value,
+            ),
+        ),
+    )
+    await _seed_run_in_state(
+        tmp_path,
+        equipment_id="EQ1",
+        project_name="PROJ-A",
+        run_dir_name="Run_X",
+        state=IngestState.STAGING,
+        writer=writer,
+    )
+    cleared = await clear_all_verified(config=config, ingest_writer=writer)
+    assert cleared == []
+
+
+async def test_clear_all_verified_handles_empty_staging_root(tmp_path: Path) -> None:
+    writer = IngestWriter()
+    config = Config(
+        orchestrator=OrchestratorConfig(
+            label="ORCH-01",
+            staging_root=str(tmp_path / "empty"),
+            staging_cleanup=OrchestratorStagingCleanup(
+                mode=StagingCleanupMode.MANUAL.value,
+            ),
+        ),
+    )
+    # staging_root doesn't even exist; list_staged_runs returns [].
+    cleared = await clear_all_verified(config=config, ingest_writer=writer)
+    assert cleared == []

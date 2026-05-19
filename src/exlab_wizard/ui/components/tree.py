@@ -39,11 +39,24 @@ _log = get_logger(__name__)
 
 # Node kinds.
 KIND_EQUIPMENT = "equipment"
+KIND_RECEIVED_EQUIPMENT = "received_equipment"
 KIND_PROJECT = "project"
 KIND_RUN_EXPERIMENTAL = "run_experimental"
 KIND_RUN_TEST = "run_test"
 
 _RUN_KINDS: frozenset[str] = frozenset({KIND_RUN_EXPERIMENTAL, KIND_RUN_TEST})
+_EQUIPMENT_KINDS: frozenset[str] = frozenset({KIND_EQUIPMENT, KIND_RECEIVED_EQUIPMENT})
+
+# Map internal kind to the testid suffix the Playwright flows expect.
+# Both run_experimental and run_test collapse to "run" (the e2e contract
+# treats them interchangeably for selection / context-menu purposes).
+_TESTID_KIND_BY_KIND: dict[str, str] = {
+    KIND_EQUIPMENT: "equipment",
+    KIND_RECEIVED_EQUIPMENT: "received_equipment",
+    KIND_PROJECT: "project",
+    KIND_RUN_EXPERIMENTAL: "run",
+    KIND_RUN_TEST: "run",
+}
 
 # Static URLs served by ``ui/theme.py:register_static_assets``.
 SYNC_ICON_LOCAL_URL = "/assets/sync_local.svg"
@@ -63,6 +76,10 @@ class TreeFilters:
 @dataclass(frozen=True)
 class EquipmentNode:
     equipment_id: str
+    # Redesign §3.3: relay equipment (received from another workstation)
+    # renders the same row but disables creation actions and uses a
+    # different context-menu surface (none, per decision 3).
+    relay: bool = False
 
 
 @dataclass(frozen=True)
@@ -204,7 +221,7 @@ def build_nodes(
             TreeNode(
                 node_id=equipment.equipment_id,
                 label=equipment.equipment_id,
-                kind=KIND_EQUIPMENT,
+                kind=KIND_RECEIVED_EQUIPMENT if equipment.relay else KIND_EQUIPMENT,
                 children=tuple(project_nodes),
             )
         )
@@ -232,6 +249,11 @@ def to_nicegui_nodes(nodes: Iterable[TreeNode]) -> list[dict[str, Any]]:
     Run rows additionally carry a ``sync_icon`` URL string and a
     ``sync_status`` string used by the ``default-header`` scoped-slot
     template attached in :func:`build_tree`.
+
+    Each row also carries a ``testid_kind`` field — the suffix the
+    Playwright flows expect on ``data-testid="tree-node-<suffix>"``.
+    Both run kinds collapse to ``"run"`` so the e2e selectors can
+    treat experimental and test runs interchangeably.
     """
 
     out: list[dict[str, Any]] = []
@@ -240,6 +262,7 @@ def to_nicegui_nodes(nodes: Iterable[TreeNode]) -> list[dict[str, Any]]:
             "id": node.node_id,
             "label": node.label,
             "kind": node.kind,
+            "testid_kind": _TESTID_KIND_BY_KIND.get(node.kind, node.kind),
             "badges": list(node.badges),
             "children": to_nicegui_nodes(node.children),
         }
@@ -253,25 +276,91 @@ def to_nicegui_nodes(nodes: Iterable[TreeNode]) -> list[dict[str, Any]]:
 
 # Quasar ``q-tree`` does not honour an ``icon`` / ``img`` field on plain
 # node dicts; per-node images must come through a scoped slot template.
-# We drop in a single ``default-header`` template that renders the run's
-# sync icon (when present) immediately to the left of the node label.
-_TREE_DEFAULT_HEADER_SLOT = (
-    '<div class="row items-center" style="gap: 0.4rem">'
-    '<img v-if="props.node.sync_icon" :src="props.node.sync_icon" '
-    'style="width: 1rem; height: 1rem; flex-shrink: 0;" '
-    ":alt=\"props.node.sync_status || ''\" />"
-    '<span :data-kind="props.node.kind" '
-    ":data-sync-status=\"props.node.sync_status || ''\">"
-    "{{ props.node.label }}"
-    "</span>"
-    "</div>"
-)
+# The ``default-header`` template renders the per-row sync icon (when
+# present), emits the data-testid / data-node-id attributes the
+# Playwright flows assert on, and inlines the right-click context menus
+# (owned equipment / runs) as Vue ``q-menu`` children. Each q-menu
+# auto-attaches to its parent row (no ``target`` selector required, so
+# we sidestep both NiceGUI's props-parser quote handling and Quasar's
+# mount-before-DOM-ready target-resolution race). Menu items emit the
+# concrete NiceGUI websocket event payload for the tree listener. A
+# native DOM CustomEvent is not enough here because NiceGUI's
+# ``element.on`` registers Vue component listeners, and q-menu content
+# is teleported outside the tree row.
+
+
+def _ctx_emit(*, tree_id: int, listener_id: str, kind: str, action: str) -> str:
+    """Return the Vue ``@click`` expression that reaches NiceGUI's listener.
+
+    Uses ``&quot;`` for inner double quotes so the expression survives
+    HTML attribute parsing inside the slot template.
+    """
+    return (
+        "$event.view.socket?.emit(&quot;event&quot;, "
+        f"{{id: {tree_id}, client_id: $event.view.clientId, listener_id: &quot;{listener_id}&quot;, "
+        "args: [$event.view.JSON.stringify("
+        f"{{node_id: props.node.id, kind: '{kind}', action: '{action}'}}"
+        ")]})"
+    )
+
+
+def _tree_header_slot(*, tree_id: int, listener_id: str) -> str:
+    return (
+        '<div class="row items-center" style="gap: 0.4rem">'
+        '<img v-if="props.node.sync_icon" :src="props.node.sync_icon" '
+        'style="width: 1rem; height: 1rem; flex-shrink: 0;" '
+        ":alt=\"props.node.sync_status || ''\" />"
+        "<span :data-testid=\"'tree-node-' + props.node.testid_kind\" "
+        ':data-node-id="props.node.id" '
+        ':data-kind="props.node.kind" '
+        ":data-sync-status=\"props.node.sync_status || ''\">"
+        "{{ props.node.label }}"
+        "</span>"
+        # Owned-equipment context menu (Edit / Remove).
+        "<q-menu v-if=\"props.node.kind === 'equipment'\" context-menu auto-close "
+        'data-testid="tree-context-menu">'
+        "<q-list dense>"
+        '<q-item clickable v-close-popup data-testid="tree-context-edit-equipment" '
+        f'@click="{_ctx_emit(tree_id=tree_id, listener_id=listener_id, kind="equipment", action="edit_equipment")}">'
+        "<q-item-section>Edit equipment…</q-item-section>"
+        "</q-item>"
+        '<q-item clickable v-close-popup data-testid="tree-context-remove-equipment" '
+        f'@click="{_ctx_emit(tree_id=tree_id, listener_id=listener_id, kind="equipment", action="remove_equipment")}">'
+        "<q-item-section>Remove…</q-item-section>"
+        "</q-item>"
+        "</q-list>"
+        "</q-menu>"
+        # Run context menu (Force sync / Clear verified / View log).
+        "<q-menu v-if=\"props.node.kind === 'run_experimental' || props.node.kind === 'run_test'\" "
+        'context-menu auto-close data-testid="run-context-menu">'
+        "<q-list dense>"
+        '<q-item clickable v-close-popup data-testid="run-context-force-sync" '
+        f'@click="{_ctx_emit(tree_id=tree_id, listener_id=listener_id, kind="run", action="force_sync")}">'
+        "<q-item-section>Force sync</q-item-section>"
+        "</q-item>"
+        '<q-item clickable v-close-popup data-testid="run-context-clear-verified" '
+        f'@click="{_ctx_emit(tree_id=tree_id, listener_id=listener_id, kind="run", action="clear_verified")}">'
+        "<q-item-section>Clear verified</q-item-section>"
+        "</q-item>"
+        '<q-item clickable v-close-popup data-testid="run-context-view-log" '
+        f'@click="{_ctx_emit(tree_id=tree_id, listener_id=listener_id, kind="run", action="view_log")}">'
+        "<q-item-section>View log</q-item-section>"
+        "</q-item>"
+        "</q-list>"
+        "</q-menu>"
+        "</div>"
+    )
+
+
+_TREE_DEFAULT_HEADER_SLOT = _tree_header_slot(tree_id=0, listener_id="listener")
 
 
 def build_tree(
     *,
     hierarchy: dict[EquipmentNode, dict[ProjectNode, list[RunNode]]],
     on_select: Callable[[str], None] | None = None,
+    on_equipment_context_action: Callable[[str, str], None] | None = None,
+    on_run_context_action: Callable[[str, str], None] | None = None,
     filters: TreeFilters | None = None,
     expand_all: bool = False,
 ) -> Any:
@@ -283,6 +372,15 @@ def build_tree(
     ``expand_all`` toggles Quasar's ``default-expand-all`` prop -- used
     by e2e tests that need every node visible in the DOM without
     having to click expand carets.
+
+    ``on_equipment_context_action`` and ``on_run_context_action``
+    receive ``(node_id, action)`` when the operator picks an item from
+    the per-row right-click menu (Redesign §4.6, dec. 4A). Action
+    strings match the constants in
+    :mod:`exlab_wizard.ui.components.tree_context_menu`
+    (``edit_equipment`` / ``remove_equipment`` /
+    ``force_sync`` / ``clear_verified`` / ``view_log``). Received-
+    equipment rows never raise these callbacks (no context menu).
     """
 
     f = filters or TreeFilters()
@@ -294,7 +392,6 @@ def build_tree(
         return payload
 
     tree = ui.tree(payload, label_key="label", node_key="id").props('data-testid="main-tree"')
-    tree.add_slot("default-header", _TREE_DEFAULT_HEADER_SLOT)
     if expand_all:
         # NiceGUI's wrapper for Quasar's expandAll() method.
         tree.expand()
@@ -304,4 +401,30 @@ def build_tree(
             on_select(event.value)
 
         tree.on_select(_selected)
+
+    def _on_context_action(event: Any) -> None:
+        detail = event.args
+        if isinstance(detail, list) and detail:
+            detail = detail[0]
+        if not isinstance(detail, dict):
+            return
+        kind = detail.get("kind", "")
+        node_id = detail.get("node_id", "")
+        action = detail.get("action", "")
+        if not node_id or not action:
+            return
+        if kind == "equipment" and on_equipment_context_action is not None:
+            on_equipment_context_action(node_id, action)
+        elif kind == "run" and on_run_context_action is not None:
+            on_run_context_action(node_id, action)
+
+    existing_listeners = set(tree._event_listeners)
+    tree.on("tree-context-action", _on_context_action)
+    listener_ids = [key for key in tree._event_listeners if key not in existing_listeners]
+    listener_id = listener_ids[-1] if listener_ids else ""
+
+    tree.add_slot(
+        "default-header",
+        _tree_header_slot(tree_id=tree.id, listener_id=listener_id),
+    )
     return tree
