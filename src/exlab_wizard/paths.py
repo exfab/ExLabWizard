@@ -176,9 +176,7 @@ def os_central_log_path() -> Path:
             )
         case Platform.LINUX:
             return (
-                _env_path("XDG_STATE_HOME", _home() / ".local" / "state")
-                / name
-                / CENTRAL_LOG_FILE
+                _env_path("XDG_STATE_HOME", _home() / ".local" / "state") / name / CENTRAL_LOG_FILE
             )
 
 

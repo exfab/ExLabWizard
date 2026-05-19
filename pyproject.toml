@@ -156,7 +156,7 @@ python_files = ["test_*.py"]
 [tool.coverage.run]
 source = ["src/exlab_wizard"]
 omit = [
-    "src/exlab_wizard/_worker.py",
+    "src/exlab_wizard/plugins/_worker.py",
     "*/tests/*",
 ]
 
