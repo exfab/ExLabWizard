@@ -277,17 +277,36 @@ def to_nicegui_nodes(nodes: Iterable[TreeNode]) -> list[dict[str, Any]]:
 # Quasar ``q-tree`` does not honour an ``icon`` / ``img`` field on plain
 # node dicts; per-node images must come through a scoped slot template.
 # The ``default-header`` template renders the per-row sync icon (when
-# present) and emits the data-testid / data-node-id attributes the
-# Playwright flows assert on. Right-click context menus are NOT inlined
-# in the slot because Quasar's ``q-menu`` mounts in a body-level
-# Teleport portal, which breaks both DOM-event bubbling back to the
-# tree wrapper and Vue ``$emit`` forwarding through scoped-slot scope.
-# Instead :func:`build_tree` renders one Python-side ``ui.menu()`` per
-# context-eligible node after the tree mounts, anchoring each menu to
-# its row via Quasar's ``target`` selector pointing at the row's
-# unique ``[data-node-id="..."]``. Menu items are plain ``ui.menu_item``
-# calls whose ``on_click`` lambdas run server-side, so no JS bridging
-# is needed.
+# present), emits the data-testid / data-node-id attributes the
+# Playwright flows assert on, and inlines the right-click context menus
+# (owned equipment / runs) as Vue ``q-menu`` children. Each q-menu
+# auto-attaches to its parent row (no ``target`` selector required, so
+# we sidestep both NiceGUI's props-parser quote handling and Quasar's
+# mount-before-DOM-ready target-resolution race). Menu items dispatch a
+# native ``treeContextAction`` ``CustomEvent`` directly on the q-tree
+# wrapper (selectable via ``[data-testid="main-tree"]``) so the bubble
+# path doesn't matter -- Quasar Teleports q-menu content to a body-
+# level portal, but ``document.querySelector(...).dispatchEvent(...)``
+# fires on the tree element regardless. The build_tree caller subscribes
+# via ``tree.on("tree-context-action", handler, args=["detail"])``;
+# NiceGUI converts the kebab-case name to the camelCase Vue listener
+# ``@treeContextAction`` which matches the dispatched event name and
+# forwards the CustomEvent ``detail`` payload to Python.
+
+
+def _ctx_dispatch(kind: str, action: str) -> str:
+    """Return the Vue ``@click`` expression that fires a context-action event.
+
+    Uses ``&quot;`` for inner double quotes so the expression survives
+    HTML attribute parsing inside the slot template.
+    """
+    return (
+        "document.querySelector('[data-testid=&quot;main-tree&quot;]')"
+        ".dispatchEvent(new CustomEvent('treeContextAction', "
+        f"{{detail: {{node_id: props.node.id, kind: '{kind}', action: '{action}'}}}}))"
+    )
+
+
 _TREE_DEFAULT_HEADER_SLOT = (
     '<div class="row items-center" style="gap: 0.4rem">'
     '<img v-if="props.node.sync_icon" :src="props.node.sync_icon" '
@@ -299,94 +318,40 @@ _TREE_DEFAULT_HEADER_SLOT = (
     ":data-sync-status=\"props.node.sync_status || ''\">"
     "{{ props.node.label }}"
     "</span>"
+    # Owned-equipment context menu (Edit / Remove).
+    "<q-menu v-if=\"props.node.kind === 'equipment'\" context-menu auto-close "
+    'data-testid="tree-context-menu">'
+    "<q-list dense>"
+    '<q-item clickable v-close-popup data-testid="tree-context-edit-equipment" '
+    f'@click="{_ctx_dispatch("equipment", "edit_equipment")}">'
+    "<q-item-section>Edit equipment…</q-item-section>"
+    "</q-item>"
+    '<q-item clickable v-close-popup data-testid="tree-context-remove-equipment" '
+    f'@click="{_ctx_dispatch("equipment", "remove_equipment")}">'
+    "<q-item-section>Remove…</q-item-section>"
+    "</q-item>"
+    "</q-list>"
+    "</q-menu>"
+    # Run context menu (Force sync / Clear verified / View log).
+    "<q-menu v-if=\"props.node.kind === 'run_experimental' || props.node.kind === 'run_test'\" "
+    'context-menu auto-close data-testid="run-context-menu">'
+    "<q-list dense>"
+    '<q-item clickable v-close-popup data-testid="run-context-force-sync" '
+    f'@click="{_ctx_dispatch("run", "force_sync")}">'
+    "<q-item-section>Force sync</q-item-section>"
+    "</q-item>"
+    '<q-item clickable v-close-popup data-testid="run-context-clear-verified" '
+    f'@click="{_ctx_dispatch("run", "clear_verified")}">'
+    "<q-item-section>Clear verified</q-item-section>"
+    "</q-item>"
+    '<q-item clickable v-close-popup data-testid="run-context-view-log" '
+    f'@click="{_ctx_dispatch("run", "view_log")}">'
+    "<q-item-section>View log</q-item-section>"
+    "</q-item>"
+    "</q-list>"
+    "</q-menu>"
     "</div>"
 )
-
-
-def _iter_nodes(nodes: Iterable[TreeNode]) -> Iterable[TreeNode]:
-    """Yield every node in ``nodes``, depth-first, including children."""
-    for node in nodes:
-        yield node
-        yield from _iter_nodes(node.children)
-
-
-def _selector_for_node_id(node_id: str) -> str:
-    """Build the Quasar ``target`` selector for a node row.
-
-    ``node_id`` is the on-disk path segment used in the tree (e.g.
-    ``EQ1/PROJ-0001/Run_2026-05-07``); the slot template emits it on
-    the row's ``data-node-id`` attribute. CSS attribute selectors
-    require backslash-escaping for any ``\\``, ``"``, ``/`` is safe.
-    """
-    escaped = node_id.replace("\\", "\\\\").replace('"', '\\"')
-    return f'[data-node-id="{escaped}"]'
-
-
-def _render_node_context_menus(
-    nodes: Iterable[TreeNode],
-    *,
-    on_equipment_context_action: Callable[[str, str], None] | None,
-    on_run_context_action: Callable[[str, str], None] | None,
-) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
-    """Render per-node Quasar context menus anchored by ``data-node-id``.
-
-    Iterates every owned-equipment / run node (received_equipment
-    deliberately has no menu per Redesign §3.3 decision 3) and emits a
-    ``ui.menu`` configured as a context menu targeting that node's
-    row. The menu items' ``on_click`` lambdas route to the
-    operator-supplied callbacks server-side; no JavaScript event
-    bridging is involved.
-    """
-    try:
-        from nicegui import ui
-    except Exception:
-        return
-
-    for node in _iter_nodes(nodes):
-        if node.kind == KIND_EQUIPMENT and on_equipment_context_action is not None:
-            target = _selector_for_node_id(node.node_id)
-            # NiceGUI's ``.props()`` parser matches double-quoted values
-            # via a regex that stops at the first inner ``"`` — wrapping
-            # the ``target`` selector in single quotes lets the
-            # ``[data-node-id="..."]`` CSS selector pass through intact.
-            with (
-                ui.menu()
-                .props(f"context-menu auto-close target='{target}'")
-                .props(f'data-testid="tree-context-menu" data-node-id="{node.node_id}"')
-            ):
-                ui.menu_item(
-                    "Edit equipment…",
-                    on_click=lambda _evt, nid=node.node_id: on_equipment_context_action(
-                        nid, "edit_equipment"
-                    ),
-                ).props('data-testid="tree-context-edit-equipment"')
-                ui.menu_item(
-                    "Remove…",
-                    on_click=lambda _evt, nid=node.node_id: on_equipment_context_action(
-                        nid, "remove_equipment"
-                    ),
-                ).props('data-testid="tree-context-remove-equipment"')
-        elif node.kind in _RUN_KINDS and on_run_context_action is not None:
-            target = _selector_for_node_id(node.node_id)
-            with (
-                ui.menu()
-                .props(f"context-menu auto-close target='{target}'")
-                .props(f'data-testid="run-context-menu" data-run-path="{node.node_id}"')
-            ):
-                ui.menu_item(
-                    "Force sync",
-                    on_click=lambda _evt, p=node.node_id: on_run_context_action(p, "force_sync"),
-                ).props('data-testid="run-context-force-sync"')
-                ui.menu_item(
-                    "Clear verified",
-                    on_click=lambda _evt, p=node.node_id: on_run_context_action(
-                        p, "clear_verified"
-                    ),
-                ).props('data-testid="run-context-clear-verified"')
-                ui.menu_item(
-                    "View log",
-                    on_click=lambda _evt, p=node.node_id: on_run_context_action(p, "view_log"),
-                ).props('data-testid="run-context-view-log"')
 
 
 def build_tree(
@@ -437,9 +402,25 @@ def build_tree(
 
         tree.on_select(_selected)
     if on_equipment_context_action is not None or on_run_context_action is not None:
-        _render_node_context_menus(
-            nodes,
-            on_equipment_context_action=on_equipment_context_action,
-            on_run_context_action=on_run_context_action,
-        )
+
+        def _on_context_action(event: Any) -> None:
+            # NiceGUI extracts ``event.detail`` for us via args=["detail"];
+            # event.args is the detail dict (or wrapped in a 1-tuple list
+            # depending on NiceGUI version).
+            detail = event.args
+            if isinstance(detail, list) and detail:
+                detail = detail[0]
+            if not isinstance(detail, dict):
+                return
+            kind = detail.get("kind", "")
+            node_id = detail.get("node_id", "")
+            action = detail.get("action", "")
+            if not node_id or not action:
+                return
+            if kind == "equipment" and on_equipment_context_action is not None:
+                on_equipment_context_action(node_id, action)
+            elif kind == "run" and on_run_context_action is not None:
+                on_run_context_action(node_id, action)
+
+        tree.on("tree-context-action", _on_context_action, args=["detail"])
     return tree

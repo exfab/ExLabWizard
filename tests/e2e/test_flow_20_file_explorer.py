@@ -41,8 +41,8 @@ def test_flow_20_file_explorer_renders_three_regions(page, server_url) -> None:
 
 def test_flow_20_select_run_node_renders_metadata_pane(page, server_url) -> None:
     _goto(page, f"{server_url}/main?view=explorer")
-    page.locator('[data-testid="tree-node-run"]').wait_for(state="visible", timeout=10_000)
-    page.locator('[data-testid="tree-node-run"]').click()
+    page.locator('[data-testid="tree-node-run"]').first.wait_for(state="visible", timeout=10_000)
+    page.locator('[data-testid="tree-node-run"]').first.click()
     page.wait_for_load_state("networkidle")
     page.locator('[data-testid="metadata-pane"]').wait_for(state="visible", timeout=5_000)
     page.locator('[data-testid="metadata-run-force-sync"]').wait_for(state="visible")
@@ -52,7 +52,7 @@ def test_flow_20_select_run_node_renders_metadata_pane(page, server_url) -> None
 
 def test_flow_20_breadcrumb_is_present_when_node_selected(page, server_url) -> None:
     _goto(page, f"{server_url}/main?view=explorer")
-    page.locator('[data-testid="tree-node-run"]').click()
+    page.locator('[data-testid="tree-node-run"]').first.click()
     page.wait_for_load_state("networkidle")
     page.locator('[data-testid="breadcrumb"]').wait_for(state="visible", timeout=5_000)
     segments = page.locator('[data-testid="breadcrumb-segment"]')

@@ -84,7 +84,7 @@ def test_flow_24_received_equipment_has_no_context_menu(page, server_url) -> Non
 
 def test_flow_24_run_context_menu_items_render(page, server_url) -> None:
     _goto(page, f"{server_url}/main?view=explorer")
-    run = page.locator('[data-testid="tree-node-run"]')
+    run = page.locator('[data-testid="tree-node-run"]').first
     run.wait_for(state="visible", timeout=10_000)
     _open_context(page, run)
     page.locator('[data-testid="run-context-force-sync"]').wait_for(state="visible", timeout=5_000)
@@ -98,7 +98,7 @@ def test_flow_24_file_list_row_context_menu(page, server_url) -> None:
     """Right-clicking a file-list row surfaces Open in OS + Copy path."""
     _goto(page, f"{server_url}/main?view=explorer")
     # Select a run so the centre pane renders the seeded file list.
-    page.locator('[data-testid="tree-node-run"]').click()
+    page.locator('[data-testid="tree-node-run"]').first.click()
     page.wait_for_load_state("networkidle")
     row = page.locator('[data-testid="file-list-row"]').first
     row.wait_for(state="visible", timeout=10_000)

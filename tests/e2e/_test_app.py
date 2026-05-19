@@ -291,10 +291,14 @@ def build_test_app() -> FastAPI:
                     tree_component.RunNode("TestRun_2026-05-07", "test", "Test run"),
                 ],
             },
+            # Relay equipment with an empty project keeps the
+            # tree-node-received_equipment row visible (flow_18, flow_24
+            # and flow_25 all rely on it) without adding a 4th
+            # tree-node-run that would break flow_20 / flow_24's bare
+            # ``.locator('[data-testid="tree-node-run"]')`` strict-mode
+            # queries.
             tree_component.EquipmentNode("RELAY_EQX", relay=True): {
-                tree_component.ProjectNode("PROJ-Relay", "Relayed Project"): [
-                    tree_component.RunNode("Run_2026-05-14T09-22", "experimental", "Relayed run"),
-                ],
+                tree_component.ProjectNode("PROJ-Relay", "Relayed Project"): [],
             },
         }
 
