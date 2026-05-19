@@ -150,15 +150,21 @@ def test_flow_25_received_equipment_disables_creation_buttons(page, server_url) 
     (Redesign §3.3 / decision 1).
     """
     _goto(page, f"{server_url}/main?selected=RELAY_EQX")
-    # The three creation buttons carry Quasar's ``disable`` prop, which
-    # surfaces as the disabled HTML attribute on the underlying button
-    # element. Use is_disabled() to assert.
+    # Quasar's q-btn ``disable`` prop renders as ``aria-disabled="true"``
+    # on the wrapper element; the inner <button> may or may not carry
+    # the HTML ``disabled`` attribute depending on Quasar version.
+    # Check ``aria-disabled`` since it's the stable contract Quasar
+    # commits to.
     for testid in ("toolbar-new-project", "toolbar-new-run", "toolbar-new-test-run"):
         btn = page.locator(f'[data-testid="{testid}"]')
         btn.wait_for(state="visible", timeout=10_000)
-        assert btn.is_disabled(), f"{testid} should be disabled when relay node selected"
+        aria = btn.get_attribute("aria-disabled")
+        assert aria == "true", (
+            f"{testid} should have aria-disabled=true when relay node selected, got {aria!r}"
+        )
     # Add Equipment stays enabled (the operator's escape hatch).
-    assert page.locator('[data-testid="toolbar-add-equipment"]').is_enabled()
+    add_eq = page.locator('[data-testid="toolbar-add-equipment"]')
+    assert add_eq.get_attribute("aria-disabled") != "true"
 
 
 def test_flow_25_footer_clear_verified_routes_to_callback(page, server_url) -> None:
