@@ -242,10 +242,16 @@ def test_wizard_run_readme_blocks_until_core_fields() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_settings_nine_sections() -> None:
-    """Settings has nine sections (Frontend §7.2)."""
+def test_settings_eight_sections() -> None:
+    """Settings has eight sections (Frontend §7.2).
 
-    assert len(settings.SETTINGS_SECTIONS) == 9
+    The ``operators`` section was removed from the UI pending the chip
+    editor; OperatorsConfig stays in the backend model so the future
+    re-add is a one-line tuple change.
+    """
+
+    assert len(settings.SETTINGS_SECTIONS) == 8
+    assert "operators" not in settings.SETTINGS_SECTIONS
     assert settings.SETTINGS_SECTIONS[0] == "paths"
     assert settings.SETTINGS_SECTIONS[-1] == "application"
 

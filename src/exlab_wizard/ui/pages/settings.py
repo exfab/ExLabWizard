@@ -1,7 +1,8 @@
 """Settings dialog (Frontend Spec §7).
 
-Two-pane modal with a left vertical-nav and a right content area. Nine
-sections; setup-incomplete mode auto-selects the first incomplete one.
+Two-pane modal with a left vertical-nav and a right content area. Eight
+sections (``operators`` is deferred pending the chip editor);
+setup-incomplete mode auto-selects the first incomplete one.
 """
 
 from __future__ import annotations
@@ -26,7 +27,9 @@ SETTINGS_SECTIONS: tuple[str, ...] = (
     "lims",
     "equipment",
     "nas_cleanup",
-    "operators",
+    # "operators" is deferred -- backend OperatorsConfig + the
+    # controller/creation.py allowlist gate stay wired and are no-ops while
+    # the allowlist defaults to []. The chip editor lands in a future update.
     "validator",
     "logging",
     "orchestrator",
@@ -38,7 +41,6 @@ SECTION_TITLES: dict[str, str] = {
     "lims": "LIMS",
     "equipment": "Equipment List",
     "nas_cleanup": "NAS Cleanup",
-    "operators": "Operators",
     "validator": "Validator",
     "logging": "Logging",
     "orchestrator": "Orchestrator Mode",
@@ -313,9 +315,9 @@ def _render_section_body(
     corresponding ``draft.<sub-block>`` attribute, so edits accumulate
     on the draft and ``render_settings_page``'s Save handler can
     re-validate and emit the finished :class:`Config`. The list-valued
-    sections (equipment, operators allowlist, scanned extensions) render
-    their current entries read-only -- rich list editors are a
-    follow-up; the deadlock this unblocks is the scalar config fields.
+    sections (equipment, scanned extensions) render their current
+    entries read-only -- rich list editors are a follow-up; the
+    deadlock this unblocks is the scalar config fields.
 
     The LIMS section's password credential is the exception to the
     draft-binding rule: it is keyring-backed and writes at click time
@@ -383,15 +385,6 @@ def _render_section_body(
             ui.checkbox(
                 "Retain .exlab-wizard/ metadata", value=draft.nas_cleanup.retain_cache
             ).bind_value(draft.nas_cleanup, "retain_cache")
-        elif section == "operators":
-            if draft.operators.allowlist:
-                ui.label("Operator allowlist: " + ", ".join(draft.operators.allowlist)).props(
-                    'data-testid="settings-operators-list"'
-                )
-            else:
-                ui.label("Operator allowlist (chips)").props(
-                    'data-testid="settings-operators-empty"'
-                )
         elif section == "validator":
             ui.number(
                 label="Max content-scan size (MiB)",

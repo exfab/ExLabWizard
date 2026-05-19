@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from exlab_wizard.config.models import Config
 
 __all__ = [
+    "TEST_MODE_ENV",
     "cache_dir",
     "canonicalize_equipment_id",
     "compose_project_path",
@@ -71,6 +72,26 @@ __all__ = [
     "setup_state_next_action",
     "validate_project_short_id",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Test-mode app-name override
+# ---------------------------------------------------------------------------
+# Setting ``EXLAB_WIZARD_TEST_MODE=1`` swaps APP_NAME for ``APP_NAME-test``
+# in every OS-path helper below, redirecting config / state / cache / logs
+# into a parallel ``exlab-wizard-test`` sandbox without touching real user
+# directories. The env var (rather than a CLI arg threaded through every
+# layer) means the window subprocess spawned by WindowLauncher inherits the
+# override automatically. See ``exlab-wizard-tray --test``.
+
+TEST_MODE_ENV = "EXLAB_WIZARD_TEST_MODE"
+
+
+def _app_name() -> str:
+    """``APP_NAME`` (suffixed ``-test`` when ``EXLAB_WIZARD_TEST_MODE=1``)."""
+    if os.environ.get(TEST_MODE_ENV) == "1":
+        return f"{APP_NAME}-test"
+    return APP_NAME
 
 
 # ---------------------------------------------------------------------------
@@ -106,53 +127,57 @@ def _env_path(var: str, fallback: Path) -> Path:
 
 def os_config_path() -> Path:
     """Return the OS-appropriate path of ``config.yaml``. Backend Spec §9."""
+    name = _app_name()
     match _platform():
         case Platform.MACOS:
-            return _home() / "Library" / "Application Support" / APP_NAME / "config.yaml"
+            return _home() / "Library" / "Application Support" / name / "config.yaml"
         case Platform.WINDOWS:
-            return _env_path("APPDATA", _home() / "AppData" / "Roaming") / APP_NAME / "config.yaml"
+            return _env_path("APPDATA", _home() / "AppData" / "Roaming") / name / "config.yaml"
         case Platform.LINUX:
-            return _env_path("XDG_CONFIG_HOME", _home() / ".config") / APP_NAME / "config.yaml"
+            return _env_path("XDG_CONFIG_HOME", _home() / ".config") / name / "config.yaml"
 
 
 def os_state_path() -> Path:
     """Return the OS-appropriate state directory. Backend Spec §15.7."""
+    name = _app_name()
     match _platform():
         case Platform.MACOS:
-            return _home() / "Library" / "Application Support" / APP_NAME / "state"
+            return _home() / "Library" / "Application Support" / name / "state"
         case Platform.WINDOWS:
-            return _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / APP_NAME / "state"
+            return _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / name / "state"
         case Platform.LINUX:
-            return _env_path("XDG_STATE_HOME", _home() / ".local" / "state") / APP_NAME
+            return _env_path("XDG_STATE_HOME", _home() / ".local" / "state") / name
 
 
 def os_cache_path() -> Path:
     """Return the OS-appropriate cache directory. Backend Spec §7.2.4."""
+    name = _app_name()
     match _platform():
         case Platform.MACOS:
-            return _home() / "Library" / "Caches" / APP_NAME
+            return _home() / "Library" / "Caches" / name
         case Platform.WINDOWS:
-            return _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / APP_NAME / "Cache"
+            return _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / name / "Cache"
         case Platform.LINUX:
-            return _env_path("XDG_CACHE_HOME", _home() / ".cache") / APP_NAME
+            return _env_path("XDG_CACHE_HOME", _home() / ".cache") / name
 
 
 def os_central_log_path() -> Path:
     """Return the OS-appropriate central log file. Backend Spec §16.3."""
+    name = _app_name()
     match _platform():
         case Platform.MACOS:
-            return _home() / "Library" / "Logs" / APP_NAME / CENTRAL_LOG_FILE
+            return _home() / "Library" / "Logs" / name / CENTRAL_LOG_FILE
         case Platform.WINDOWS:
             return (
                 _env_path("LOCALAPPDATA", _home() / "AppData" / "Local")
-                / APP_NAME
+                / name
                 / "Logs"
                 / CENTRAL_LOG_FILE
             )
         case Platform.LINUX:
             return (
                 _env_path("XDG_STATE_HOME", _home() / ".local" / "state")
-                / APP_NAME
+                / name
                 / CENTRAL_LOG_FILE
             )
 
@@ -160,7 +185,7 @@ def os_central_log_path() -> Path:
 def default_orchestrator_staging_root() -> Path:
     """OS-conditional default for ``orchestrator.staging_root``. Backend Spec §9, §13."""
     if _platform() is Platform.WINDOWS:
-        return _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / APP_NAME / "staging"
+        return _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / _app_name() / "staging"
     return Path("/staging")
 
 
