@@ -345,9 +345,13 @@ def _render_node_context_menus(
     for node in _iter_nodes(nodes):
         if node.kind == KIND_EQUIPMENT and on_equipment_context_action is not None:
             target = _selector_for_node_id(node.node_id)
+            # NiceGUI's ``.props()`` parser matches double-quoted values
+            # via a regex that stops at the first inner ``"`` — wrapping
+            # the ``target`` selector in single quotes lets the
+            # ``[data-node-id="..."]`` CSS selector pass through intact.
             with (
                 ui.menu()
-                .props(f'context-menu auto-close target="{target}"')
+                .props(f"context-menu auto-close target='{target}'")
                 .props(f'data-testid="tree-context-menu" data-node-id="{node.node_id}"')
             ):
                 ui.menu_item(
@@ -366,7 +370,7 @@ def _render_node_context_menus(
             target = _selector_for_node_id(node.node_id)
             with (
                 ui.menu()
-                .props(f'context-menu auto-close target="{target}"')
+                .props(f"context-menu auto-close target='{target}'")
                 .props(f'data-testid="run-context-menu" data-run-path="{node.node_id}"')
             ):
                 ui.menu_item(
