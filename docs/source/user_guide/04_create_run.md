@@ -24,15 +24,15 @@ sync. See section 02 §3.2 for the authoritative contract.
 
 ## Screenshots
 
-```{image} ../_static/screenshots/02_create_run/01_initial.png
+```{image} ../_static/screenshots/04_create_run/01_initial.png
 :alt: New experimental run wizard, initial render
 :align: center
 ```
 
 ## Related material
 
-- {doc}`03_create_test_run` -- the test-mode counterpart.
-- {doc}`05_readme` -- the README form is a sub-step.
+- {doc}`05_create_test_run` -- the test-mode counterpart.
+- {doc}`06_readme` -- the README form is a sub-step.
 - Design spec section 03 (Directory Structure) -- where the rendered
   run lands on disk.
 - Design spec section 06 (Plugin System) -- plugins execute on the

@@ -27,14 +27,14 @@ authoritative contract.
 
 ## Screenshots
 
-```{image} ../_static/screenshots/03_create_test_run/01_initial.png
+```{image} ../_static/screenshots/05_create_test_run/01_initial.png
 :alt: New test run wizard, initial render
 :align: center
 ```
 
 ## Related material
 
-- {doc}`02_create_run` -- the experimental counterpart.
+- {doc}`04_create_run` -- the experimental counterpart.
 - Design spec section 03 (Directory Structure) -- the redundant folder
   + leaf-prefix separation that protects against miscategorisation.
 - Design spec section 02 §4 -- the full mode-invariant list.
