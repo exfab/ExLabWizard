@@ -18,8 +18,8 @@ contract.
 ## Walkthrough
 
 The README form is a sub-step of the project wizard
-({doc}`01_create_project`) and the run wizards
-({doc}`02_create_run`, {doc}`03_create_test_run`). It is not a
+({doc}`03_create_project`) and the run wizards
+({doc}`04_create_run`, {doc}`05_create_test_run`). It is not a
 standalone surface; the screenshot below shows the project wizard with
 the README step active.
 
@@ -34,15 +34,15 @@ the README step active.
 
 ## Screenshots
 
-```{image} ../_static/screenshots/05_readme/01_initial.png
+```{image} ../_static/screenshots/06_readme/01_initial.png
 :alt: README step inside the new-project wizard
 :align: center
 ```
 
 ## Related material
 
-- {doc}`01_create_project`, {doc}`02_create_run`,
-  {doc}`03_create_test_run` -- the host wizards.
+- {doc}`03_create_project`, {doc}`04_create_run`,
+  {doc}`05_create_test_run` -- the host wizards.
 - Design spec section 10 (README Generation) -- the merge order, the
   output format, and the rendering contract.
 - Design spec section 11 §11.4 (`readme_fields.json`) -- the cached

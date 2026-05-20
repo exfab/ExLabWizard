@@ -12,18 +12,23 @@ launches a headless Chromium via Playwright, and captures one or more
 PNGs per user-visible capability. The capability map mirrors the
 ``docs/source/user_guide/`` tree:
 
-================  ====================================================
-Capability id     Source route(s) inside the test app
-================  ====================================================
-01_create_project ``/wizard/project``
-02_create_run     ``/wizard/run``
-03_create_test_run ``/wizard/test-run``
-04_browse         ``/main``
-05_readme         ``/wizard/project`` (README sub-step)
-06_settings       ``/settings``
-07_orchestrator   ``/staging`` and ``/main?orchestrator=1``
-08_problems       ``/problems?seed=hard``
-================  ====================================================
+==================  =====================================================
+Capability id       Source route(s) inside the test app
+==================  =====================================================
+00_getting_started  ``/`` -- first-launch welcome card
+01_settings         ``/settings`` + ``/wizard/equipment``
+02_browse           ``/main`` + ``/main?selected=...`` -- file explorer
+03_create_project   ``/wizard/project``
+04_create_run       ``/wizard/run``
+05_create_test_run  ``/wizard/test-run``
+06_readme           ``/wizard/project`` -- README sub-step
+07_orchestrator     ``/staging`` + ``/main?orchestrator=1``
+08_problems         ``/problems?seed=hard``
+==================  =====================================================
+
+The guide is ordered by the operator's journey (welcome -> setup ->
+file explorer -> creation -> monitoring), not by the design spec's
+3.x capability numbers; the ``NN_`` prefix is the reading order.
 
 If a capability cannot be screenshotted (for example, the test app's
 selector did not appear within the timeout), the script logs a WARNING
@@ -209,7 +214,55 @@ def _capability_plan() -> list[tuple[str, list[dict[str, Any]]]]:
     """
     return [
         (
-            "01_create_project",
+            "00_getting_started",
+            [
+                {
+                    "step_id": "01_initial",
+                    "route": "/",
+                    "wait_selector": '[data-testid="welcome-get-started"]',
+                },
+            ],
+        ),
+        (
+            "01_settings",
+            [
+                {
+                    "step_id": "01_initial",
+                    "route": "/settings",
+                    "wait_selector": '[data-testid="settings-dialog"]',
+                },
+                {
+                    # The Add-Equipment wizard is reached from the main
+                    # toolbar; it backs capability 3.6 alongside the
+                    # Settings dialog (Redesign decision 4A).
+                    "step_id": "02_add_equipment",
+                    "route": "/wizard/equipment",
+                    "wait_selector": '[data-testid="wizard-equipment-id"]',
+                },
+            ],
+        ),
+        (
+            "02_browse",
+            [
+                {
+                    "step_id": "01_initial",
+                    "route": "/main",
+                    "wait_selector": '[data-testid="main-tree"]',
+                },
+                {
+                    # A selected node drives the redesigned three-region
+                    # layout (centre file list + metadata pane). Wait on a
+                    # breadcrumb *segment* -- only rendered once a node is
+                    # picked -- so a failed selection can't silently
+                    # screenshot the empty state.
+                    "step_id": "02_selected",
+                    "route": "/main?selected=EQ1/Demo Project",
+                    "wait_selector": '[data-testid="breadcrumb-segment"]',
+                },
+            ],
+        ),
+        (
+            "03_create_project",
             [
                 {
                     "step_id": "01_initial",
@@ -219,7 +272,7 @@ def _capability_plan() -> list[tuple[str, list[dict[str, Any]]]]:
             ],
         ),
         (
-            "02_create_run",
+            "04_create_run",
             [
                 {
                     "step_id": "01_initial",
@@ -229,7 +282,7 @@ def _capability_plan() -> list[tuple[str, list[dict[str, Any]]]]:
             ],
         ),
         (
-            "03_create_test_run",
+            "05_create_test_run",
             [
                 {
                     "step_id": "01_initial",
@@ -239,17 +292,7 @@ def _capability_plan() -> list[tuple[str, list[dict[str, Any]]]]:
             ],
         ),
         (
-            "04_browse",
-            [
-                {
-                    "step_id": "01_initial",
-                    "route": "/main",
-                    "wait_selector": '[data-testid="main-tree"]',
-                },
-            ],
-        ),
-        (
-            "05_readme",
+            "06_readme",
             [
                 # The README form is a sub-step of the project wizard;
                 # the test app does not expose a deep-link query
@@ -260,16 +303,6 @@ def _capability_plan() -> list[tuple[str, list[dict[str, Any]]]]:
                     "step_id": "01_initial",
                     "route": "/wizard/project",
                     "wait_selector": '[data-testid="wizard-project-card"]',
-                },
-            ],
-        ),
-        (
-            "06_settings",
-            [
-                {
-                    "step_id": "01_initial",
-                    "route": "/settings",
-                    "wait_selector": '[data-testid="settings-dialog"]',
                 },
             ],
         ),
@@ -295,27 +328,6 @@ def _capability_plan() -> list[tuple[str, list[dict[str, Any]]]]:
                     "step_id": "01_initial",
                     "route": "/problems?seed=hard",
                     "wait_selector": '[data-testid="problems-table"]',
-                },
-            ],
-        ),
-        # GUI/Orchestrator Redesign capability additions.
-        (
-            "09_add_equipment_wizard",
-            [
-                {
-                    "step_id": "01_identity",
-                    "route": "/wizard/equipment",
-                    "wait_selector": '[data-testid="wizard-equipment-id"]',
-                },
-            ],
-        ),
-        (
-            "10_file_explorer",
-            [
-                {
-                    "step_id": "01_overview",
-                    "route": "/main?view=explorer",
-                    "wait_selector": '[data-testid="toolbar-add-equipment"]',
                 },
             ],
         ),
