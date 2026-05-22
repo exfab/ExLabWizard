@@ -22,6 +22,10 @@ class WizardEquipmentPage:
     def label(self) -> Any:
         return self._page.locator('[data-testid="wizard-equipment-label"]')
 
+    @property
+    def step_paths(self) -> Any:
+        return self._page.locator('[data-testid="wizard-equipment-step-paths"]')
+
     # Paths
     @property
     def local_root(self) -> Any:
@@ -36,14 +40,13 @@ class WizardEquipmentPage:
     def sync_mode(self) -> Any:
         return self._page.locator('[data-testid="wizard-equipment-sync-mode"]')
 
-    # Signal
     @property
-    def signal(self) -> Any:
-        return self._page.locator('[data-testid="wizard-equipment-signal"]')
+    def rclone_remote(self) -> Any:
+        return self._page.locator('[data-testid="wizard-equipment-rclone-remote"]')
 
     @property
-    def sentinel_filename(self) -> Any:
-        return self._page.locator('[data-testid="wizard-equipment-sentinel-filename"]')
+    def rclone_remote_path(self) -> Any:
+        return self._page.locator('[data-testid="wizard-equipment-rclone-remote-path"]')
 
     # Review / confirm
     @property
@@ -57,6 +60,10 @@ class WizardEquipmentPage:
     @property
     def next_button(self) -> Any:
         return self._page.locator('[data-testid="wizard-equipment-next"]')
+
+    @property
+    def back(self) -> Any:
+        return self._page.locator('[data-testid="wizard-equipment-back"]')
 
     @property
     def success(self) -> Any:

@@ -77,8 +77,6 @@ def _build_config(local_root: Path) -> Config:
                 label="Equipment 1",
                 local_root=str(local_root),
                 nas_root="/nas",
-                completeness_signal="sentinel_file",
-                sentinel_filename="DONE",
                 transport=RcloneTransport(
                     type="rclone",
                     rclone_remote="lab-nas",
@@ -525,5 +523,168 @@ async def test_remote_hash_mismatch_terminal(
         assert row.last_error == "hash_mismatch"
         # The factory was invoked twice (the single retry exhausts there).
         assert counter[0] == 2
+    finally:
+        await client.close()
+
+
+async def test_poller_per_file_enqueue_drives_to_synced_state(
+    stub_binaries_on_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Poller sweep -> per-file enqueue -> drive -> verify -> sync_state.json
+    records ``synced_signature`` + ``verified_at`` for the synced files.
+
+    Exercises the full operator-free per-file NAS sync path end-to-end:
+    the :class:`QuiescenceSyncPoller` discovers the run, computes the
+    eligible file list, and feeds it to a real :class:`NASSyncClient` that
+    drives the job through the stub rclone transport + verifier.
+    """
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+    from exlab_wizard.orchestrator.quiescence_poller import QuiescenceSyncPoller
+
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    nas_root = tmp_path / "nas"
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
+    monkeypatch.setenv("STUB_RCLONE_DEST_ROOT", str(nas_root))
+
+    cfg = _build_config(local_root)
+    run_dir = await _populate_run(local_root)
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+    sync_state = SyncStateWriter()
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        sync_state_writer=sync_state,
+        worker_poll_interval_s=0.01,
+    )
+    await client.init()
+    poller = QuiescenceSyncPoller(
+        config=cfg,
+        nas_sync=client,
+        sync_state_writer=sync_state,
+    )
+    try:
+        # First sweep observes the file; second sweep (past the settle
+        # window) finds it quiet and enqueues the per-file subset.
+        assert await poller.poll_once(now_monotonic=0.0) == []
+        enqueued = await poller.poll_once(now_monotonic=cfg.sync.quiescence_minutes * 60 + 1.0)
+        assert enqueued == [run_dir]
+
+        # The worker drives the per-file job through to VERIFIED.
+        async def _by_run_path(_ignored: str) -> SyncJobRow | None:
+            return await client._queue.get_by_run_path(run_dir)
+
+        row = await _wait_for_state(
+            _by_run_path,
+            "",
+            {SyncJobState.VERIFIED, SyncJobState.CLEANUP_ELIGIBLE, SyncJobState.CLEANED},
+        )
+        assert row.state in {
+            SyncJobState.VERIFIED,
+            SyncJobState.CLEANUP_ELIGIBLE,
+            SyncJobState.CLEANED,
+        }
+        assert row.files == ("data.bin",)
+
+        # sync_state.json records the verified file.
+        state = await sync_state.read(run_dir)
+        assert "data.bin" in state.files
+        assert state.files["data.bin"].synced_signature is not None
+        assert state.files["data.bin"].verified_at is not None
+    finally:
+        await client.close()
+
+
+async def test_poller_to_cleanup_honors_keep_local_and_stamps_cleared(
+    stub_binaries_on_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Full Phase 5 path: poller sweep -> enqueue -> verify -> SYNCED rollup
+    -> cleanup runs, keeping a ``keep_local`` file and stamping ``cleared_at``.
+
+    Exercises the operator-free per-file NAS sync cleanup contract
+    end-to-end with a real :class:`NASSyncClient` over the stub rclone
+    transport: the run carries two data files, one flagged ``keep_local``;
+    after cleanup the kept file survives, the other is removed, the
+    ``.exlab-wizard/`` metadata subtree is retained, and the run's
+    ``sync_state.json`` rolls up to ``CLEARED``.
+    """
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+    from exlab_wizard.constants import RunSyncState
+    from exlab_wizard.orchestrator.quiescence_poller import QuiescenceSyncPoller
+
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    nas_root = tmp_path / "nas"
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
+    monkeypatch.setenv("STUB_RCLONE_DEST_ROOT", str(nas_root))
+
+    # ``min_verify_passes=1`` + ``min_age_hours=0`` so cleanup runs in the
+    # same worker pass that promotes the job to VERIFIED.
+    cfg = _build_config(local_root)
+    run_dir = local_root / "EQ1" / "PROJ-0042" / "Runs" / "Run_2026-04-17T14-32-00"
+    run_dir.mkdir(parents=True)
+    (run_dir / "data.bin").write_bytes(b"payload-bytes")
+    (run_dir / "keep.bin").write_bytes(b"keep-me-local")
+    cache = run_dir / CACHE_DIR_NAME
+    cache.mkdir()
+    (cache / CREATION_JSON_NAME).write_bytes(msgspec_json.encode(_make_creation(run_dir)))
+
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+    sync_state = SyncStateWriter()
+    # Operator flags one file keep-local before the sync runs.
+    await sync_state.set_keep_local(run_dir, "keep.bin", True)
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        sync_state_writer=sync_state,
+        worker_poll_interval_s=0.01,
+    )
+    await client.init()
+    poller = QuiescenceSyncPoller(
+        config=cfg,
+        nas_sync=client,
+        sync_state_writer=sync_state,
+    )
+    try:
+        # Poller discovers the run and enqueues its quiet files past the
+        # settle window.
+        assert await poller.poll_once(now_monotonic=0.0) == []
+        enqueued = await poller.poll_once(now_monotonic=cfg.sync.quiescence_minutes * 60 + 1.0)
+        assert enqueued == [run_dir]
+
+        async def _by_run_path(_ignored: str) -> SyncJobRow | None:
+            return await client._queue.get_by_run_path(run_dir)
+
+        # The worker drives the job through verify into the cleanup states.
+        await _wait_for_state(
+            _by_run_path,
+            "",
+            {SyncJobState.CLEANED},
+        )
+
+        # The keep_local file survives; the other data file is removed.
+        assert (run_dir / "keep.bin").exists()
+        assert not (run_dir / "data.bin").exists()
+        # The metadata subtree is retained so tombstones still render.
+        assert cache.exists()
+
+        # sync_state.json rolled up to CLEARED (cleared_at stamped).
+        state = await sync_state.read(run_dir)
+        assert state.cleared_at is not None
+        assert SyncStateWriter.rollup_state(state) is RunSyncState.CLEARED
+        # Both files were credited as verified before cleanup ran.
+        assert state.files["data.bin"].verified_at is not None
+        assert state.files["keep.bin"].verified_at is not None
+        assert state.files["keep.bin"].keep_local is True
     finally:
         await client.close()

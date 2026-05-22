@@ -89,12 +89,18 @@ class RsyncSshTransport:
         remote_path: str,
         *,
         bwlimit_kibps: int | None = None,
+        files_from: Path | None = None,
     ) -> TransportResult:
         """Run ``rsync -avz --checksum`` from ``local`` to ``ssh_target:remote_path``.
 
         ``ssh_target`` is ``<user>@<host>``. ``ssh_key_path`` is forwarded
         via ``-e 'ssh -i <key> -o BatchMode=yes'`` so the driver never
         prompts for a password.
+
+        ``files_from`` (operator-free per-file NAS sync, 2026-05-21), when
+        set, is a path to a text file listing run-relative paths to copy --
+        forwarded as ``--files-from <path>`` so only that subset transfers.
+        ``None`` keeps the whole-directory copy behaviour.
 
         Returns a :class:`TransportResult`. Raises :class:`TransportError`
         when the rsync binary is missing (no retry will help).
@@ -110,6 +116,12 @@ class RsyncSshTransport:
         ]
         if bwlimit_kibps is not None and bwlimit_kibps > 0:
             cmd.append(f"--bwlimit={bwlimit_kibps}")
+        if files_from is not None:
+            # The paths inside the --files-from file are interpreted by
+            # rsync as relative to the source dir argument (``local``
+            # below), which is exactly the run-relative POSIX layout the
+            # caller writes -- so no path rewriting is needed here.
+            cmd.append(f"--files-from={files_from}")
         cmd.append(str(local))
         cmd.append(f"{ssh_target}:{remote_path}")
         _log.debug("rsync cmd: %s", shlex.join(cmd))

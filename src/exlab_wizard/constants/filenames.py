@@ -20,8 +20,9 @@ README_FIELDS_JSON_NAME: str = "readme_fields.json"
 # Cache filename for per-equipment static metadata. Backend Spec §11.4.1.
 EQUIPMENT_JSON_NAME: str = "equipment.json"
 
-# Cache filename for the NAS ingest state machine. Backend Spec §13.4.
-INGEST_JSON_NAME: str = "ingest.json"
+# Cache filename for the per-run quiescence-driven per-file sync state.
+# Operator-free per-file NAS sync design (2026-05-21).
+SYNC_STATE_FILENAME: str = "sync_state.json"
 
 # Cache filename for the per-equipment test-run history. Backend Spec §11.4.2.
 TEST_RUNS_JSON_NAME: str = "test_runs.json"

@@ -1,7 +1,7 @@
 """E2E flow 16: Add-Equipment wizard (Redesign §6).
 
-Drives the five-step wizard end to end against the test app:
-identity → paths → sync_mode → signal → review → confirm.
+Drives the four-step wizard end to end against the test app:
+identity → paths → sync_mode → review → confirm.
 
 The test app mounts the wizard at ``/wizard/equipment?step=<step>`` so
 each step can be loaded directly; the production navigation between
@@ -11,6 +11,8 @@ NiceGUI render path produces every testid the catalog promises.
 """
 
 from __future__ import annotations
+
+from playwright.sync_api import expect
 
 from tests.e2e.page_objects.wizard_equipment_page import WizardEquipmentPage
 
@@ -54,14 +56,6 @@ def test_flow_16_add_equipment_sync_mode_step(page, server_url) -> None:
     wiz.sync_mode.wait_for(state="visible", timeout=10_000)
 
 
-def test_flow_16_add_equipment_signal_step(page, server_url) -> None:
-    """Completeness signal step renders the radio + sentinel filename."""
-    wiz = WizardEquipmentPage(page)
-    _goto(page, f"{server_url}/wizard/equipment?step=signal")
-    wiz.signal.wait_for(state="visible", timeout=10_000)
-    wiz.sentinel_filename.wait_for(state="visible")
-
-
 def test_flow_16_add_equipment_review_and_confirm(page, server_url) -> None:
     """Review step renders Confirm; clicking it fires the success label."""
     wiz = WizardEquipmentPage(page)
@@ -70,3 +64,33 @@ def test_flow_16_add_equipment_review_and_confirm(page, server_url) -> None:
     wiz.confirm.click()
     page.wait_for_load_state("networkidle")
     wiz.success.wait_for(state="visible", timeout=5_000)
+
+
+def test_flow_16_next_enables_on_valid_input_and_state_survives_back(page, server_url) -> None:
+    """An empty wizard: Next stays disabled until the identity step is
+    valid, then a click advances *in place* and the entered data
+    survives a Back step.
+
+    Regression guard for two production bugs the seeded ``?step=`` tests
+    could never see: the Next button's ``disable`` was frozen at render
+    time (typing never re-enabled it), and the route rebuilt a fresh
+    empty ``EquipmentWizardState`` on every step navigation.
+    """
+    wiz = WizardEquipmentPage(page)
+    _goto(page, f"{server_url}/wizard/equipment?step=identity&seed=0")
+    wiz.step_identity.wait_for(state="visible", timeout=10_000)
+
+    # Bug A: Next is gated shut until the step validates.
+    expect(wiz.next_button).to_be_disabled()
+    wiz.equipment_id.fill("EQ1")
+    wiz.label.fill("Lab Device")
+    expect(wiz.next_button).to_be_enabled()
+
+    # Advancing re-renders in place -- no page navigation.
+    wiz.next_button.click()
+    wiz.step_paths.wait_for(state="visible", timeout=10_000)
+
+    # Bug B: stepping back keeps what the operator already typed.
+    wiz.back.click()
+    wiz.step_identity.wait_for(state="visible", timeout=10_000)
+    expect(wiz.equipment_id).to_have_value("EQ1")

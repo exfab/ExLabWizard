@@ -297,8 +297,6 @@ def _bootstrap_test_config(config_path: Path, *, include_samples: bool) -> None:
                     "label": "Test Rig",
                     "local_root": str(sandbox / "local" / "TESTRIG"),
                     "nas_root": str(sandbox / "nas" / "TESTRIG"),
-                    "completeness_signal": "sentinel_file",
-                    "sentinel_filename": "done.flag",
                     "sync_mode": "nas",
                     "transport": {
                         "type": "rclone",

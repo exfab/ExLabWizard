@@ -22,8 +22,8 @@ from exlab_wizard import __version__
 from exlab_wizard.api.setup import compute_setup_state
 from exlab_wizard.constants import (
     CREATION_JSON_VERSION,
-    INGEST_JSON_VERSION,
     README_FIELDS_JSON_VERSION,
+    SYNC_STATE_JSON_VERSION,
 )
 from exlab_wizard.logging import get_logger
 
@@ -60,7 +60,7 @@ def build_health_router() -> APIRouter:
             schema_versions={
                 "creation_json": CREATION_JSON_VERSION,
                 "readme_fields_json": README_FIELDS_JSON_VERSION,
-                "ingest_json": INGEST_JSON_VERSION,
+                "sync_state_json": SYNC_STATE_JSON_VERSION,
             },
             components=components,
             setup_state=setup_state_value,

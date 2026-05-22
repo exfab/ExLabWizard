@@ -20,9 +20,9 @@ def test_readme_fields_json_version_is_pinned() -> None:
     assert schema_versions.README_FIELDS_JSON_VERSION == "1.1"
 
 
-def test_ingest_json_version_is_pinned() -> None:
-    # Backend Spec §13.4.
-    assert schema_versions.INGEST_JSON_VERSION == "1.1"
+def test_sync_state_json_version_is_pinned() -> None:
+    # Operator-free per-file NAS sync design (2026-05-21).
+    assert schema_versions.SYNC_STATE_JSON_VERSION == "1.0"
 
 
 def test_equipment_json_version_is_pinned() -> None:
@@ -51,7 +51,7 @@ def test_all_schema_versions_are_strings() -> None:
     for name in (
         "CREATION_JSON_VERSION",
         "README_FIELDS_JSON_VERSION",
-        "INGEST_JSON_VERSION",
+        "SYNC_STATE_JSON_VERSION",
         "EQUIPMENT_JSON_VERSION",
         "TEST_RUNS_JSON_VERSION",
         "OFFLINE_CATALOGUE_VERSION",
@@ -67,7 +67,7 @@ def test_schema_versions_re_exported_from_package() -> None:
 
     assert constants.CREATION_JSON_VERSION == "1.9"
     assert constants.README_FIELDS_JSON_VERSION == "1.1"
-    assert constants.INGEST_JSON_VERSION == "1.1"
+    assert constants.SYNC_STATE_JSON_VERSION == "1.0"
     assert constants.EQUIPMENT_JSON_VERSION == "1.0"
     assert constants.TEST_RUNS_JSON_VERSION == "1.0"
     assert constants.OFFLINE_CATALOGUE_VERSION == "1.0"

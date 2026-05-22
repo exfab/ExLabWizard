@@ -1038,7 +1038,6 @@ def test_build_metadata_payload_owned_equipment_reads_config() -> None:
         sync_mode="nas",
         local_root="/data/EQ1",
         nas_root="//nas/EQ1",
-        completeness_signal="sentinel_file",
     )
     config = _config(equipment=(equipment,))
     payload = mount._build_metadata_payload("EQ1", "equipment", _deps(config=config))
@@ -1047,7 +1046,6 @@ def test_build_metadata_payload_owned_equipment_reads_config() -> None:
     assert payload["sync_mode"] == "nas"
     assert payload["local_root"] == "/data/EQ1"
     assert payload["nas_root"] == "//nas/EQ1"
-    assert payload["completeness_signal"] == "sentinel_file"
 
 
 def test_build_metadata_payload_unknown_equipment_id_returns_empty() -> None:
@@ -1232,7 +1230,7 @@ def test_file_context_action_open_in_os_dispatches_to_helper(
     monkeypatch.setattr(mount, "_open_in_os", lambda p: called.append(p) or True)
     ui = _UiSpy()
     entry = SimpleNamespace(path="/data/EQ1/scan.tif")
-    mount._file_context_action(entry, "open_in_os", ui)
+    mount._file_context_action(None, entry, "open_in_os", ui)
     assert called == ["/data/EQ1/scan.tif"]
 
 
@@ -1243,7 +1241,7 @@ def test_file_context_action_open_in_os_failure_toasts_negative(
     monkeypatch.setattr(mount, "_open_in_os", lambda _p: False)
     ui = _UiSpy()
     entry = SimpleNamespace(path="/data/scan.tif")
-    mount._file_context_action(entry, "open_in_os", ui)
+    mount._file_context_action(None, entry, "open_in_os", ui)
     # No assertion needed -- the test only verifies the call doesn't raise.
 
 
@@ -1251,7 +1249,7 @@ def test_file_context_action_copy_path_writes_clipboard() -> None:
     """``copy_path`` writes the entry path to the NiceGUI clipboard."""
     ui = _UiSpy()
     entry = SimpleNamespace(path="/data/EQ1/scan.tif")
-    mount._file_context_action(entry, "copy_path", ui)
+    mount._file_context_action(None, entry, "copy_path", ui)
     assert ui.clipboard.writes == ["/data/EQ1/scan.tif"]
 
 
@@ -1259,13 +1257,13 @@ def test_file_context_action_unknown_action_no_raise() -> None:
     """An unknown action verb is logged + toasted without raising."""
     ui = _UiSpy()
     entry = SimpleNamespace(path="/data/x.bin")
-    mount._file_context_action(entry, "rename", ui)  # no AssertionError
+    mount._file_context_action(None, entry, "rename", ui)  # no AssertionError
 
 
 def test_file_context_action_empty_path_toasts_negative() -> None:
     """An entry with no path triggers the early-return toast."""
     ui = _UiSpy()
-    mount._file_context_action(SimpleNamespace(path=""), "open_in_os", ui)
+    mount._file_context_action(None, SimpleNamespace(path=""), "open_in_os", ui)
 
 
 # ---------------------------------------------------------------------------
@@ -1329,7 +1327,7 @@ def test_run_staging_action_view_log_invokes_log_dialog(
 ) -> None:
     """``view_log`` dispatches to the dialog opener helper."""
     seen: list[Path] = []
-    monkeypatch.setattr(mount, "_open_log_dialog", lambda path, _ui: seen.append(path))
+    monkeypatch.setattr(mount, "_open_log_dialog", lambda _deps, path, _ui: seen.append(path))
     deps = _deps(config=_config())
     ui = _UiSpy()
     mount._run_staging_action(deps, "EQ1/proj/Run_x", "view_log", ui)
@@ -1343,18 +1341,18 @@ def test_run_staging_action_unknown_action_no_raise() -> None:
     mount._run_staging_action(deps, "EQ1/proj/Run_x", "rename", ui)
 
 
-async def test_run_staging_action_clear_verified_invokes_clear_run(
+async def test_run_staging_action_clear_verified_invokes_clear(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``clear_verified`` calls orchestrator.cleanup.clear_run via background."""
+    """``clear_verified`` deletes the run directory via the local helper."""
     captured: list[Path] = []
 
-    async def _stub(run_path: Path, **_kw: Any) -> tuple[int, int]:
+    def _stub(run_path: Path) -> tuple[int, int]:
         captured.append(run_path)
         return 3, 1024
 
-    monkeypatch.setattr("exlab_wizard.orchestrator.cleanup.clear_run", _stub)
-    deps = _deps(config=_config(), ingest_writer=None)
+    monkeypatch.setattr(mount, "clear_run_dir", _stub)
+    deps = _deps(config=_config())
     ui = _UiSpy()
     mount._run_staging_action(deps, "EQ1/proj/Run_x", "clear_verified", ui)
     pending = [t for t in mount._BACKGROUND_TASKS if not t.done()]
@@ -1368,25 +1366,33 @@ async def test_run_staging_action_clear_verified_invokes_clear_run(
 # ---------------------------------------------------------------------------
 
 
-async def test_bulk_clear_verified_calls_orchestrator_helper(
+async def test_bulk_clear_verified_clears_verified_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The bulk action awaits ``clear_all_verified`` and toasts the count."""
-    calls: list[Any] = []
+    """The bulk action clears every ``synced`` row and toasts the count."""
+    cleared: list[Path] = []
 
-    async def _stub(*, config: Any, ingest_writer: Any, host: Any = None) -> list[str]:
-        del ingest_writer, host
-        calls.append(config)
-        return ["/staging/EQ1/proj/Run_a", "/staging/EQ1/proj/Run_b"]
+    def _summary(path: str, state: str) -> SimpleNamespace:
+        return SimpleNamespace(path=path, current_state=state)
 
-    monkeypatch.setattr("exlab_wizard.orchestrator.cleanup.clear_all_verified", _stub)
-    deps = _deps(config=_config(), ingest_writer=None)
+    monkeypatch.setattr(
+        mount,
+        "list_staged_runs",
+        lambda **_kw: [
+            _summary("/staging/EQ1/proj/Run_a", "synced"),
+            _summary("/staging/EQ1/proj/Run_b", "synced"),
+            _summary("/staging/EQ1/proj/Run_c", "syncing"),
+        ],
+    )
+    monkeypatch.setattr(mount, "clear_run_dir", lambda p: cleared.append(p) or (1, 10))
+    deps = _deps(config=_config())
     ui = _UiSpy()
     mount._bulk_clear_verified(deps, ui)
     pending = [t for t in mount._BACKGROUND_TASKS if not t.done()]
     for task in pending:
         await task
-    assert len(calls) == 1
+    # Only the two verified rows were cleared.
+    assert cleared == [Path("/staging/EQ1/proj/Run_a"), Path("/staging/EQ1/proj/Run_b")]
 
 
 def test_bulk_clear_verified_no_config_toasts_and_returns() -> None:
@@ -1399,13 +1405,13 @@ def test_bulk_clear_verified_no_config_toasts_and_returns() -> None:
 async def test_bulk_clear_verified_logs_helper_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An exception from clear_all_verified is caught + toasted."""
+    """An exception from the clear sweep is caught + toasted."""
 
-    async def _raise(**_kw: Any) -> list[str]:
+    def _raise(**_kw: Any) -> list[Any]:
         raise RuntimeError("staging walker exploded")
 
-    monkeypatch.setattr("exlab_wizard.orchestrator.cleanup.clear_all_verified", _raise)
-    deps = _deps(config=_config(), ingest_writer=None)
+    monkeypatch.setattr(mount, "list_staged_runs", _raise)
+    deps = _deps(config=_config())
     ui = _UiSpy()
     mount._bulk_clear_verified(deps, ui)
     pending = [t for t in mount._BACKGROUND_TASKS if not t.done()]
@@ -1546,26 +1552,38 @@ async def test_fetch_folder_async_swallows_helper_exceptions(
 
 
 # ---------------------------------------------------------------------------
-# _open_log_dialog: missing ingest / malformed / dialog mounted
+# _open_log_dialog: no queue job / queue job present
 # ---------------------------------------------------------------------------
 
 
-def test_open_log_dialog_missing_ingest_toasts(tmp_path: Path) -> None:
-    """A run without an ingest.json file shows a negative toast."""
+async def test_open_log_dialog_no_queue_job_renders_dialog(tmp_path: Path) -> None:
+    """A run with no sync-queue job still renders a dialog without raising."""
     ui = _UiSpy()
-    mount._open_log_dialog(tmp_path / "nope", ui)
+    deps = _deps(nas_sync=None)
+    mount._open_log_dialog(deps, tmp_path / "nope", ui)
+    for task in [t for t in mount._BACKGROUND_TASKS if not t.done()]:
+        await task
 
 
-def test_open_log_dialog_malformed_ingest_toasts(tmp_path: Path) -> None:
-    """A corrupt ingest.json surfaces a parse-error toast without raising."""
-    from exlab_wizard.constants import CACHE_DIR_NAME, INGEST_JSON_NAME
+async def test_open_log_dialog_with_queue_job_renders_dialog(tmp_path: Path) -> None:
+    """A run with a sync-queue job renders its state without raising."""
 
-    run_dir = tmp_path / "EQ1" / "PROJ" / "Run_x"
-    cache = run_dir / CACHE_DIR_NAME
-    cache.mkdir(parents=True)
-    (cache / INGEST_JSON_NAME).write_bytes(b"{not-valid")
+    class _Row:
+        state = SimpleNamespace(value="verified")
+        enqueued_at = "2026-05-01T10:00:00Z"
+        verified_at = "2026-05-01T10:35:00Z"
+        attempts = 1
+        last_error = None
+
+    class _Queue:
+        async def get_by_run_path(self, _path: Path) -> Any:
+            return _Row()
+
     ui = _UiSpy()
-    mount._open_log_dialog(run_dir, ui)
+    deps = _deps(nas_sync=_Queue())
+    mount._open_log_dialog(deps, tmp_path / "EQ1" / "Run_x", ui)
+    for task in [t for t in mount._BACKGROUND_TASKS if not t.done()]:
+        await task
 
 
 # ---------------------------------------------------------------------------
@@ -1661,12 +1679,12 @@ async def test_run_staging_action_force_sync_exception_path_no_raise(
 async def test_run_staging_action_clear_verified_exception_path_no_raise(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When clear_run raises, the background task swallows + toasts."""
+    """When the clear helper raises, the background task swallows + toasts."""
 
-    async def _raise(*_a: Any, **_kw: Any) -> tuple[int, int]:
+    def _raise(*_a: Any, **_kw: Any) -> tuple[int, int]:
         raise RuntimeError("oh no")
 
-    monkeypatch.setattr("exlab_wizard.orchestrator.cleanup.clear_run", _raise)
+    monkeypatch.setattr(mount, "clear_run_dir", _raise)
     deps = _deps(config=_config())
     ui = _UiSpy()
     mount._run_staging_action(deps, "EQ1/Run_x", "clear_verified", ui)
@@ -1679,10 +1697,7 @@ async def test_run_staging_action_clear_verified_zero_files_branch(
 ) -> None:
     """The 0-file path reports ``already cleared`` rather than ``cleared N``."""
 
-    async def _stub(*_a: Any, **_kw: Any) -> tuple[int, int]:
-        return 0, 0
-
-    monkeypatch.setattr("exlab_wizard.orchestrator.cleanup.clear_run", _stub)
+    monkeypatch.setattr(mount, "clear_run_dir", lambda *_a, **_kw: (0, 0))
     deps = _deps(config=_config())
     ui = _UiSpy()
     mount._run_staging_action(deps, "EQ1/Run_x", "clear_verified", ui)
@@ -1702,4 +1717,4 @@ def test_file_context_action_clipboard_failure_toasts(
     ui = _UiSpy()
     ui.clipboard = _BadClipboard()
     entry = SimpleNamespace(path="/data/scan.tif")
-    mount._file_context_action(entry, "copy_path", ui)
+    mount._file_context_action(None, entry, "copy_path", ui)

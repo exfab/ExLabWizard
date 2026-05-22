@@ -16,11 +16,11 @@ never get past the no-config state. This test walks:
     -> /restart-required gate
     -> config.yaml written under the tmp HOME with the entered values
 
-The equipment / project / run / test-run / template creation flows are
-NOT covered here: their wizard submit handlers in
-``exlab_wizard/ui/mount.py`` are still toast-only stubs and no template
-UX exists yet, so there is nothing functional to drive end-to-end.
-Wiring those is tracked as follow-up feature work.
+The project / run / test-run / template creation flows are NOT covered
+here: their wizard submit handlers in ``exlab_wizard/ui/mount.py`` are
+still toast-only stubs and no template UX exists yet. The Add-Equipment
+wizard's confirm now persists for real -- that is exercised against the
+production app in ``test_flow_26_equipment_wizard_persist.py``.
 """
 
 from __future__ import annotations

@@ -71,8 +71,6 @@ def _build_config(
                 label="Eq 1",
                 local_root=str(local_root),
                 nas_root="/nas",
-                completeness_signal="sentinel_file",
-                sentinel_filename="DONE",
                 transport=transport,
             )
         ],
@@ -128,8 +126,6 @@ def test_build_transport_driver_rclone(tmp_path: Path) -> None:
         label="Eq 1",
         local_root=str(tmp_path),
         nas_root="/nas",
-        completeness_signal="sentinel_file",
-        sentinel_filename="DONE",
         transport=RcloneTransport(
             type="rclone",
             rclone_remote="lab-nas",
@@ -148,8 +144,6 @@ def test_build_transport_driver_rsync_ssh(tmp_path: Path) -> None:
         label="Eq 1",
         local_root=str(tmp_path),
         nas_root="/nas",
-        completeness_signal="sentinel_file",
-        sentinel_filename="DONE",
         transport=RsyncSshTransport(
             type="rsync_ssh",
             ssh_target="user@host",
@@ -180,7 +174,9 @@ async def test_hash_mismatch_first_failure_retries(tmp_path: Path) -> None:
     writer = CreationWriter(lock_timeout_seconds=10.0)
     call_count = {"n": 0}
 
-    async def _push(_local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
+    async def _push(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
         call_count["n"] += 1
         if call_count["n"] == 1:
             return TransportResult(
@@ -229,7 +225,9 @@ async def test_hash_mismatch_second_failure_terminal(tmp_path: Path) -> None:
     run_dir = await _populate_run(tmp_path)
     writer = CreationWriter(lock_timeout_seconds=10.0)
 
-    async def _push(_local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
+    async def _push(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
         return TransportResult(ok=False, error_kind=TransportErrorKind.HASH_MISMATCH, returncode=1)
 
     client = NASSyncClient(
@@ -265,7 +263,9 @@ async def test_cleanup_full_delete_when_retain_cache_false(tmp_path: Path) -> No
     run_dir = await _populate_run(tmp_path)
     writer = CreationWriter(lock_timeout_seconds=10.0)
 
-    async def _push(_local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
+    async def _push(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
         return TransportResult(ok=True, returncode=0)
 
     client = NASSyncClient(
@@ -299,7 +299,9 @@ async def test_cleanup_retain_cache_keeps_metadata(tmp_path: Path) -> None:
     run_dir = await _populate_run(tmp_path)
     writer = CreationWriter(lock_timeout_seconds=10.0)
 
-    async def _push(_local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
+    async def _push(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
         return TransportResult(ok=True, returncode=0)
 
     client = NASSyncClient(
@@ -335,7 +337,9 @@ async def test_cleanup_disabled_keeps_files(tmp_path: Path) -> None:
     run_dir = await _populate_run(tmp_path)
     writer = CreationWriter(lock_timeout_seconds=10.0)
 
-    async def _push(_local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
+    async def _push(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
         return TransportResult(ok=True, returncode=0)
 
     client = NASSyncClient(
@@ -371,7 +375,9 @@ async def test_cleanup_eligible_when_min_verify_passes_unmet(tmp_path: Path) -> 
     run_dir = await _populate_run(tmp_path)
     writer = CreationWriter(lock_timeout_seconds=10.0)
 
-    async def _push(_local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
+    async def _push(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
         return TransportResult(ok=True, returncode=0)
 
     client = NASSyncClient(
@@ -405,7 +411,9 @@ async def test_cleanup_blocked_by_remote_stat(tmp_path: Path) -> None:
     run_dir = await _populate_run(tmp_path)
     writer = CreationWriter(lock_timeout_seconds=10.0)
 
-    async def _push(_local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
+    async def _push(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
         return TransportResult(ok=True, returncode=0)
 
     client = NASSyncClient(
@@ -435,6 +443,275 @@ async def test_cleanup_blocked_by_remote_stat(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 5: _delete_local honors keep_local; cleanup gates on the SYNCED rollup
+# ---------------------------------------------------------------------------
+
+
+def _client(cfg: Config, tmp_path: Path) -> NASSyncClient:
+    """Build an un-init'd client for direct ``_delete_local`` calls."""
+    return NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=CreationWriter(lock_timeout_seconds=10.0),
+    )
+
+
+def test_delete_local_skips_keep_local_files_incl_nested(tmp_path: Path) -> None:
+    """``_delete_local`` keeps ``keep_local`` files, incl. a nested one."""
+    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Runs" / "Run_x"
+    run_dir.mkdir(parents=True)
+    (run_dir / "keep.bin").write_bytes(b"keep")
+    (run_dir / "drop.bin").write_bytes(b"drop")
+    nested = run_dir / "sub" / "deep"
+    nested.mkdir(parents=True)
+    (nested / "kept_nested.txt").write_text("nested-keep")
+    (run_dir / "sub" / "other.txt").write_text("nested-drop")
+    cache = run_dir / CACHE_DIR_NAME
+    cache.mkdir()
+    (cache / "meta.json").write_text("{}")
+
+    cfg = _build_config(tmp_path, retain_cache=True)
+    client = _client(cfg, tmp_path)
+    client._delete_local(run_dir, {"keep.bin", "sub/deep/kept_nested.txt"})
+
+    # Retained files survive; the run dir + cache are intact.
+    assert (run_dir / "keep.bin").exists()
+    assert (nested / "kept_nested.txt").exists()
+    assert (cache / "meta.json").exists()
+    # Non-retained files are gone.
+    assert not (run_dir / "drop.bin").exists()
+    assert not (run_dir / "sub" / "other.txt").exists()
+    # The directory holding the kept nested file survives.
+    assert (run_dir / "sub" / "deep").exists()
+
+
+def test_delete_local_prunes_emptied_dirs_keeps_dir_with_kept_file(tmp_path: Path) -> None:
+    """A directory holding only deleted files is pruned (deepest-first);
+    a parent still holding a kept file survives."""
+    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Runs" / "Run_p"
+    run_dir.mkdir(parents=True)
+    # ``branch/`` keeps a file directly + has a fully-emptied descendant.
+    branch = run_dir / "branch"
+    (branch / "leaf").mkdir(parents=True)
+    (branch / "kept.txt").write_text("keep")
+    (branch / "leaf" / "drop_a.txt").write_text("a")
+    (branch / "leaf" / "drop_b.txt").write_text("b")
+    # ``gone/`` and its nested ``gone/inner/`` hold only droppable files ->
+    # the whole ``gone`` subtree must be pruned away (deepest-first).
+    inner = run_dir / "gone" / "inner"
+    inner.mkdir(parents=True)
+    (run_dir / "gone" / "drop_c.txt").write_text("c")
+    (inner / "drop_d.txt").write_text("d")
+
+    cfg = _build_config(tmp_path, retain_cache=True)
+    client = _client(cfg, tmp_path)
+    client._delete_local(run_dir, {"branch/kept.txt"})
+
+    # The kept file and its directory survive.
+    assert (branch / "kept.txt").exists()
+    assert branch.is_dir()
+    # The fully-emptied descendant directory is pruned.
+    assert not (branch / "leaf").exists()
+    # The entire ``gone`` subtree (parent + nested) is pruned deepest-first.
+    assert not (run_dir / "gone").exists()
+    # The run directory itself is never removed.
+    assert run_dir.is_dir()
+
+
+def test_delete_local_does_not_descend_or_remove_directory_symlink(tmp_path: Path) -> None:
+    """A directory symlink inside the run is left untouched -- its target's
+    contents are not deleted and the link itself is not removed."""
+    # An external directory the run will symlink to.
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "precious.txt").write_text("do-not-delete")
+
+    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Runs" / "Run_s"
+    run_dir.mkdir(parents=True)
+    (run_dir / "drop.bin").write_bytes(b"drop")
+    link = run_dir / "linked"
+    link.symlink_to(external, target_is_directory=True)
+
+    cfg = _build_config(tmp_path, retain_cache=True)
+    client = _client(cfg, tmp_path)
+    client._delete_local(run_dir, set())
+
+    # The run's own file is gone.
+    assert not (run_dir / "drop.bin").exists()
+    # The symlink itself and the external target's contents are untouched.
+    assert link.is_symlink()
+    assert external.is_dir()
+    assert (external / "precious.txt").read_text() == "do-not-delete"
+
+
+def test_delete_local_keep_local_survives_retain_cache_false(tmp_path: Path) -> None:
+    """A ``keep_local`` file survives even when ``retain_cache=False``."""
+    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Runs" / "Run_y"
+    run_dir.mkdir(parents=True)
+    (run_dir / "keep.bin").write_bytes(b"keep")
+    (run_dir / "drop.bin").write_bytes(b"drop")
+
+    cfg = _build_config(tmp_path, retain_cache=False)
+    client = _client(cfg, tmp_path)
+    client._delete_local(run_dir, {"keep.bin"})
+
+    # The whole-run rmtree is skipped because a keep_local file exists.
+    assert run_dir.exists()
+    assert (run_dir / "keep.bin").exists()
+    assert not (run_dir / "drop.bin").exists()
+
+
+def test_delete_local_retain_cache_false_drops_whole_run_without_keep_local(
+    tmp_path: Path,
+) -> None:
+    """With ``retain_cache=False`` and no kept files the run dir is removed."""
+    run_dir = tmp_path / "EQ1" / "PROJ-0042" / "Runs" / "Run_z"
+    run_dir.mkdir(parents=True)
+    (run_dir / "drop.bin").write_bytes(b"drop")
+
+    cfg = _build_config(tmp_path, retain_cache=False)
+    client = _client(cfg, tmp_path)
+    client._delete_local(run_dir, set())
+    assert not run_dir.exists()
+
+
+async def test_cleanup_marks_cleared_in_sync_state(tmp_path: Path) -> None:
+    """A full cleanup pass stamps ``cleared_at`` in ``sync_state.json``."""
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+
+    cfg = _build_config(tmp_path, retain_cache=True, min_verify_passes=1, min_age_hours=0)
+    run_dir = await _populate_run(tmp_path)
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+
+    async def _push(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
+        return TransportResult(ok=True, returncode=0)
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        push_callable_factory=_factory(_push),
+        hashsum_callable_factory=local_hashsum_factory(),
+        worker_poll_interval_s=0.005,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir)
+        for _ in range(400):
+            row = await client._queue.get_by_id(handle.job_id)
+            if row is not None and row.state is SyncJobState.CLEANED:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("expected CLEANED state")
+    finally:
+        await client.close()
+
+    state = await SyncStateWriter().read(run_dir)
+    assert state.cleared_at is not None
+    assert SyncStateWriter.rollup_state(state).value == "cleared"
+
+
+async def test_cleanup_keeps_keep_local_file(tmp_path: Path) -> None:
+    """A file flagged ``keep_local`` survives the cleanup sweep."""
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+
+    cfg = _build_config(tmp_path, retain_cache=True, min_verify_passes=1, min_age_hours=0)
+    run_dir = await _populate_run(tmp_path)
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+    sync_writer = SyncStateWriter()
+    # Operator flags the top-level data file as keep-local before cleanup.
+    await sync_writer.set_keep_local(run_dir, "data.bin", True)
+
+    async def _push(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
+        return TransportResult(ok=True, returncode=0)
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        sync_state_writer=sync_writer,
+        push_callable_factory=_factory(_push),
+        hashsum_callable_factory=local_hashsum_factory(),
+        worker_poll_interval_s=0.005,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir)
+        for _ in range(400):
+            row = await client._queue.get_by_id(handle.job_id)
+            if row is not None and row.state is SyncJobState.CLEANED:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("expected CLEANED state")
+        # The keep_local file survives; the other data file is removed.
+        assert (run_dir / "data.bin").exists()
+        assert not (run_dir / "subdir" / "child.txt").exists()
+    finally:
+        await client.close()
+
+
+async def test_cleanup_deferred_when_run_only_partially_synced(tmp_path: Path) -> None:
+    """Cleanup does not run while a tracked file remains unverified.
+
+    A pre-existing ``sync_state.json`` records an extra file that never
+    verifies, so the whole-run rollup stays ``SYNCING`` even after this
+    job's subset verifies -- the job promotes to VERIFIED but cleanup is
+    deferred and the local files survive.
+    """
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+
+    cfg = _build_config(tmp_path, retain_cache=True, min_verify_passes=1, min_age_hours=0)
+    run_dir = await _populate_run(tmp_path)
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+    sync_writer = SyncStateWriter()
+    # A later-sweep file that has never verified -> run is not fully SYNCED.
+    await sync_writer.upsert_file(run_dir, "pending.bin", synced_signature=None, verified_at=None)
+
+    async def _push(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
+        return TransportResult(ok=True, returncode=0)
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        sync_state_writer=sync_writer,
+        push_callable_factory=_factory(_push),
+        hashsum_callable_factory=local_hashsum_factory(),
+        worker_poll_interval_s=0.005,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir, files=["data.bin"])
+        for _ in range(400):
+            row = await client._queue.get_by_id(handle.job_id)
+            if row is not None and row.state is SyncJobState.VERIFIED:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("expected VERIFIED")
+        # Give the worker a beat -- cleanup must NOT advance the job.
+        await asyncio.sleep(0.1)
+        row = await client._queue.get_by_id(handle.job_id)
+        assert row is not None and row.state is SyncJobState.VERIFIED
+        # Local data is retained because the run is not fully SYNCED.
+        assert (run_dir / "data.bin").exists()
+    finally:
+        await client.close()
+
+
+# ---------------------------------------------------------------------------
 # Worker error handling: equipment-not-configured / vanished local
 # ---------------------------------------------------------------------------
 
@@ -448,7 +725,9 @@ async def test_worker_marks_failed_when_local_run_vanished(tmp_path: Path) -> No
     # Use a slow stub so we have time to delete the directory before the
     # worker picks the row.
 
-    async def _slow(_local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
+    async def _slow(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
         await asyncio.sleep(2.0)
         return TransportResult(ok=True)
 
@@ -497,8 +776,10 @@ async def test_verifier_mismatch_first_failure_then_pass(tmp_path: Path) -> None
         def __init__(self) -> None:
             self.calls = 0
 
-        async def compute_local_manifest(self, run_path: Path) -> dict[str, str]:
-            return await Verifier.compute_local_manifest(self, run_path)
+        async def compute_local_manifest(
+            self, run_path: Path, include: set[str] | None = None
+        ) -> dict[str, str]:
+            return await Verifier.compute_local_manifest(self, run_path, include)
 
         async def verify_against_local(
             self, run_path: Path, manifest: dict[str, str]
@@ -508,7 +789,9 @@ async def test_verifier_mismatch_first_failure_then_pass(tmp_path: Path) -> None
                 return VerifyResult(ok=False, mismatched=("data.bin",), manifest=manifest)
             return VerifyResult(ok=True, manifest=manifest)
 
-    async def _push(_local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
+    async def _push(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
         return TransportResult(ok=True, returncode=0)
 
     client = NASSyncClient(
@@ -553,7 +836,9 @@ async def test_verifier_mismatch_second_failure_terminal(tmp_path: Path) -> None
         ) -> VerifyResult:
             return VerifyResult(ok=False, mismatched=("x",), manifest=manifest)
 
-    async def _push(_local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
+    async def _push(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
         return TransportResult(ok=True, returncode=0)
 
     client = NASSyncClient(
@@ -608,7 +893,9 @@ async def test_network_error_records_backoff_retry(tmp_path: Path) -> None:
     run_dir = await _populate_run(tmp_path)
     writer = CreationWriter(lock_timeout_seconds=10.0)
 
-    async def _push(_local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
+    async def _push(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
         return TransportResult(ok=False, error_kind=TransportErrorKind.NETWORK, returncode=1)
 
     client = NASSyncClient(
@@ -663,8 +950,6 @@ async def test_build_transport_driver_rejects_unknown_type(tmp_path: Path) -> No
         label="Eq",
         local_root=str(tmp_path),
         nas_root="/nas",
-        completeness_signal="sentinel_file",
-        sentinel_filename="DONE",
         transport=_BogusTransport(),  # type: ignore[arg-type]
     )
     with pytest.raises(ValueError, match="unsupported transport"):
@@ -727,3 +1012,125 @@ def test_infer_equipment_id_falls_back_to_first(tmp_path: Path) -> None:
     )
     inferred = client._infer_equipment_id(Path("/no/match/here"), creation)
     assert inferred == "EQ1"
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: per-file verify reconciliation
+# ---------------------------------------------------------------------------
+
+
+async def test_partial_batch_credits_verified_files_in_sync_state(tmp_path: Path) -> None:
+    """A batch where one file fails verification still credits the others
+    in ``sync_state.json`` -- operator-free per-file NAS sync 'Failure
+    handling': a single bad file must not block the good ones."""
+    import hashlib
+
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+
+    cfg = _build_config(tmp_path)
+    run_dir = await _populate_run(tmp_path)  # data.bin + subdir/child.txt
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+    sync_state = SyncStateWriter()
+
+    async def _push(_local: Path, *, bwlimit_kibps: int | None, files_from: object = None):
+        return TransportResult(ok=True, returncode=0)
+
+    def corrupt_one_hashsum_factory():
+        """Remote-hash probe that mangles ``subdir/child.txt`` -- so it
+        mismatches while ``data.bin`` verifies cleanly."""
+
+        async def _hashsum(target: Path) -> dict[str, str]:
+            out: dict[str, str] = {}
+            for f in sorted(target.rglob("*")):
+                if not f.is_file():
+                    continue
+                rel = f.relative_to(target).as_posix()
+                if rel.startswith(".exlab-wizard/"):
+                    continue
+                digest = hashlib.sha256(f.read_bytes()).hexdigest()
+                if rel == "subdir/child.txt":
+                    digest = "0" * 64  # corrupt this one file's remote digest
+                out[rel] = digest
+            return out
+
+        return lambda _eq: _hashsum
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        sync_state_writer=sync_state,
+        push_callable_factory=_factory(_push),
+        hashsum_callable_factory=corrupt_one_hashsum_factory(),
+        worker_poll_interval_s=0.005,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir, ["data.bin", "subdir/child.txt"])
+        # child.txt mismatches on every probe -> the hash-mismatch path
+        # retries once then terminates the whole batch job at FAILED.
+        for _ in range(600):
+            row = await client._queue.get_by_id(handle.job_id)
+            if row is not None and row.state is SyncJobState.FAILED:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("expected the batch job to terminate FAILED")
+
+        # Even though the batch job is terminal FAILED, per-file
+        # reconciliation must still have credited data.bin: it verified,
+        # so it carries a synced_signature + verified_at. child.txt did
+        # NOT verify -> uncredited.
+        state = await sync_state.read(run_dir)
+        assert "data.bin" in state.files
+        assert state.files["data.bin"].synced_signature is not None
+        assert state.files["data.bin"].verified_at is not None
+        assert "subdir/child.txt" not in state.files
+    finally:
+        await client.close()
+
+
+async def test_full_batch_credits_every_file_in_sync_state(tmp_path: Path) -> None:
+    """A fully-successful batch credits every verified file in sync_state.json."""
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+
+    cfg = _build_config(tmp_path)
+    run_dir = await _populate_run(tmp_path)
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+    sync_state = SyncStateWriter()
+
+    async def _push(_local: Path, *, bwlimit_kibps: int | None, files_from: object = None):
+        return TransportResult(ok=True, returncode=0)
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        sync_state_writer=sync_state,
+        push_callable_factory=_factory(_push),
+        hashsum_callable_factory=local_hashsum_factory(),
+        worker_poll_interval_s=0.005,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir, ["data.bin", "subdir/child.txt"])
+        for _ in range(400):
+            row = await client._queue.get_by_id(handle.job_id)
+            if row is not None and row.state in {
+                SyncJobState.VERIFIED,
+                SyncJobState.CLEANUP_ELIGIBLE,
+                SyncJobState.CLEANED,
+            }:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("expected eventual VERIFIED")
+        state = await sync_state.read(run_dir)
+        assert {"data.bin", "subdir/child.txt"} <= set(state.files)
+        for rec in state.files.values():
+            assert rec.synced_signature is not None
+            assert rec.verified_at is not None
+    finally:
+        await client.close()

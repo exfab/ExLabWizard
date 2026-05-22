@@ -28,7 +28,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from exlab_wizard.api._dependencies import require_deps
+from exlab_wizard.api._dependencies import lims_password_present, require_deps
 from exlab_wizard.config.models import (
     EquipmentConfig,
     EquipmentTransport,
@@ -151,7 +151,7 @@ def compute_setup_state(deps: Any) -> SetupState:
     return evaluate_setup_state(
         deps.config,
         lims_reachable=getattr(deps, "lims_reachable", True),
-        keyring_password_present=getattr(deps, "keyring_password_present", True),
+        keyring_password_present=lims_password_present(deps),
     )
 
 

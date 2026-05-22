@@ -36,6 +36,7 @@ from exlab_wizard.config.models import (
     RsyncSshTransport,
     SyncConfig,
     ValidatorConfig,
+    config_with_equipment_appended,
 )
 from exlab_wizard.errors import ConfigError
 
@@ -65,9 +66,6 @@ def _rsync_transport_dict() -> dict:
 def _equipment_dict(
     *,
     equipment_id: str = "CONFOCAL_01",
-    completeness_signal: str = "sentinel_file",
-    sentinel_filename: str | None = "acquisition_complete.flag",
-    manifest_filename: str | None = None,
     transport: dict | None = None,
 ) -> dict:
     """Build a valid EquipmentConfig dict with sensible defaults."""
@@ -76,9 +74,6 @@ def _equipment_dict(
         "label": "Confocal Microscope 1",
         "local_root": "/data/lab",
         "nas_root": "//nas01/lab",
-        "completeness_signal": completeness_signal,
-        "sentinel_filename": sentinel_filename,
-        "manifest_filename": manifest_filename,
         "transport": transport or _rclone_transport_dict(),
     }
 
@@ -114,9 +109,6 @@ def _full_config_dict() -> dict:
                 "label": "Confocal Microscope 1",
                 "local_root": "/data/lab",
                 "nas_root": "//nas01/lab",
-                "completeness_signal": "sentinel_file",
-                "sentinel_filename": "acquisition_complete.flag",
-                "manifest_filename": None,
                 "sync_mode": "nas",
                 "transport": {
                     "type": "rclone",
@@ -140,9 +132,6 @@ def _full_config_dict() -> dict:
                 "label": "Flow Cytometer 1",
                 "local_root": "/data/lab",
                 "nas_root": "/mnt/nas/lab",
-                "completeness_signal": "manifest",
-                "sentinel_filename": None,
-                "manifest_filename": "run_manifest.json",
                 "sync_mode": "nas",
                 "transport": {
                     "type": "rsync_ssh",
@@ -189,7 +178,13 @@ def _full_config_dict() -> dict:
             ],
         },
         "plugins": {"allow_network": False},
-        "sync": {"enabled": True, "retry_attempts": 3},
+        "sync": {
+            "enabled": True,
+            "retry_attempts": 3,
+            "quiescence_minutes": 10,
+            "ignore_globs": ["*.partial", "*.tmp"],
+            "poll_interval_seconds": 120,
+        },
         "orchestrator": {
             "label": "Lab Acquisition Station 01",
             "staging_root": "/staging",
@@ -458,9 +453,6 @@ def test_equipment_transport_discriminates_on_type_rsync() -> None:
     eq = EquipmentConfig.model_validate(
         _equipment_dict(
             equipment_id="FLOW_01",
-            completeness_signal="manifest",
-            sentinel_filename=None,
-            manifest_filename="run_manifest.json",
             transport=_rsync_transport_dict(),
         )
     )
@@ -539,24 +531,15 @@ def test_equipment_id_accepts_max_length() -> None:
     assert eq.id == at_max
 
 
-def test_completeness_signal_sentinel_requires_filename() -> None:
-    with pytest.raises(ValidationError) as info:
-        EquipmentConfig.model_validate(
-            _equipment_dict(completeness_signal="sentinel_file", sentinel_filename=None)
-        )
-    assert "sentinel_filename" in str(info.value)
-
-
-def test_completeness_signal_manifest_requires_filename() -> None:
-    with pytest.raises(ValidationError) as info:
-        EquipmentConfig.model_validate(
-            _equipment_dict(
-                completeness_signal="manifest",
-                sentinel_filename=None,
-                manifest_filename=None,
-            )
-        )
-    assert "manifest_filename" in str(info.value)
+def test_equipment_config_rejects_removed_completeness_fields() -> None:
+    """The operator-free quiescence redesign drops the per-equipment
+    completeness-signal fields; ``extra='forbid'`` now rejects them."""
+    for stale_key in ("completeness_signal", "sentinel_filename", "manifest_filename"):
+        bad = _equipment_dict()
+        bad[stale_key] = "x"
+        with pytest.raises(ValidationError) as info:
+            EquipmentConfig.model_validate(bad)
+        assert stale_key in str(info.value)
 
 
 def test_equipment_label_must_be_non_empty() -> None:
@@ -818,11 +801,43 @@ def test_sync_config_defaults() -> None:
     cfg = SyncConfig()
     assert cfg.enabled is True
     assert cfg.retry_attempts == 3
+    assert cfg.quiescence_minutes == 10
+    assert cfg.ignore_globs == ["*.partial", "*.tmp"]
+    assert cfg.poll_interval_seconds == 120
 
 
 def test_sync_config_retry_attempts_non_negative() -> None:
     with pytest.raises(ValidationError):
         SyncConfig(retry_attempts=-1)
+
+
+def test_sync_config_quiescence_minutes_at_least_one() -> None:
+    with pytest.raises(ValidationError):
+        SyncConfig(quiescence_minutes=0)
+
+
+def test_sync_config_poll_interval_seconds_at_least_one() -> None:
+    with pytest.raises(ValidationError):
+        SyncConfig(poll_interval_seconds=0)
+
+
+def test_sync_config_accepts_custom_quiescence_settings() -> None:
+    cfg = SyncConfig(
+        quiescence_minutes=30,
+        ignore_globs=["*.lock"],
+        poll_interval_seconds=60,
+    )
+    assert cfg.quiescence_minutes == 30
+    assert cfg.ignore_globs == ["*.lock"]
+    assert cfg.poll_interval_seconds == 60
+
+
+def test_sync_config_ignore_globs_default_is_independent_per_instance() -> None:
+    # default_factory: mutating one instance's list must not bleed into another.
+    first = SyncConfig()
+    first.ignore_globs.append("*.bak")
+    second = SyncConfig()
+    assert second.ignore_globs == ["*.partial", "*.tmp"]
 
 
 # ---------------------------------------------------------------------------
@@ -895,9 +910,6 @@ def test_distinct_equipment_ids_accepted() -> None:
             _equipment_dict(equipment_id="CONFOCAL_01"),
             _equipment_dict(
                 equipment_id="FLOW_01",
-                completeness_signal="manifest",
-                sentinel_filename=None,
-                manifest_filename="run_manifest.json",
                 transport=_rsync_transport_dict(),
             ),
         ],
@@ -989,3 +1001,46 @@ def test_round_trip_preserves_bandwidth_alias_for_from() -> None:
     assert schedule[0]["from"] == "08:00"
     assert schedule[0]["to"] == "18:00"
     assert "from_" not in schedule[0]
+
+
+# ---------------------------------------------------------------------------
+# config_with_equipment_appended (Redesign §6 -- shared append helper)
+# ---------------------------------------------------------------------------
+
+
+def test_config_with_equipment_appended_seeds_from_none() -> None:
+    """A ``None`` config (fresh install) yields a default Config + the device."""
+    eq = EquipmentConfig.model_validate(_equipment_dict(equipment_id="CONFOCAL_01"))
+    result = config_with_equipment_appended(None, eq)
+    assert isinstance(result, Config)
+    assert [e.id for e in result.equipment] == ["CONFOCAL_01"]
+
+
+def test_config_with_equipment_appended_preserves_existing_state() -> None:
+    """Appending keeps prior equipment and other config sections, unmutated."""
+    first = EquipmentConfig.model_validate(_equipment_dict(equipment_id="CONFOCAL_01"))
+    base = Config(equipment=[first], logging=LoggingConfig(level="DEBUG"))
+    second = EquipmentConfig.model_validate(
+        _equipment_dict(
+            equipment_id="FLOW_02",
+            transport={
+                "type": "rclone",
+                "rclone_remote": "lab-nas",
+                "rclone_remote_path": "lab/FLOW_02",
+            },
+        )
+    )
+    result = config_with_equipment_appended(base, second)
+    assert [e.id for e in result.equipment] == ["CONFOCAL_01", "FLOW_02"]
+    assert result.logging.level == "DEBUG"
+    # The input config is copied, never mutated in place.
+    assert [e.id for e in base.equipment] == ["CONFOCAL_01"]
+
+
+def test_config_with_equipment_appended_rejects_duplicate_id() -> None:
+    """A device whose id already exists raises ConfigError, not a silent merge."""
+    existing = EquipmentConfig.model_validate(_equipment_dict(equipment_id="CONFOCAL_01"))
+    base = Config(equipment=[existing])
+    dupe = EquipmentConfig.model_validate(_equipment_dict(equipment_id="CONFOCAL_01"))
+    with pytest.raises(ConfigError, match="CONFOCAL_01"):
+        config_with_equipment_appended(base, dupe)

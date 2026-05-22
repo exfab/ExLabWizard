@@ -25,7 +25,6 @@ from exlab_wizard.constants import (
     EQUIPMENT_ID_MAX_LENGTH,
     EQUIPMENT_ID_PATTERN,
     EQUIPMENT_JSON_NAME,
-    INGEST_JSON_NAME,
     PROJECT_NAME_MAX_LENGTH,
     PROJECT_SHORT_ID_PATTERN,
     README_FIELDS_JSON_NAME,
@@ -59,7 +58,6 @@ __all__ = [
     "ensure_state_dir",
     "equipment_json_path",
     "evaluate_setup_state",
-    "ingest_json_path",
     "is_run_dir",
     "is_test_run_dir",
     "os_cache_path",
@@ -573,11 +571,6 @@ def cache_dir(run_or_project_dir: Path) -> Path:
 def creation_json_path(run_or_project_dir: Path) -> Path:
     """Return the ``creation.json`` path under a run or project directory."""
     return cache_dir(run_or_project_dir) / CREATION_JSON_NAME
-
-
-def ingest_json_path(run_dir: Path) -> Path:
-    """Return the ``ingest.json`` path under a run directory."""
-    return cache_dir(run_dir) / INGEST_JSON_NAME
 
 
 def equipment_json_path(equipment_dir: Path) -> Path:

@@ -8,7 +8,7 @@ Visual concerns are covered by Phase-16 Playwright tests.
 
 from __future__ import annotations
 
-from exlab_wizard.constants import IngestState
+from exlab_wizard.constants import RunSyncState
 from exlab_wizard.orchestrator.staging_query import StagedRunSummary
 from exlab_wizard.ui.pages.staging import (
     STAGING_DOCK_HEIGHT_PX,
@@ -99,11 +99,9 @@ def test_format_elapsed_handles_negative() -> None:
 
 def test_state_pill_props_returns_label_and_color_for_each_state() -> None:
     for state in (
-        IngestState.STAGING,
-        IngestState.COMPLETE,
-        IngestState.SYNC_QUEUED,
-        IngestState.SYNC_VERIFIED,
-        IngestState.CLEARED,
+        RunSyncState.SYNCING,
+        RunSyncState.SYNCED,
+        RunSyncState.CLEARED,
     ):
         props = state_pill_props(state.value)
         assert props["label"] == state.value
@@ -124,7 +122,7 @@ def test_state_pill_props_falls_back_for_unknown_state() -> None:
 
 def _make_row(
     *,
-    state: IngestState = IngestState.STAGING,
+    state: str = "syncing",
     path: str = "/staging/EQ1/PROJ-0001/Run_2026-04-17T14-32-00",
     files: int = 5,
     byte_total: int = 4096,
@@ -132,7 +130,7 @@ def _make_row(
 ) -> StagedRunSummary:
     return StagedRunSummary(
         path=path,
-        current_state=state.value,
+        current_state=state,
         equipment_id="EQ1",
         project_name="PROJ-0001",
         run_kind="experimental",
@@ -148,18 +146,16 @@ def test_row_props_emits_run_label_as_leaf() -> None:
     assert props["run_label"] == "Run_2026-04-17T14-32-00"
 
 
-def test_row_props_marks_sync_verified_as_clearable() -> None:
-    props = row_props(_make_row(state=IngestState.SYNC_VERIFIED))
+def test_row_props_marks_synced_rollup_as_clearable() -> None:
+    """Only a fully-``synced`` run rollup is clearable."""
+    props = row_props(_make_row(state=RunSyncState.SYNCED.value))
     assert props["is_clearable"] is True
 
 
-def test_row_props_does_not_mark_other_states_as_clearable() -> None:
-    for state in (
-        IngestState.STAGING,
-        IngestState.COMPLETE,
-        IngestState.SYNC_QUEUED,
-        IngestState.CLEARED,
-    ):
+def test_row_props_does_not_mark_other_rollups_as_clearable() -> None:
+    # ``cleared`` is excluded: that run's staging copy is already gone, so
+    # a "Clear" affordance would be a no-op. ``syncing`` is unproven.
+    for state in (RunSyncState.SYNCING.value, RunSyncState.CLEARED.value):
         props = row_props(_make_row(state=state))
         assert props["is_clearable"] is False, state
 

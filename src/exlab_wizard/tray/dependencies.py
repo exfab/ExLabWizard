@@ -10,17 +10,17 @@ the tray. The pattern mirrors the §4.5 lifespan contract ("best-effort;
 failure logs WARN").
 
 The order matters: validator depends on the cache writers, controller
-composes validator + plugin host + template engine + cache writers,
-staging watcher depends on the ingest writer + a NAS-sync stub. We
-construct upstream pieces first and pass them into downstream
-constructors; any upstream failure short-circuits the chain so a None
-upstream produces a None downstream rather than a partially-constructed
-object.
+composes validator + plugin host + template engine + cache writers, the
+quiescence poller depends on the NAS-sync queue. We construct upstream
+pieces first and pass them into downstream constructors; any upstream
+failure short-circuits the chain so a None upstream produces a None
+downstream rather than a partially-constructed object.
 """
 
 from __future__ import annotations
 
 import contextlib
+import os
 from pathlib import Path
 from typing import Any
 
@@ -62,7 +62,6 @@ def build_production_dependencies(state_dir: Path) -> AppDependencies:
     cache_equipment = _try("cache_equipment", _build_equipment_writer)
     template_engine = _try("template_engine", _build_template_engine)
     deps.plugin_host = _try("plugin_host", _build_plugin_host, deps.config)
-    deps.ingest_writer = _try("ingest_writer", _build_ingest_writer)
 
     deps.controller = _try(
         "controller",
@@ -94,16 +93,28 @@ def build_production_dependencies(state_dir: Path) -> AppDependencies:
     deps.lims_reachable = True
     deps.lims_probe = _make_lims_probe(deps)
 
-    deps.nas_sync = _try("nas_sync", _build_nas_sync, deps.config, state_dir)
+    # ``sync_state_writer`` must precede ``nas_sync`` -- the NASSyncClient
+    # takes it as a constructor dependency for per-file verify
+    # reconciliation (operator-free per-file NAS sync, 2026-05-21).
+    deps.sync_state_writer = _try("sync_state_writer", _build_sync_state_writer)
+
+    deps.nas_sync = _try(
+        "nas_sync",
+        _build_nas_sync,
+        deps.config,
+        state_dir,
+        validator,
+        deps.cache_creation,
+        deps.sync_state_writer,
+    )
     deps.nas_sync_snapshot = _make_nas_sync_snapshot(deps)
 
-    deps.staging_watcher = _try(
-        "staging_watcher",
-        _build_staging_watcher,
+    deps.quiescence_poller = _try(
+        "quiescence_poller",
+        _build_quiescence_poller,
         config=deps.config,
-        ingest_writer=deps.ingest_writer,
         nas_sync=deps.nas_sync,
-        cache_creation=deps.cache_creation,
+        sync_state_writer=deps.sync_state_writer,
     )
 
     deps.autostart_toggle = _make_autostart_toggle()
@@ -192,12 +203,6 @@ def _build_equipment_writer() -> Any:
     return EquipmentCacheWriter()
 
 
-def _build_ingest_writer() -> Any:
-    from exlab_wizard.cache.ingest_writer import IngestWriter
-
-    return IngestWriter()
-
-
 def _build_template_engine() -> Any:
     from exlab_wizard.template.copier_driver import TemplateEngine
 
@@ -252,10 +257,27 @@ def _build_controller(
     )
 
 
+# Env var supplying the master passphrase for the encrypted-at-rest
+# secret store. Read only when the OS keyring is unavailable; never
+# committed -- callers export it at launch on keyring-less hosts.
+_SECRET_PASSPHRASE_ENV = "EXLAB_WIZARD_SECRET_PASSPHRASE"
+
+
 def _build_keyring_store(state_dir: Path) -> Any:
+    """Build the LIMS/NAS secret store with an optional fallback passphrase.
+
+    When the OS keyring backend is unavailable, :class:`KeyringStore`
+    falls back to an encrypted-at-rest file keyed by a master passphrase
+    (Backend Spec §7.4.4). That passphrase is read from
+    ``EXLAB_WIZARD_SECRET_PASSPHRASE``; when the variable is unset no
+    provider is wired and the fallback stays disabled -- the historical
+    behaviour, so keyring-equipped hosts are unaffected.
+    """
     from exlab_wizard.lims.keyring_store import KeyringStore
 
-    return KeyringStore(state_dir=state_dir)
+    passphrase = os.environ.get(_SECRET_PASSPHRASE_ENV)
+    provider = (lambda: passphrase) if passphrase else None
+    return KeyringStore(state_dir=state_dir, passphrase_provider=provider)
 
 
 def _lims_keyring_password(keyring_store: Any) -> str | None:
@@ -323,14 +345,44 @@ def _make_lims_probe(deps: AppDependencies) -> Any:
     return _probe
 
 
-def _build_nas_sync(config: Any, state_dir: Path) -> Any:
+def _build_nas_sync(
+    config: Any,
+    state_dir: Path,
+    validator: Any,
+    cache_creation: Any,
+    sync_state_writer: Any,
+) -> Any:
+    """Build the :class:`NASSyncClient` -- the public NAS-sync surface.
+
+    The client wires the durable queue, the transport drivers, the
+    verifier, the Pre-Sync Gate, and (operator-free per-file NAS sync,
+    2026-05-21) the ``sync_state.json`` writer used for per-file verify
+    reconciliation. ``verifier`` and the transport / hashsum factories
+    default correctly inside ``NASSyncClient`` so they are not passed.
+
+    The poller and the force-sync route call ``enqueue`` / ``status`` on
+    this object; returning a bare ``SyncQueue`` (which has neither) would
+    leave the poller sweep silently dead.
+    """
     if config is None:
         msg = "NAS sync requires a loaded config"
         raise RuntimeError(msg)
-    from exlab_wizard.sync.queue import SyncQueue
+    if validator is None:
+        msg = "NAS sync requires a validator"
+        raise RuntimeError(msg)
+    if cache_creation is None:
+        msg = "NAS sync requires a creation-cache writer"
+        raise RuntimeError(msg)
+    from exlab_wizard.sync.nas_client import NASSyncClient
 
     db_path = state_dir / "sync_queue.sqlite"
-    return SyncQueue(db_path)
+    return NASSyncClient(
+        config=config,
+        queue_db=db_path,
+        validator=validator,
+        cache_creation=cache_creation,
+        sync_state_writer=sync_state_writer,
+    )
 
 
 def _make_nas_sync_snapshot(deps: AppDependencies) -> Any:
@@ -345,27 +397,48 @@ def _make_nas_sync_snapshot(deps: AppDependencies) -> Any:
     return _snapshot
 
 
-def _build_staging_watcher(
+def _build_sync_state_writer() -> Any:
+    """Build the orchestrator-only ``sync_state.json`` writer.
+
+    Operator-free per-file NAS sync design (2026-05-21): the quiescence
+    poller reads ``sync_state.json`` to skip already-synced files and the
+    NAS-sync client writes per-file verify reconciliation into it.
+    """
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+
+    return SyncStateWriter()
+
+
+def _build_quiescence_poller(
     *,
     config: Any,
-    ingest_writer: Any,
     nas_sync: Any,
-    cache_creation: Any,
+    sync_state_writer: Any,
 ) -> Any:
-    # Redesign §3.1: the staging watcher boots whenever staging_root is
-    # configured; the legacy enabled toggle is gone.
-    if config is None or not config.orchestrator.staging_root:
+    # Operator-free per-file NAS sync design (2026-05-21): the quiescence
+    # poller boots whenever a staging_root is configured OR any equipment
+    # is in ``nas`` sync mode -- it is the single auto-sync trigger for
+    # both orchestrator-staged and nas-mode runs.
+    if config is None:
         return None
-    if ingest_writer is None or nas_sync is None or cache_creation is None:
-        msg = "staging watcher requires ingest_writer + nas_sync + cache_creation"
-        raise RuntimeError(msg)
-    from exlab_wizard.orchestrator.staging_watcher import StagingWatcher
+    from exlab_wizard.constants import SyncMode
 
-    return StagingWatcher(
+    has_staging_root = bool(config.orchestrator.staging_root)
+    has_nas_equipment = any(eq.sync_mode == SyncMode.NAS for eq in config.equipment)
+    if not (has_staging_root or has_nas_equipment):
+        return None
+    if nas_sync is None:
+        msg = "quiescence poller requires nas_sync"
+        raise RuntimeError(msg)
+    if sync_state_writer is None:
+        msg = "quiescence poller requires sync_state_writer"
+        raise RuntimeError(msg)
+    from exlab_wizard.orchestrator.quiescence_poller import QuiescenceSyncPoller
+
+    return QuiescenceSyncPoller(
         config=config,
-        ingest_writer=ingest_writer,
         nas_sync=nas_sync,
-        cache_creation=cache_creation,
+        sync_state_writer=sync_state_writer,
     )
 
 

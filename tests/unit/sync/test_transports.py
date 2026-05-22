@@ -368,6 +368,80 @@ async def test_rclone_argv_omits_bwlimit_when_none(
     assert "--bwlimit" not in argv
 
 
+async def test_rclone_argv_includes_files_from_when_set(
+    stub_dir: Path,
+    record_argv: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``files_from`` -> ``--files-from`` immediately followed by the path."""
+    src = tmp_path / "src"
+    src.mkdir()
+    files_from = tmp_path / "files.txt"
+    files_from.write_text("data.bin\n")
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
+    transport = RcloneTransport()
+    await transport.push(src, "remote:/srv/run", files_from=files_from)
+    argv = _read_recorded_argvs(record_argv)[0]
+    assert "--files-from" in argv
+    idx = argv.index("--files-from")
+    assert argv[idx + 1] == str(files_from)
+
+
+async def test_rclone_argv_omits_files_from_when_none(
+    stub_dir: Path,
+    record_argv: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``files_from=None`` -> ``--files-from`` is absent from argv."""
+    src = tmp_path / "src"
+    src.mkdir()
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
+    transport = RcloneTransport()
+    await transport.push(src, "remote:/srv/run")
+    argv = _read_recorded_argvs(record_argv)[0]
+    assert "--files-from" not in argv
+
+
+async def test_rsync_argv_includes_files_from_when_set(
+    stub_dir: Path,
+    record_argv: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``files_from`` -> ``--files-from=<path>`` is present in the rsync argv."""
+    src = tmp_path / "src"
+    src.mkdir()
+    files_from = tmp_path / "files.txt"
+    files_from.write_text("data.bin\n")
+    monkeypatch.setenv("STUB_RSYNC_BEHAVIOR", "success")
+    transport = RsyncSshTransport()
+    key = tmp_path / "id_ed25519"
+    key.write_bytes(b"k")
+    await transport.push(src, "user@host", key, "/srv/run", files_from=files_from)
+    argv = _read_recorded_argvs(record_argv)[0]
+    assert f"--files-from={files_from}" in argv
+
+
+async def test_rsync_argv_omits_files_from_when_none(
+    stub_dir: Path,
+    record_argv: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``files_from=None`` -> no ``--files-from`` flag in the rsync argv."""
+    src = tmp_path / "src"
+    src.mkdir()
+    monkeypatch.setenv("STUB_RSYNC_BEHAVIOR", "success")
+    transport = RsyncSshTransport()
+    key = tmp_path / "id_ed25519"
+    key.write_bytes(b"k")
+    await transport.push(src, "user@host", key, "/srv/run")
+    argv = _read_recorded_argvs(record_argv)[0]
+    assert not any(a.startswith("--files-from") for a in argv)
+
+
 async def test_rsync_argv_includes_checksum_partial(
     stub_dir: Path,
     record_argv: Path,

@@ -95,13 +95,59 @@ def test_flow_24_run_context_menu_items_render(page, server_url) -> None:
 
 
 def test_flow_24_file_list_row_context_menu(page, server_url) -> None:
-    """Right-clicking a file-list row surfaces Open in OS + Copy path."""
+    """Right-clicking a file-list row surfaces Open in OS / Copy path / Keep local."""
     _goto(page, f"{server_url}/main?view=explorer")
     # Select a run so the centre pane renders the seeded file list.
     page.locator('[data-testid="tree-node-run"]').first.click()
     page.wait_for_load_state("networkidle")
-    row = page.locator('[data-testid="file-list-row"]').first
+    # A non-tombstone row carries all three actions.
+    row = page.locator('[data-testid="file-list-row"]:not([data-tombstone])').first
     row.wait_for(state="visible", timeout=10_000)
     _open_context(page, row)
     page.locator('[data-testid="file-context-open-in-os"]').wait_for(state="visible", timeout=5_000)
     page.locator('[data-testid="file-context-copy-path"]').wait_for(state="visible", timeout=5_000)
+    page.locator('[data-testid="file-context-keep-local"]').wait_for(state="visible", timeout=5_000)
+
+
+def test_flow_24_tombstone_row_has_no_open_in_os(page, server_url) -> None:
+    """An "On NAS" tombstone row has no local copy, so no Open-in-OS action.
+
+    Operator-free per-file NAS sync design (2026-05-21): a cleared-run
+    file is listed as an "On NAS" tombstone -- it cannot be opened, but
+    Copy path / Keep local stay available.
+    """
+    _goto(page, f"{server_url}/main?view=explorer")
+    page.locator('[data-testid="tree-node-run"]').first.click()
+    page.wait_for_load_state("networkidle")
+    tombstone = page.locator('[data-testid="file-list-row"][data-tombstone="true"]').first
+    tombstone.wait_for(state="visible", timeout=10_000)
+    _open_context(page, tombstone)
+    page.locator('[data-testid="file-context-copy-path"]').wait_for(state="visible", timeout=5_000)
+    page.locator('[data-testid="file-context-keep-local"]').wait_for(state="visible", timeout=5_000)
+    # The tombstone's own context menu carries no Open-in-OS item.
+    menu = page.locator('[data-testid="file-context-menu"]').last
+    assert menu.locator('[data-testid="file-context-open-in-os"]').count() == 0
+
+
+def test_flow_24_keep_local_badge_and_toggle(page, server_url) -> None:
+    """A keep-local file shows the "kept local" badge; the toggle action fires.
+
+    Operator-free per-file NAS sync design (2026-05-21): a ``keep_local``
+    file carries a small badge and its context menu offers "Don't keep
+    local". Clicking the keep-local item dispatches the action without
+    raising (the round trip to ``set_keep_local`` is covered by the unit
+    tests).
+    """
+    _goto(page, f"{server_url}/main?view=explorer")
+    page.locator('[data-testid="tree-node-run"]').first.click()
+    page.wait_for_load_state("networkidle")
+    # The default seeded feed has exactly one keep-local file.
+    badge = page.locator('[data-testid="file-keep-local-badge"]')
+    badge.first.wait_for(state="visible", timeout=10_000)
+    assert badge.count() == 1
+    kept_row = page.locator('[data-testid="file-list-row"][data-keep-local="true"]').first
+    kept_row.wait_for(state="visible", timeout=5_000)
+    _open_context(page, kept_row)
+    item = page.locator('[data-testid="file-context-keep-local"]').last
+    item.wait_for(state="visible", timeout=5_000)
+    item.click()  # dispatches the keep-local toggle action without error

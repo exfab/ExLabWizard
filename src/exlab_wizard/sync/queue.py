@@ -31,12 +31,19 @@ The schema below mirrors the API contract in the Phase 10 brief:
         verify_passes INTEGER NOT NULL DEFAULT 0,
         verified_at TEXT,
         enqueued_at TEXT NOT NULL,
-        nas_path TEXT
+        nas_path TEXT,
+        files TEXT NOT NULL DEFAULT '[]'
     )
+
+The ``files`` column holds a JSON array of run-relative POSIX paths --
+the per-file subset eligible at enqueue time (operator-free per-file NAS
+sync design, 2026-05-21). An empty list (``'[]'``) means "the whole run",
+preserving back-compat for callers that do not pass a file list.
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -93,7 +100,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     verify_passes INTEGER NOT NULL DEFAULT 0,
     verified_at TEXT,
     enqueued_at TEXT NOT NULL,
-    nas_path TEXT
+    nas_path TEXT,
+    files TEXT NOT NULL DEFAULT '[]'
 )
 """
 
@@ -120,6 +128,29 @@ class SyncJobRow:
     verified_at: str | None = None
     enqueued_at: str = ""
     nas_path: str | None = None
+    files: tuple[str, ...] = ()
+
+
+def _decode_files(raw: str | None) -> tuple[str, ...]:
+    """Decode the ``files`` JSON column into a tuple of run-relative paths.
+
+    A ``NULL`` / empty / ``'[]'`` column yields ``()`` -- the "whole run"
+    semantics that pre-Phase-4 callers rely on.
+    """
+    if not raw:
+        return ()
+    try:
+        decoded = json.loads(raw)
+    except (ValueError, TypeError):
+        return ()
+    if not isinstance(decoded, list):
+        return ()
+    return tuple(str(item) for item in decoded)
+
+
+def _encode_files(files: tuple[str, ...]) -> str:
+    """Encode a run-relative path tuple into the ``files`` JSON column."""
+    return json.dumps(list(files))
 
 
 def _row_to_job(row: aiosqlite.Row | tuple) -> SyncJobRow:
@@ -137,6 +168,7 @@ def _row_to_job(row: aiosqlite.Row | tuple) -> SyncJobRow:
         verified_at=row[9],
         enqueued_at=row[10] or "",
         nas_path=row[11],
+        files=_decode_files(row[12]),
     )
 
 
@@ -228,8 +260,12 @@ class SyncQueue:
         equipment_id: str,
         nas_path: str | None = None,
         job_id: str | None = None,
+        files: tuple[str, ...] | list[str] | None = None,
     ) -> SyncJobRow:
         """Insert a new ``QUEUED`` row for ``run_path``.
+
+        ``files`` is the per-file subset (run-relative POSIX paths) eligible
+        at enqueue time; an empty / omitted list means "the whole run".
 
         Raises :class:`aiosqlite.IntegrityError` (via the UNIQUE constraint
         on ``run_path``) if a row already exists for the same path.
@@ -242,14 +278,15 @@ class SyncQueue:
             state=SyncJobState.QUEUED,
             enqueued_at=utc_now_iso(),
             nas_path=nas_path,
+            files=tuple(files or ()),
         )
         await conn.execute(
             """
             INSERT INTO jobs (
                 id, run_path, equipment_id, state, attempts,
                 last_attempt_at, next_attempt_at, last_error,
-                verify_passes, verified_at, enqueued_at, nas_path
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                verify_passes, verified_at, enqueued_at, nas_path, files
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row.id,
@@ -264,6 +301,7 @@ class SyncQueue:
                 row.verified_at,
                 row.enqueued_at,
                 row.nas_path,
+                _encode_files(row.files),
             ),
         )
         await conn.commit()
@@ -455,6 +493,40 @@ class SyncQueue:
             WHERE id = ?
             """,
             (SyncJobState.QUEUED.value, job_id),
+        )
+        await conn.commit()
+        return await self.get_by_id(job_id)  # type: ignore[return-value]
+
+    async def requeue_with_files(
+        self,
+        job_id: str,
+        files: tuple[str, ...] | list[str],
+    ) -> SyncJobRow:
+        """Reset a terminal job back to ``QUEUED`` carrying a new ``files`` list.
+
+        Operator-free per-file NAS sync design (2026-05-21): a file modified
+        after a prior verify becomes re-eligible. When the poller observes
+        such a file it re-arms the run's terminal job (``VERIFIED`` /
+        ``CLEANUP_ELIGIBLE`` / ``CLEANED`` / ``FAILED``) with the freshly
+        eligible subset. ``attempts`` / ``last_error`` / ``verify_passes``
+        are cleared so the backoff schedule and verify counter start fresh.
+        """
+        await self._require_job(job_id)
+        conn = self._require_conn()
+        await conn.execute(
+            """
+            UPDATE jobs SET
+                state = ?,
+                attempts = 0,
+                last_attempt_at = NULL,
+                next_attempt_at = NULL,
+                last_error = NULL,
+                verify_passes = 0,
+                verified_at = NULL,
+                files = ?
+            WHERE id = ?
+            """,
+            (SyncJobState.QUEUED.value, _encode_files(tuple(files)), job_id),
         )
         await conn.commit()
         return await self.get_by_id(job_id)  # type: ignore[return-value]

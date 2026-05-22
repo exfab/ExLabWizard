@@ -14,7 +14,6 @@ from typing import Any
 from pydantic import ValidationError
 
 from exlab_wizard.config.models import Config
-from exlab_wizard.constants import CompletenessSignal
 from exlab_wizard.logging import get_logger
 from exlab_wizard.ui import notifications
 from exlab_wizard.ui.components import credential_field, test_connection_panel
@@ -438,10 +437,9 @@ def _render_equipment_section(draft: Config) -> None:
     ``draft.equipment`` and reflects it in the visible list; the whole
     draft is re-validated and persisted when the operator clicks Save.
 
-    The sub-form covers the full §9 equipment surface: a
-    completeness-signal radio (``sentinel_file`` / ``manifest``) that
-    swaps the filename field, and a transport radio (``rclone`` /
-    ``rsync_ssh``) that swaps the transport fieldset.
+    The sub-form covers the full §9 equipment surface: a transport
+    radio (``rclone`` / ``rsync_ssh``) that swaps the transport
+    fieldset.
     """
     from nicegui import ui
 
@@ -455,10 +453,9 @@ def _render_equipment_section(draft: Config) -> None:
                     transport_summary = (
                         entry.transport.type if entry.transport is not None else "stage"
                     )
-                    ui.label(
-                        f"{entry.id} -- {entry.label} "
-                        f"[{entry.completeness_signal} / {transport_summary}]"
-                    ).props('data-testid="settings-equipment-row"')
+                    ui.label(f"{entry.id} -- {entry.label} [{transport_summary}]").props(
+                        'data-testid="settings-equipment-row"'
+                    )
             else:
                 ui.label("No equipment configured yet.").props(
                     'data-testid="settings-equipment-empty"'
@@ -473,29 +470,8 @@ def _render_equipment_section(draft: Config) -> None:
     eq_local = ui.input(label="Local root").props('data-testid="settings-equipment-local-root"')
     eq_nas = ui.input(label="NAS root").props('data-testid="settings-equipment-nas-root"')
 
-    # Completeness signal: a radio that swaps the filename field.
-    signal_radio = ui.radio(
-        [CompletenessSignal.SENTINEL_FILE.value, CompletenessSignal.MANIFEST.value],
-        value=CompletenessSignal.SENTINEL_FILE.value,
-    ).props('data-testid="settings-equipment-signal"')
     # Widget refs the swap-panels and ``_add`` share.
     fields: dict[str, Any] = {}
-
-    @ui.refreshable
-    def _signal_field() -> None:
-        if signal_radio.value == CompletenessSignal.MANIFEST.value:
-            fields["manifest"] = ui.input(label="Manifest filename", value="manifest.json").props(
-                'data-testid="settings-equipment-manifest"'
-            )
-            fields.pop("sentinel", None)
-        else:
-            fields["sentinel"] = ui.input(
-                label="Sentinel filename", value="acquisition_complete.flag"
-            ).props('data-testid="settings-equipment-sentinel"')
-            fields.pop("manifest", None)
-
-    _signal_field()
-    signal_radio.on_value_change(lambda _e: _signal_field.refresh())
 
     # Transport: a radio that swaps the transport fieldset.
     transport_radio = ui.radio(["rclone", "rsync_ssh"], value="rclone").props(
@@ -536,9 +512,6 @@ def _render_equipment_section(draft: Config) -> None:
                 label=eq_label.value or "",
                 local_root=eq_local.value or "",
                 nas_root=eq_nas.value or "",
-                completeness_signal=signal_radio.value or CompletenessSignal.SENTINEL_FILE.value,
-                sentinel_filename=(fields["sentinel"].value or "" if "sentinel" in fields else ""),
-                manifest_filename=(fields["manifest"].value or "" if "manifest" in fields else ""),
                 transport_type=transport_radio.value or "rclone",
                 rclone_remote=(
                     fields["rclone_remote"].value or "" if "rclone_remote" in fields else ""

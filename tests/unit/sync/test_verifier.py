@@ -61,6 +61,44 @@ async def test_compute_local_manifest_writes_checksums_file(tmp_path: Path) -> N
     assert parsed == manifest
 
 
+async def test_compute_local_manifest_include_filters_to_subset(tmp_path: Path) -> None:
+    """``include`` scopes the manifest to the given run-relative subset."""
+    run_path = tmp_path / "run"
+    run_path.mkdir()
+    contents = _populate_run(run_path)
+
+    verifier = Verifier()
+    manifest = await verifier.compute_local_manifest(run_path, {"data/a.txt", "metadata.json"})
+
+    assert set(manifest) == {"data/a.txt", "metadata.json"}
+    assert "data/b.txt" not in manifest
+    assert manifest["data/a.txt"] == hashlib.sha256(contents["data/a.txt"]).hexdigest()
+
+
+async def test_compute_local_manifest_include_empty_set_hashes_nothing(tmp_path: Path) -> None:
+    """An empty ``include`` set yields an empty manifest (whole-run is ``None``)."""
+    run_path = tmp_path / "run"
+    run_path.mkdir()
+    _populate_run(run_path)
+
+    manifest = await Verifier().compute_local_manifest(run_path, set())
+    assert manifest == {}
+
+
+async def test_compute_local_manifest_subset_skips_checksums_side_effect(tmp_path: Path) -> None:
+    """A subset (``include``) pass does NOT write ``checksums.sha256``.
+
+    Persisting a partial manifest would clobber the run's durable checksum
+    file with an incomplete record; only a whole-run pass is durable.
+    """
+    run_path = tmp_path / "run"
+    run_path.mkdir()
+    _populate_run(run_path)
+
+    await Verifier().compute_local_manifest(run_path, {"data/a.txt"})
+    assert not (run_path / CHECKSUMS_RELATIVE).exists()
+
+
 async def test_compute_excludes_cache_dir(tmp_path: Path) -> None:
     """Files under ``.exlab-wizard/`` are excluded from the manifest."""
     run_path = tmp_path / "run"

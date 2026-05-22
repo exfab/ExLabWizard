@@ -65,8 +65,6 @@ def _build_config(local_root: Path, *, retain_cache: bool = True) -> Config:
                 label="Eq 1",
                 local_root=str(local_root),
                 nas_root="/nas",
-                completeness_signal="sentinel_file",
-                sentinel_filename="DONE",
                 transport=RcloneTransport(
                     type="rclone",
                     rclone_remote="lab-nas",
@@ -122,7 +120,9 @@ def _make_push_factory(
 ) -> Callable[[EquipmentConfig], Callable[..., Any]]:
     """A push callable factory that yields deterministic outcomes for tests."""
 
-    async def _push(local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
+    async def _push(
+        local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
         return TransportResult(ok=ok, error_kind=error_kind, returncode=0 if ok else 1)
 
     def factory(_eq: EquipmentConfig) -> Callable[..., Any]:
@@ -439,7 +439,9 @@ async def test_enqueue_idempotent_for_already_queued_row(
     run_dir = await _populate_run(tmp_path)
     # Use a slow stub to keep the row from progressing past QUEUED.
 
-    async def _slow(local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
+    async def _slow(
+        local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
         await asyncio.sleep(0.5)
         return TransportResult(ok=True)
 
@@ -521,5 +523,105 @@ async def test_mark_cleaned_is_noop_when_creation_json_missing(
     try:
         # Should not raise even though creation.json doesn't exist.
         await client._mark_cleaned(run_dir)
+    finally:
+        await client.close()
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: per-file enqueue + verify reconciliation
+# ---------------------------------------------------------------------------
+
+
+async def test_enqueue_with_files_inserts_subset(tmp_path: Path, writer: CreationWriter) -> None:
+    """``enqueue(run, files=[...])`` stores the subset on the queue row."""
+    cfg = _build_config(tmp_path)
+    run_dir = await _populate_run(tmp_path)
+
+    async def _slow(local: Path, *, bwlimit_kibps: int | None, files_from: object = None):
+        await asyncio.sleep(0.5)
+        return TransportResult(ok=True)
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        push_callable_factory=lambda _eq: _slow,
+        worker_poll_interval_s=0.01,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir, ["data.bin"])
+        assert handle.state == HandleState.QUEUED
+        row = await client._queue.get_by_run_path(run_dir)
+        assert row is not None
+        assert row.files == ("data.bin",)
+    finally:
+        await client.close()
+
+
+async def test_enqueue_requeues_terminal_job_with_new_files(
+    tmp_path: Path, writer: CreationWriter
+) -> None:
+    """A terminal (FAILED) job is re-armed in QUEUED with a fresh file subset."""
+    cfg = _build_config(tmp_path)
+    run_dir = await _populate_run(tmp_path)
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        push_callable_factory=_make_push_factory(ok=False, error_kind=TransportErrorKind.AUTH),
+        worker_poll_interval_s=0.01,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir, ["data.bin"])
+        for _ in range(200):
+            row = await client._queue.get_by_id(handle.job_id)
+            if row is not None and row.state is SyncJobState.FAILED:
+                break
+            await asyncio.sleep(0.02)
+        else:
+            pytest.fail("worker did not reach FAILED")
+        # Re-enqueue with a new subset -> re-armed QUEUED carrying the new files.
+        handle2 = await client.enqueue(run_dir, ["other.bin"])
+        assert handle2.state == HandleState.QUEUED
+        row2 = await client._queue.get_by_run_path(run_dir)
+        assert row2 is not None
+        assert row2.files == ("other.bin",)
+    finally:
+        await client.close()
+
+
+async def test_enqueue_noops_active_job_with_new_files(
+    tmp_path: Path, writer: CreationWriter
+) -> None:
+    """An active (QUEUED) job is left untouched when re-enqueued with new files."""
+    cfg = _build_config(tmp_path)
+    run_dir = await _populate_run(tmp_path)
+
+    async def _slow(local: Path, *, bwlimit_kibps: int | None, files_from: object = None):
+        await asyncio.sleep(0.5)
+        return TransportResult(ok=True)
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        push_callable_factory=lambda _eq: _slow,
+        worker_poll_interval_s=0.01,
+    )
+    await client.init()
+    try:
+        handle1 = await client.enqueue(run_dir, ["data.bin"])
+        handle2 = await client.enqueue(run_dir, ["other.bin"])
+        # Same job; the new files do NOT overwrite the active row's subset.
+        assert handle1.job_id == handle2.job_id
+        row = await client._queue.get_by_run_path(run_dir)
+        assert row is not None
+        assert row.files == ("data.bin",)
     finally:
         await client.close()

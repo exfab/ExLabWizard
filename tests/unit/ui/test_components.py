@@ -133,6 +133,33 @@ def test_sync_status_cleaned_uses_success_with_cloud_icon() -> None:
     assert props["icon_name"] == "cloud_done"
 
 
+def test_sync_status_acquiring_uses_muted() -> None:
+    """``acquiring`` (new file, still settling) uses the muted token."""
+
+    props = sync_status_icon.sync_status_props("acquiring")
+    assert props["color_var"] == "--color-muted"
+    assert props["status"] == "acquiring"
+    assert props["icon_name"]
+
+
+def test_sync_status_syncing_uses_info() -> None:
+    """``syncing`` (settled, transferring) uses the info token."""
+
+    props = sync_status_icon.sync_status_props("syncing")
+    assert props["color_var"] == "--color-info"
+    assert props["status"] == "syncing"
+    assert props["icon_name"]
+
+
+def test_sync_status_on_nas_uses_muted_cloud() -> None:
+    """``on_nas`` (tombstone, local copy cleared) uses a muted cloud glyph."""
+
+    props = sync_status_icon.sync_status_props("on_nas")
+    assert props["color_var"] == "--color-muted"
+    assert props["status"] == "on_nas"
+    assert props["icon_name"] == "cloud"
+
+
 def test_sync_status_retrying_with_counter() -> None:
     """Retry counter renders as ``(N/M)`` (Frontend §10.5.1)."""
 
@@ -651,15 +678,19 @@ def test_tree_run_node_propagates_sync_status() -> None:
     assert nodes[0].children[0].children[0].sync_status == "cleaned"
 
 
-def test_to_nicegui_nodes_cleaned_run_uses_cloud_icon() -> None:
-    """A ``cleaned`` run row carries the cloud-icon URL and its sync_status."""
+def test_to_nicegui_nodes_cleared_run_uses_cloud_icon() -> None:
+    """A ``cleared`` run row carries the cloud-icon URL and its sync_status.
+
+    Operator-free per-file NAS sync design (2026-05-21): the run rollup
+    is a :class:`RunSyncState` value; the cloud icon keys off ``cleared``.
+    """
 
     equipment = tree.EquipmentNode(equipment_id="CONFOCAL_01")
     project = tree.ProjectNode(short_id="PROJ-1", name="Cortex Q3")
     run = tree.RunNode(
         directory_name="Run_2026-05-07",
         run_kind="experimental",
-        sync_status="cleaned",
+        sync_status="cleared",
     )
     payload = tree.to_nicegui_nodes(
         tree.build_nodes(
@@ -669,7 +700,7 @@ def test_to_nicegui_nodes_cleaned_run_uses_cloud_icon() -> None:
     )
     run_dict = payload[0]["children"][0]["children"][0]
     assert run_dict["sync_icon"] == tree.SYNC_ICON_CLOUD_URL
-    assert run_dict["sync_status"] == "cleaned"
+    assert run_dict["sync_status"] == "cleared"
 
 
 def test_to_nicegui_nodes_local_run_uses_local_icon() -> None:

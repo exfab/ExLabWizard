@@ -43,9 +43,6 @@ flow test.
 | `/settings` | `settings-equipment-label` | input | Type the equipment label | Provides the EquipmentConfig.label for the new entry. |
 | `/settings` | `settings-equipment-local-root` | input | Type the equipment local root | Provides the EquipmentConfig.local_root for the new entry. |
 | `/settings` | `settings-equipment-nas-root` | input | Type the equipment NAS root | Provides the EquipmentConfig.nas_root for the new entry. |
-| `/settings` | `settings-equipment-signal` | radio | Pick the completeness signal (sentinel_file / manifest) | Swaps the filename field between sentinel and manifest. |
-| `/settings` | `settings-equipment-sentinel` | input | Type the sentinel filename | Sets the sentinel_file completeness signal filename. |
-| `/settings` | `settings-equipment-manifest` | input | Type the manifest filename | Sets the manifest completeness signal filename. |
 | `/settings` | `settings-equipment-transport` | radio | Pick the transport (rclone / rsync_ssh) | Swaps the transport fieldset between rclone and rsync_ssh. |
 | `/settings` | `settings-equipment-rclone-remote` | input | Type the rclone remote | Sets the rclone transport remote for the new entry. |
 | `/settings` | `settings-equipment-rclone-path` | input | Type the rclone remote path | Sets the rclone transport remote path for the new entry. |
@@ -109,7 +106,6 @@ flow test.
 | `/wizard/equipment` | `wizard-equipment-label` | input | Type the equipment label | Sets the human-readable equipment label. |
 | `/wizard/equipment` | `wizard-equipment-local-root` | input | Type the equipment's local root path | Sets where this device acquires runs on disk. |
 | `/wizard/equipment` | `wizard-equipment-sync-mode` | radio | Pick 'nas' or 'stage' sync mode | Swaps the transport sub-form between NAS-direct and stage-push. |
-| `/wizard/equipment` | `wizard-equipment-signal` | radio | Pick 'sentinel_file' or 'manifest' completeness signal | Swaps the filename input between sentinel and manifest naming. |
 | `/wizard/equipment` | `wizard-equipment-confirm` | button | Click 'Confirm' on the review step | Posts the assembled EquipmentConfig via POST /config/equipment. |
 | `/wizard/equipment` | `wizard-equipment-cancel` | button | Click 'Cancel' on any wizard step | Discards the wizard and returns to /main. |
 

@@ -220,26 +220,23 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         _fill(page, "settings-lims-offline-path", str(catalogue_path))
 
         # ---- Phase 4: add equipment ------------------------------------
-        # 4a. rclone transport + sentinel_file signal (the default radios).
+        # 4a. rclone transport (the default radio).
         page.get_by_test_id("settings-nav-equipment").click()
         _fill(page, "settings-equipment-id", "MICROSCOPE1")
         _fill(page, "settings-equipment-label", "Confocal Microscope 1")
         _fill(page, "settings-equipment-local-root", str(data_root))
         _fill(page, "settings-equipment-nas-root", "/srv/nas/microscope1")
-        _fill(page, "settings-equipment-sentinel", "acquisition_complete.flag")
         _fill(page, "settings-equipment-rclone-remote", "lab-nas")
         _fill(page, "settings-equipment-rclone-path", "lab/microscope1")
         page.get_by_test_id("settings-equipment-add").click()
         page.get_by_test_id("settings-equipment-row").first.wait_for(state="visible", timeout=8_000)
 
-        # 4b. rsync_ssh transport + manifest signal -- exercises the
-        #     completeness-signal and transport radios swapping fields.
+        # 4b. rsync_ssh transport -- exercises the transport radio
+        #     swapping the transport fieldset.
         _fill(page, "settings-equipment-id", "SPECTROMETER1")
         _fill(page, "settings-equipment-label", "Mass Spectrometer 1")
         _fill(page, "settings-equipment-local-root", str(data_root))
         _fill(page, "settings-equipment-nas-root", "/srv/nas/spectrometer1")
-        _pick_radio(page, "settings-equipment-signal", "manifest")
-        _fill(page, "settings-equipment-manifest", "manifest.json")
         _pick_radio(page, "settings-equipment-transport", "rsync_ssh")
         _fill(page, "settings-equipment-ssh-target", "operator@nas.example.test")
         _fill(page, "settings-equipment-rsync-path", "/srv/nas/spectrometer1/incoming")
@@ -258,7 +255,6 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         assert "MICROSCOPE1" in config_text
         assert "SPECTROMETER1" in config_text
         assert "rsync_ssh" in config_text
-        assert "manifest.json" in config_text
         assert str(data_root) in config_text
 
         # ---- Phase 6: restart so the controller picks up the config ----

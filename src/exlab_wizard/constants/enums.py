@@ -114,13 +114,23 @@ class LIMSProjectSource(StrEnum):
     OFFLINE_CATALOGUE = "offline_catalogue"
 
 
-class IngestState(StrEnum):
-    """State machine for the NAS-ingest workflow. Backend Spec §13.3."""
+class RunSyncState(StrEnum):
+    """Derived run-level rollup of a run's per-file NAS sync progress.
 
-    STAGING = "staging"
-    COMPLETE = "complete"
-    SYNC_QUEUED = "sync_queued"
-    SYNC_VERIFIED = "sync_verified"
+    Operator-free per-file NAS sync design (2026-05-21). This rollup is
+    *never persisted*: it is computed on read from ``sync_state.json`` by
+    ``SyncStateWriter.rollup_state`` because the ``SYNCING``/``SYNCED``
+    distinction can oscillate (a ``SYNCED`` run whose file is modified
+    again returns to ``SYNCING``).
+
+    * ``SYNCING`` -- at least one tracked file is unverified, or no files are
+      tracked yet.
+    * ``SYNCED`` -- every tracked file has been verified on the NAS.
+    * ``CLEARED`` -- the run's staging copy has been cleaned up.
+    """
+
+    SYNCING = "syncing"
+    SYNCED = "synced"
     CLEARED = "cleared"
 
 
@@ -164,16 +174,6 @@ class SyncMode(StrEnum):
 
     NAS = "nas"
     STAGE = "stage"
-
-
-class CompletenessSignal(StrEnum):
-    """How a directory signals that its contents are finalized.
-
-    Backend Spec §9 and §13.5.
-    """
-
-    SENTINEL_FILE = "sentinel_file"
-    MANIFEST = "manifest"
 
 
 class StagingCleanupMode(StrEnum):

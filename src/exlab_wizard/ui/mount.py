@@ -26,8 +26,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from exlab_wizard.constants import KEYRING_USERNAME_LIMS, AuditScopeKind, RunKind
+from exlab_wizard.constants import KEYRING_USERNAME_LIMS, AuditScopeKind, RunKind, RunSyncState
 from exlab_wizard.logging import get_logger
+from exlab_wizard.orchestrator.staging_clear import clear_run_dir
+from exlab_wizard.orchestrator.staging_query import list_staged_runs
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -193,7 +195,7 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             ui.navigate.to(f"/settings?active=equipment&equipment_id={node_id}")
 
         def _on_file_context_action(entry: Any, action: str) -> None:
-            _file_context_action(entry, action, ui)
+            _file_context_action(deps, entry, action, ui, on_done=_refresh)
 
         return main_page.render_file_explorer_page(
             on_open_new_project=lambda: ui.navigate.to("/wizard/project"),
@@ -245,41 +247,54 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
 
     @ui.page("/wizard/equipment")
     def _wizard_equipment() -> Any:
-        """Redesign §6 — Add-Equipment wizard route."""
+        """Redesign §6 — Add-Equipment wizard route.
+
+        ``state`` is created once for the wizard's whole lifetime: the
+        render layer drives Next / Back internally (re-rendering in
+        place), so nothing here navigates mid-wizard -- a navigation
+        would rebuild the page and reset every field the operator typed.
+        """
         deps = _deps()
         if _restart_gate(deps, ui):
             return None
         state = wizard_equipment_page.EquipmentWizardState()
 
-        def _on_advance(current_step: str) -> None:
-            idx = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS.index(current_step)
-            if idx + 1 < len(wizard_equipment_page.EQUIPMENT_WIZARD_STEPS):
-                state.active_step = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS[idx + 1]
-                ui.navigate.to("/wizard/equipment")
-
-        def _on_back(current_step: str) -> None:
-            idx = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS.index(current_step)
-            if idx > 0:
-                state.active_step = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS[idx - 1]
-                ui.navigate.to("/wizard/equipment")
-
         def _on_confirm(eq: Any) -> None:
-            # Posts through the config router. The actual HTTP wiring is
-            # supplied by the deps' append-equipment callable; tests can
-            # stub it.
-            append = getattr(deps, "append_equipment", None) if deps is not None else None
-            if append is not None:
-                try:
-                    append(eq)
-                except Exception as exc:
-                    _show_toast(ui, f"Could not add equipment: {exc}", positive=False)
-                    return
+            # Persist straight into the live config (Redesign §6): merge
+            # via the same shared helper the POST /config/equipment route
+            # uses, save through ``deps.save_config``, and update the
+            # in-memory config so the new equipment is live without a
+            # tray relaunch -- matching the route's no-restart contract.
+            from exlab_wizard.config.models import config_with_equipment_appended
+            from exlab_wizard.errors import ConfigError
+
+            try:
+                merged = config_with_equipment_appended(getattr(deps, "config", None), eq)
+            except ConfigError as exc:
+                _show_toast(ui, f"Could not add equipment: {exc}", positive=False)
+                return
+            saver = getattr(deps, "save_config", None) if deps is not None else None
+            if saver is None:
+                _show_toast(
+                    ui, "Cannot add equipment: no config writer is available", positive=False
+                )
+                return
+            try:
+                result = saver(merged)
+                if hasattr(result, "__await__"):
+                    # Production wires a synchronous saver; an awaitable
+                    # here would silently no-op, so surface it.
+                    _log.warning("save_config returned an awaitable; a sync saver is expected")
+            except Exception as exc:
+                _log.exception("append-equipment save_config failed")
+                _show_toast(ui, f"Could not add equipment: {exc}", positive=False)
+                return
+            if deps is not None:
+                deps.config = merged
             ui.navigate.to("/main")
 
         return wizard_equipment_page.render_wizard_equipment(
             state=state,
-            on_advance=_on_advance,
-            on_back=_on_back,
             on_confirm=_on_confirm,
             on_cancel=lambda: ui.navigate.to("/main"),
         )
@@ -322,6 +337,8 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
 
     @ui.page("/settings")
     def _settings(active: str = "") -> Any:
+        from exlab_wizard.api._dependencies import lims_password_present
+
         deps = _deps()
         if _restart_gate(deps, ui):
             return None
@@ -355,7 +372,7 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             on_discard=None,
             on_save_lims_password=on_save_lims_password,
             on_clear_lims_password=on_clear_lims_password,
-            lims_password_present=bool(getattr(deps, "keyring_password_present", False)),
+            lims_password_present=lims_password_present(deps),
         )
 
     @ui.page("/problems")
@@ -427,6 +444,13 @@ def _lims_credential_handlers(
             _log.exception("LIMS keyring set_password failed")
             _show_toast(ui, f"Could not save the LIMS password: {exc}", positive=False)
             return
+        # The credential field re-seeds its "Set / Not set" status from
+        # ``deps.keyring_password_present`` on the next render, and the
+        # §4.9 setup gate reads the same flag. It is computed once at
+        # tray boot, so flip it here -- otherwise a freshly saved
+        # password still reads as absent until a relaunch.
+        if deps is not None:
+            deps.keyring_password_present = True
         _show_toast(ui, "LIMS password saved to the OS keyring", positive=True)
 
     def _on_clear() -> None:
@@ -441,6 +465,10 @@ def _lims_credential_handlers(
             _log.exception("LIMS keyring delete_password failed")
             _show_toast(ui, f"Could not clear the LIMS password: {exc}", positive=False)
             return
+        # Mirror of the Save path: clearing the password makes the slot
+        # incomplete again, so drop the boot-time flag in step.
+        if deps is not None:
+            deps.keyring_password_present = False
         _show_toast(ui, "LIMS password removed from the OS keyring", positive=True)
 
     return _on_save, _on_clear
@@ -500,10 +528,18 @@ def _render_restart_required(ui: Any) -> Any:
 
 
 def _is_setup_ready(deps: Any) -> bool:
-    """Mirror ``api.setup.compute_setup_state`` without the API import."""
+    """Mirror ``api.setup.compute_setup_state``'s readiness verdict.
+
+    Re-evaluated here rather than calling the API so the NiceGUI mount
+    stays independent of the setup-state *evaluator*; the keyring read
+    still routes through the shared ``lims_password_present`` helper so
+    a change to that semantics propagates here too.
+    """
+    from exlab_wizard.api._dependencies import lims_password_present
+
     if deps is None or getattr(deps, "config", None) is None:
         return False
-    keyring = getattr(deps, "keyring_password_present", False)
+    keyring = lims_password_present(deps)
     lims_reachable = getattr(deps, "lims_reachable", True)
     return bool(keyring and lims_reachable)
 
@@ -647,7 +683,6 @@ def _metadata_for_owned_equipment(node_id: str, config: Any) -> dict[str, Any]:
             "sync_mode": str(getattr(entry, "sync_mode", "")) or "nas",
             "local_root": entry.local_root or "",
             "nas_root": entry.nas_root or "",
-            "completeness_signal": getattr(entry, "completeness_signal", "") or "",
         }
     return {}
 
@@ -803,6 +838,8 @@ def _drive_folder_feed(app: Any, deps: Any, selected_path: str | None) -> list[A
                 size_bytes=entry.size_bytes,
                 modified_iso=entry.modified_iso,
                 sync_status=entry.sync_status,
+                keep_local=getattr(entry, "keep_local", False),
+                tombstone=getattr(entry, "tombstone", False),
             )
         )
     return entries
@@ -836,12 +873,10 @@ def _run_staging_action(deps: Any, path: str, action: str, ui: Any) -> None:
     """Dispatch a per-run context action to its backend surface.
 
     Mirrors :func:`api.routers.staging.post_force_sync` /
-    :func:`api.routers.staging.post_clear` /
-    :func:`api.routers.browse.get_run_log` but invokes the underlying
+    :func:`api.routers.staging.post_clear` but invokes the underlying
     primitives directly from the mount so the action stays in-process
     (no HTTP round trip from the same Python interpreter).
     """
-    from exlab_wizard.cache.ingest_writer import IngestWriter
     from exlab_wizard.ui.components.tree_context_menu import (
         RUN_CONTEXT_CLEAR_VERIFIED,
         RUN_CONTEXT_FORCE_SYNC,
@@ -871,14 +906,10 @@ def _run_staging_action(deps: Any, path: str, action: str, ui: Any) -> None:
         _spawn_background(_do_enqueue())
         return
     if action == RUN_CONTEXT_CLEAR_VERIFIED:
-        ingest_writer = getattr(deps, "ingest_writer", None) or IngestWriter()
-        from exlab_wizard.orchestrator.cleanup import clear_run
 
         async def _do_clear() -> None:
             try:
-                files, _bytes = await clear_run(
-                    run_path, config=config, ingest_writer=ingest_writer
-                )
+                files, _bytes = await asyncio.to_thread(clear_run_dir, run_path)
             except Exception as exc:
                 _log.exception("per-run clear failed")
                 _show_toast(ui, f"Clear failed: {exc}", positive=False)
@@ -891,29 +922,37 @@ def _run_staging_action(deps: Any, path: str, action: str, ui: Any) -> None:
         _spawn_background(_do_clear())
         return
     if action == RUN_CONTEXT_VIEW_LOG:
-        _open_log_dialog(run_path, ui)
+        _open_log_dialog(deps, run_path, ui)
         return
     _show_toast(ui, f"Unknown staging action: {action}", positive=False)
 
 
 def _bulk_clear_verified(deps: Any, ui: Any) -> None:
-    """Run the orchestrator's bulk ``clear_all_verified`` helper.
+    """Bulk-clear every staged run whose sync job is verified.
 
     Wired from the file-explorer footer's *Clear verified runs* button.
-    Same in-process dispatch pattern as the per-run actions.
+    Same in-process dispatch pattern as the per-run actions. The
+    operator-free per-file NAS sync redesign (2026-05-21) keys the
+    "clearable" set off the sync-queue job state; Phase 5 swaps this to
+    the ``sync_state.json`` ``SYNCED`` rollup.
     """
-    from exlab_wizard.cache.ingest_writer import IngestWriter
-    from exlab_wizard.orchestrator.cleanup import clear_all_verified
-
     config = getattr(deps, "config", None) if deps is not None else None
     if config is None:
         _show_toast(ui, "Clear-verified unavailable: no config", positive=False)
         return
-    ingest_writer = getattr(deps, "ingest_writer", None) or IngestWriter()
 
     async def _do_bulk() -> None:
         try:
-            cleared = await clear_all_verified(config=config, ingest_writer=ingest_writer)
+            cleared: list[str] = []
+            sync_state_writer = getattr(deps, "sync_state_writer", None)
+            for summary in list_staged_runs(config=config, sync_state_writer=sync_state_writer):
+                # Only a fully-SYNCED run is clearable; ``cleared`` runs
+                # have no staging copy left and ``syncing`` runs are unproven.
+                if summary.current_state != RunSyncState.SYNCED.value:
+                    continue
+                files, _bytes = await asyncio.to_thread(clear_run_dir, Path(summary.path))
+                if files > 0:
+                    cleared.append(summary.path)
         except Exception as exc:
             _log.exception("bulk clear-verified failed")
             _show_toast(ui, f"Clear-verified failed: {exc}", positive=False)
@@ -926,9 +965,20 @@ def _bulk_clear_verified(deps: Any, ui: Any) -> None:
     _spawn_background(_do_bulk())
 
 
-def _file_context_action(entry: Any, action: str, ui: Any) -> None:
-    """Handle ``Open in OS`` / ``Copy path`` from the centre-pane file row."""
-    from exlab_wizard.ui.components.file_list import FILE_CONTEXT_COPY_PATH, FILE_CONTEXT_OPEN
+def _file_context_action(
+    deps: Any,
+    entry: Any,
+    action: str,
+    ui: Any,
+    *,
+    on_done: Callable[[], None] | None = None,
+) -> None:
+    """Handle ``Open in OS`` / ``Copy path`` / ``Keep local`` file actions."""
+    from exlab_wizard.ui.components.file_list import (
+        FILE_CONTEXT_COPY_PATH,
+        FILE_CONTEXT_KEEP_LOCAL,
+        FILE_CONTEXT_OPEN,
+    )
 
     path = str(getattr(entry, "path", ""))
     if not path:
@@ -949,7 +999,59 @@ def _file_context_action(entry: Any, action: str, ui: Any) -> None:
             return
         _show_toast(ui, "Path copied to clipboard", positive=True)
         return
+    if action == FILE_CONTEXT_KEEP_LOCAL:
+        _toggle_keep_local(deps, entry, ui, on_done=on_done)
+        return
     _show_toast(ui, f"Unknown file action: {action}", positive=False)
+
+
+def _toggle_keep_local(
+    deps: Any,
+    entry: Any,
+    ui: Any,
+    *,
+    on_done: Callable[[], None] | None = None,
+) -> None:
+    """Flip a file's ``keep_local`` flag via the orchestrator's writer.
+
+    Operator-free per-file NAS sync design (2026-05-21): ``sync_state.json``
+    has a single writer -- the orchestrator's :class:`SyncStateWriter` --
+    so the GUI never writes the file directly. The mount calls
+    ``set_keep_local`` in-process (matching the per-run staging actions),
+    which is exactly what the ``POST /staging/{run}/keep-local`` endpoint
+    does. The run root is resolved by walking up to the nearest
+    ``creation.json`` cache.
+    """
+    from exlab_wizard.api.routers.browse import _find_run_root, _run_relative_posix
+
+    writer = getattr(deps, "sync_state_writer", None) if deps is not None else None
+    if writer is None:
+        _show_toast(ui, "Keep-local unavailable: sync-state writer not wired", positive=False)
+        return
+    path = Path(str(getattr(entry, "path", "")))
+    run_root = _find_run_root(path.parent)
+    if run_root is None:
+        _show_toast(ui, "Keep-local unavailable: file is not inside a run", positive=False)
+        return
+    rel = _run_relative_posix(run_root, path)
+    if rel is None:
+        _show_toast(ui, "Keep-local unavailable: could not resolve file path", positive=False)
+        return
+    new_value = not bool(getattr(entry, "keep_local", False))
+
+    async def _do_toggle() -> None:
+        try:
+            await writer.set_keep_local(run_root, rel, new_value)
+        except Exception as exc:
+            _log.exception("keep-local toggle failed")
+            _show_toast(ui, f"Keep-local failed: {exc}", positive=False)
+            return
+        verb = "kept local" if new_value else "no longer kept local"
+        _show_toast(ui, f"{path.name} {verb}", positive=True)
+        if on_done is not None:
+            on_done()
+
+    _spawn_background(_do_toggle())
 
 
 def _open_in_os(path: str) -> bool:
@@ -980,46 +1082,52 @@ def _open_in_os(path: str) -> bool:
     return False
 
 
-def _open_log_dialog(run_path: Path, ui: Any) -> None:
-    """Open a NiceGUI dialog showing the run's ingest.json history."""
-    import msgspec
+def _open_log_dialog(deps: Any, run_path: Path, ui: Any) -> None:
+    """Open a NiceGUI dialog showing the run's sync-queue job state.
 
-    from exlab_wizard.api.schemas import IngestJson
-    from exlab_wizard.io import read_msgspec_json
-    from exlab_wizard.paths import ingest_json_path
+    The operator-free per-file NAS sync redesign (2026-05-21) removed
+    ``ingest.json``; the per-run "log" is now the run's sync-queue job
+    state. Phase 5/6 source this from the ``sync_state.json`` rollup.
+    """
 
-    ingest_path = ingest_json_path(run_path)
-    if not ingest_path.exists():
-        _show_toast(ui, "No log: ingest.json not found", positive=False)
-        return
-    try:
-        payload = read_msgspec_json(ingest_path, IngestJson)
-    except (msgspec.DecodeError, msgspec.ValidationError) as exc:
-        _show_toast(ui, f"Log unreadable: {exc}", positive=False)
-        return
-    try:
-        dialog = ui.dialog()
-        with (
-            dialog,
-            ui.card()
-            .props('data-testid="run-log-dialog"')
-            .style("min-width: 480px; max-width: 720px;"),
-        ):
-            ui.label(f"Log: {run_path.name}").style("font-weight: 600;")
-            ui.label(f"State: {payload.current_state}").style("color: var(--color-muted);")
-            with ui.scroll_area().style("max-height: 360px;"):
-                for entry in payload.history:
-                    state_val = entry.get("state", "?") if isinstance(entry, dict) else "?"
-                    at_val = entry.get("at", "") if isinstance(entry, dict) else ""
-                    host_val = entry.get("host", "") if isinstance(entry, dict) else ""
-                    ui.label(f"[{at_val}] {state_val} (host={host_val})").style(
+    async def _do_open() -> None:
+        nas_sync = getattr(deps, "nas_sync", None) if deps is not None else None
+        getter = getattr(nas_sync, "get_by_run_path", None) if nas_sync is not None else None
+        row = None
+        if getter is not None:
+            try:
+                row = await getter(run_path)
+            except Exception as exc:  # pragma: no cover -- defensive
+                _log.warning("sync-queue lookup failed for %s: %s", run_path, exc)
+        state = getattr(getattr(row, "state", None), "value", None) or "none"
+        try:
+            dialog = ui.dialog()
+            with (
+                dialog,
+                ui.card()
+                .props('data-testid="run-log-dialog"')
+                .style("min-width: 480px; max-width: 720px;"),
+            ):
+                ui.label(f"Log: {run_path.name}").style("font-weight: 600;")
+                ui.label(f"Sync state: {state}").style("color: var(--color-muted);")
+                if row is None:
+                    ui.label("No sync job recorded for this run yet.").style(
                         "font-family: var(--font-mono); font-size: 0.85em;"
                     )
-            ui.button("Close", on_click=dialog.close).props("flat")
-        dialog.open()
-    except Exception as exc:
-        _log.warning("log dialog render failed: %s", exc)
-        _show_toast(ui, "Log dialog unavailable", positive=False)
+                else:
+                    for field in ("enqueued_at", "verified_at", "attempts", "last_error"):
+                        value = getattr(row, field, None)
+                        if value:
+                            ui.label(f"{field}: {value}").style(
+                                "font-family: var(--font-mono); font-size: 0.85em;"
+                            )
+                ui.button("Close", on_click=dialog.close).props("flat")
+            dialog.open()
+        except Exception as exc:
+            _log.warning("log dialog render failed: %s", exc)
+            _show_toast(ui, "Log dialog unavailable", positive=False)
+
+    _spawn_background(_do_open())
 
 
 def _missing_setup_sections(deps: Any) -> tuple[str, ...]:
@@ -1029,6 +1137,8 @@ def _missing_setup_sections(deps: Any) -> tuple[str, ...]:
     other than READY surfaces at least one section. The Settings page
     uses this to auto-select the first incomplete section.
     """
+    from exlab_wizard.api._dependencies import lims_password_present
+
     if deps is None:
         return ("paths", "lims")
     config = getattr(deps, "config", None)
@@ -1042,7 +1152,7 @@ def _missing_setup_sections(deps: Any) -> tuple[str, ...]:
         missing.append("paths")
     if not config.lims.endpoint or not config.lims.email:
         missing.append("lims")
-    if not getattr(deps, "keyring_password_present", False) and "lims" not in missing:
+    if not lims_password_present(deps) and "lims" not in missing:
         missing.append("lims")
     return tuple(missing)
 
@@ -1317,9 +1427,10 @@ def _build_staging_state(deps: Any) -> Any:
     # Redesign §3.1: orchestrator pipeline is always active; missing
     # staging_root surfaces as an empty staging dock, not a None panel.
     try:
-        from exlab_wizard.orchestrator.staging_query import list_staged_runs
-
-        rows = list_staged_runs(config=config)
+        rows = list_staged_runs(
+            config=config,
+            sync_state_writer=getattr(deps, "sync_state_writer", None),
+        )
     except Exception as exc:
         _log.warning("staging_query failed: %s", exc)
         return staging_page.StagingDockState(rows=[])

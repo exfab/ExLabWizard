@@ -21,9 +21,30 @@ from typing import Any
 from fastapi import HTTPException, Request, status
 
 __all__ = [
+    "lims_password_present",
     "require_controller",
     "require_deps",
 ]
+
+
+def lims_password_present(deps: Any) -> bool:
+    """Return whether a LIMS password is stored -- the repo-wide reader.
+
+    Every surface that asks "is the LIMS keyring password set?" -- the
+    settings credential field, the setup-state evaluator, the
+    section-completion gate -- routes through here so the default and
+    the ``deps is None`` handling stay identical instead of each call
+    site open-coding its own ``getattr(deps, "keyring_password_present",
+    ...)`` with its own default.
+
+    ``deps`` is typed ``Any`` because callers hold it loosely
+    (``AppDependencies`` in production, mocks in tests, ``None`` before
+    wiring). A ``None`` or attribute-less ``deps`` means nothing is
+    wired yet, so the password cannot be present -- hence ``False``.
+    """
+    if deps is None:
+        return False
+    return bool(getattr(deps, "keyring_password_present", False))
 
 
 def require_deps(request: Request) -> Any:

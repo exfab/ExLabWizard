@@ -16,12 +16,10 @@ from exlab_wizard.constants.app import APP_NAME
 from exlab_wizard.constants.enums import (
     AuditScopeKind,
     BandwidthDay,
-    CompletenessSignal,
     CreationLevel,
     DirectoryLevel,
     FieldType,
     FindingKind,
-    IngestState,
     LIMSProjectSource,
     LIMSProjectStatus,
     NextAction,
@@ -32,6 +30,7 @@ from exlab_wizard.constants.enums import (
     ProblemClass,
     RunKind,
     RunScope,
+    RunSyncState,
     SessionKind,
     SetupNextAction,
     SetupState,
@@ -54,7 +53,6 @@ from exlab_wizard.constants.filenames import (
     COPIER_MANIFEST_NAME,
     CREATION_JSON_NAME,
     EQUIPMENT_JSON_NAME,
-    INGEST_JSON_NAME,
     LIMS_CACHE_DB_NAME,
     LOG_FILE_TEMPLATE,
     PLUGIN_MANIFEST_NAME,
@@ -63,6 +61,7 @@ from exlab_wizard.constants.filenames import (
     SECRETS_FILE,
     SERVER_STATE_FILE,
     SYNC_QUEUE_DB_NAME,
+    SYNC_STATE_FILENAME,
     TEST_RUNS_JSON_NAME,
 )
 
@@ -141,10 +140,10 @@ from exlab_wizard.constants.patterns import (
 from exlab_wizard.constants.schema_versions import (
     CREATION_JSON_VERSION,
     EQUIPMENT_JSON_VERSION,
-    INGEST_JSON_VERSION,
     OFFLINE_CATALOGUE_VERSION,
     README_FIELDS_JSON_VERSION,
     README_FRONT_MATTER_SCHEMA_VERSION,
+    SYNC_STATE_JSON_VERSION,
     TEST_RUNS_JSON_VERSION,
 )
 
@@ -173,8 +172,6 @@ __all__ = [
     "EQUIPMENT_ID_REGEX",
     "EQUIPMENT_JSON_NAME",
     "EQUIPMENT_JSON_VERSION",
-    "INGEST_JSON_NAME",
-    "INGEST_JSON_VERSION",
     # Keyring
     "KEYRING_SERVICE",
     "KEYRING_USERNAME_LIMS",
@@ -223,6 +220,8 @@ __all__ = [
     "SESSION_GC_AFTER_SECONDS",
     "SIGTERM_DRAIN_TIMEOUT_SECONDS",
     "SYNC_QUEUE_DB_NAME",
+    "SYNC_STATE_FILENAME",
+    "SYNC_STATE_JSON_VERSION",
     "TEMPLATE_QUESTION_ID_PATTERN",
     "TEMPLATE_QUESTION_ID_REGEX",
     "TEST_RUNS_DIR_NAME",
@@ -241,12 +240,10 @@ __all__ = [
     # Enum classes
     "AuditScopeKind",
     "BandwidthDay",
-    "CompletenessSignal",
     "CreationLevel",
     "DirectoryLevel",
     "FieldType",
     "FindingKind",
-    "IngestState",
     "LIMSProjectSource",
     "LIMSProjectStatus",
     "NextAction",
@@ -257,6 +254,7 @@ __all__ = [
     "ProblemClass",
     "RunKind",
     "RunScope",
+    "RunSyncState",
     "SessionKind",
     "SetupNextAction",
     "SetupState",

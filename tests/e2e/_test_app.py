@@ -91,7 +91,10 @@ class TestState:
     selected_node_is_received: bool = False
     # Seeded folder-feed payload keyed by tree-node id; the test app
     # serves these as the centre-pane file list.
-    folder_feeds: dict[str, list[tuple[str, int, str | None]]] = field(default_factory=dict)
+    # Each row is a 3-tuple ``(name, size, sync)`` or a 5-tuple that
+    # additionally carries ``(keep_local, tombstone)`` -- the operator-free
+    # per-file NAS sync design (2026-05-21) added the latter two fields.
+    folder_feeds: dict[str, list[tuple[Any, ...]]] = field(default_factory=dict)
     # Seeded findings that the travelling-badge flow consumes (path → tier).
     seeded_findings: list[tuple[str, str]] = field(default_factory=list)
 
@@ -134,7 +137,6 @@ def _seeded_metadata_payload(node_id: str | None, node_kind: str | None) -> dict
             "sync_mode": "stage" if "stage" in node_id else "nas",
             "local_root": "/data/lab",
             "nas_root": "//nas/lab",
-            "completeness_signal": "sentinel_file",
         }
     if node_kind == "received_equipment":
         return {
@@ -168,30 +170,55 @@ def _seeded_metadata_payload(node_id: str | None, node_kind: str | None) -> dict
     return {}
 
 
+# Default synthetic file-list feed. Operator-free per-file NAS sync
+# design (2026-05-21): the rows exercise the five per-file display
+# states -- a synced+kept-local file, an acquiring file, a syncing
+# file, and an "On NAS" tombstone (cleared run, no local copy). Each
+# tuple is (name, size|None, sync_status, keep_local, tombstone).
+_DEFAULT_FEED_ROWS: list[tuple[str, int | None, str | None, bool, bool]] = [
+    ("scan.tif", 1024, "synced", True, False),
+    ("metadata.json", 256, "acquiring", False, False),
+    ("frames.raw", 4096, "syncing", False, False),
+    ("archived.tif", None, "on_nas", False, True),
+]
+
+
 def _seeded_file_entries(test_state: TestState, node_id: str | None) -> list[Any]:
     """Build the centre-pane file rows the test flows assert on.
 
-    Returns a default synthetic two-file feed unless the test seeded a
-    specific path via ``test_state.folder_feeds``.
+    Returns a default synthetic feed (covering every per-file display
+    state, including a keep-local file and an "On NAS" tombstone) unless
+    the test seeded a specific path via ``test_state.folder_feeds``. A
+    seeded 3-tuple ``(name, size, sync)`` keeps backward compatibility; a
+    5-tuple additionally carries ``keep_local`` / ``tombstone``.
     """
     if node_id is None:
         return []
     from exlab_wizard.ui.components.file_list import FileListEntry
 
-    rows = test_state.folder_feeds.get(
-        node_id,
-        [("scan.tif", 1024, "synced"), ("metadata.json", 256, "pending")],
-    )
+    seeded = test_state.folder_feeds.get(node_id)
+    rows: list[tuple[str, int | None, str | None, bool, bool]]
+    if seeded is None:
+        rows = list(_DEFAULT_FEED_ROWS)
+    else:
+        rows = [
+            (row[0], row[1], row[2], False, False)
+            if len(row) == 3
+            else (row[0], row[1], row[2], row[3], row[4])
+            for row in seeded
+        ]
     return [
         FileListEntry(
             name=name,
             path=f"{node_id}/{name}",
             is_dir=False,
             size_bytes=size,
-            modified_iso="2026-05-14T09:22:00Z",
+            modified_iso=None if tombstone else "2026-05-14T09:22:00Z",
             sync_status=sync,
+            keep_local=keep_local,
+            tombstone=tombstone,
         )
-        for (name, size, sync) in rows
+        for (name, size, sync, keep_local, tombstone) in rows
     ]
 
 
@@ -285,8 +312,11 @@ def build_test_app() -> FastAPI:
                     tree_component.RunNode(
                         directory_name="Run_2026-05-06",
                         run_kind="experimental",
-                        label="Cleaned run",
-                        sync_status="cleaned",
+                        label="Cleared run",
+                        # Operator-free per-file NAS sync design
+                        # (2026-05-21): the run rollup is a RunSyncState
+                        # value; ``cleared`` drives the cloud icon.
+                        sync_status="cleared",
                     ),
                     tree_component.RunNode("TestRun_2026-05-07", "test", "Test run"),
                 ],
@@ -468,41 +498,47 @@ def build_test_app() -> FastAPI:
     # Add-Equipment wizard (Flow 16 -- Redesign §6)
     # ----------------------------------------------------------------------
     @ui.page("/wizard/equipment")
-    def wizard_equipment_index(step: str = "identity") -> None:
-        state = wizard_equipment_page.EquipmentWizardState(
-            active_step=step or "identity",
-            equipment_id="FLOW_99",
-            label="Flow Cytometer 99",
-            local_root="/data",
-            nas_root="/srv/nas",
-            rclone_remote="lab-nas",
-            rclone_remote_path="lab/FLOW_99",
-            sentinel_filename="done.flag",
-        )
-
-        def _advance(current: str) -> None:
-            idx = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS.index(current)
-            if idx + 1 < len(wizard_equipment_page.EQUIPMENT_WIZARD_STEPS):
-                ui.navigate.to(
-                    f"/wizard/equipment?step={wizard_equipment_page.EQUIPMENT_WIZARD_STEPS[idx + 1]}"
-                )
-
-        def _back(current: str) -> None:
-            idx = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS.index(current)
-            if idx > 0:
-                ui.navigate.to(
-                    f"/wizard/equipment?step={wizard_equipment_page.EQUIPMENT_WIZARD_STEPS[idx - 1]}"
-                )
+    def wizard_equipment_index(step: str = "identity", seed: str = "1") -> None:
+        # The render layer now drives Next / Back internally, so this
+        # route wires the wizard exactly as production does -- one state,
+        # ``on_confirm`` / ``on_cancel`` only. ``seed=1`` (default)
+        # pre-fills a valid state so a step can be deep-linked and its
+        # render asserted; ``seed=0`` starts empty to exercise the real
+        # type -> Next -> advance path.
+        if seed == "0":
+            state = wizard_equipment_page.EquipmentWizardState(active_step=step or "identity")
+        else:
+            state = wizard_equipment_page.EquipmentWizardState(
+                active_step=step or "identity",
+                equipment_id="FLOW_99",
+                label="Flow Cytometer 99",
+                local_root="/data",
+                nas_root="/srv/nas",
+                rclone_remote="lab-nas",
+                rclone_remote_path="lab/FLOW_99",
+            )
 
         def _confirm(eq: Any) -> None:
+            # Mirror the production confirm wiring (mount.py): merge via
+            # the shared helper and persist, rather than just stashing
+            # the raw equipment -- so this surface no longer masks the
+            # real append path.
+            from exlab_wizard.config.models import config_with_equipment_appended
+            from exlab_wizard.errors import ConfigError
+
+            try:
+                merged = config_with_equipment_appended(test_state.config, eq)
+            except ConfigError as exc:
+                ui.label(f"Error: {exc}").props('data-testid="wizard-equipment-error"')
+                return
+            test_state.config = merged
+            test_state.saved_config = merged
             test_state.appended_equipment = eq
             test_state.last_action = "wizard.equipment.confirm"
             ui.label("Equipment added").props('data-testid="wizard-equipment-success"')
 
         wizard_equipment_page.render_wizard_equipment(
             state=state,
-            on_advance=_advance,
-            on_back=_back,
             on_confirm=_confirm,
             on_cancel=lambda: ui.navigate.to("/main"),
         )
@@ -671,9 +707,9 @@ def build_test_app() -> FastAPI:
     # Staging dock (Flow 09)
     # ----------------------------------------------------------------------
     @ui.page("/staging")
-    def staging_index(state: str = "staging") -> None:
-        from exlab_wizard.constants import IngestState
+    def staging_index(state: str = "none") -> None:
         from exlab_wizard.orchestrator.staging_query import StagedRunSummary
+        from exlab_wizard.sync.queue import SyncJobState
 
         rows = [
             StagedRunSummary(
@@ -691,11 +727,11 @@ def build_test_app() -> FastAPI:
 
         def _force_sync(path: str) -> None:
             test_state.last_action = f"staging.force_sync:{path}"
-            ui.navigate.to(f"/staging?state={IngestState.SYNC_QUEUED.value}")
+            ui.navigate.to(f"/staging?state={SyncJobState.QUEUED.value}")
 
         def _clear(path: str) -> None:
             test_state.last_action = f"staging.clear:{path}"
-            ui.navigate.to(f"/staging?state={IngestState.CLEARED.value}")
+            ui.navigate.to(f"/staging?state={SyncJobState.CLEANED.value}")
 
         def _view_log(path: str) -> None:
             test_state.last_action = f"staging.view_log:{path}"

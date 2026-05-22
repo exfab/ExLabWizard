@@ -37,6 +37,11 @@ state/
 *.tmp
 .tmp/
 
+# Local secrets / env (never commit)
+.env
+.env.*
+*.secret
+
 # pre-commit cache
 .pre-commit-cache/
 

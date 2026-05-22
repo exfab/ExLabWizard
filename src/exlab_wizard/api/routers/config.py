@@ -19,9 +19,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
-from exlab_wizard.api._dependencies import require_deps
-from exlab_wizard.config.models import Config, EquipmentConfig
+from exlab_wizard.api._dependencies import lims_password_present, require_deps
+from exlab_wizard.config.models import Config, EquipmentConfig, config_with_equipment_appended
 from exlab_wizard.constants import SetupState
+from exlab_wizard.errors import ConfigError
 from exlab_wizard.logging import get_logger
 from exlab_wizard.paths import (
     evaluate_setup_state,
@@ -94,7 +95,7 @@ def build_config_router() -> APIRouter:
         state = evaluate_setup_state(
             deps.config,
             lims_reachable=getattr(deps, "lims_reachable", True),
-            keyring_password_present=getattr(deps, "keyring_password_present", True),
+            keyring_password_present=lims_password_present(deps),
         )
         return ConfigUpdateResponse(
             state=state.value,
@@ -114,21 +115,13 @@ def build_config_router() -> APIRouter:
         Duplicate IDs are rejected with a structured error per §10.
         """
         deps = require_deps(request)
-        config = getattr(deps, "config", None) or Config()
-        for entry in config.equipment:
-            if entry.id == body.id:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "code": "equipment_id_conflict",
-                        "message": (f"equipment id {body.id!r} already exists in config"),
-                    },
-                )
-        new_equipment = [*config.equipment, body]
-        # model_validate re-runs the cross-field invariants (unique-id check
-        # etc.) on the merged config.
-        new_config = config.model_copy(update={"equipment": new_equipment})
-        Config.model_validate(new_config.model_dump(mode="python"))
+        try:
+            new_config = config_with_equipment_appended(getattr(deps, "config", None), body)
+        except ConfigError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "equipment_id_conflict", "message": str(exc)},
+            ) from exc
         saver = getattr(deps, "save_config", None)
         if saver is not None:
             await _await_or_call(saver, new_config)
@@ -136,7 +129,7 @@ def build_config_router() -> APIRouter:
         state = evaluate_setup_state(
             deps.config,
             lims_reachable=getattr(deps, "lims_reachable", True),
-            keyring_password_present=getattr(deps, "keyring_password_present", True),
+            keyring_password_present=lims_password_present(deps),
         )
         return EquipmentAppendResponse(
             appended_id=body.id,

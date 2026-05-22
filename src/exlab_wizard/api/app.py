@@ -197,8 +197,13 @@ class AppDependencies:
     lims_client: Any = None
     nas_sync: Any = None
     session_store: Any = None
-    ingest_writer: Any = None
-    staging_watcher: Any = None
+    quiescence_poller: Any = None
+    # Orchestrator-only ``sync_state.json`` writer
+    # (:class:`exlab_wizard.cache.sync_state_writer.SyncStateWriter`). The
+    # quiescence poller reads it; the NAS-sync client writes per-file
+    # verify reconciliation into it (operator-free per-file NAS sync,
+    # 2026-05-21).
+    sync_state_writer: Any = None
     # OS-keyring store (:class:`exlab_wizard.lims.keyring_store.KeyringStore`).
     # The settings dialog's credential fields write the LIMS password
     # straight to this at click time (Frontend Spec §7.3, §7.4.1).
@@ -257,9 +262,27 @@ def create_app(
                 _audit_loop(deps, audit_interval_seconds),
                 name="exlab-audit-loop",
             )
+        # Operator-free per-file NAS sync (2026-05-21): the NASSyncClient
+        # owns the durable queue + transport worker; ``init()`` opens the
+        # queue DB and spawns the worker task -- ``enqueue`` itself fails
+        # without it. The quiescence poller is the auto-sync trigger and
+        # must start *after* the client it feeds. Both are ``None`` when
+        # no staging_root / nas-mode equipment is configured.
+        if deps.nas_sync is not None:
+            with contextlib.suppress(Exception):
+                await deps.nas_sync.init()
+        if deps.quiescence_poller is not None:
+            with contextlib.suppress(Exception):
+                await deps.quiescence_poller.start()
         try:
             yield
         finally:
+            if deps.quiescence_poller is not None:
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await deps.quiescence_poller.stop()
+            if deps.nas_sync is not None:
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await deps.nas_sync.close()
             if deps.audit_task is not None and not deps.audit_task.done():
                 deps.audit_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):

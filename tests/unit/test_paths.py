@@ -57,8 +57,6 @@ def _make_equipment(equipment_id: str = "CONFOCAL_01") -> EquipmentConfig:
             "label": "Confocal Microscope",
             "local_root": "/data/lab",
             "nas_root": "//nas01/lab",
-            "completeness_signal": "sentinel_file",
-            "sentinel_filename": "done.flag",
             "transport": {
                 "type": "rclone",
                 "rclone_remote": "lab-nas",

@@ -29,7 +29,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from exlab_wizard.constants import IngestState
+from exlab_wizard.constants import RunSyncState
 from exlab_wizard.logging import get_logger
 from exlab_wizard.orchestrator.staging_query import StagedRunSummary
 
@@ -64,16 +64,22 @@ STAGING_TABLE_COLUMNS: tuple[str, ...] = (
 """The seven columns displayed (column order is part of the spec)."""
 
 
-# State -> color mapping mirroring the design tokens in
+# Run rollup state -> color mapping mirroring the design tokens in
 # ``exlab_wizard.ui.design``. Kept here as plain strings so the unit tests
-# don't depend on the full design module being importable.
+# don't depend on the full design module being importable. Phase 5 of the
+# operator-free per-file NAS sync redesign (2026-05-21) sources
+# ``current_state`` from the derived ``sync_state.json``
+# ``RunSyncState`` rollup -- ``syncing`` / ``synced`` / ``cleared``.
 _STATE_COLORS: dict[str, str] = {
-    IngestState.STAGING.value: "var(--color-info)",
-    IngestState.COMPLETE.value: "var(--color-success)",
-    IngestState.SYNC_QUEUED.value: "var(--color-info)",
-    IngestState.SYNC_VERIFIED.value: "var(--color-success)",
-    IngestState.CLEARED.value: "var(--color-muted)",
+    RunSyncState.SYNCING.value: "var(--color-info)",
+    RunSyncState.SYNCED.value: "var(--color-success)",
+    RunSyncState.CLEARED.value: "var(--color-muted)",
 }
+
+# Run rollup states whose staging copy may still be cleared: only a
+# fully-``synced`` run (``cleared`` has no staging copy left, ``syncing``
+# is unproven).
+_CLEARABLE_STATES: frozenset[str] = frozenset({RunSyncState.SYNCED.value})
 
 
 @dataclass
@@ -164,7 +170,7 @@ def row_props(row: StagedRunSummary) -> dict[str, Any]:
         "files": row.file_count,
         "bytes": format_bytes(row.byte_total),
         "elapsed": format_elapsed(row.elapsed_seconds_since_last_activity),
-        "is_clearable": row.current_state == IngestState.SYNC_VERIFIED.value,
+        "is_clearable": row.current_state in _CLEARABLE_STATES,
     }
 
 
@@ -216,9 +222,7 @@ def render_staging_dock(state: StagingDockState) -> Any:
                 "font-weight: 600;",
             )
             ui.space()
-            verified_count = sum(
-                1 for row in state.rows if row.current_state == IngestState.SYNC_VERIFIED.value
-            )
+            verified_count = sum(1 for row in state.rows if row.current_state in _CLEARABLE_STATES)
             ui.button(
                 f"Clear verified runs ({verified_count})",
                 on_click=lambda _evt: _invoke(state.on_clear_verified),

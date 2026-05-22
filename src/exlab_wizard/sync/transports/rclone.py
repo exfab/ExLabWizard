@@ -70,12 +70,18 @@ class RcloneTransport:
         remote: str,
         *,
         bwlimit_kibps: int | None = None,
+        files_from: Path | None = None,
     ) -> TransportResult:
         """Run ``rclone copy --checksum`` from ``local`` to ``remote``.
 
         ``remote`` is the full ``<remote_name>:<path>`` string per the
         rclone spec. ``bwlimit_kibps`` (KiB/s) is forwarded as
         ``--bwlimit <K>K`` when set.
+
+        ``files_from`` (operator-free per-file NAS sync, 2026-05-21), when
+        set, is a path to a text file listing run-relative paths to copy --
+        forwarded as ``--files-from <path>`` so only that subset transfers.
+        ``None`` keeps the whole-directory copy behaviour.
 
         Returns a :class:`TransportResult` describing the outcome. A
         process-spawn failure (binary missing) raises
@@ -85,6 +91,8 @@ class RcloneTransport:
         cmd: list[str] = [self._binary, "copy", "--checksum"]
         if bwlimit_kibps is not None and bwlimit_kibps > 0:
             cmd.extend(["--bwlimit", f"{bwlimit_kibps}K"])
+        if files_from is not None:
+            cmd.extend(["--files-from", str(files_from)])
         cmd.extend([str(local), remote])
         _log.debug("rclone cmd: %s", shlex.join(cmd))
 

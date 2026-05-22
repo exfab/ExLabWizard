@@ -130,7 +130,16 @@ class TreeResponse(BaseModel):
 
 
 class FolderEntry(BaseModel):
-    """One row in the new ``GET /folder/{path}`` response. Redesign §4.3 / §5."""
+    """One row in the new ``GET /folder/{path}`` response. Redesign §4.3 / §5.
+
+    Operator-free per-file NAS sync design (2026-05-21): ``sync_status``
+    is one of the five GUI display states -- ``acquiring`` / ``syncing`` /
+    ``synced`` / ``on_nas`` -- sourced from the run's ``sync_state.json``.
+    A ``tombstone`` entry (``is_dir=False``, ``size_bytes=None``,
+    ``modified_iso=None``) represents a file present in ``sync_state.json``
+    but absent on disk -- a cleared run still lists its files as "On NAS".
+    ``keep_local`` carries the file's keep-local flag for the badge.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -140,6 +149,8 @@ class FolderEntry(BaseModel):
     size_bytes: int | None = None
     modified_iso: str | None = None
     sync_status: str | None = None
+    keep_local: bool = False
+    tombstone: bool = False
 
 
 class FolderResponse(BaseModel):
@@ -169,12 +180,12 @@ class RunDetail(BaseModel):
 class RunLogEntry(BaseModel):
     """One row in the ``GET /run/{path}/log`` response.
 
-    The orchestrator does not write per-run log files; the "log" for a
-    run is the state-transition history of its ``ingest.json``. Each
-    history entry carries at minimum ``state`` and ``at``; transient
-    extras (``host``, ``files_received`` on ``complete``, etc.) are
-    forwarded as a free-form payload so the UI can render whatever the
-    orchestrator recorded.
+    The orchestrator does not write per-run log files. After the
+    operator-free per-file NAS sync redesign (2026-05-21) removed
+    ``ingest.json``, the per-run "log" is derived from the run's
+    sync-queue job: each entry carries the queue ``state`` and ``at``
+    timestamp, with queue extras (``attempts``, ``last_error`` ...)
+    forwarded as a free-form ``payload``.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -243,69 +254,34 @@ def build_browse_router() -> APIRouter:
         response_model=RunLogResponse,
         dependencies=[Depends(setup_state_gate)],
     )
-    async def get_run_log(run_path: str) -> RunLogResponse:
-        """Return the staged run's ``ingest.json`` history as a log.
+    async def get_run_log(request: Request, run_path: str) -> RunLogResponse:
+        """Return the staged run's sync-queue job state as a log.
 
-        Redesign §4.6 View-log surface. The orchestrator does not write
-        per-run log files; the lifecycle history in
-        ``<run>/.exlab-wizard/ingest.json`` IS the per-run log. Returns
-        404 when ingest.json doesn't exist (the run hasn't been staged
-        yet or has been cleared) and 422 on a parse failure. The
-        ``current_state`` field mirrors the most recent history entry
-        so the UI can show a header before iterating.
+        Redesign §4.6 View-log surface. The operator-free per-file NAS
+        sync redesign (2026-05-21) removed ``ingest.json``; the per-run
+        log is now derived from the run's sync-queue job. Returns 404
+        when the run directory does not exist (never staged, or cleared
+        without a surviving record). A run with no queue job yet returns
+        an empty ``history`` and ``current_state == "none"``.
 
         Declared above the ``GET /run/{run_path:path}`` matcher because
         FastAPI matches routes in declaration order and the ``:path``
         converter would otherwise swallow the trailing ``/log``.
         """
         path = Path(run_path)
-        from exlab_wizard.api.schemas import IngestJson as _IngestJson
-        from exlab_wizard.constants import INGEST_JSON_NAME as _INGEST_JSON_NAME
-
-        ingest_path = path / CACHE_DIR_NAME / _INGEST_JSON_NAME
-        if not ingest_path.exists():
-            # Reuse ``session_not_found`` (same allowlist as the run-
-            # detail endpoint at GET /run/{path}) rather than minting a
-            # new code; semantically the run record is missing in both
-            # cases (creation.json there, ingest.json here).
+        if not path.exists():  # noqa: ASYNC240 -- one-shot existence stat
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={
                     "code": "session_not_found",
-                    "message": f"ingest.json not found at {ingest_path}",
+                    "message": f"run directory not found at {path}",
                 },
             )
-        try:
-            payload = read_msgspec_json(ingest_path, _IngestJson)
-        except (msgspec.DecodeError, msgspec.ValidationError) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "code": "validation_failed",
-                    "message": str(exc),
-                },
-            ) from exc
-        history: list[RunLogEntry] = []
-        for raw in payload.history:
-            state = str(raw.get("state", "")) if isinstance(raw, dict) else ""
-            if not state:
-                continue
-            extras = (
-                {k: v for k, v in raw.items() if k not in {"state", "at", "host"}}
-                if isinstance(raw, dict)
-                else {}
-            )
-            history.append(
-                RunLogEntry(
-                    state=state,
-                    at=raw.get("at") if isinstance(raw, dict) else None,
-                    host=raw.get("host") if isinstance(raw, dict) else None,
-                    payload=extras,
-                )
-            )
+        deps = require_deps(request)
+        history, current_state = await _run_log_from_queue(deps, path)
         return RunLogResponse(
             path=str(path),
-            current_state=str(payload.current_state) if payload.current_state else None,
+            current_state=current_state,
             history=history,
         )
 
@@ -360,6 +336,40 @@ def build_browse_router() -> APIRouter:
 # ---------------------------------------------------------------------------
 # Tree builders
 # ---------------------------------------------------------------------------
+
+
+async def _run_log_from_queue(deps: Any, run_path: Path) -> tuple[list[RunLogEntry], str | None]:
+    """Derive a run's per-run log from its sync-queue job.
+
+    Returns ``(history, current_state)``. The operator-free per-file NAS
+    sync redesign (2026-05-21) removed the ``ingest.json`` history; the
+    sync queue is the run-status source this phase. A run with no job
+    yields an empty history and ``current_state == "none"``.
+    """
+    nas_sync = getattr(deps, "nas_sync", None)
+    getter = getattr(nas_sync, "get_by_run_path", None) if nas_sync is not None else None
+    if getter is None:
+        return [], "none"
+    try:
+        row = await getter(run_path)
+    except Exception as exc:  # pragma: no cover -- defensive
+        _log.warning("sync-queue lookup failed for %s: %s", run_path, exc)
+        return [], "none"
+    if row is None:
+        return [], "none"
+    state = getattr(getattr(row, "state", None), "value", None) or "none"
+    extras: dict[str, Any] = {}
+    for field in ("attempts", "verify_passes", "last_error", "nas_path"):
+        value = getattr(row, field, None)
+        if value:
+            extras[field] = value
+    entry = RunLogEntry(
+        state=state,
+        at=getattr(row, "verified_at", None) or getattr(row, "enqueued_at", None) or None,
+        host=None,
+        payload=extras,
+    )
+    return [entry], state
 
 
 def _path_is_under_allowed_root(path: Path, config: Any) -> bool:
@@ -471,38 +481,99 @@ def _relay_label_from_first_run(equipment_dir: Path, fallback: str) -> str:
     return fallback
 
 
-def _per_file_sync_status(path: Path) -> str | None:
-    """Return per-file sync status for a folder-list row.
+# Per-file GUI display states (operator-free per-file NAS sync design,
+# 2026-05-21). The five-state table in the spec maps a file's
+# sync_state.json record + on-disk presence to one of these. The UI's
+# ``sync_status_props`` renders an icon for each.
+FILE_STATE_ACQUIRING = "acquiring"
+FILE_STATE_SYNCING = "syncing"
+FILE_STATE_SYNCED = "synced"
+FILE_STATE_ON_NAS = "on_nas"
 
-    Redesign §5 last bullet:
-    - For files under owned ``nas`` equipment: derived from the run's
-      ``creation.json`` ``sync_status`` (pending → synced → verified).
-    - For files under owned ``stage`` equipment: tops out at ``relayed``.
-    - For files under received equipment: derived from ``ingest.json``
-      lifecycle state.
 
-    Implemented conservatively: walks up to find the nearest
-    ``creation.json`` (run cache) and returns its ``sync_status`` if
-    present. Receives a ``None`` when nothing applies.
+def _find_run_root(folder: Path) -> Path | None:
+    """Walk up from ``folder`` to the nearest run directory, or ``None``.
+
+    A run directory is identified by the presence of a
+    ``.exlab-wizard/creation.json`` cache. The bound (10) tolerates
+    typical instrument output tree depths without becoming pathological
+    for misrooted paths.
     """
-    if path.is_dir():
-        return None
-    # Walk up to find a Run_*/.exlab-wizard/creation.json. The bound (10)
-    # tolerates typical instrument output tree depths (Run/data/raw/
-    # series/frames/...) without becoming pathological for misrooted paths.
-    current = path.parent
+    current = folder
     for _ in range(10):
         try:
-            cache_path = creation_json_path(current)
-            if cache_path.exists():
-                payload = read_msgspec_json(cache_path, CreationJson)
-                return payload.sync_status
-        except (msgspec.DecodeError, msgspec.ValidationError, OSError):
+            if creation_json_path(current).exists():
+                return current
+        except OSError:
             return None
         if current.parent == current:
             break
         current = current.parent
     return None
+
+
+def _read_sync_state(run_root: Path) -> Any:
+    """Read a run's ``sync_state.json`` via :class:`SyncStateWriter`.
+
+    Returns the decoded :class:`SyncStateJson` (an empty state when the
+    file is absent), or ``None`` on a decode/IO failure so callers can
+    fall back to a no-status row.
+    """
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+
+    try:
+        return SyncStateWriter().read_sync(run_root)
+    except Exception as exc:  # pragma: no cover -- defensive
+        _log.warning("sync_state.json read failed for %s: %s", run_root, exc)
+        return None
+
+
+def _file_state_from_record(record: Any | None, *, on_disk: bool) -> str | None:
+    """Map a ``sync_state.json`` record + on-disk presence to a GUI state.
+
+    The five-state table (operator-free per-file NAS sync design,
+    2026-05-21):
+
+    * not recorded + on disk        -> ``acquiring``
+    * recorded, unverified + disk   -> ``syncing``
+    * recorded, verified + on disk  -> ``synced``
+    * recorded, verified + absent   -> ``on_nas`` (tombstone)
+    """
+    if record is None:
+        return FILE_STATE_ACQUIRING if on_disk else None
+    verified = getattr(record, "verified_at", None) is not None
+    if on_disk:
+        return FILE_STATE_SYNCED if verified else FILE_STATE_SYNCING
+    return FILE_STATE_ON_NAS if verified else None
+
+
+def _per_file_sync_status(path: Path) -> str | None:
+    """Return the per-file GUI sync state for a folder-list row.
+
+    Operator-free per-file NAS sync design (2026-05-21): per-file status
+    is sourced from the run's ``sync_state.json`` rather than the
+    ``creation.json`` ``sync_status`` field. Returns ``None`` for
+    directories or for files outside any run.
+    """
+    if path.is_dir():
+        return None
+    run_root = _find_run_root(path.parent)
+    if run_root is None:
+        return None
+    state = _read_sync_state(run_root)
+    if state is None:
+        return None
+    rel = _run_relative_posix(run_root, path)
+    record = state.files.get(rel) if rel is not None else None
+    return _file_state_from_record(record, on_disk=True)
+
+
+def _run_relative_posix(run_root: Path, path: Path) -> str | None:
+    """Return ``path`` relative to ``run_root`` as a POSIX string, or ``None``."""
+    try:
+        return path.relative_to(run_root).as_posix()
+    except ValueError:
+        return None
 
 
 def _iter_run_or_project_subdirs(parent: Path) -> list[os.DirEntry[str]]:
@@ -579,15 +650,19 @@ def _scan_run_children(
 
 
 def _build_run_node(run_dir: Path, *, kind: str) -> RunNode:
+    """Build a tree run node, deriving its rollup from ``sync_state.json``.
+
+    Operator-free per-file NAS sync design (2026-05-21): the run-node
+    rollup (``syncing`` / ``synced`` / ``cleared``) is derived from the
+    run's ``sync_state.json`` via :meth:`SyncStateWriter.rollup_state`,
+    not the ``creation.json`` ``sync_status`` field. The rollup is
+    ``None`` only when the run has no ``creation.json`` at all.
+    """
     cache_path = creation_json_path(run_dir)
-    sync_status: str | None = None
     has_cache = cache_path.exists()
+    sync_status: str | None = None
     if has_cache:
-        try:
-            payload = read_msgspec_json(cache_path, CreationJson)
-            sync_status = payload.sync_status
-        except (msgspec.DecodeError, msgspec.ValidationError):
-            sync_status = None
+        sync_status = _run_rollup_status(run_dir)
     return RunNode(
         name=run_dir.name,
         path=str(run_dir),
@@ -595,6 +670,22 @@ def _build_run_node(run_dir: Path, *, kind: str) -> RunNode:
         sync_status=sync_status,
         has_creation_json=has_cache,
     )
+
+
+def _run_rollup_status(run_dir: Path) -> str | None:
+    """Return a run's derived ``RunSyncState`` rollup value, or ``None``.
+
+    Reads ``sync_state.json`` and applies the pure
+    :meth:`SyncStateWriter.rollup_state` derivation.
+    """
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+
+    try:
+        state = SyncStateWriter().read_sync(run_dir)
+    except Exception as exc:  # pragma: no cover -- defensive
+        _log.warning("sync_state.json rollup read failed for %s: %s", run_dir, exc)
+        return None
+    return SyncStateWriter.rollup_state(state).value
 
 
 # ---------------------------------------------------------------------------
@@ -676,12 +767,24 @@ def scan_folder_sync(folder_path: str, config: Any) -> FolderResponse:
                 "message": f"cannot list {path}: {exc}",
             },
         ) from exc
+    # Source per-file status from the run's sync_state.json once for the
+    # whole folder (operator-free per-file NAS sync design, 2026-05-21).
+    run_root = _find_run_root(path)
+    sync_state = _read_sync_state(run_root) if run_root is not None else None
+    on_disk_rel: set[str] = set()
     for entry in sorted(scandir_entries, key=lambda e: e.name):
         try:
             is_dir = entry.is_dir(follow_symlinks=False)
             stat = entry.stat(follow_symlinks=False)
         except OSError:
             continue
+        rel: str | None = None
+        record: Any | None = None
+        if sync_state is not None and run_root is not None and not is_dir:
+            rel = _run_relative_posix(run_root, Path(entry.path))
+            if rel is not None:
+                on_disk_rel.add(rel)
+                record = sync_state.files.get(rel)
         entries.append(
             FolderEntry(
                 name=entry.name,
@@ -689,10 +792,62 @@ def scan_folder_sync(folder_path: str, config: Any) -> FolderResponse:
                 is_dir=is_dir,
                 size_bytes=None if is_dir else stat.st_size,
                 modified_iso=dt_to_iso(datetime.fromtimestamp(stat.st_mtime, tz=UTC)),
-                sync_status=_per_file_sync_status(Path(entry.path)),
+                sync_status=(None if is_dir else _file_state_from_record(record, on_disk=True)),
+                keep_local=bool(getattr(record, "keep_local", False)),
             )
         )
+    # Tombstones: files recorded in sync_state.json but absent on disk
+    # (a cleared run still lists its files as "On NAS"). Emitted only for
+    # records that resolve to this folder (the rel-path's parent matches).
+    if sync_state is not None and run_root is not None:
+        entries.extend(_tombstone_entries(run_root, path, sync_state, on_disk_rel))
+        entries.sort(key=lambda e: e.name)
     return FolderResponse(path=str(path), entries=entries)
+
+
+def _tombstone_entries(
+    run_root: Path,
+    folder: Path,
+    sync_state: Any,
+    on_disk_rel: set[str],
+) -> list[FolderEntry]:
+    """Build "On NAS" tombstone rows for cleared-run files absent on disk.
+
+    Operator-free per-file NAS sync design (2026-05-21): ``sync_state.json``
+    survives cleanup, so a cleared run still expands to show every file as
+    an "On NAS" tombstone. Only records whose run-relative path resolves to
+    a file *directly inside* ``folder`` and that is not already on disk are
+    emitted.
+    """
+    out: list[FolderEntry] = []
+    for rel, record in sync_state.files.items():
+        if rel in on_disk_rel:
+            continue
+        abs_path = run_root / rel
+        # Only keys resolving to a file directly inside ``folder`` are
+        # emitted. This intentionally drops any non-normalized
+        # sync_state.json key (a ``..`` segment or an absolute path):
+        # such a key's joined path won't have ``folder`` as its parent,
+        # so it is silently skipped. Safe -- no file is ever opened here.
+        if abs_path.parent != folder:
+            continue
+        state = _file_state_from_record(record, on_disk=False)
+        if state is None:
+            # An unverified, absent record is not a meaningful tombstone.
+            continue
+        out.append(
+            FolderEntry(
+                name=abs_path.name,
+                path=str(abs_path),
+                is_dir=False,
+                size_bytes=None,
+                modified_iso=None,
+                sync_status=state,
+                keep_local=bool(getattr(record, "keep_local", False)),
+                tombstone=True,
+            )
+        )
+    return out
 
 
 def build_hierarchy_dict(config: Any) -> dict[Any, dict[Any, list[Any]]]:

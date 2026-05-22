@@ -6,10 +6,19 @@ import pytest
 from pydantic import ValidationError
 
 from exlab_wizard.ui.pages.wizard_equipment import (
+    EQUIPMENT_STEP_TITLES,
+    EQUIPMENT_WIZARD_STEPS,
     EquipmentWizardState,
     assemble_equipment_config,
     can_advance,
 )
+
+
+def test_wizard_has_four_steps_without_signal_step() -> None:
+    """The completeness-signal step is removed by the quiescence redesign."""
+    assert EQUIPMENT_WIZARD_STEPS == ("identity", "paths", "sync_mode", "review")
+    assert set(EQUIPMENT_STEP_TITLES) == set(EQUIPMENT_WIZARD_STEPS)
+    assert "signal" not in EQUIPMENT_WIZARD_STEPS
 
 
 def _state_filled_for(step: str) -> EquipmentWizardState:
@@ -22,8 +31,6 @@ def _state_filled_for(step: str) -> EquipmentWizardState:
     s.transport_type = "rclone"
     s.rclone_remote = "lab-nas"
     s.rclone_remote_path = "lab/FLOW_99"
-    s.completeness_signal = "sentinel_file"
-    s.sentinel_filename = "done.flag"
     return s
 
 
@@ -63,17 +70,6 @@ def test_can_advance_sync_mode_stage_requires_staging_fields() -> None:
     assert can_advance(s) is False
     s.staging_mount_point = "/mnt/staging"
     s.staging_subpath = "in/FLOW_99"
-    assert can_advance(s) is True
-
-
-def test_can_advance_signal_requires_matching_filename() -> None:
-    s = _state_filled_for("signal")
-    assert can_advance(s) is True
-    s.completeness_signal = "manifest"
-    s.sentinel_filename = ""
-    s.manifest_filename = ""
-    assert can_advance(s) is False
-    s.manifest_filename = "manifest.json"
     assert can_advance(s) is True
 
 

@@ -17,10 +17,19 @@ from pathlib import Path
 
 import keyring
 import keyring.backend
+import pytest
 
-from exlab_wizard.config.models import Config
-from exlab_wizard.constants import KEYRING_USERNAME_LIMS
+from exlab_wizard.config.models import (
+    BandwidthConfig,
+    Config,
+    EquipmentConfig,
+    PathsConfig,
+    RcloneTransport,
+)
+from exlab_wizard.constants import KEYRING_USERNAME_LIMS, SyncMode
 from exlab_wizard.lims.keyring_store import KeyringStore
+from exlab_wizard.sync.nas_client import NASSyncClient
+from exlab_wizard.tray import dependencies as deps_module
 from exlab_wizard.tray.dependencies import (
     _build_lims_client,
     _check_keyring_present,
@@ -62,6 +71,45 @@ def test_build_production_dependencies_exposes_keyring_store(tmp_path: Path) -> 
     deps = build_production_dependencies(tmp_path)
 
     assert isinstance(deps.keyring_store, KeyringStore)
+
+
+def test_build_production_dependencies_nas_sync_is_a_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``deps.nas_sync`` must be a :class:`NASSyncClient`, not a bare queue.
+
+    Regression: ``_build_nas_sync`` once returned a ``SyncQueue``, which
+    has neither ``enqueue`` nor ``status`` -- the poller sweep and the
+    force-sync route call both, so the bug surfaced only as a silent dead
+    sync loop in production. This is the test that catches it.
+    """
+    local_root = tmp_path / "lab-data"
+    local_root.mkdir()
+    config = Config(
+        paths=PathsConfig(local_root=str(local_root)),
+        equipment=[
+            EquipmentConfig(
+                id="EQNAS",
+                label="Nas Equipment",
+                local_root=str(local_root),
+                nas_root="/nas",
+                sync_mode=SyncMode.NAS,
+                transport=RcloneTransport(
+                    type="rclone",
+                    rclone_remote="lab-nas",
+                    rclone_remote_path="/srv/nas",
+                    bandwidth=BandwidthConfig(),
+                ),
+            ),
+        ],
+    )
+    monkeypatch.setattr(deps_module, "_load_config_safely", lambda: config)
+
+    deps = build_production_dependencies(tmp_path)
+
+    assert isinstance(deps.nas_sync, NASSyncClient)
+    assert callable(deps.nas_sync.enqueue)
+    assert callable(deps.nas_sync.status)
 
 
 def test_check_keyring_present_true_when_lims_password_stored(tmp_path: Path) -> None:

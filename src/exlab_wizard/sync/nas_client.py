@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import shutil
+import tempfile
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,14 +23,15 @@ from typing import Any
 
 from exlab_wizard.api.schemas import CreationJson
 from exlab_wizard.cache.creation_writer import CreationWriter
+from exlab_wizard.cache.sync_state_writer import SyncStateWriter
 from exlab_wizard.config.models import Config, EquipmentConfig, RcloneTransport, RsyncSshTransport
 from exlab_wizard.constants import (
-    CACHE_DIR_NAME,
+    RunSyncState,
     SyncHandleState,
     SyncStatus,
 )
 from exlab_wizard.logging import get_logger
-from exlab_wizard.paths import creation_json_path
+from exlab_wizard.paths import cache_dir, creation_json_path
 from exlab_wizard.sync.bandwidth import effective_bandwidth_limit_kibps
 from exlab_wizard.sync.cleanup import cleanup_interlocks_satisfied
 from exlab_wizard.sync.pre_sync_gate import is_eligible
@@ -39,6 +40,7 @@ from exlab_wizard.sync.queue import (
     SyncJobState,
     SyncQueue,
 )
+from exlab_wizard.sync.run_delete import delete_run_files
 from exlab_wizard.sync.transports import (
     TransportError,
     TransportErrorKind,
@@ -59,6 +61,22 @@ __all__ = [
 
 
 _log = get_logger(__name__)
+
+
+# Job states that count as "done with this subset" for re-enqueue purposes
+# (operator-free per-file NAS sync, 2026-05-21). When ``enqueue`` is called
+# with a fresh ``files`` list and the run's existing job is in one of these
+# states, the row is re-armed in QUEUED with the new subset -- this is how a
+# file modified after a prior verify, or queued onto a permanently-failed
+# run, gets re-synced.
+_TERMINAL_ENQUEUE_STATES: frozenset[SyncJobState] = frozenset(
+    {
+        SyncJobState.VERIFIED,
+        SyncJobState.CLEANUP_ELIGIBLE,
+        SyncJobState.CLEANED,
+        SyncJobState.FAILED,
+    },
+)
 
 
 # ---------------------------------------------------------------------------
@@ -114,9 +132,16 @@ def _build_transport_driver(equipment: EquipmentConfig) -> tuple[Any, Callable[.
         remote_name = transport.rclone_remote
         remote_path = transport.rclone_remote_path
 
-        async def _push_rclone(local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
+        async def _push_rclone(
+            local: Path,
+            *,
+            bwlimit_kibps: int | None,
+            files_from: Path | None = None,
+        ) -> TransportResult:
             target = f"{remote_name}:{remote_path}/{local.name}"
-            return await rclone_driver.push(local, target, bwlimit_kibps=bwlimit_kibps)
+            return await rclone_driver.push(
+                local, target, bwlimit_kibps=bwlimit_kibps, files_from=files_from
+            )
 
         return rclone_driver, _push_rclone
 
@@ -126,7 +151,12 @@ def _build_transport_driver(equipment: EquipmentConfig) -> tuple[Any, Callable[.
         ssh_target = transport.ssh_target
         remote_path_value = transport.remote_path
 
-        async def _push_rsync(local: Path, *, bwlimit_kibps: int | None) -> TransportResult:
+        async def _push_rsync(
+            local: Path,
+            *,
+            bwlimit_kibps: int | None,
+            files_from: Path | None = None,
+        ) -> TransportResult:
             target = f"{remote_path_value}/{local.name}"
             return await rsync_driver.push(
                 local,
@@ -134,6 +164,7 @@ def _build_transport_driver(equipment: EquipmentConfig) -> tuple[Any, Callable[.
                 ssh_key,
                 target,
                 bwlimit_kibps=bwlimit_kibps,
+                files_from=files_from,
             )
 
         return rsync_driver, _push_rsync
@@ -220,6 +251,7 @@ class NASSyncClient:
         queue_db: Path,
         validator: Validator,
         cache_creation: CreationWriter,
+        sync_state_writer: SyncStateWriter | None = None,
         verifier: Verifier | None = None,
         worker_poll_interval_s: float = 0.05,
         push_callable_factory: Callable[[EquipmentConfig], Callable[..., Any]] | None = None,
@@ -232,6 +264,7 @@ class NASSyncClient:
         self._queue_db = queue_db
         self._validator = validator
         self._cache_creation = cache_creation
+        self._sync_state_writer = sync_state_writer or SyncStateWriter()
         self._verifier = verifier or Verifier()
         self._queue = SyncQueue(queue_db)
         self._equipment_by_id = {e.id: e for e in config.equipment}
@@ -266,14 +299,44 @@ class NASSyncClient:
 
     # ------------------------------------------------------------------ enqueue
 
-    async def enqueue(self, run_path: Path) -> SyncJobHandle:
+    async def enqueue(
+        self,
+        run_path: Path,
+        files: list[str] | None = None,
+    ) -> SyncJobHandle:
         """Pre-Sync Gate -> if hard-tier finding without override, mark
         ``sync_status='blocked_by_validation'``. Otherwise insert a
         ``QUEUED`` row.
 
+        ``files`` (operator-free per-file NAS sync, 2026-05-21) is the
+        per-file subset of run-relative POSIX paths eligible at enqueue
+        time; an empty / omitted list means "the whole run".
+
+        The queue holds one row per ``run_path`` (UNIQUE). Re-enqueue
+        behaviour:
+
+        * existing job in a **terminal** state (``VERIFIED`` /
+          ``CLEANUP_ELIGIBLE`` / ``CLEANED`` / ``FAILED``) **and** a
+          non-empty ``files`` list -> reset to ``QUEUED`` carrying the new
+          subset. This is how a file modified after a prior verify gets
+          re-synced.
+        * existing job in a terminal ``VERIFIED`` / ``CLEANUP_ELIGIBLE`` /
+          ``CLEANED`` state with an **empty** ``files`` list -> falls
+          through to a no-op: there is no subset to re-sync and a
+          successfully-verified run is not blindly re-queued. (Only a
+          terminal ``FAILED`` row with empty ``files`` is re-armed -- the
+          manual-retry branch below.)
+        * existing job **active** (``QUEUED`` / ``RUNNING`` /
+          ``AWAITING_VERIFY``) -> no-op (newly settled files ride the next
+          sweep).
+        * existing terminal ``FAILED`` job with no ``files`` -> re-armed
+          via ``reset_to_queued`` so the manual-retry contract holds.
+        * no existing job -> insert a ``QUEUED`` row with ``files``.
+
         Returns a :class:`SyncJobHandle`. The handle's ``state`` is
         either :attr:`SyncHandleState.BLOCKED` or :attr:`SyncHandleState.QUEUED`.
         """
+        files_tuple: tuple[str, ...] = tuple(files or ())
         creation_path = creation_json_path(run_path)
         creation = await self._cache_creation.read_creation_snapshot(creation_path)
 
@@ -294,9 +357,19 @@ class NASSyncClient:
         equipment_id = self._infer_equipment_id(run_path, creation)
         existing = await self._queue.get_by_run_path(run_path)
         if existing is not None:
-            # Re-enqueueing an existing run is a no-op except for FAILED rows,
-            # which we re-arm in QUEUED.
+            if existing.state in _TERMINAL_ENQUEUE_STATES and files_tuple:
+                # A file modified after a prior verify (or a permanently
+                # failed run carrying a fresh subset): re-arm the row in
+                # QUEUED with the new file list.
+                row = await self._queue.requeue_with_files(existing.id, files_tuple)
+                self._wake_event.set()
+                return SyncJobHandle(
+                    job_id=row.id,
+                    state=SyncHandleState.QUEUED,
+                    run_path=str(run_path),
+                )
             if existing.state == SyncJobState.FAILED:
+                # Manual retry with no fresh subset -- keep the old contract.
                 row = await self._queue.reset_to_queued(existing.id)
                 self._wake_event.set()
                 return SyncJobHandle(
@@ -304,6 +377,7 @@ class NASSyncClient:
                     state=SyncHandleState.QUEUED,
                     run_path=str(run_path),
                 )
+            # Active job (QUEUED / RUNNING / AWAITING_VERIFY): no-op.
             return SyncJobHandle(
                 job_id=existing.id,
                 state=SyncHandleState.QUEUED,
@@ -314,6 +388,7 @@ class NASSyncClient:
             run_path=run_path,
             equipment_id=equipment_id,
             nas_path=self._compute_nas_path(creation),
+            files=files_tuple,
         )
         self._wake_event.set()
         return SyncJobHandle(job_id=row.id, state=SyncHandleState.QUEUED, run_path=str(run_path))
@@ -431,12 +506,28 @@ class NASSyncClient:
             equipment.transport.bandwidth, now_local=datetime.now()
         )
 
+        # Per-file NAS sync (2026-05-21): when the job carries a file
+        # subset, write it to a temp ``--files-from`` list so the transport
+        # copies only those paths. An empty ``job.files`` keeps the
+        # whole-directory copy.
         push = self._build_push(equipment)
+        files_from_path: Path | None = None
         try:
-            result = await push(run_path, bwlimit_kibps=bwlimit)
-        except TransportError as exc:
-            await self._queue.record_failure(job.id, error=str(exc), terminal=False)
-            return
+            if job.files:
+                files_from_path = self._write_files_from(job.files)
+            try:
+                result = await push(
+                    run_path,
+                    bwlimit_kibps=bwlimit,
+                    files_from=files_from_path,
+                )
+            except TransportError as exc:
+                await self._queue.record_failure(job.id, error=str(exc), terminal=False)
+                return
+        finally:
+            if files_from_path is not None:
+                with contextlib.suppress(OSError):
+                    files_from_path.unlink()
 
         if not result.ok:
             await self._handle_push_failure(job, result)
@@ -450,9 +541,11 @@ class NASSyncClient:
         # partial transports cheaply; the remote pass closes the
         # integrity-in-transit gap and is the reason ``equipment`` flows
         # in here -- the verifier needs the transport-specific hashsum
-        # callable.
+        # callable. When the job carries a file subset, the verify pass is
+        # scoped to that subset.
+        include = set(job.files) if job.files else None
         try:
-            verify_result = await self._verify_pass(run_path, equipment)
+            verify_result = await self._verify_pass(run_path, equipment, include=include)
         except FileNotFoundError:
             await self._queue.record_failure(
                 job.id,
@@ -460,6 +553,14 @@ class NASSyncClient:
                 terminal=True,
             )
             return
+
+        # Per-file verify reconciliation (operator-free per-file NAS sync,
+        # design "Failure handling"): credit every file that verified in
+        # ``sync_state.json`` -- even when the batch job is otherwise marked
+        # failed, so a single bad file does not block the good ones. The
+        # job's overall pass/fail (retry/backoff) is decided below from
+        # ``verify_result.ok`` exactly as before.
+        await self._reconcile_synced_files(run_path, job, verify_result)
 
         if not verify_result.ok:
             # Spec §7.1.5 retry-class routing for verify failures. The
@@ -579,7 +680,13 @@ class NASSyncClient:
         # NETWORK / UNKNOWN -> backoff retry.
         await self._queue.record_failure(job.id, error=kind.value, terminal=False)
 
-    async def _verify_pass(self, run_path: Path, equipment: EquipmentConfig) -> VerifyResult:
+    async def _verify_pass(
+        self,
+        run_path: Path,
+        equipment: EquipmentConfig,
+        *,
+        include: set[str] | None = None,
+    ) -> VerifyResult:
         """Run one local manifest + verify pass, then probe the remote.
 
         The local pass is the cheap pre-check; if the local subtree no
@@ -588,6 +695,12 @@ class NASSyncClient:
         we ask the transport for its remote-side manifest and compare via
         :meth:`Verifier.verify_against_remote` (Backend Spec §7.1.4 -- the
         integrity-in-transit gap closure).
+
+        ``include`` (operator-free per-file NAS sync, 2026-05-21) scopes the
+        local manifest to a run-relative subset; ``None`` hashes the whole
+        run. The remote probe still walks the whole run subtree -- the
+        remote-vs-local comparison is keyed on the (possibly subset) local
+        manifest, so extra remote keys are simply informational.
 
         A :class:`TransportError` from the hashsum probe is surfaced as a
         verify failure (``ok=False``) carrying the transport's classified
@@ -599,7 +712,7 @@ class NASSyncClient:
         NETWORK / UNKNOWN -> backoff, every other case including a
         missing-binary spawn failure -> single retry then terminal).
         """
-        manifest = await self._verifier.compute_local_manifest(run_path)
+        manifest = await self._verifier.compute_local_manifest(run_path, include)
         local_result = await self._verifier.verify_against_local(run_path, manifest)
         if not local_result.ok:
             return local_result
@@ -616,13 +729,102 @@ class NASSyncClient:
             )
         return self._verifier.verify_against_remote(manifest, remote_manifest)
 
+    async def _reconcile_synced_files(
+        self,
+        run_path: Path,
+        job: SyncJobRow,
+        verify_result: VerifyResult,
+    ) -> None:
+        """Credit every individually-verified file in ``sync_state.json``.
+
+        Operator-free per-file NAS sync design ("Failure handling"): a
+        per-run batch job may verify some files and fail others. Every file
+        that *did* verify is recorded with its current ``(st_size,
+        st_mtime_ns)`` ``synced_signature`` and a ``verified_at`` timestamp
+        -- even when the batch job is otherwise routed to a retry / FAILED
+        -- so a single bad file does not block crediting the good ones.
+
+        A file counts as verified when it is present in the verify result's
+        local manifest and absent from both ``mismatched`` and ``missing``.
+        When the remote probe could not run at all (``error_kind`` set)
+        nothing is credited -- no file's NAS copy was confirmed.
+        """
+        if verify_result.error_kind is not None:
+            return
+        bad = set(verify_result.mismatched) | set(verify_result.missing)
+        verified_rel = [rel for rel in verify_result.manifest if rel not in bad]
+        if not verified_rel:
+            return
+        verified_at = utc_now_iso()
+        for rel in verified_rel:
+            signature = self._file_signature(run_path / rel)
+            if signature is None:
+                continue
+            with contextlib.suppress(Exception):
+                await self._sync_state_writer.upsert_file(
+                    run_path,
+                    rel,
+                    synced_signature=signature,
+                    verified_at=verified_at,
+                )
+
+    @staticmethod
+    def _file_signature(path: Path) -> tuple[int, int] | None:
+        """Return the ``(st_size, st_mtime_ns)`` signature for ``path``."""
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        return (stat.st_size, stat.st_mtime_ns)
+
+    @staticmethod
+    def _write_files_from(files: tuple[str, ...]) -> Path:
+        """Write a transport ``--files-from`` list and return its path.
+
+        One run-relative POSIX path per line. The caller is responsible for
+        unlinking the temp file once the transport invocation completes.
+        """
+        handle = tempfile.NamedTemporaryFile(  # noqa: SIM115 -- caller unlinks
+            mode="w",
+            encoding="utf-8",
+            prefix="exlab-files-from-",
+            suffix=".txt",
+            delete=False,
+        )
+        try:
+            handle.write("\n".join(files) + "\n")
+        finally:
+            handle.close()
+        return Path(handle.name)
+
     async def _maybe_cleanup(self, job_id: str, run_path: Path) -> None:
-        """Apply the §7.1.6 interlocks; if all pass, run the cleanup."""
+        """Apply the §7.1.6 interlocks; if all pass, run the cleanup.
+
+        Operator-free per-file NAS sync design ("Cleanup -- rollup"): with
+        per-file sync a job reaching ``VERIFIED`` only means *that job's
+        file subset* verified -- the run may still hold unsynced files from
+        a later sweep. Cleanup therefore additionally requires the whole-run
+        ``sync_state.json`` rollup to be ``SYNCED`` (every tracked file
+        verified); a partially-synced run is left for a later pass.
+        """
         if not self._config.nas_cleanup.enabled:
             return
         job = await self._queue.get_by_id(job_id)
         if job is None or job.state != SyncJobState.VERIFIED:
             return
+
+        # Whole-run rollup gate: every tracked file must be verified before
+        # any local deletion. A job's VERIFIED only covers its own subset.
+        sync_state = await self._sync_state_writer.read(run_path)
+        rollup = self._sync_state_writer.rollup_state(sync_state)
+        if rollup != RunSyncState.SYNCED:
+            _log.debug(
+                "cleanup deferred: run %s not fully SYNCED (rollup=%s)",
+                run_path,
+                rollup.value,
+            )
+            return
+
         creation_path = creation_json_path(run_path)
         creation: CreationJson | None = None
         if creation_path.exists():
@@ -643,33 +845,38 @@ class NASSyncClient:
             await self._queue.transition(job_id, SyncJobState.CLEANUP_ELIGIBLE)
             return
 
-        # Promote to CLEANUP_ELIGIBLE then perform the deletion.
+        # Promote to CLEANUP_ELIGIBLE then perform the deletion. Files the
+        # operator flagged ``keep_local`` survive the sweep.
         await self._queue.transition(job_id, SyncJobState.CLEANUP_ELIGIBLE)
-        self._delete_local(run_path)
+        keep_local = {rel for rel, rec in sync_state.files.items() if rec.keep_local}
+        self._delete_local(run_path, keep_local)
         await self._mark_cleaned(run_path)
+        # Stamp ``cleared_at`` in ``sync_state.json`` so the run rolls up to
+        # CLEARED. Skipped when the whole-run ``retain_cache=False`` delete
+        # removed the cache directory along with the data files -- there is
+        # no surviving record to stamp.
+        if cache_dir(run_path).exists():
+            await self._sync_state_writer.mark_cleared(run_path)
         await self._queue.transition(job_id, SyncJobState.CLEANED)
 
-    def _delete_local(self, run_path: Path) -> None:
-        """Delete ``run_path`` data files honoring ``retain_cache``.
+    def _delete_local(
+        self,
+        run_path: Path,
+        keep_local: set[str] | None = None,
+    ) -> None:
+        """Delete ``run_path`` data files honoring ``retain_cache`` and ``keep_local``.
 
-        With the default ``retain_cache=True`` we keep the
-        ``.exlab-wizard/`` subtree so the local browse view can still
-        render the run with a ``cleaned`` badge (§7.1.10).
+        Thin wrapper over the shared :func:`exlab_wizard.sync.run_delete.delete_run_files`
+        helper so the automatic cleanup reaper and the operator-facing
+        ``clear_run_dir`` stay in lockstep: ``keep_local`` files survive, the
+        ``.exlab-wizard/`` subtree survives (when ``retain_cache``), and
+        directory symlinks are never descended into or removed.
         """
-        if not run_path.exists():
-            return
-        retain = self._config.nas_cleanup.retain_cache
-        if retain:
-            for entry in run_path.iterdir():
-                if entry.name == CACHE_DIR_NAME:
-                    continue
-                if entry.is_dir():
-                    shutil.rmtree(entry, ignore_errors=True)
-                else:
-                    with contextlib.suppress(OSError):
-                        entry.unlink()
-        else:
-            shutil.rmtree(run_path, ignore_errors=True)
+        delete_run_files(
+            run_path,
+            keep_local=keep_local or set(),
+            retain_cache=self._config.nas_cleanup.retain_cache,
+        )
 
     # ----------------------------------------------------------- helpers
 

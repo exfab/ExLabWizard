@@ -7,7 +7,7 @@ Covers the pure logic behind the three polish features:
 * ``render_question_field`` -- seeds the answers dict with each
   question's default (the only headlessly-assertable behaviour).
 * ``build_equipment_config`` -- the equipment-editor builder, across
-  both completeness signals and both transports.
+  both transports.
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ from pydantic import ValidationError
 # Prime the api package before importing ui.pages (import-cycle workaround).
 import exlab_wizard.api.app  # noqa: F401
 from exlab_wizard.config.models import RcloneTransport, RsyncSshTransport
-from exlab_wizard.constants import CompletenessSignal
 from exlab_wizard.ui.pages.settings import build_equipment_config
 from exlab_wizard.ui.pages.templates import (
     TemplateQuestion,
@@ -123,9 +122,6 @@ def _equipment_kwargs(**overrides: object) -> dict[str, object]:
         "label": "Confocal 1",
         "local_root": "/data/microscope1",
         "nas_root": "/nas/microscope1",
-        "completeness_signal": "sentinel_file",
-        "sentinel_filename": "done.flag",
-        "manifest_filename": "",
         "transport_type": "rclone",
         "rclone_remote": "lab-nas",
         "rclone_remote_path": "lab/microscope1",
@@ -137,22 +133,16 @@ def _equipment_kwargs(**overrides: object) -> dict[str, object]:
     return base
 
 
-def test_build_equipment_rclone_sentinel() -> None:
+def test_build_equipment_rclone() -> None:
     entry = build_equipment_config(**_equipment_kwargs())  # type: ignore[arg-type]
     assert entry.id == "MICROSCOPE1"
-    assert entry.completeness_signal is CompletenessSignal.SENTINEL_FILE
-    assert entry.sentinel_filename == "done.flag"
-    assert entry.manifest_filename is None
     assert isinstance(entry.transport, RcloneTransport)
     assert entry.transport.rclone_remote == "lab-nas"
 
 
-def test_build_equipment_rsync_manifest() -> None:
+def test_build_equipment_rsync() -> None:
     entry = build_equipment_config(
         **_equipment_kwargs(  # type: ignore[arg-type]
-            completeness_signal="manifest",
-            sentinel_filename="",
-            manifest_filename="manifest.json",
             transport_type="rsync_ssh",
             rclone_remote="",
             rclone_remote_path="",
@@ -161,9 +151,6 @@ def test_build_equipment_rsync_manifest() -> None:
             rsync_remote_path="/remote/microscope1",
         )
     )
-    assert entry.completeness_signal is CompletenessSignal.MANIFEST
-    assert entry.manifest_filename == "manifest.json"
-    assert entry.sentinel_filename is None
     assert isinstance(entry.transport, RsyncSshTransport)
     assert entry.transport.ssh_target == "operator@host"
     assert entry.transport.remote_path == "/remote/microscope1"
@@ -172,10 +159,3 @@ def test_build_equipment_rsync_manifest() -> None:
 def test_build_equipment_rejects_bad_id() -> None:
     with pytest.raises(ValidationError):
         build_equipment_config(**_equipment_kwargs(equipment_id="lower_case"))  # type: ignore[arg-type]
-
-
-def test_build_equipment_rejects_sentinel_without_filename() -> None:
-    with pytest.raises(ValidationError):
-        build_equipment_config(
-            **_equipment_kwargs(sentinel_filename="")  # type: ignore[arg-type]
-        )

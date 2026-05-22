@@ -19,7 +19,6 @@ from exlab_wizard.config.models import (
     RsyncSshTransport,
 )
 from exlab_wizard.constants import (
-    CompletenessSignal,
     OrchestratorTransportType,
     SyncMode,
 )
@@ -33,9 +32,6 @@ def build_equipment_config(
     label: str,
     local_root: str,
     nas_root: str,
-    completeness_signal: str,
-    sentinel_filename: str,
-    manifest_filename: str,
     sync_mode: str = "nas",
     # NAS transport fields (when sync_mode == "nas")
     transport_type: str = "rclone",
@@ -58,7 +54,6 @@ def build_equipment_config(
     Pydantic validation enforces the exclusivity rule.
     """
     mode = SyncMode(sync_mode)
-    signal = CompletenessSignal(completeness_signal)
 
     transport: RcloneTransport | RsyncSshTransport | None = None
     orch_staging: OrchestratorStagingTransport | None = None
@@ -89,15 +84,6 @@ def build_equipment_config(
         label=label.strip(),
         local_root=local_root.strip(),
         nas_root=nas_root.strip(),
-        completeness_signal=signal,
-        sentinel_filename=(
-            sentinel_filename.strip() or None
-            if signal is CompletenessSignal.SENTINEL_FILE
-            else None
-        ),
-        manifest_filename=(
-            manifest_filename.strip() or None if signal is CompletenessSignal.MANIFEST else None
-        ),
         sync_mode=mode,
         transport=transport,
         orchestrator_staging_transport=orch_staging,

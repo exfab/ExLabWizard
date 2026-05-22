@@ -60,15 +60,11 @@ def test_load_config_complete_yaml() -> None:
     assert len(cfg.equipment) == 2
     confocal = cfg.equipment[0]
     assert confocal.id == "CONFOCAL_01"
-    assert confocal.completeness_signal == "sentinel_file"
-    assert confocal.sentinel_filename == "acquisition_complete.flag"
     assert confocal.transport.type == "rclone"
     assert confocal.transport.rclone_remote == "lab-nas"
 
     flow = cfg.equipment[1]
     assert flow.id == "FLOW_01"
-    assert flow.completeness_signal == "manifest"
-    assert flow.manifest_filename == "run_manifest.json"
     assert flow.transport.type == "rsync_ssh"
     assert flow.transport.ssh_target == "labuser@nas01.lab.example"
 
@@ -118,8 +114,6 @@ def test_load_config_validation_error_raises_config_error(tmp_path: Path) -> Non
         "    label: x\n"
         "    local_root: /tmp\n"
         "    nas_root: /mnt\n"
-        "    completeness_signal: sentinel_file\n"
-        "    sentinel_filename: done.flag\n"
         "    transport:\n"
         "      type: rclone\n"
         "      rclone_remote: r\n"
@@ -253,8 +247,6 @@ def test_dump_config_round_trip() -> None:
                 "label": "Confocal",
                 "local_root": "/l",
                 "nas_root": "/n",
-                "completeness_signal": "sentinel_file",
-                "sentinel_filename": "done.flag",
                 "transport": {
                     "type": "rclone",
                     "rclone_remote": "lab-nas",

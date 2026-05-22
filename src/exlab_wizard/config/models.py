@@ -35,7 +35,6 @@ from pydantic import (
 from exlab_wizard.constants import (
     TEMPLATE_QUESTION_ID_PATTERN,
     BandwidthDay,
-    CompletenessSignal,
     FieldType,
     OrchestratorTransportType,
     StagingCleanupMode,
@@ -309,17 +308,9 @@ class EquipmentConfig(BaseModel):
     label: str = Field(min_length=1)
     local_root: str = Field(min_length=1)
     nas_root: str = Field(min_length=1)
-    completeness_signal: CompletenessSignal
-    sentinel_filename: str | None = None
-    manifest_filename: str | None = None
     sync_mode: SyncMode = SyncMode.NAS
     transport: EquipmentTransport | None = None
     orchestrator_staging_transport: OrchestratorStagingTransport | None = None
-
-    @field_serializer("completeness_signal")
-    def _serialize_completeness_signal(self, value: CompletenessSignal) -> str:
-        # Emit the bare string so YAML/JSON dumps round-trip the wire format.
-        return value.value
 
     @field_serializer("sync_mode")
     def _serialize_sync_mode(self, value: SyncMode) -> str:
@@ -336,25 +327,6 @@ class EquipmentConfig(BaseModel):
             return canonicalize_equipment_id(value)
         except ConfigError as exc:
             raise ValueError(str(exc)) from exc
-
-    @model_validator(mode="after")
-    def _completeness_signal_requires_matching_filename(self) -> EquipmentConfig:
-        match self.completeness_signal:
-            case CompletenessSignal.SENTINEL_FILE:
-                if not self.sentinel_filename:
-                    msg = (
-                        "equipment.completeness_signal == 'sentinel_file' "
-                        "requires a non-empty sentinel_filename"
-                    )
-                    raise ValueError(msg)
-            case CompletenessSignal.MANIFEST:
-                if not self.manifest_filename:
-                    msg = (
-                        "equipment.completeness_signal == 'manifest' "
-                        "requires a non-empty manifest_filename"
-                    )
-                    raise ValueError(msg)
-        return self
 
     @model_validator(mode="after")
     def _sync_mode_dictates_transport(self) -> EquipmentConfig:
@@ -504,13 +476,20 @@ class PluginsConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _default_ignore_globs() -> list[str]:
+    return ["*.partial", "*.tmp"]
+
+
 class SyncConfig(BaseModel):
-    """``sync:`` block. NAS sync engine kill-switch + retry policy."""
+    """``sync:`` block. NAS sync engine kill-switch + retry / quiescence policy."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     enabled: bool = True
     retry_attempts: int = Field(default=3, ge=0)
+    quiescence_minutes: int = Field(default=10, ge=1)
+    ignore_globs: list[str] = Field(default_factory=_default_ignore_globs)
+    poll_interval_seconds: int = Field(default=120, ge=1)
 
 
 # ---------------------------------------------------------------------------
@@ -594,3 +573,28 @@ class Config(BaseModel):
         # for completion. Pydantic validation only ensures the fields are
         # present (which they always are due to the empty-string defaults).
         return self
+
+
+def config_with_equipment_appended(config: Config | None, equipment: EquipmentConfig) -> Config:
+    """Return a copy of ``config`` with ``equipment`` appended.
+
+    The single place the Add-Equipment flow merges a new device into the
+    live config -- shared by the ``POST /config/equipment`` route and the
+    NiceGUI wizard's confirm step so both reject duplicate ids and re-run
+    the same cross-field validation instead of open-coding the merge
+    twice. ``config`` may be ``None`` on a fresh install that has no
+    ``config.yaml`` yet, in which case a default :class:`Config` is the
+    base.
+
+    Raises :class:`exlab_wizard.errors.ConfigError` when an equipment
+    entry with the same id already exists.
+    """
+    base = config or Config()
+    for entry in base.equipment:
+        if entry.id == equipment.id:
+            msg = f"equipment id {equipment.id!r} already exists in config"
+            raise ConfigError(msg)
+    merged = base.model_copy(update={"equipment": [*base.equipment, equipment]})
+    # Re-run the full cross-field validation (unique ids, etc.) on the
+    # merged result so a bad merge fails loudly rather than persisting.
+    return Config.model_validate(merged.model_dump(mode="python"))

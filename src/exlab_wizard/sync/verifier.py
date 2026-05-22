@@ -63,17 +63,24 @@ class VerifyResult:
     error_kind: TransportErrorKind | None = None
 
 
-def _iter_files(run_path: Path) -> list[Path]:
+def _iter_files(run_path: Path, include: set[str] | None = None) -> list[Path]:
     """Return every regular file under ``run_path`` (depth-first).
 
     Uses ``Path.rglob('*')`` and filters to regular files. The manifest
     format is independent of walk order, but we sort the result by
     relative path so the manifest file is reproducible byte-for-byte.
+
+    ``include`` (operator-free per-file NAS sync, 2026-05-21), when set, is
+    a set of run-relative POSIX paths; only files whose relative path is in
+    the set are returned. ``None`` walks the whole subtree (unchanged).
     """
     files: list[Path] = []
     for path in run_path.rglob("*"):
-        if path.is_file():
-            files.append(path)
+        if not path.is_file():
+            continue
+        if include is not None and path.relative_to(run_path).as_posix() not in include:
+            continue
+        files.append(path)
     return files
 
 
@@ -145,29 +152,46 @@ def parse_manifest(text: str) -> dict[str, str]:
 class Verifier:
     """SHA-256 verifier. Backend Spec §7.1.4."""
 
-    async def compute_local_manifest(self, run_path: Path) -> dict[str, str]:
+    async def compute_local_manifest(
+        self,
+        run_path: Path,
+        include: set[str] | None = None,
+    ) -> dict[str, str]:
         """Walk ``run_path`` and compute a SHA-256 per file.
 
         Writes the manifest to ``run_path/.exlab-wizard/checksums.sha256``
         as a side-effect (the §7.1.4 contract). Files inside the
         ``.exlab-wizard/`` cache subtree are excluded so the manifest does
         not record its own hash.
+
+        ``include`` (operator-free per-file NAS sync, 2026-05-21), when set,
+        is a set of run-relative POSIX paths; only those files are hashed --
+        used to verify a per-file sync subset. ``None`` hashes the whole
+        subtree (unchanged).
+
+        The side-effect ``checksums.sha256`` write is skipped for a subset
+        (``include is not None``): only a whole-run manifest is durable --
+        persisting a partial manifest would clobber the run's checksum file
+        with an incomplete record.
         """
         if not run_path.exists() or not run_path.is_dir():  # noqa: ASYNC240 -- one-shot stat
             msg = f"run_path does not exist or is not a directory: {run_path}"
             raise FileNotFoundError(msg)
 
         manifest: dict[str, str] = {}
-        for file_path in _iter_files(run_path):
+        for file_path in _iter_files(run_path, include):
             rel = file_path.relative_to(run_path)
             if _is_inside_cache_dir(rel):
                 continue
             manifest[str(rel.as_posix())] = await _compute_sha256(file_path)
 
-        # Persist to .exlab-wizard/checksums.sha256.
-        paths.cache_dir(run_path).mkdir(parents=True, exist_ok=True)
-        checksums_path = run_path / CHECKSUMS_RELATIVE
-        atomic_write_bytes(checksums_path, format_manifest(manifest).encode("utf-8"))
+        # Persist to .exlab-wizard/checksums.sha256 -- whole-run only. A
+        # subset pass must not overwrite the run's checksum file with a
+        # partial manifest.
+        if include is None:
+            paths.cache_dir(run_path).mkdir(parents=True, exist_ok=True)
+            checksums_path = run_path / CHECKSUMS_RELATIVE
+            atomic_write_bytes(checksums_path, format_manifest(manifest).encode("utf-8"))
         return manifest
 
     async def verify_against_local(self, run_path: Path, manifest: dict[str, str]) -> VerifyResult:

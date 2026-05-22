@@ -49,6 +49,37 @@ async def test_insert_unique_constraint(queue: SyncQueue, tmp_path: Path) -> Non
         await queue.insert(run_path=tmp_path / "run", equipment_id="EQ1")
 
 
+async def test_files_column_round_trips(queue: SyncQueue, tmp_path: Path) -> None:
+    """The per-file ``files`` list round-trips through insert and read."""
+    files = ["data.bin", "subdir/child.txt"]
+    row = await queue.insert(run_path=tmp_path / "run", equipment_id="EQ1", files=files)
+    assert row.files == tuple(files)
+    read_back = await queue.get_by_run_path(tmp_path / "run")
+    assert read_back is not None
+    assert read_back.files == tuple(files)
+
+
+async def test_files_column_defaults_to_empty(queue: SyncQueue, tmp_path: Path) -> None:
+    """A job inserted without ``files`` reads back as the empty 'whole run' tuple."""
+    row = await queue.insert(run_path=tmp_path / "run", equipment_id="EQ1")
+    assert row.files == ()
+    read_back = await queue.get_by_run_path(tmp_path / "run")
+    assert read_back is not None
+    assert read_back.files == ()
+
+
+async def test_requeue_with_files_resets_terminal_job(queue: SyncQueue, tmp_path: Path) -> None:
+    """``requeue_with_files`` re-arms a terminal job in QUEUED with a new subset."""
+    row = await queue.insert(run_path=tmp_path / "run", equipment_id="EQ1", files=["old.bin"])
+    await queue.transition(row.id, SyncJobState.VERIFIED, increment_verify_passes=True)
+    requeued = await queue.requeue_with_files(row.id, ["new.bin", "another.bin"])
+    assert requeued.state is SyncJobState.QUEUED
+    assert requeued.files == ("new.bin", "another.bin")
+    assert requeued.attempts == 0
+    assert requeued.verify_passes == 0
+    assert requeued.verified_at is None
+
+
 async def test_get_by_id_and_run_path(queue: SyncQueue, tmp_path: Path) -> None:
     row = await queue.insert(run_path=tmp_path / "run", equipment_id="EQ1")
     by_id = await queue.get_by_id(row.id)

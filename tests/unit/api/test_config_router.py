@@ -29,8 +29,6 @@ def _ready_config() -> Config:
                 label="Equipment 1",
                 local_root="/d",
                 nas_root="/n",
-                completeness_signal="sentinel_file",
-                sentinel_filename="done.flag",
                 transport=RcloneTransport(
                     type="rclone",
                     rclone_remote="lab-nas",
@@ -117,8 +115,6 @@ def test_append_equipment_persists_and_re_evaluates_state() -> None:
             "label": "Flow Cytometer 99",
             "local_root": "/data",
             "nas_root": "/srv/nas",
-            "completeness_signal": "sentinel_file",
-            "sentinel_filename": "done.flag",
             "transport": {
                 "type": "rclone",
                 "rclone_remote": "lab-nas",
@@ -144,8 +140,6 @@ def test_append_equipment_rejects_duplicate_id() -> None:
             "label": "Equipment 1 duplicate",
             "local_root": "/data",
             "nas_root": "/srv/nas",
-            "completeness_signal": "sentinel_file",
-            "sentinel_filename": "done.flag",
             "transport": {
                 "type": "rclone",
                 "rclone_remote": "lab-nas",

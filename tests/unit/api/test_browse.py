@@ -29,6 +29,7 @@ from exlab_wizard.constants import (
     CREATION_JSON_VERSION,
     README_FILE_NAME,
     RUN_DIR_PREFIX,
+    RunSyncState,
     SyncStatus,
 )
 
@@ -46,8 +47,6 @@ def _config_with_local_root(local_root: Path) -> Config:
                 label="Equipment 1",
                 local_root=str(local_root),
                 nas_root="/srv/nas",
-                completeness_signal="sentinel_file",
-                sentinel_filename="done.flag",
                 transport=RcloneTransport(
                     type="rclone",
                     rclone_remote="lab-nas",
@@ -107,7 +106,10 @@ def test_get_tree_lists_equipment_and_projects(tmp_path: Path) -> None:
     assert project["name"] == "Cortex Q3 Pilot"
     assert len(project["runs"]) == 1
     assert project["runs"][0]["kind"] == "experimental"
-    assert project["runs"][0]["sync_status"] == SyncStatus.PENDING.value
+    # Operator-free per-file NAS sync design (2026-05-21): the run-node
+    # rollup is derived from sync_state.json. A run with no sync_state.json
+    # yet rolls up to ``syncing`` (nothing tracked / verified).
+    assert project["runs"][0]["sync_status"] == RunSyncState.SYNCING.value
 
 
 def test_get_tree_returns_empty_when_no_equipment(tmp_path: Path) -> None:
@@ -302,117 +304,113 @@ def test_get_folder_rejects_path_outside_configured_roots(tmp_path: Path) -> Non
 # ---------------------------------------------------------------------------
 
 
-def _write_ingest_json(
-    run_dir: Path,
-    *,
-    current_state: str,
-    history: list[dict],
-) -> None:
-    from exlab_wizard.api.schemas import IngestJson
-    from exlab_wizard.cache.ingest_writer import IngestWriter
-    from exlab_wizard.constants import INGEST_JSON_NAME, INGEST_JSON_VERSION
+class _StubJobRow:
+    """A minimal sync-queue job row for the run-log tests."""
 
-    cache = run_dir / CACHE_DIR_NAME
-    cache.mkdir(parents=True, exist_ok=True)
-    payload = msgspec.convert(
-        {
-            "schema_version": INGEST_JSON_VERSION,
-            "project_name": "PROJ-0001",
-            "equipment_id": "EQ1",
-            "run_kind": "experimental",
-            "run_path": str(run_dir),
-            "transport": "smb_mount",
-            "current_state": current_state,
-            "history": history,
-        },
-        type=IngestJson,
-    )
-    # Use synchronous write since the IngestWriter's async API requires
-    # an event loop here; msgspec encoded payload + write_bytes is fine
-    # for test fixtures.
-    _ = IngestWriter  # keep import for type/intent clarity
-    (cache / INGEST_JSON_NAME).write_bytes(msgspec.json.encode(payload))
+    def __init__(self, *, run_path: str, state: str) -> None:
+        from exlab_wizard.sync.queue import SyncJobState
+
+        self.run_path = run_path
+        self.state = SyncJobState(state)
+        self.attempts = 2
+        self.verify_passes = 1
+        self.last_error: str | None = None
+        self.nas_path: str | None = None
+        self.verified_at = "2026-05-01T10:35:00Z"
+        self.enqueued_at = "2026-05-01T10:00:00Z"
 
 
-def test_get_run_log_returns_history_entries(tmp_path: Path) -> None:
-    """A staged run's ingest.json history is surfaced as the log."""
-    from exlab_wizard.constants import IngestState
+class _StubNasSync:
+    """Sync-queue stub serving ``get_by_run_path`` for the log endpoint."""
 
+    def __init__(self, row: _StubJobRow | None = None) -> None:
+        self._row = row
+
+    async def get_by_run_path(self, run_path: Path) -> _StubJobRow | None:
+        if self._row is None or self._row.run_path != str(run_path):
+            return None
+        return self._row
+
+
+def test_get_run_log_returns_queue_derived_history(tmp_path: Path) -> None:
+    """A staged run's sync-queue job state is surfaced as the log."""
     run_dir = tmp_path / "data" / "EQ1" / "PROJ-0001" / "Run_2026-05-01T10-00-00"
     run_dir.mkdir(parents=True)
-    _write_ingest_json(
-        run_dir,
-        current_state=IngestState.SYNC_VERIFIED.value,
-        history=[
-            {
-                "state": IngestState.STAGING.value,
-                "at": "2026-05-01T10:00:00Z",
-                "host": "h1",
-            },
-            {
-                "state": IngestState.COMPLETE.value,
-                "at": "2026-05-01T10:30:00Z",
-                "host": "h1",
-                "files_received": 12,
-            },
-            {
-                "state": IngestState.SYNC_QUEUED.value,
-                "at": "2026-05-01T10:31:00Z",
-                "host": "h1",
-            },
-            {
-                "state": IngestState.SYNC_VERIFIED.value,
-                "at": "2026-05-01T10:35:00Z",
-                "host": "h1",
-            },
-        ],
+    nas_sync = _StubNasSync(_StubJobRow(run_path=str(run_dir), state="verified"))
+    deps = AppDependencies(
+        config=_config_with_local_root(tmp_path / "data"),
+        nas_sync=nas_sync,
     )
-    deps = AppDependencies(config=_config_with_local_root(tmp_path / "data"))
     app = create_app(dependencies=deps)
     client = TestClient(app)
     resp = client.get(f"/api/v1/run/{run_dir}/log")
     assert resp.status_code == 200
     body = resp.json()
     assert body["path"] == str(run_dir)
-    assert body["current_state"] == IngestState.SYNC_VERIFIED.value
-    assert len(body["history"]) == 4
-    states = [entry["state"] for entry in body["history"]]
-    assert states == [
-        IngestState.STAGING.value,
-        IngestState.COMPLETE.value,
-        IngestState.SYNC_QUEUED.value,
-        IngestState.SYNC_VERIFIED.value,
-    ]
-    # Extra ingest fields (e.g. files_received) come through as payload.
-    assert body["history"][1]["payload"] == {"files_received": 12}
+    assert body["current_state"] == "verified"
+    assert len(body["history"]) == 1
+    assert body["history"][0]["state"] == "verified"
+    # Queue extras (attempts, verify_passes) come through as payload.
+    assert body["history"][0]["payload"]["attempts"] == 2
 
 
-def test_get_run_log_404_when_ingest_missing(tmp_path: Path) -> None:
-    """A run without an ingest.json returns 404 ``ingest_not_found``."""
+def test_get_run_log_forwards_failure_extras_in_payload(tmp_path: Path) -> None:
+    """A failed job row's ``last_error`` / ``attempts`` / ``verify_passes`` /
+    ``nas_path`` are all forwarded into the log entry's free-form payload.
+
+    Directly exercises the ``extras`` extraction in
+    :func:`browse._run_log_from_queue` -- the baseline test leaves
+    ``last_error`` / ``nas_path`` unset, so this asserts the truthy-only
+    extraction picks up every populated extra.
+    """
+    run_dir = tmp_path / "data" / "EQ1" / "PROJ-0001" / "Run_2026-05-02T08-00-00"
+    run_dir.mkdir(parents=True)
+    row = _StubJobRow(run_path=str(run_dir), state="failed")
+    row.attempts = 4
+    row.verify_passes = 0
+    row.last_error = "transport timeout"
+    row.nas_path = "/srv/nas/EQ1/run"
+    deps = AppDependencies(
+        config=_config_with_local_root(tmp_path / "data"),
+        nas_sync=_StubNasSync(row),
+    )
+    app = create_app(dependencies=deps)
+    client = TestClient(app)
+    resp = client.get(f"/api/v1/run/{run_dir}/log")
+    assert resp.status_code == 200
+    payload = resp.json()["history"][0]["payload"]
+    assert payload["attempts"] == 4
+    assert payload["last_error"] == "transport timeout"
+    assert payload["nas_path"] == "/srv/nas/EQ1/run"
+    # ``verify_passes`` is 0 (falsy) -- the truthy-only extraction omits it.
+    assert "verify_passes" not in payload
+
+
+def test_get_run_log_empty_history_when_no_queue_job(tmp_path: Path) -> None:
+    """A run with no sync-queue job returns an empty history + 'none' state."""
+    run_dir = tmp_path / "data" / "EQ1" / "PROJ-0001" / "Run_x"
+    run_dir.mkdir(parents=True)
+    deps = AppDependencies(
+        config=_config_with_local_root(tmp_path / "data"),
+        nas_sync=_StubNasSync(),
+    )
+    app = create_app(dependencies=deps)
+    client = TestClient(app)
+    resp = client.get(f"/api/v1/run/{run_dir}/log")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["current_state"] == "none"
+    assert body["history"] == []
+
+
+def test_get_run_log_404_when_run_missing(tmp_path: Path) -> None:
+    """A run directory that does not exist returns 404 ``session_not_found``."""
     deps = AppDependencies(config=_config_with_local_root(tmp_path))
     app = create_app(dependencies=deps)
     client = TestClient(app)
     resp = client.get(f"/api/v1/run/{tmp_path}/nope/log")
     assert resp.status_code == 404
-    # Reuses the existing ``session_not_found`` code -- same allowlist as
-    # the run-detail endpoint (creation.json missing vs ingest.json
-    # missing share semantics: the run record is unreadable).
     assert resp.json()["error"]["code"] == "session_not_found"
-
-
-def test_get_run_log_422_when_ingest_malformed(tmp_path: Path) -> None:
-    """A corrupt ingest.json surfaces 422 from msgspec."""
-    run_dir = tmp_path / "data" / "EQ1" / "PROJ-0001" / "Run_x"
-    cache = run_dir / CACHE_DIR_NAME
-    cache.mkdir(parents=True)
-    from exlab_wizard.constants import INGEST_JSON_NAME
-
-    (cache / INGEST_JSON_NAME).write_bytes(b"{not-valid-json")
-    deps = AppDependencies(config=_config_with_local_root(tmp_path / "data"))
-    app = create_app(dependencies=deps)
-    client = TestClient(app)
-    resp = client.get(f"/api/v1/run/{run_dir}/log")
-    assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------
@@ -493,3 +491,164 @@ def test_scan_folder_sync_raises_404_for_missing_path(tmp_path: Path) -> None:
         assert exc.status_code == 404
     else:  # pragma: no cover -- defensive
         raise AssertionError("expected HTTPException")
+
+
+# ---------------------------------------------------------------------------
+# Per-file sync status from sync_state.json + cleared-run tombstones
+# (operator-free per-file NAS sync design, 2026-05-21)
+# ---------------------------------------------------------------------------
+
+
+def _seed_run_with_creation(local_root: Path) -> Path:
+    """Create a run dir with a creation.json so it is recognised as a run."""
+    eq_dir = local_root / "EQ1"
+    run_dir = eq_dir / "Cortex" / f"{RUN_DIR_PREFIX}2026-05-21T00-00-00"
+    run_dir.mkdir(parents=True)
+    _write_creation_json(run_dir)
+    return run_dir
+
+
+def _write_sync_state(run_dir: Path, files: dict, *, cleared: bool = False) -> None:
+    """Write a sync_state.json with the given per-file records."""
+    import asyncio
+
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+
+    writer = SyncStateWriter()
+    for rel, rec in files.items():
+        asyncio.run(
+            writer.upsert_file(
+                run_dir,
+                rel,
+                synced_signature=rec.get("synced_signature"),
+                verified_at=rec.get("verified_at"),
+            )
+        )
+        if rec.get("keep_local"):
+            asyncio.run(writer.set_keep_local(run_dir, rel, True))
+    if cleared:
+        asyncio.run(writer.mark_cleared(run_dir))
+
+
+def test_per_file_status_acquiring_when_not_in_sync_state(tmp_path: Path) -> None:
+    """A file on disk but absent from sync_state.json reads as ``acquiring``."""
+    from exlab_wizard.api.routers import browse
+
+    local_root = tmp_path / "data"
+    run_dir = _seed_run_with_creation(local_root)
+    (run_dir / "scan.tif").write_bytes(b"x" * 10)
+    config = _config_with_local_root(local_root)
+    resp = browse.scan_folder_sync(str(run_dir), config)
+    by_name = {e.name: e for e in resp.entries}
+    assert by_name["scan.tif"].sync_status == "acquiring"
+
+
+def test_per_file_status_syncing_when_unverified(tmp_path: Path) -> None:
+    """A recorded file with verified_at null + on disk reads as ``syncing``."""
+    from exlab_wizard.api.routers import browse
+
+    local_root = tmp_path / "data"
+    run_dir = _seed_run_with_creation(local_root)
+    (run_dir / "scan.tif").write_bytes(b"x" * 10)
+    _write_sync_state(run_dir, {"scan.tif": {"synced_signature": (10, 1)}})
+    config = _config_with_local_root(local_root)
+    resp = browse.scan_folder_sync(str(run_dir), config)
+    by_name = {e.name: e for e in resp.entries}
+    assert by_name["scan.tif"].sync_status == "syncing"
+
+
+def test_per_file_status_synced_when_verified_and_on_disk(tmp_path: Path) -> None:
+    """A recorded+verified file still on disk reads as ``synced``."""
+    from exlab_wizard.api.routers import browse
+
+    local_root = tmp_path / "data"
+    run_dir = _seed_run_with_creation(local_root)
+    (run_dir / "scan.tif").write_bytes(b"x" * 10)
+    _write_sync_state(
+        run_dir,
+        {"scan.tif": {"synced_signature": (10, 1), "verified_at": "2026-05-21T01:00:00Z"}},
+    )
+    config = _config_with_local_root(local_root)
+    resp = browse.scan_folder_sync(str(run_dir), config)
+    by_name = {e.name: e for e in resp.entries}
+    assert by_name["scan.tif"].sync_status == "synced"
+
+
+def test_per_file_status_on_nas_tombstone_for_cleared_run(tmp_path: Path) -> None:
+    """A cleared run lists verified-but-absent files as ``on_nas`` tombstones."""
+    from exlab_wizard.api.routers import browse
+
+    local_root = tmp_path / "data"
+    run_dir = _seed_run_with_creation(local_root)
+    # File verified, then cleared from disk -- only sync_state.json remains.
+    _write_sync_state(
+        run_dir,
+        {"scan.tif": {"synced_signature": (10, 1), "verified_at": "2026-05-21T01:00:00Z"}},
+        cleared=True,
+    )
+    config = _config_with_local_root(local_root)
+    resp = browse.scan_folder_sync(str(run_dir), config)
+    by_name = {e.name: e for e in resp.entries}
+    assert "scan.tif" in by_name
+    tomb = by_name["scan.tif"]
+    assert tomb.sync_status == "on_nas"
+    assert tomb.tombstone is True
+    assert tomb.is_dir is False
+    assert tomb.size_bytes is None
+
+
+def test_per_file_status_keep_local_flag_carried(tmp_path: Path) -> None:
+    """A keep_local file carries the flag alongside its sync status."""
+    from exlab_wizard.api.routers import browse
+
+    local_root = tmp_path / "data"
+    run_dir = _seed_run_with_creation(local_root)
+    (run_dir / "scan.tif").write_bytes(b"x" * 10)
+    _write_sync_state(
+        run_dir,
+        {
+            "scan.tif": {
+                "synced_signature": (10, 1),
+                "verified_at": "2026-05-21T01:00:00Z",
+                "keep_local": True,
+            }
+        },
+    )
+    config = _config_with_local_root(local_root)
+    resp = browse.scan_folder_sync(str(run_dir), config)
+    by_name = {e.name: e for e in resp.entries}
+    assert by_name["scan.tif"].sync_status == "synced"
+    assert by_name["scan.tif"].keep_local is True
+
+
+def test_build_run_node_rollup_from_sync_state(tmp_path: Path) -> None:
+    """The tree run-node sync_status is the sync_state.json rollup, not creation.json."""
+    local_root = tmp_path / "data"
+    run_dir = _seed_run_with_creation(local_root)
+    _write_sync_state(
+        run_dir,
+        {"scan.tif": {"synced_signature": (10, 1), "verified_at": "2026-05-21T01:00:00Z"}},
+    )
+    deps = AppDependencies(config=_config_with_local_root(local_root))
+    app = create_app(dependencies=deps)
+    client = TestClient(app)
+    body = client.get("/api/v1/tree").json()
+    run = body["equipment"][0]["projects"][0]["runs"][0]
+    assert run["sync_status"] == RunSyncState.SYNCED.value
+
+
+def test_build_run_node_rollup_cleared(tmp_path: Path) -> None:
+    """A cleared run rolls up to ``cleared`` in the tree."""
+    local_root = tmp_path / "data"
+    run_dir = _seed_run_with_creation(local_root)
+    _write_sync_state(
+        run_dir,
+        {"scan.tif": {"synced_signature": (10, 1), "verified_at": "2026-05-21T01:00:00Z"}},
+        cleared=True,
+    )
+    deps = AppDependencies(config=_config_with_local_root(local_root))
+    app = create_app(dependencies=deps)
+    client = TestClient(app)
+    body = client.get("/api/v1/tree").json()
+    run = body["equipment"][0]["projects"][0]["runs"][0]
+    assert run["sync_status"] == RunSyncState.CLEARED.value

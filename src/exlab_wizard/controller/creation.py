@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import shutil
+import socket
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -52,7 +53,6 @@ from exlab_wizard.api.schemas import (
 )
 from exlab_wizard.cache.creation_writer import CreationWriter
 from exlab_wizard.cache.equipment import EquipmentCacheWriter
-from exlab_wizard.cache.ingest_writer import default_host
 from exlab_wizard.cache.log_writer import append_log_line, format_log_line
 from exlab_wizard.config.models import Config
 from exlab_wizard.constants import (
@@ -963,18 +963,14 @@ class CreationController:
 
         # Redesign §3.1: creation.json always carries the orchestrator
         # block. Redesign §3.3: the block carries the producing equipment's
-        # label + completeness-signal info so a receiving orchestrator
-        # can auto-discover the relayed equipment without a per-equipment
-        # config of its own.
+        # label so a receiving orchestrator can auto-discover the relayed
+        # equipment without a per-equipment config of its own.
         eq = next((e for e in self._config.equipment if e.id == req.equipment_id), None)
         orchestrator_block = OrchestratorBlock(
             enabled=True,
-            host=default_host(),
+            host=socket.gethostname(),
             label=self._config.orchestrator.label,
             equipment_label=eq.label if eq else None,
-            completeness_signal=eq.completeness_signal if eq else None,
-            sentinel_filename=eq.sentinel_filename if eq else None,
-            manifest_filename=eq.manifest_filename if eq else None,
         )
 
         payload = CreationJson(

@@ -136,21 +136,16 @@ def test_lims_project_source_values() -> None:
     }
 
 
-def test_ingest_state_values() -> None:
-    # Backend Spec §13.3.
-    assert issubclass(enums.IngestState, StrEnum)
-    assert enums.IngestState.STAGING.value == "staging"
-    assert enums.IngestState.COMPLETE.value == "complete"
-    assert enums.IngestState.SYNC_QUEUED.value == "sync_queued"
-    assert enums.IngestState.SYNC_VERIFIED.value == "sync_verified"
-    assert enums.IngestState.CLEARED.value == "cleared"
-    assert {m.value for m in enums.IngestState} == {
-        "staging",
-        "complete",
-        "sync_queued",
-        "sync_verified",
-        "cleared",
-    }
+def test_ingest_state_enum_is_removed() -> None:
+    # The operator-free per-file NAS sync redesign (2026-05-21) removed the
+    # five-state ``IngestState`` machine along with ``ingest.json``.
+    assert not hasattr(enums, "IngestState")
+
+
+def test_run_sync_state_values() -> None:
+    # Operator-free per-file NAS sync design (2026-05-21) -- derived rollup.
+    assert issubclass(enums.RunSyncState, StrEnum)
+    assert {m.value for m in enums.RunSyncState} == {"syncing", "synced", "cleared"}
 
 
 def test_setup_state_values() -> None:
@@ -181,12 +176,9 @@ def test_transport_type_values() -> None:
     assert {m.value for m in enums.TransportType} == {"rclone", "rsync_ssh"}
 
 
-def test_completeness_signal_values() -> None:
-    # Backend Spec §9, §13.5.
-    assert issubclass(enums.CompletenessSignal, StrEnum)
-    assert enums.CompletenessSignal.SENTINEL_FILE.value == "sentinel_file"
-    assert enums.CompletenessSignal.MANIFEST.value == "manifest"
-    assert {m.value for m in enums.CompletenessSignal} == {"sentinel_file", "manifest"}
+def test_completeness_signal_enum_removed() -> None:
+    # The operator-free quiescence redesign removes CompletenessSignal.
+    assert not hasattr(enums, "CompletenessSignal")
 
 
 def test_staging_cleanup_mode_values() -> None:
@@ -335,10 +327,9 @@ def test_enums_re_exported_from_package() -> None:
     assert constants.RunScope is enums.RunScope
     assert constants.LIMSProjectStatus is enums.LIMSProjectStatus
     assert constants.LIMSProjectSource is enums.LIMSProjectSource
-    assert constants.IngestState is enums.IngestState
+    assert constants.RunSyncState is enums.RunSyncState
     assert constants.SetupState is enums.SetupState
     assert constants.TransportType is enums.TransportType
-    assert constants.CompletenessSignal is enums.CompletenessSignal
     assert constants.StagingCleanupMode is enums.StagingCleanupMode
     assert constants.PluginStatus is enums.PluginStatus
     assert constants.CreationLevel is enums.CreationLevel

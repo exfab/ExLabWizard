@@ -29,9 +29,9 @@ def test_equipment_json_name() -> None:
     assert filenames.EQUIPMENT_JSON_NAME == "equipment.json"
 
 
-def test_ingest_json_name() -> None:
-    # Backend Spec §13.4.
-    assert filenames.INGEST_JSON_NAME == "ingest.json"
+def test_sync_state_filename() -> None:
+    # Operator-free per-file NAS sync design (2026-05-21).
+    assert filenames.SYNC_STATE_FILENAME == "sync_state.json"
 
 
 def test_test_runs_json_name() -> None:
@@ -111,7 +111,7 @@ def test_filenames_re_exported_from_package() -> None:
     assert constants.CREATION_JSON_NAME == "creation.json"
     assert constants.README_FIELDS_JSON_NAME == "readme_fields.json"
     assert constants.EQUIPMENT_JSON_NAME == "equipment.json"
-    assert constants.INGEST_JSON_NAME == "ingest.json"
+    assert constants.SYNC_STATE_FILENAME == "sync_state.json"
     assert constants.TEST_RUNS_JSON_NAME == "test_runs.json"
     assert constants.ANSWERS_FILE_NAME == ".exlab-answers.yml"
     assert constants.LOG_FILE_TEMPLATE == "wizard.{hostname}.log"

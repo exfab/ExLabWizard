@@ -29,8 +29,6 @@ def _ready_config() -> Config:
                 label="Equipment 1",
                 local_root="/d",
                 nas_root="/n",
-                completeness_signal="sentinel_file",
-                sentinel_filename="done.flag",
                 transport=RcloneTransport(
                     type="rclone",
                     rclone_remote="lab-nas",
