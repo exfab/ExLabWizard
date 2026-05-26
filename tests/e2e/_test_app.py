@@ -115,7 +115,10 @@ def _classify_test_node(node_id: str) -> tuple[str, bool]:
     classify cleanly.
     """
     if "/" not in node_id:
-        if node_id.startswith("RELAY_"):
+        # The test-app seed prefixes every equipment id with ``TEST_``
+        # to mirror the production test-mode convention; the embedded
+        # ``RELAY_`` marker still identifies a relayed (received) root.
+        if "RELAY_" in node_id:
             return "received_equipment", True
         return "equipment", False
     if "Run_" in node_id or "TestRun_" in node_id:
@@ -183,30 +186,38 @@ _DEFAULT_FEED_ROWS: list[tuple[str, int | None, str | None, bool, bool]] = [
 ]
 
 
+def _feed_rows(
+    test_state: TestState, node_id: str
+) -> list[tuple[str, int | None, str | None, bool, bool]]:
+    """Return a node's feed as normalized 5-tuples.
+
+    ``(name, size, sync_status, keep_local, tombstone)``. A seeded
+    3-tuple ``(name, size, sync)`` is widened with ``keep_local=False``
+    / ``tombstone=False`` for backward compatibility.
+    """
+    seeded = test_state.folder_feeds.get(node_id)
+    if seeded is None:
+        return list(_DEFAULT_FEED_ROWS)
+    return [
+        (row[0], row[1], row[2], False, False)
+        if len(row) == 3
+        else (row[0], row[1], row[2], row[3], row[4])
+        for row in seeded
+    ]
+
+
 def _seeded_file_entries(test_state: TestState, node_id: str | None) -> list[Any]:
     """Build the centre-pane file rows the test flows assert on.
 
     Returns a default synthetic feed (covering every per-file display
     state, including a keep-local file and an "On NAS" tombstone) unless
-    the test seeded a specific path via ``test_state.folder_feeds``. A
-    seeded 3-tuple ``(name, size, sync)`` keeps backward compatibility; a
-    5-tuple additionally carries ``keep_local`` / ``tombstone``.
+    the test seeded a specific path via ``test_state.folder_feeds``.
     """
     if node_id is None:
         return []
     from exlab_wizard.ui.components.file_list import FileListEntry
 
-    seeded = test_state.folder_feeds.get(node_id)
-    rows: list[tuple[str, int | None, str | None, bool, bool]]
-    if seeded is None:
-        rows = list(_DEFAULT_FEED_ROWS)
-    else:
-        rows = [
-            (row[0], row[1], row[2], False, False)
-            if len(row) == 3
-            else (row[0], row[1], row[2], row[3], row[4])
-            for row in seeded
-        ]
+    rows = _feed_rows(test_state, node_id)
     return [
         FileListEntry(
             name=name,
@@ -301,12 +312,15 @@ def build_test_app() -> FastAPI:
             test_state.selected_node_kind = node_kind
             test_state.selected_node_is_received = is_received
 
-        # Hierarchy used by every /main test. Owned EQ1 carries the
-        # local + cleaned + test-run mix that flow 05b's sync-icon
-        # assertions depend on; the relay-flagged RELAY_EQX root
-        # surfaces the received-equipment row flow 18 / 24 target.
+        # Hierarchy used by every /main test. Owned TEST_EQ1 carries
+        # the local + cleaned + test-run mix that flow 05b's sync-icon
+        # assertions depend on; the relay-flagged TEST_RELAY_EQX root
+        # surfaces the received-equipment row flow 18 / 24 target. The
+        # ``TEST_`` prefix mirrors the production test-mode convention
+        # (see ``constants.TEST_MODE_PREFIX``) so the seeded display
+        # matches what a test-mode operator would see on the NAS.
         hierarchy: dict[Any, Any] = {
-            tree_component.EquipmentNode("EQ1", relay=False): {
+            tree_component.EquipmentNode("TEST_EQ1", relay=False): {
                 tree_component.ProjectNode("LIMS-001", "Demo Project"): [
                     tree_component.RunNode("Run_2026-05-07", "experimental", "Demo run"),
                     tree_component.RunNode(
@@ -327,7 +341,7 @@ def build_test_app() -> FastAPI:
             # tree-node-run that would break flow_20 / flow_24's bare
             # ``.locator('[data-testid="tree-node-run"]')`` strict-mode
             # queries.
-            tree_component.EquipmentNode("RELAY_EQX", relay=True): {
+            tree_component.EquipmentNode("TEST_RELAY_EQX", relay=True): {
                 tree_component.ProjectNode("PROJ-Relay", "Relayed Project"): [],
             },
         }
@@ -401,7 +415,22 @@ def build_test_app() -> FastAPI:
             ui.navigate.to(f"/settings?active=equipment&equipment_id={node_id}")
 
         def _on_file_context_action(entry: Any, action: str) -> None:
+            from exlab_wizard.ui.components.file_list import FILE_CONTEXT_KEEP_LOCAL
+
             test_state.last_action = f"file.{action}:{entry.path}"
+            # Keep-local toggles the seeded feed and re-renders so the
+            # badge visibly flips; production routes the same action
+            # through SyncStateWriter.set_keep_local.
+            if action == FILE_CONTEXT_KEEP_LOCAL and selected_path is not None:
+                name = entry.path.rsplit("/", 1)[-1]
+                test_state.folder_feeds[selected_path] = [
+                    (n, s, sy, (not kl) if n == name else kl, ts)
+                    for (n, s, sy, kl, ts) in _feed_rows(test_state, selected_path)
+                ]
+                qs = f"selected={selected_path}"
+                if right_pane:
+                    qs += f"&right_pane={right_pane}"
+                ui.navigate.to(f"/main?{qs}")
 
         main_page.render_file_explorer_page(
             on_open_new_project=_on_open_new_project,
@@ -434,7 +463,7 @@ def build_test_app() -> FastAPI:
         s = wizard_project_page.ProjectWizardState(
             selected_lims_short_id="LIMS-001",
             selected_template="default",
-            selected_equipment="EQ1",
+            selected_equipment="TEST_EQ1",
             template_variables={},
             readme_fields={"label": "demo", "operator": "asmith", "objective": "demo run"},
         )
@@ -442,7 +471,7 @@ def build_test_app() -> FastAPI:
         def _submit(state: wizard_project_page.ProjectWizardState) -> None:
             test_state.last_action = "wizard.project.submit"
             # Render a confirm-card stand-in so tests see the success path
-            ui.label("Project created at /tmp/data/EQ1/LIMS-001").props(
+            ui.label("Project created at /tmp/data/TEST_EQ1/LIMS-001").props(
                 'data-testid="wizard-project-success"'
             )
 
@@ -458,7 +487,7 @@ def build_test_app() -> FastAPI:
         s = wizard_run_page.RunWizardState(
             run_kind="experimental",
             selected_project_name="Demo Project",
-            selected_equipment="EQ1",
+            selected_equipment="TEST_EQ1",
             selected_template="default",
             template_variables={},
             readme_fields={"label": "demo", "operator": "asmith", "objective": "demo run"},
@@ -480,7 +509,7 @@ def build_test_app() -> FastAPI:
         s = wizard_run_page.RunWizardState(
             run_kind="test",
             selected_project_name="Demo Project",
-            selected_equipment="EQ1",
+            selected_equipment="TEST_EQ1",
             selected_template="default",
             template_variables={},
             readme_fields={"label": "demo", "operator": "asmith", "objective": "demo run"},
@@ -611,10 +640,10 @@ def build_test_app() -> FastAPI:
                         finding_id="F-1",
                         severity=Tier.HARD,
                         rule_class="Placeholder",
-                        path="/data/EQ1/LIMS-001/Run_2026-05-07",
+                        path="/data/TEST_EQ1/LIMS-001/Run_2026-05-07",
                         matched_token="<placeholder>",
                         run_label="Run_2026-05-07",
-                        equipment="EQ1",
+                        equipment="TEST_EQ1",
                         detected_at="2026-05-07T10:00:00Z",
                         state="Active",
                     ),
@@ -625,10 +654,10 @@ def build_test_app() -> FastAPI:
                         finding_id="F-2",
                         severity=Tier.HARD,
                         rule_class="Missing field",
-                        path="/data/EQ1/LIMS-001/Run_2026-05-07/.exlab-wizard/creation.json",
+                        path="/data/TEST_EQ1/LIMS-001/Run_2026-05-07/.exlab-wizard/creation.json",
                         matched_token="schema_version=2.0",
                         run_label="Run_2026-05-07",
-                        equipment="EQ1",
+                        equipment="TEST_EQ1",
                         detected_at="2026-05-07T10:00:00Z",
                         state="Active",
                     ),
@@ -639,10 +668,10 @@ def build_test_app() -> FastAPI:
                         finding_id="F-3",
                         severity=Tier.HARD,
                         rule_class="Orphan",
-                        path="/data/EQ1/LIMS-001/Run_2026-05-07-orphan",
+                        path="/data/TEST_EQ1/LIMS-001/Run_2026-05-07-orphan",
                         matched_token="missing creation.json",
                         run_label="Run_2026-05-07-orphan",
-                        equipment="EQ1",
+                        equipment="TEST_EQ1",
                         detected_at="2026-05-07T10:00:00Z",
                         state="Active",
                     ),
@@ -713,8 +742,8 @@ def build_test_app() -> FastAPI:
 
         rows = [
             StagedRunSummary(
-                path="/staging/EQ1/LIMS-001/Run_2026-05-07",
-                equipment_id="EQ1",
+                path="/staging/TEST_EQ1/LIMS-001/Run_2026-05-07",
+                equipment_id="TEST_EQ1",
                 project_name="LIMS-001",
                 run_kind="experimental",
                 current_state=state,

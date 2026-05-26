@@ -9,6 +9,7 @@ edit cycles.
 from __future__ import annotations
 
 import io
+import os
 from pathlib import Path
 from typing import Any
 
@@ -16,11 +17,63 @@ from pydantic import ValidationError
 from ruamel.yaml import YAML
 
 from exlab_wizard.config.models import Config
+from exlab_wizard.constants import TEST_MODE_ENV, TEST_MODE_PREFIX
 from exlab_wizard.errors import ConfigError
 from exlab_wizard.io import atomic_write_bytes
 from exlab_wizard.logging import get_logger
 
 _log = get_logger(__name__)
+
+# Values that flip ``EXLAB_WIZARD_TEST_MODE`` on. Matched case-insensitively
+# against the env var's stripped value; anything else (including unset, "",
+# "0", "false", "no") leaves the loaded config untouched.
+_TEST_MODE_TRUTHY: frozenset[str] = frozenset({"1", "true", "yes", "on"})
+
+
+def _test_mode_enabled() -> bool:
+    """Return True when the env var :data:`TEST_MODE_ENV` is truthy.
+
+    Centralized here so callers don't have to know the truthy/falsy
+    spellings; see :data:`_TEST_MODE_TRUTHY` for the accepted strings.
+    """
+    raw = os.environ.get(TEST_MODE_ENV, "")
+    return raw.strip().lower() in _TEST_MODE_TRUTHY
+
+
+def apply_test_mode_prefix(config: Config) -> Config:
+    """Return ``config`` with each equipment id prefixed by :data:`TEST_MODE_PREFIX`.
+
+    Idempotent: an id that already begins with the prefix is left
+    unchanged so repeated applications (or already-prefixed inputs)
+    never grow a ``TEST_TEST_…`` chain. The rewritten config is re-run
+    through :meth:`Config.model_validate` so unique-id and pattern
+    invariants are re-checked against the new ids -- if a rewrite ever
+    produces a duplicate or an over-length id, the loader raises the
+    same :class:`ConfigError` shape a hand-edited config would.
+    """
+    if not config.equipment:
+        return config
+
+    needs_rewrite = any(not entry.id.startswith(TEST_MODE_PREFIX) for entry in config.equipment)
+    if not needs_rewrite:
+        return config
+
+    # Round-trip through ``model_dump`` so the rewritten dict is valid
+    # input for ``Config.model_validate`` (which re-runs every field-,
+    # model-, and cross-field validator, including the equipment-id
+    # regex, the max-length check, and the unique-id invariant).
+    dumped: dict[str, Any] = config.model_dump(mode="python")
+    for entry in dumped.get("equipment", []):
+        current_id = entry.get("id", "")
+        if isinstance(current_id, str) and not current_id.startswith(TEST_MODE_PREFIX):
+            entry["id"] = f"{TEST_MODE_PREFIX}{current_id}"
+
+    try:
+        return Config.model_validate(dumped)
+    except ValidationError as exc:
+        raise ConfigError(
+            f"applying {TEST_MODE_PREFIX!r} prefix to equipment ids failed validation:\n{exc}"
+        ) from exc
 
 
 def _yaml() -> YAML:
@@ -61,9 +114,15 @@ def load_config_from_text(text: str) -> Config:
     if not isinstance(data, dict):
         raise ConfigError("config.yaml top level must be a mapping")
     try:
-        return Config.model_validate(data)
+        config = Config.model_validate(data)
     except ValidationError as exc:
         raise ConfigError(f"config.yaml failed validation:\n{exc}") from exc
+    # Apply the ``EXLAB_WIZARD_TEST_MODE`` opt-in *after* validation so the
+    # base config is verified once on its own, and the prefix step's
+    # error path (duplicate ids, over-length) is reported separately.
+    if _test_mode_enabled():
+        config = apply_test_mode_prefix(config)
+    return config
 
 
 def save_config(path: Path, config: Config, *, original_text: str | None = None) -> None:

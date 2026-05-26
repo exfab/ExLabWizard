@@ -31,6 +31,7 @@ from exlab_wizard.constants import (
     RUN_DATE_STRFTIME,
     RUN_DIR_PREFIX,
     RUNS_DIR_NAME,
+    TEST_MODE_ENV,
     TEST_RUN_DIR_PREFIX,
     TEST_RUNS_DIR_NAME,
     WINDOWS_ILLEGAL_CHARS,
@@ -78,11 +79,16 @@ __all__ = [
 # Setting ``EXLAB_WIZARD_TEST_MODE=1`` swaps APP_NAME for ``APP_NAME-test``
 # in every OS-path helper below, redirecting config / state / cache / logs
 # into a parallel ``exlab-wizard-test`` sandbox without touching real user
-# directories. The env var (rather than a CLI arg threaded through every
-# layer) means the window subprocess spawned by WindowLauncher inherits the
-# override automatically. See ``exlab-wizard-tray --test``.
-
-TEST_MODE_ENV = "EXLAB_WIZARD_TEST_MODE"
+# directories. The same env var also drives ``apply_test_mode_prefix`` in
+# ``config.loader`` so on-disk + NAS run directories sort under a
+# ``TEST_<id>/...`` namespace. The env var (rather than a CLI arg threaded
+# through every layer) means the window subprocess spawned by
+# WindowLauncher inherits the override automatically. See
+# ``exlab-wizard-tray --test``.
+#
+# ``TEST_MODE_ENV`` is re-exported here for backward compat with callers
+# that imported it from this module before it was centralized in
+# ``constants/app.py``.
 
 
 def _app_name() -> str:

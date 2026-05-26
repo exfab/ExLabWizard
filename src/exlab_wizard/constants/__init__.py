@@ -10,7 +10,7 @@ section citations.
 from __future__ import annotations
 
 # ---- App-level identifiers ----
-from exlab_wizard.constants.app import APP_NAME
+from exlab_wizard.constants.app import APP_NAME, TEST_MODE_ENV, TEST_MODE_PREFIX
 
 # ---- Enums (Backend §4.7, §4.9.1, §5.2, §6.2.4, §7, §8.1, §11.3, §13.3) ----
 from exlab_wizard.constants.enums import (
@@ -224,6 +224,8 @@ __all__ = [
     "SYNC_STATE_JSON_VERSION",
     "TEMPLATE_QUESTION_ID_PATTERN",
     "TEMPLATE_QUESTION_ID_REGEX",
+    "TEST_MODE_ENV",
+    "TEST_MODE_PREFIX",
     "TEST_RUNS_DIR_NAME",
     "TEST_RUNS_JSON_NAME",
     "TEST_RUNS_JSON_VERSION",

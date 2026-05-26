@@ -82,7 +82,7 @@ def test_flow_16_next_enables_on_valid_input_and_state_survives_back(page, serve
 
     # Bug A: Next is gated shut until the step validates.
     expect(wiz.next_button).to_be_disabled()
-    wiz.equipment_id.fill("EQ1")
+    wiz.equipment_id.fill("TEST_EQ1")
     wiz.label.fill("Lab Device")
     expect(wiz.next_button).to_be_enabled()
 
@@ -93,4 +93,4 @@ def test_flow_16_next_enables_on_valid_input_and_state_survives_back(page, serve
     # Bug B: stepping back keeps what the operator already typed.
     wiz.back.click()
     wiz.step_identity.wait_for(state="visible", timeout=10_000)
-    expect(wiz.equipment_id).to_have_value("EQ1")
+    expect(wiz.equipment_id).to_have_value("TEST_EQ1")

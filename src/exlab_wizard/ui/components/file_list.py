@@ -139,14 +139,42 @@ def render_file_list(
             .style("border-collapse: collapse; font-family: var(--font-mono);")
             .props('data-testid="file-list-table"')
         ):
-            for entry in state.entries:
-                _render_row(
-                    entry,
-                    is_new=entry.path in state.new_paths,
-                    on_double_click=on_double_click,
-                    on_context_menu=on_context_menu,
-                )
+            with ui.element("thead"):
+                _render_header()
+            with ui.element("tbody"):
+                for entry in state.entries:
+                    _render_row(
+                        entry,
+                        is_new=entry.path in state.new_paths,
+                        on_double_click=on_double_click,
+                        on_context_menu=on_context_menu,
+                    )
     return container
+
+
+def _render_header() -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
+    """Render the file-list column header row (Name / Size / Modified / Status)."""
+    try:
+        from nicegui import ui
+    except Exception:
+        return
+    cell = (
+        "font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; "
+        "color: var(--color-muted); font-weight: 600;"
+    )
+    with (
+        ui.element("tr")
+        .style("border-bottom: 1px solid var(--color-rule);")
+        .props('data-testid="file-list-header"')
+    ):
+        for title, align in (
+            ("Name", "left"),
+            ("Size", "right"),
+            ("Modified", "left"),
+            ("Status", "left"),
+        ):
+            with ui.element("th").classes("p-2").style(f"text-align: {align}; {cell}"):
+                ui.label(title)
 
 
 def _render_row(

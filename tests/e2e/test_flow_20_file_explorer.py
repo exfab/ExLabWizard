@@ -58,5 +58,5 @@ def test_flow_20_breadcrumb_is_present_when_node_selected(page, server_url) -> N
     page.wait_for_url(lambda url: "selected=" in url, timeout=10_000)
     page.locator('[data-testid="breadcrumb"]').wait_for(state="visible", timeout=5_000)
     segments = page.locator('[data-testid="breadcrumb-segment"]')
-    # selecting the run leaf gives EQ1 / Demo Project / Run_...
+    # selecting the run leaf gives TEST_EQ1 / Demo Project / Run_...
     assert segments.count() >= 1

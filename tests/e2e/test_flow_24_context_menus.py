@@ -57,7 +57,7 @@ def test_flow_24_edit_equipment_deep_links_into_settings(page, server_url) -> No
     page.locator('[data-testid="tree-context-edit-equipment"]').click()
     page.wait_for_url(lambda url: "/settings" in url, timeout=10_000)
     assert "active=equipment" in page.url
-    assert "equipment_id=EQ1" in page.url
+    assert "equipment_id=TEST_EQ1" in page.url
 
 
 def test_flow_24_remove_equipment_deep_links_into_settings(page, server_url) -> None:

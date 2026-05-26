@@ -538,13 +538,18 @@ def test_main_test_does_not_overwrite_existing_config(test_mode_env: Path) -> No
 
 def test_main_test_with_samples_adds_equipment(test_mode_env: Path) -> None:
     from exlab_wizard.config.loader import load_config
+    from exlab_wizard.constants import TEST_MODE_PREFIX
     from exlab_wizard.tray import main as tray_main
 
     tray_main.main(["--test", "--add-test-samples"])
 
     cfg = load_config(test_mode_env / ".config" / "exlab-wizard-test" / "config.yaml")
     assert len(cfg.equipment) == 1
-    assert cfg.equipment[0].id == "TESTRIG"
+    # ``--test`` sets EXLAB_WIZARD_TEST_MODE=1, which makes the loader
+    # rewrite every equipment id with the ``TEST_`` prefix so test-mode
+    # runs land under an identifiable namespace on the NAS. The seeded
+    # ``TESTRIG`` sample therefore surfaces as ``TEST_TESTRIG``.
+    assert cfg.equipment[0].id == f"{TEST_MODE_PREFIX}TESTRIG"
 
 
 def test_main_without_test_does_not_set_env(test_mode_env: Path) -> None:

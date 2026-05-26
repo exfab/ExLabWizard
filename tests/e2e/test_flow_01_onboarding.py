@@ -61,7 +61,7 @@ def test_flow_01_onboarding(page, server_url) -> None:
     page.locator('[data-testid="settings-paths-local-root"]').fill("/tmp/data")
 
     _goto(page, f"{server_url}/settings?incomplete=paths,equipment&active=equipment")
-    page.locator('[data-testid="settings-equipment-id"]').fill("EQ1")
+    page.locator('[data-testid="settings-equipment-id"]').fill("TEST_EQ1")
     page.locator('[data-testid="settings-equipment-add"]').click()
 
     # 5. Save and confirm setup banner clears.
