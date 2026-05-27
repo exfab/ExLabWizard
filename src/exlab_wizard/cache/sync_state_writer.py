@@ -112,13 +112,21 @@ class SyncStateWriter:
         *,
         synced_signature: tuple[int, int] | None = None,
         verified_at: str | None = None,
+        verified_sha256: str | None = None,
     ) -> SyncStateJson:
         """Create or update one file record under an exclusive lock.
 
         The record for ``rel_path`` (a run-relative POSIX path) is created if
-        absent, otherwise updated in place. ``synced_signature`` and
-        ``verified_at`` overwrite the record's fields; the record's other
-        fields (notably ``keep_local``) are preserved.
+        absent, otherwise updated in place. ``synced_signature``,
+        ``verified_at``, and ``verified_sha256`` overwrite the record's
+        fields when supplied; the record's other fields (notably
+        ``keep_local``) are preserved.
+
+        ``verified_sha256`` is the Slot A capture: the SHA-256 hex digest
+        of the local bytes at sync time. The caller is expected to pass
+        it once when crediting a freshly verified file from
+        ``_reconcile_synced_files``; later updates (``set_keep_local``,
+        ``mark_cleared``) preserve it.
         """
         return await asyncio.to_thread(
             self._upsert_file_blocking,
@@ -126,6 +134,7 @@ class SyncStateWriter:
             rel_path,
             synced_signature,
             verified_at,
+            verified_sha256,
         )
 
     async def set_keep_local(
@@ -204,16 +213,28 @@ class SyncStateWriter:
         rel_path: str,
         synced_signature: tuple[int, int] | None,
         verified_at: str | None,
+        verified_sha256: str | None,
     ) -> SyncStateJson:
         path = _sync_state_path(run_path)
         _ensure_cache_dir(path)
         with FileLock(lock_path_for(path)):
             payload = self._decode_locked(path)
             existing = payload.files.get(rel_path, FileSyncRecord())
+            # ``synced_signature`` and ``verified_at`` overwrite even with
+            # ``None`` -- the poller drops the verify marks on a
+            # re-modified file by calling upsert_file with None values,
+            # which is how the run-level rollup flips back to ``syncing``.
+            # ``verified_sha256`` is treated differently: a ``None`` keeps
+            # the existing digest so the audit trail survives a re-verify
+            # pass that doesn't itself re-compute the SHA (e.g. an
+            # operator-triggered ``force_verify``).
             record = msgspec.structs.replace(
                 existing,
                 synced_signature=synced_signature,
                 verified_at=verified_at,
+                verified_sha256=(
+                    verified_sha256 if verified_sha256 is not None else existing.verified_sha256
+                ),
             )
             new_payload = self._with_file(payload, rel_path, record)
             atomic_write_bytes(path, msgspec.json.encode(new_payload))

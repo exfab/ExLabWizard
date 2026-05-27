@@ -45,7 +45,7 @@ from exlab_wizard.sync.nas_client import (
 from exlab_wizard.sync.queue import SyncJobState
 from exlab_wizard.sync.transports import TransportErrorKind, TransportResult
 from exlab_wizard.validator.engine import Validator
-from tests.unit.sync._helpers import local_hashsum_factory
+from tests.unit.sync._helpers import corrupt_one_check_factory, local_check_factory
 
 
 def _build_config(
@@ -146,7 +146,7 @@ def test_build_transport_driver_sftp(tmp_path: Path) -> None:
             bandwidth=BandwidthConfig(),
         ),
     )
-    driver, push = _build_transport_driver(eq, _StubKeyring())
+    driver, push, _check = _build_transport_driver(eq, _StubKeyring())
     assert driver is not None
     assert callable(push)
 
@@ -167,7 +167,7 @@ def test_build_transport_driver_smb(tmp_path: Path) -> None:
             bandwidth=BandwidthConfig(),
         ),
     )
-    driver, push = _build_transport_driver(eq, _StubKeyring())
+    driver, push, _check = _build_transport_driver(eq, _StubKeyring())
     assert driver is not None
     assert callable(push)
 
@@ -210,7 +210,7 @@ async def test_hash_mismatch_first_failure_retries(tmp_path: Path) -> None:
         # spurious HASH_MISMATCH (the no-op stub push doesn't actually
         # transfer files, so a real hashsum probe would see nothing on
         # the "remote" side). See ``local_hashsum_factory`` docstring.
-        hashsum_callable_factory=local_hashsum_factory(),
+        check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )
     await client.init()
@@ -289,7 +289,7 @@ async def test_cleanup_full_delete_when_retain_cache_false(tmp_path: Path) -> No
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
-        hashsum_callable_factory=local_hashsum_factory(),
+        check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )
     await client.init()
@@ -325,7 +325,7 @@ async def test_cleanup_retain_cache_keeps_metadata(tmp_path: Path) -> None:
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
-        hashsum_callable_factory=local_hashsum_factory(),
+        check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )
     await client.init()
@@ -363,7 +363,7 @@ async def test_cleanup_disabled_keeps_files(tmp_path: Path) -> None:
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
-        hashsum_callable_factory=local_hashsum_factory(),
+        check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )
     await client.init()
@@ -401,7 +401,7 @@ async def test_cleanup_eligible_when_min_verify_passes_unmet(tmp_path: Path) -> 
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
-        hashsum_callable_factory=local_hashsum_factory(),
+        check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )
     await client.init()
@@ -437,7 +437,7 @@ async def test_cleanup_blocked_by_remote_stat(tmp_path: Path) -> None:
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
-        hashsum_callable_factory=local_hashsum_factory(),
+        check_callable_factory=local_check_factory(),
         remote_stat_callable=lambda _row: False,
         worker_poll_interval_s=0.005,
     )
@@ -610,7 +610,7 @@ async def test_cleanup_marks_cleared_in_sync_state(tmp_path: Path) -> None:
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
-        hashsum_callable_factory=local_hashsum_factory(),
+        check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )
     await client.init()
@@ -654,7 +654,7 @@ async def test_cleanup_keeps_keep_local_file(tmp_path: Path) -> None:
         cache_creation=writer,
         sync_state_writer=sync_writer,
         push_callable_factory=_factory(_push),
-        hashsum_callable_factory=local_hashsum_factory(),
+        check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )
     await client.init()
@@ -703,7 +703,7 @@ async def test_cleanup_deferred_when_run_only_partially_synced(tmp_path: Path) -
         cache_creation=writer,
         sync_state_writer=sync_writer,
         push_callable_factory=_factory(_push),
-        hashsum_callable_factory=local_hashsum_factory(),
+        check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )
     await client.init()
@@ -778,31 +778,23 @@ async def test_worker_marks_failed_when_local_run_vanished(tmp_path: Path) -> No
 
 
 async def test_verifier_mismatch_first_failure_then_pass(tmp_path: Path) -> None:
-    """The verifier-side hash mismatch retries once, then passes."""
-    from exlab_wizard.sync.verifier import Verifier, VerifyResult
+    """A rclone-check mismatch retries once, then passes."""
+    from exlab_wizard.sync.transports.rclone import CheckResult
 
     cfg = _build_config(tmp_path)
     run_dir = await _populate_run(tmp_path)
     writer = CreationWriter(lock_timeout_seconds=10.0)
 
-    class _StubVerifier(Verifier):
-        """First verify fails, second succeeds."""
+    call_count = {"n": 0}
 
-        def __init__(self) -> None:
-            self.calls = 0
-
-        async def compute_local_manifest(
-            self, run_path: Path, include: set[str] | None = None
-        ) -> dict[str, str]:
-            return await Verifier.compute_local_manifest(self, run_path, include)
-
-        async def verify_against_local(
-            self, run_path: Path, manifest: dict[str, str]
-        ) -> VerifyResult:
-            self.calls += 1
-            if self.calls == 1:
-                return VerifyResult(ok=False, mismatched=("data.bin",), manifest=manifest)
-            return VerifyResult(ok=True, manifest=manifest)
+    async def _check(local: Path, *, files_from: Path) -> CheckResult:
+        del local
+        text = files_from.read_text(encoding="utf-8")
+        files = tuple(line.strip() for line in text.splitlines() if line.strip())
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return CheckResult(differ=("data.bin",), equal=())
+        return CheckResult(equal=files)
 
     async def _push(
         _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
@@ -814,9 +806,8 @@ async def test_verifier_mismatch_first_failure_then_pass(tmp_path: Path) -> None
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
-        verifier=_StubVerifier(),
         push_callable_factory=_factory(_push),
-        hashsum_callable_factory=local_hashsum_factory(),
+        check_callable_factory=lambda _eq: _check,
         worker_poll_interval_s=0.005,
     )
     await client.init()
@@ -839,17 +830,15 @@ async def test_verifier_mismatch_first_failure_then_pass(tmp_path: Path) -> None
 
 async def test_verifier_mismatch_second_failure_terminal(tmp_path: Path) -> None:
     """Two consecutive verifier mismatches terminate FAILED."""
-    from exlab_wizard.sync.verifier import Verifier, VerifyResult
+    from exlab_wizard.sync.transports.rclone import CheckResult
 
     cfg = _build_config(tmp_path)
     run_dir = await _populate_run(tmp_path)
     writer = CreationWriter(lock_timeout_seconds=10.0)
 
-    class _AlwaysMismatch(Verifier):
-        async def verify_against_local(
-            self, run_path: Path, manifest: dict[str, str]
-        ) -> VerifyResult:
-            return VerifyResult(ok=False, mismatched=("x",), manifest=manifest)
+    async def _always_differ(local: Path, *, files_from: Path) -> CheckResult:
+        del local, files_from
+        return CheckResult(differ=("x",))
 
     async def _push(
         _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
@@ -861,8 +850,8 @@ async def test_verifier_mismatch_second_failure_terminal(tmp_path: Path) -> None
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
-        verifier=_AlwaysMismatch(),
         push_callable_factory=_factory(_push),
+        check_callable_factory=lambda _eq: _always_differ,
         worker_poll_interval_s=0.005,
     )
     await client.init()
@@ -1050,26 +1039,6 @@ async def test_partial_batch_credits_verified_files_in_sync_state(tmp_path: Path
     async def _push(_local: Path, *, bwlimit_kibps: int | None, files_from: object = None):
         return TransportResult(ok=True, returncode=0)
 
-    def corrupt_one_hashsum_factory():
-        """Remote-hash probe that mangles ``subdir/child.txt`` -- so it
-        mismatches while ``data.bin`` verifies cleanly."""
-
-        async def _hashsum(target: Path) -> dict[str, str]:
-            out: dict[str, str] = {}
-            for f in sorted(target.rglob("*")):
-                if not f.is_file():
-                    continue
-                rel = f.relative_to(target).as_posix()
-                if rel.startswith(".exlab-wizard/"):
-                    continue
-                digest = hashlib.sha256(f.read_bytes()).hexdigest()
-                if rel == "subdir/child.txt":
-                    digest = "0" * 64  # corrupt this one file's remote digest
-                out[rel] = digest
-            return out
-
-        return lambda _eq: _hashsum
-
     client = NASSyncClient(
         config=cfg,
         queue_db=tmp_path / "q.db",
@@ -1077,7 +1046,7 @@ async def test_partial_batch_credits_verified_files_in_sync_state(tmp_path: Path
         cache_creation=writer,
         sync_state_writer=sync_state,
         push_callable_factory=_factory(_push),
-        hashsum_callable_factory=corrupt_one_hashsum_factory(),
+        check_callable_factory=corrupt_one_check_factory("subdir/child.txt"),
         worker_poll_interval_s=0.005,
     )
     await client.init()
@@ -1125,7 +1094,7 @@ async def test_full_batch_credits_every_file_in_sync_state(tmp_path: Path) -> No
         cache_creation=writer,
         sync_state_writer=sync_state,
         push_callable_factory=_factory(_push),
-        hashsum_callable_factory=local_hashsum_factory(),
+        check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )
     await client.init()

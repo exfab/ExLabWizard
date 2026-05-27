@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import tempfile
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -189,15 +189,18 @@ async def _resolve_env_for_equipment(
 def _build_transport_driver(
     equipment: EquipmentConfig,
     keyring_store: Any,
-) -> tuple[Any, Callable[..., Any]]:
-    """Return a ``(driver, push_callable)`` pair for ``equipment.transport``.
+) -> tuple[Any, Callable[..., Any], Callable[..., Any]]:
+    """Return a ``(driver, push_callable, check_callable)`` triple.
 
     Both supported transports (SFTP and SMB) route through the same
-    :class:`RcloneDriver`. The push closure resolves the keyring password
-    + obscures + builds env on every invocation so credential changes
-    take effect on the next sync without restarting the worker.
-    Stage-mode equipment (Redesign §3.2, ``sync_mode == 'stage'``) has no
-    ``transport`` block — the orchestrator owns the NAS sync. The
+    :class:`RcloneDriver`. The push and check closures resolve the
+    keyring password, run ``rclone obscure``, build the env, and call
+    the matching driver method. The closures share the same equipment +
+    keyring binding so credentials never go out of sync between push
+    and verify.
+
+    Stage-mode equipment (Redesign §3.2, ``sync_mode == 'stage'``) has
+    no ``transport`` block — the orchestrator owns the NAS sync. The
     EquipmentConfig validator guarantees this function only runs against
     nas-mode equipment.
     """
@@ -232,44 +235,18 @@ def _build_transport_driver(
             mask_for_log=mask,
         )
 
-    return rclone_driver, _push
-
-
-def _build_hashsum_callable(
-    equipment: EquipmentConfig,
-    keyring_store: Any,
-) -> Callable[[Path], Awaitable[dict[str, str]]]:
-    """Return a remote-hashsum closure for ``equipment.transport``.
-
-    Phase 1 of the rclone-only migration keeps this legacy probe alive
-    so the verify path stays intact at the phase boundary. Phase 2
-    replaces it with :meth:`RcloneDriver.check`.
-
-    The closure resolves credentials lazily (same pattern as
-    :func:`_build_transport_driver`). Backend Spec §7.1.4
-    (integrity-in-transit gap closure). Only called for nas-mode
-    equipment (Redesign §3.2).
-    """
-    transport = equipment.transport
-    if transport is None:
-        msg = (
-            f"equipment {equipment.id!r} has sync_mode "
-            f"{equipment.sync_mode.value!r}; remote-hashsum probes only "
-            f"apply to nas-mode equipment with a configured transport"
-        )
-        raise ValueError(msg)
-    if not isinstance(transport, RcloneSftpTransport | RcloneSmbTransport):
-        msg = f"unsupported transport type: {type(transport).__name__}"
-        raise ValueError(msg)
-
-    rclone_driver = RcloneDriver()
-
-    async def _hashsum(run_dir: Path) -> dict[str, str]:
+    async def _check(local: Path, *, files_from: Path) -> Any:
         env, mask, remote_name = await _resolve_env_for_equipment(equipment, keyring_store)
-        target = _build_target_for(transport, remote_name, run_dir)
-        return await rclone_driver.hashsum(target, env=env, mask_for_log=mask)
+        target = _build_target_for(transport, remote_name, local)
+        return await rclone_driver.check(
+            local,
+            target,
+            files_from=files_from,
+            env=env,
+            mask_for_log=mask,
+        )
 
-    return _hashsum
+    return rclone_driver, _push, _check
 
 
 # ---------------------------------------------------------------------------
@@ -309,9 +286,7 @@ class NASSyncClient:
         keyring_store: Any = None,
         worker_poll_interval_s: float = 0.05,
         push_callable_factory: Callable[[EquipmentConfig], Callable[..., Any]] | None = None,
-        hashsum_callable_factory: (
-            Callable[[EquipmentConfig], Callable[[Path], Awaitable[dict[str, str]]]] | None
-        ) = None,
+        check_callable_factory: Callable[[EquipmentConfig], Callable[..., Any]] | None = None,
         remote_stat_callable: Callable[[SyncJobRow], bool] | None = None,
     ) -> None:
         self._config = config
@@ -332,7 +307,7 @@ class NASSyncClient:
         self._wake_event = asyncio.Event()
         self._stopping = False
         self._push_callable_factory = push_callable_factory
-        self._hashsum_callable_factory = hashsum_callable_factory
+        self._check_callable_factory = check_callable_factory
         # Default remote stat: optimistic OK so unit tests don't need
         # to wire a real network probe.
         self._remote_stat_callable = remote_stat_callable or (lambda _row: True)
@@ -469,13 +444,55 @@ class NASSyncClient:
         self._wake_event.set()
 
     async def force_verify(self, run_path: Path) -> VerifyResult:
-        """Recompute the local manifest and verify against itself.
+        """Re-run ``rclone check --download`` against the configured remote.
 
-        Used by the Settings "verify integrity" action. Does not advance
-        the queue state.
+        Used by the Settings "verify integrity" action. Reports only --
+        does NOT advance the queue state and does NOT update
+        ``verified_sha256`` in ``sync_state.json`` (the rclone-only
+        migration deliberately keeps Slot A SHA capture scoped to the
+        sync-time path that has access to a freshly-read local copy).
+
+        Resolves the equipment from ``run_path``'s first component, gathers
+        every tracked file in ``sync_state.json`` as the ``--files-from``
+        subset, and asks the driver to compare. Returns a populated
+        :class:`VerifyResult`; the caller renders ``mismatched``,
+        ``missing``, and ``errors`` to the operator. A run with no
+        tracked files yields ``ok=True`` (nothing to verify).
         """
-        manifest = await self._verifier.compute_local_manifest(run_path)
-        return await self._verifier.verify_against_local(run_path, manifest)
+        equipment: EquipmentConfig | None = None
+        for part in run_path.parts:
+            candidate = self._equipment_by_id.get(part)
+            if candidate is not None:
+                equipment = candidate
+                break
+        if equipment is None:
+            return VerifyResult(
+                ok=False,
+                error_kind=TransportErrorKind.UNKNOWN,
+            )
+        state = await self._sync_state_writer.read(run_path)
+        files = tuple(sorted(state.files.keys()))
+        if not files:
+            return VerifyResult(ok=True)
+        check = self._build_check(equipment)
+        files_from = self._write_files_from(files)
+        try:
+            try:
+                check_result = await check(run_path, files_from=files_from)
+            except TransportError as exc:
+                return VerifyResult(ok=False, error_kind=exc.error_kind)
+        finally:
+            with contextlib.suppress(OSError):
+                files_from.unlink()
+        ok = not check_result.differ and not check_result.missing_on_dst and not check_result.errors
+        return VerifyResult(
+            ok=ok,
+            mismatched=check_result.differ,
+            missing=check_result.missing_on_dst,
+            extra=check_result.extra_on_dst,
+            errors=check_result.errors,
+            verified=check_result.equal,
+        )
 
     # ----------------------------------------------------------- worker
 
@@ -565,6 +582,17 @@ class NASSyncClient:
             equipment.transport.bandwidth, now_local=datetime.now()
         )
 
+        # Slot A SHA capture (rclone-only migration, 2026-05-26). Compute
+        # the local SHA for every file the job wants to verify (the
+        # ``--files-from`` subset for a per-file enqueue, or the whole-
+        # run subtree when ``job.files`` is empty -- a whole-run enqueue,
+        # the manual force-sync path, or a first-sync poll sweep). Local
+        # disk I/O only, no wire cost; files removed mid-pass are simply
+        # absent from the resulting dict and the reconcile path skips
+        # writing ``verified_sha256`` for them.
+        verify_files: tuple[str, ...] = job.files or self._discover_run_files(run_path)
+        local_shas = await self._compute_local_shas(run_path, verify_files)
+
         # Per-file NAS sync (2026-05-21): when the job carries a file
         # subset, write it to a temp ``--files-from`` list so the transport
         # copies only those paths. An empty ``job.files`` keeps the
@@ -583,43 +611,85 @@ class NASSyncClient:
             except TransportError as exc:
                 await self._queue.record_failure(job.id, error=str(exc), terminal=False)
                 return
+
+            if not result.ok:
+                await self._handle_push_failure(job, result)
+                return
+
+            # Push succeeded. Transition RUNNING -> AWAITING_VERIFY.
+            await self._queue.transition(job.id, SyncJobState.AWAITING_VERIFY)
+
+            # ``rclone check --download --combined`` streams every file in
+            # the subset back from the NAS, hashes it locally, and writes
+            # one ``=/*/+/-/!`` line per file (see RcloneDriver.check).
+            # When the job carries no subset (a whole-run re-verify), we
+            # still need a files-from for the check call; build it from
+            # sync_state.json's tracked files. The whole-run case is rare
+            # (only a manual force_verify reaches it, and force_verify has
+            # its own code path), so we treat absence of ``job.files`` as
+            # a noop here.
+            check = self._build_check(equipment)
+            check_files_from = files_from_path
+            if check_files_from is None:
+                # Whole-run case (``job.files`` empty): scope the rclone
+                # check against every file we just SHA'd locally so the
+                # remote bytes are integrity-verified against the source.
+                # An empty discovery -- a completely empty run dir --
+                # short-circuits the verifier on the push alone.
+                if not verify_files:
+                    await self._queue.transition(
+                        job.id,
+                        SyncJobState.VERIFIED,
+                        increment_verify_passes=True,
+                        verified_at=utc_now_iso(),
+                    )
+                    await self._mark_synced(run_path)
+                    await self._maybe_cleanup(job.id, run_path)
+                    return
+                check_files_from = self._write_files_from(verify_files)
+
+            try:
+                try:
+                    check_result = await check(run_path, files_from=check_files_from)
+                except TransportError as exc:
+                    verify_result = VerifyResult(ok=False, error_kind=exc.error_kind)
+                except FileNotFoundError:
+                    await self._queue.record_failure(
+                        job.id,
+                        error=TransportErrorKind.LOCAL_FILE_VANISHED.value,
+                        terminal=True,
+                    )
+                    return
+                else:
+                    ok = (
+                        not check_result.differ
+                        and not check_result.missing_on_dst
+                        and not check_result.errors
+                    )
+                    verify_result = VerifyResult(
+                        ok=ok,
+                        mismatched=check_result.differ,
+                        missing=check_result.missing_on_dst,
+                        extra=check_result.extra_on_dst,
+                        errors=check_result.errors,
+                        verified=check_result.equal,
+                    )
+            finally:
+                if check_files_from is not None and check_files_from is not files_from_path:
+                    with contextlib.suppress(OSError):
+                        check_files_from.unlink()
         finally:
             if files_from_path is not None:
                 with contextlib.suppress(OSError):
                     files_from_path.unlink()
 
-        if not result.ok:
-            await self._handle_push_failure(job, result)
-            return
-
-        # Push succeeded. Transition RUNNING -> AWAITING_VERIFY.
-        await self._queue.transition(job.id, SyncJobState.AWAITING_VERIFY)
-
-        # Verify locally (the §7.1.4 manifest pass) and then compare
-        # against the remote-derived manifest. The local pass catches
-        # partial transports cheaply; the remote pass closes the
-        # integrity-in-transit gap and is the reason ``equipment`` flows
-        # in here -- the verifier needs the transport-specific hashsum
-        # callable. When the job carries a file subset, the verify pass is
-        # scoped to that subset.
-        include = set(job.files) if job.files else None
-        try:
-            verify_result = await self._verify_pass(run_path, equipment, include=include)
-        except FileNotFoundError:
-            await self._queue.record_failure(
-                job.id,
-                error=TransportErrorKind.LOCAL_FILE_VANISHED.value,
-                terminal=True,
-            )
-            return
-
         # Per-file verify reconciliation (operator-free per-file NAS sync,
         # design "Failure handling"): credit every file that verified in
         # ``sync_state.json`` -- even when the batch job is otherwise marked
-        # failed, so a single bad file does not block the good ones. The
-        # job's overall pass/fail (retry/backoff) is decided below from
-        # ``verify_result.ok`` exactly as before.
-        await self._reconcile_synced_files(run_path, job, verify_result)
+        # failed, so a single bad file does not block the good ones. Slot A
+        # also lands here -- ``verified_sha256`` is written from the
+        # ``local_shas`` dict captured before the push.
+        await self._reconcile_synced_files(run_path, verify_result, local_shas)
 
         if not verify_result.ok:
             # Spec §7.1.5 retry-class routing for verify failures. The
@@ -694,26 +764,69 @@ class NASSyncClient:
         """Resolve the push callable for ``equipment.transport``.
 
         Tests can inject a custom factory via the constructor's
-        ``push_callable_factory`` argument so they don't need real
-        rclone / rsync binaries.
+        ``push_callable_factory`` argument so they don't need a real
+        rclone binary on PATH.
         """
         if self._push_callable_factory is not None:
             return self._push_callable_factory(equipment)
-        _, push = _build_transport_driver(equipment, self._keyring_store)
+        _driver, push, _check = _build_transport_driver(equipment, self._keyring_store)
         return push
 
-    def _build_hashsum(
-        self, equipment: EquipmentConfig
-    ) -> Callable[[Path], Awaitable[dict[str, str]]]:
-        """Resolve the hashsum callable for ``equipment.transport``.
+    def _build_check(self, equipment: EquipmentConfig) -> Callable[..., Any]:
+        """Resolve the ``rclone check`` callable for ``equipment.transport``.
 
         Tests can inject a custom factory via the constructor's
-        ``hashsum_callable_factory`` argument so they don't need real
-        rclone / rsync binaries (or network access).
+        ``check_callable_factory`` argument. The default builds the
+        check closure alongside the push closure so credentials never
+        drift between push and verify.
         """
-        if self._hashsum_callable_factory is not None:
-            return self._hashsum_callable_factory(equipment)
-        return _build_hashsum_callable(equipment, self._keyring_store)
+        if self._check_callable_factory is not None:
+            return self._check_callable_factory(equipment)
+        _driver, _push, check = _build_transport_driver(equipment, self._keyring_store)
+        return check
+
+    async def _compute_local_shas(
+        self,
+        run_path: Path,
+        files: tuple[str, ...],
+    ) -> dict[str, str]:
+        """Compute the SHA-256 hex digest of each file in ``files``.
+
+        Slot A of the 2026-05-26 rclone-only migration. The dict the
+        method returns is keyed by run-relative POSIX path and consumed
+        by :meth:`_reconcile_synced_files` to populate
+        ``sync_state.json:files[*].verified_sha256``. Files that
+        disappear between Slot A and ``rclone check`` (an equipment
+        machine pulled mid-sweep) are simply absent from the dict and
+        the reconcile path skips writing ``verified_sha256`` for them.
+
+        Each per-file hash runs in ``asyncio.to_thread`` so a multi-GB
+        file does not block the event loop.
+        """
+        import hashlib
+
+        def _read_and_hash(path: Path) -> str | None:
+            try:
+                handle = path.open("rb")
+            except OSError:
+                return None
+            try:
+                digest = hashlib.sha256()
+                while True:
+                    chunk = handle.read(65536)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                return digest.hexdigest()
+            finally:
+                handle.close()
+
+        out: dict[str, str] = {}
+        for rel in files:
+            digest = await asyncio.to_thread(_read_and_hash, run_path / rel)
+            if digest is not None:
+                out[rel] = digest
+        return out
 
     async def _handle_push_failure(self, job: SyncJobRow, result: TransportResult) -> None:
         """Translate a transport failure into a queue update."""
@@ -739,79 +852,30 @@ class NASSyncClient:
         # NETWORK / UNKNOWN -> backoff retry.
         await self._queue.record_failure(job.id, error=kind.value, terminal=False)
 
-    async def _verify_pass(
-        self,
-        run_path: Path,
-        equipment: EquipmentConfig,
-        *,
-        include: set[str] | None = None,
-    ) -> VerifyResult:
-        """Run one local manifest + verify pass, then probe the remote.
-
-        The local pass is the cheap pre-check; if the local subtree no
-        longer matches its own freshly-computed manifest, we return that
-        result immediately without spending a remote round-trip. Otherwise
-        we ask the transport for its remote-side manifest and compare via
-        :meth:`Verifier.verify_against_remote` (Backend Spec §7.1.4 -- the
-        integrity-in-transit gap closure).
-
-        ``include`` (operator-free per-file NAS sync, 2026-05-21) scopes the
-        local manifest to a run-relative subset; ``None`` hashes the whole
-        run. The remote probe still walks the whole run subtree -- the
-        remote-vs-local comparison is keyed on the (possibly subset) local
-        manifest, so extra remote keys are simply informational.
-
-        A :class:`TransportError` from the hashsum probe is surfaced as a
-        verify failure (``ok=False``) carrying the transport's classified
-        ``error_kind``. The §7.1.4 step-2 contract mandates a remote
-        SHA-256 walk; silently skipping it on a probe error would let the
-        job promote through VERIFIED -> CLEANED without the integrity
-        check. ``_drive_job`` keys off ``error_kind`` to route the failure
-        through the spec-correct §7.1.5 retry path (AUTH -> terminal,
-        NETWORK / UNKNOWN -> backoff, every other case including a
-        missing-binary spawn failure -> single retry then terminal).
-        """
-        manifest = await self._verifier.compute_local_manifest(run_path, include)
-        local_result = await self._verifier.verify_against_local(run_path, manifest)
-        if not local_result.ok:
-            return local_result
-
-        hashsum = self._build_hashsum(equipment)
-        try:
-            remote_manifest = await hashsum(run_path)
-        except TransportError as exc:
-            _log.warning("remote hashsum probe failed: %s", exc)
-            return VerifyResult(
-                ok=False,
-                manifest=dict(manifest),
-                error_kind=exc.error_kind,
-            )
-        return self._verifier.verify_against_remote(manifest, remote_manifest)
-
     async def _reconcile_synced_files(
         self,
         run_path: Path,
-        job: SyncJobRow,
         verify_result: VerifyResult,
+        local_shas: dict[str, str],
     ) -> None:
         """Credit every individually-verified file in ``sync_state.json``.
 
-        Operator-free per-file NAS sync design ("Failure handling"): a
-        per-run batch job may verify some files and fail others. Every file
-        that *did* verify is recorded with its current ``(st_size,
-        st_mtime_ns)`` ``synced_signature`` and a ``verified_at`` timestamp
-        -- even when the batch job is otherwise routed to a retry / FAILED
-        -- so a single bad file does not block crediting the good ones.
+        Per-file reconciliation: a per-run batch job may verify some
+        files and fail others. Every file that ``rclone check``
+        confirmed (an ``=`` line, captured into ``verify_result.verified``)
+        is recorded with its current ``(st_size, st_mtime_ns)``
+        ``synced_signature``, a ``verified_at`` timestamp, and the Slot A
+        ``verified_sha256`` digest from ``local_shas``. Crediting happens
+        even when the batch job is otherwise routed to retry / FAILED so
+        a single bad file does not block the good ones.
 
-        A file counts as verified when it is present in the verify result's
-        local manifest and absent from both ``mismatched`` and ``missing``.
-        When the remote probe could not run at all (``error_kind`` set)
-        nothing is credited -- no file's NAS copy was confirmed.
+        When the rclone subprocess could not run at all
+        (``error_kind`` set) nothing is credited -- no file's NAS copy
+        was confirmed.
         """
         if verify_result.error_kind is not None:
             return
-        bad = set(verify_result.mismatched) | set(verify_result.missing)
-        verified_rel = [rel for rel in verify_result.manifest if rel not in bad]
+        verified_rel = list(verify_result.verified)
         if not verified_rel:
             return
         verified_at = utc_now_iso()
@@ -825,7 +889,33 @@ class NASSyncClient:
                     rel,
                     synced_signature=signature,
                     verified_at=verified_at,
+                    verified_sha256=local_shas.get(rel),
                 )
+
+    @staticmethod
+    def _discover_run_files(run_path: Path) -> tuple[str, ...]:
+        """Return every non-cache regular file under ``run_path`` as POSIX rel paths.
+
+        Used by ``_drive_job`` whenever ``job.files`` is empty (a whole-
+        run enqueue / force-sync / first poll sweep) so the verify pass
+        has a concrete subset to scope itself to. Mirrors the
+        pre-migration ``compute_local_manifest`` walk in scope -- the
+        ``.exlab-wizard/`` cache dir is excluded so we never try to
+        verify our own metadata against the NAS.
+        """
+        from exlab_wizard.constants import CACHE_DIR_NAME
+
+        if not run_path.exists() or not run_path.is_dir():
+            return ()
+        out: list[str] = []
+        for path in sorted(run_path.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(run_path)
+            if CACHE_DIR_NAME in rel.parts:
+                continue
+            out.append(rel.as_posix())
+        return tuple(out)
 
     @staticmethod
     def _file_signature(path: Path) -> tuple[int, int] | None:

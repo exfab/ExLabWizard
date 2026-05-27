@@ -60,12 +60,6 @@ def test_readme_file_name() -> None:
     assert filenames.README_FILE_NAME == "README.md"
 
 
-def test_checksums_relative() -> None:
-    # Backend Spec §11.3. Note this is a path relative to the run/project
-    # root and must use forward slashes (cross-platform JSON value).
-    assert filenames.CHECKSUMS_RELATIVE == ".exlab-wizard/checksums.sha256"
-
-
 def test_copier_manifest_name() -> None:
     # Backend Spec §5.2.
     assert filenames.COPIER_MANIFEST_NAME == "copier.yml"
@@ -116,7 +110,6 @@ def test_filenames_re_exported_from_package() -> None:
     assert constants.ANSWERS_FILE_NAME == ".exlab-answers.yml"
     assert constants.LOG_FILE_TEMPLATE == "wizard.{hostname}.log"
     assert constants.README_FILE_NAME == "README.md"
-    assert constants.CHECKSUMS_RELATIVE == ".exlab-wizard/checksums.sha256"
     assert constants.COPIER_MANIFEST_NAME == "copier.yml"
     assert constants.PLUGIN_MANIFEST_NAME == "manifest.yml"
     assert constants.SERVER_STATE_FILE == "server.json"

@@ -240,34 +240,6 @@ async def test_rclone_argv_omits_files_from_when_none(
 
 
 # ---------------------------------------------------------------------------
-# hashsum (Phase 1: legacy path still alive)
-# ---------------------------------------------------------------------------
-
-
-async def test_rclone_hashsum_parses_output(
-    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manifest_text = "deadbeef  a.txt\ncafebabe  data/b.bin\n"
-    manifest_file = tmp_path / "manifest.txt"
-    manifest_file.write_text(manifest_text)
-    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "hashsum_success")
-    monkeypatch.setenv("STUB_RCLONE_HASHSUM_PATH", str(manifest_file))
-    driver = RcloneDriver()
-    result = await driver.hashsum("remote:/srv/run")
-    assert result == {"a.txt": "deadbeef", "data/b.bin": "cafebabe"}
-
-
-async def test_rclone_hashsum_raises_transport_error_on_auth(
-    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "auth_error")
-    driver = RcloneDriver()
-    with pytest.raises(TransportError) as excinfo:
-        await driver.hashsum("remote:/srv/run")
-    assert excinfo.value.error_kind is TransportErrorKind.AUTH
-
-
-# ---------------------------------------------------------------------------
 # obscure
 # ---------------------------------------------------------------------------
 

@@ -49,7 +49,6 @@ from exlab_wizard.constants.filenames import (
     ANSWERS_FILE_NAME,
     CACHE_DIR_NAME,
     CENTRAL_LOG_FILE,
-    CHECKSUMS_RELATIVE,
     COPIER_MANIFEST_NAME,
     CREATION_JSON_NAME,
     EQUIPMENT_JSON_NAME,
@@ -160,7 +159,6 @@ __all__ = [
     "BEARER_REGEX",
     "CACHE_DIR_NAME",
     "CENTRAL_LOG_FILE",
-    "CHECKSUMS_RELATIVE",
     "COPIER_MANIFEST_NAME",
     "CREATION_JSON_NAME",
     # Schema versions

@@ -2,8 +2,9 @@
 
 Single transport binary for the NAS sync subsystem. Push uses
 ``rclone copy --checksum --files-from``; verify uses ``rclone check
---download --combined`` (Phase 2 of the migration); the legacy
-``hashsum`` method survives Phase 1 only.
+--download --combined`` which streams remote bytes back and computes
+SHA-256 locally (the only way to integrity-check SFTP and SMB backends,
+which expose no server-side hashing).
 
 The driver is intentionally thin: it builds an argv, hands it to
 :func:`exlab_wizard.sync.transports._run.run_subprocess` along with an
@@ -388,39 +389,6 @@ class RcloneDriver:
             return AboutResult(ok=True, info={})
         info = {key: int(value) for key, value in parsed.items() if isinstance(value, int | float)}
         return AboutResult(ok=True, info=info)
-
-    async def hashsum(
-        self,
-        remote: str,
-        *,
-        env: dict[str, str] | None = None,
-        mask_for_log: tuple[str, ...] = (),
-    ) -> dict[str, str]:
-        """Legacy ``rclone hashsum sha256`` probe -- kept through Phase 1 only.
-
-        Returns a ``{relative-path: sha256-hex}`` dict. Phase 2 of the
-        rclone-only migration replaces every caller with
-        :meth:`check`; this method exists so Phase 1 leaves the verify
-        path intact at its boundary.
-        """
-        from exlab_wizard.sync.verifier import parse_manifest
-
-        cmd: list[str] = [self._binary, "hashsum", "sha256", remote]
-        _log.debug("rclone hashsum cmd: %s", shlex.join(cmd))
-
-        try:
-            rc, stdout, stderr = await run_subprocess(cmd, env=env, mask_for_log=mask_for_log)
-        except FileNotFoundError as exc:
-            msg = f"rclone binary not found: {self._binary!r}"
-            raise TransportError(msg) from exc
-
-        if rc != 0:
-            kind = _classify_failure(stderr, rc)
-            _log.warning("rclone hashsum failed rc=%d kind=%s", rc, kind.value)
-            msg = f"rclone hashsum failed rc={rc} kind={kind.value}: {stderr.strip()}"
-            raise TransportError(msg, error_kind=kind)
-
-        return parse_manifest(stdout)
 
 
 # ---------------------------------------------------------------------------

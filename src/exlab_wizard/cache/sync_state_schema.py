@@ -36,11 +36,20 @@ class FileSyncRecord(
       counts toward the ``SYNCED`` rollup only once this is set.
     * ``keep_local`` -- when ``True`` the file still syncs to the NAS but is
       excluded from cleanup deletion.
+    * ``verified_sha256`` -- the SHA-256 hex digest of the local bytes
+      captured at sync time. Slot A of the 2026-05-26 rclone-only
+      migration: ``rclone check --download --combined`` confirms the NAS
+      copy matches the local source, and we record the local SHA here so
+      the offline-audit affordance lost by dropping ``checksums.sha256``
+      is preserved without any wire cost. ``None`` for records that
+      pre-date the migration or for files synced via the legacy verify
+      path; reads must tolerate its absence.
     """
 
     synced_signature: tuple[int, int] | None = None
     verified_at: str | None = None
     keep_local: bool = False
+    verified_sha256: str | None = None
 
 
 class SyncStateJson(
