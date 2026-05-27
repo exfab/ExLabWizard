@@ -1,28 +1,43 @@
 #!/usr/bin/env python3
 """Stub ``rclone`` binary for tests.
 
-Acts like ``rclone copy --checksum [--bwlimit X] <local> <remote>:<path>``
-under the test harness's PATH override. Reads the
-``STUB_RCLONE_BEHAVIOR`` environment variable to drive deterministic
-outcomes:
+Acts like the rclone CLI under the test harness's PATH override. Verbs
+covered: ``copy``, ``hashsum`` (legacy, Phase 1 only), ``obscure``,
+``about``, ``check`` (Phase 2). Deterministic outcomes are selected via
+``STUB_RCLONE_BEHAVIOR``:
 
-- ``success`` (default): copies ``local`` to ``<dest_root>/<path>`` so the
-  verifier sees real content.
-- ``network_error``: prints "network timeout" to stderr and exits 1.
-- ``auth_error``: prints "401 Unauthorized" to stderr and exits 1.
-- ``hash_mismatch``: prints "hash mismatch on file" to stderr and exits 1.
-- ``hashsum_success``: emits a SHA-256 manifest to stdout for
-  ``rclone hashsum sha256 <remote>``. The manifest source is
-  ``STUB_RCLONE_HASHSUM_PATH`` (read verbatim) when set, otherwise it is
-  computed by walking ``STUB_RCLONE_DEST_ROOT``.
+Push (``rclone copy ... <local> <remote>:<path>``):
+- ``success`` (default) — copies ``local`` to ``<dest_root>/<path>``.
+- ``network_error`` — prints "network timeout" to stderr, exits 1.
+- ``auth_error`` — prints "401 Unauthorized" to stderr, exits 1.
+- ``hash_mismatch`` — prints "hash mismatch on file" to stderr, exits 1.
 
-The destination root is read from ``STUB_RCLONE_DEST_ROOT`` so the test
-harness can map a fake remote name onto a real on-disk directory.
+Hashsum (``rclone hashsum sha256 <remote>:<path>``):
+- ``hashsum_success`` / ``success`` — emits a manifest from
+  ``STUB_RCLONE_HASHSUM_PATH`` or by walking ``STUB_RCLONE_DEST_ROOT``.
 
-If ``STUB_RCLONE_RECORD_PATH`` is set, every invocation appends one JSON
-array (``sys.argv``) to that file. This makes argv assertions in tests
-trivial and is silent when the env var is unset (default behavior is
-byte-identical to the historical stub).
+Obscure (``rclone obscure -``):
+- ``obscure_success`` — emits ``STUB_RCLONE_OBSCURE_OUT`` (default
+  ``OBSCURED``) to stdout.
+
+About (``rclone about <remote>:``):
+- ``about_success`` — emits ``STUB_RCLONE_ABOUT_JSON`` (default
+  ``{}``) to stdout.
+- ``about_auth_error`` — prints "401 Unauthorized" to stderr, exits 1.
+
+Check (``rclone check --download --combined <out> --files-from <list>
+       <local> <remote>:<path>``) -- Phase 2:
+- ``check_success`` — writes one ``= <path>`` line per file in
+  ``--files-from`` to ``--combined``; exits 0.
+- ``check_differ`` — writes ``* <path>`` for every file; exits 1.
+- ``check_missing`` — writes ``- <path>`` for every file; exits 1.
+
+Optional env probes (any verb):
+- ``STUB_RCLONE_RECORD_PATH`` — append one JSON-array line of
+  ``sys.argv`` per invocation.
+- ``STUB_RCLONE_ENV_DUMP`` — write ``KEY=VALUE\\n`` lines for every env
+  var starting with ``RCLONE_CONFIG_`` to that path so tests can assert
+  on env injection.
 """
 
 from __future__ import annotations
@@ -35,12 +50,8 @@ import sys
 from pathlib import Path
 
 
-def _parse_args(argv: list[str]) -> tuple[str, str]:
-    """Return ``(local, remote_spec)`` from a ``rclone copy`` argv.
-
-    The stub doesn't replicate the full rclone CLI; it only needs the
-    last two positional arguments after the ``copy`` verb.
-    """
+def _parse_copy_args(argv: list[str]) -> tuple[str, str]:
+    """Return ``(local, remote_spec)`` from a ``rclone copy`` argv."""
     if len(argv) < 4 or argv[1] != "copy":
         sys.stderr.write(f"stub_rclone: unexpected argv: {argv!r}\n")
         sys.exit(2)
@@ -52,12 +63,17 @@ def _parse_args(argv: list[str]) -> tuple[str, str]:
 
 
 def _is_flag_value(arg: str, argv: list[str]) -> bool:
-    """Return True if ``arg`` is the value-half of a ``--flag value`` pair.
-
-    The stub treats ``--bwlimit`` and ``--transfers`` as taking a value;
-    other flags it sees are forms like ``--checksum`` (no value).
-    """
-    flags_with_value = {"--bwlimit", "--transfers"}
+    """Return True if ``arg`` is the value-half of a ``--flag value`` pair."""
+    flags_with_value = {
+        "--bwlimit",
+        "--transfers",
+        "--files-from",
+        "--combined",
+        "--differ",
+        "--missing-on-dst",
+        "--missing-on-src",
+        "--error",
+    }
     idx = argv.index(arg)
     if idx == 0:
         return False
@@ -65,18 +81,7 @@ def _is_flag_value(arg: str, argv: list[str]) -> bool:
 
 
 def _emit_hashsum(argv: list[str]) -> int:
-    """Emit a SHA-256 manifest on stdout for the ``hashsum`` verb.
-
-    Source priority:
-    1. ``STUB_RCLONE_HASHSUM_PATH``: read the file verbatim.
-    2. ``STUB_RCLONE_DEST_ROOT``: walk
-       ``<dest_root>/<remote_path>`` (parsed from the trailing
-       ``<remote>:<path>`` arg) and compute hashes. Paths are emitted
-       relative to that subtree so the verifier sees the same keys it
-       computes locally.
-
-    Falls back to an empty manifest with rc=0 when neither is set.
-    """
+    """Emit a SHA-256 manifest on stdout for the ``hashsum`` verb."""
     source_path = os.environ.get("STUB_RCLONE_HASHSUM_PATH", "")
     if source_path:
         try:
@@ -90,7 +95,6 @@ def _emit_hashsum(argv: list[str]) -> int:
     if not dest_root:
         return 0
 
-    # Argv shape: rclone hashsum sha256 <remote>:<path>
     target_arg = argv[-1] if len(argv) >= 4 else ""
     remote_path = ""
     if ":" in target_arg:
@@ -106,18 +110,118 @@ def _emit_hashsum(argv: list[str]) -> int:
     return 0
 
 
+def _emit_combined(argv: list[str], prefix: str) -> int:
+    """Write ``<prefix> <path>`` per file in ``--files-from`` to ``--combined``.
+
+    ``prefix`` is one of ``=`` / ``*`` / ``+`` / ``-`` / ``!``. Returns
+    rc=0 for ``=`` (equal) and rc=1 otherwise -- matches real rclone,
+    which returns non-zero whenever any file differs.
+    """
+    files_from = _flag_value(argv, "--files-from")
+    combined = _flag_value(argv, "--combined")
+    if combined is None:
+        sys.stderr.write("stub_rclone check: missing --combined\n")
+        return 2
+    paths: list[str] = []
+    if files_from is not None:
+        try:
+            paths = [
+                line.strip()
+                for line in Path(files_from).read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        except OSError as exc:
+            sys.stderr.write(f"stub_rclone check: cannot read files-from: {exc}\n")
+            return 2
+    with Path(combined).open("w", encoding="utf-8") as f:
+        for path in paths:
+            f.write(f"{prefix} {path}\n")
+    return 0 if prefix == "=" else 1
+
+
+def _flag_value(argv: list[str], flag: str) -> str | None:
+    """Return the value following ``flag`` in ``argv`` or ``None``."""
+    try:
+        idx = argv.index(flag)
+    except ValueError:
+        return None
+    if idx + 1 >= len(argv):
+        return None
+    return argv[idx + 1]
+
+
+def _dump_env() -> None:
+    """When ``STUB_RCLONE_ENV_DUMP`` is set, write the rclone-prefixed env."""
+    dump = os.environ.get("STUB_RCLONE_ENV_DUMP")
+    if not dump:
+        return
+    with open(dump, "w") as f:
+        for key, value in sorted(os.environ.items()):
+            if key.startswith("RCLONE_CONFIG_"):
+                f.write(f"{key}={value}\n")
+
+
 def main() -> int:
     record_path = os.environ.get("STUB_RCLONE_RECORD_PATH")
     if record_path:
         with open(record_path, "a") as f:
             f.write(json.dumps(sys.argv) + "\n")
+    _dump_env()
 
     behavior = os.environ.get("STUB_RCLONE_BEHAVIOR", "success")
     dest_root = os.environ.get("STUB_RCLONE_DEST_ROOT", "")
 
-    # Hashsum verb: branch before any of the copy-only behaviors so the
-    # copy path is unaffected by the new behavior.
-    if len(sys.argv) >= 2 and sys.argv[1] == "hashsum":
+    verb = sys.argv[1] if len(sys.argv) >= 2 else ""
+
+    # ---- obscure ----------------------------------------------------------
+    if verb == "obscure":
+        # Consume stdin so the parent's communicate(input=...) doesn't block.
+        import contextlib
+
+        with contextlib.suppress(OSError):
+            sys.stdin.read()
+        # Production code always invokes obscure before push / about / check
+        # / hashsum, so STUB_RCLONE_BEHAVIOR controlling auth_error on
+        # *those* verbs must not short-circuit obscure too -- tests need to
+        # observe the failure on the actual verb. Obscure honors only its
+        # own dedicated `obscure_*` behaviors.
+        if behavior in ("obscure_network_error",):
+            sys.stderr.write("network timeout\n")
+            return 1
+        if behavior in ("obscure_auth_error",):
+            sys.stderr.write("401 Unauthorized\n")
+            return 1
+        sys.stdout.write(os.environ.get("STUB_RCLONE_OBSCURE_OUT", "OBSCURED") + "\n")
+        return 0
+
+    # ---- about ------------------------------------------------------------
+    if verb == "about":
+        if behavior == "about_auth_error":
+            sys.stderr.write("401 Unauthorized\n")
+            return 1
+        if behavior == "network_error":
+            sys.stderr.write("network timeout\n")
+            return 1
+        sys.stdout.write(os.environ.get("STUB_RCLONE_ABOUT_JSON", "{}"))
+        return 0
+
+    # ---- check ------------------------------------------------------------
+    if verb == "check":
+        if behavior == "auth_error":
+            sys.stderr.write("401 Unauthorized\n")
+            return 1
+        if behavior == "network_error":
+            sys.stderr.write("network timeout\n")
+            return 1
+        if behavior == "check_differ":
+            return _emit_combined(sys.argv, "*")
+        if behavior == "check_missing":
+            return _emit_combined(sys.argv, "-")
+        # default / "success" / "check_success" -> all equal
+        return _emit_combined(sys.argv, "=")
+
+    # ---- hashsum ----------------------------------------------------------
+    if verb == "hashsum":
         if behavior == "network_error":
             sys.stderr.write("network timeout\n")
             return 1
@@ -129,6 +233,7 @@ def main() -> int:
         sys.stderr.write(f"stub_rclone hashsum: unknown behavior {behavior!r}\n")
         return 2
 
+    # ---- copy (default verb) ---------------------------------------------
     if behavior == "network_error":
         sys.stderr.write("network timeout\n")
         return 1
@@ -139,12 +244,11 @@ def main() -> int:
         sys.stderr.write("hash mismatch on file\n")
         return 1
 
-    if behavior not in ("success", "hashsum_success"):
+    if behavior not in ("success", "hashsum_success", "obscure_success", "about_success"):
         sys.stderr.write(f"stub_rclone: unknown behavior {behavior!r}\n")
         return 2
 
-    local, remote_spec = _parse_args(sys.argv)
-    # rclone remote spec is "<name>:<path>"; split on the first colon.
+    local, remote_spec = _parse_copy_args(sys.argv)
     if ":" not in remote_spec:
         sys.stderr.write(f"stub_rclone: malformed remote {remote_spec!r}\n")
         return 2
@@ -152,8 +256,6 @@ def main() -> int:
 
     src = Path(local)
     if not dest_root:
-        # Without a configured destination root the stub still succeeds
-        # silently; the verifier will only need the local manifest.
         return 0
     dst = Path(dest_root) / remote_path.lstrip("/")
     dst.mkdir(parents=True, exist_ok=True)

@@ -31,7 +31,7 @@ from exlab_wizard.config.models import (
     EquipmentConfig,
     NASCleanupConfig,
     PathsConfig,
-    RcloneTransport,
+    RcloneSftpTransport,
 )
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
@@ -65,10 +65,11 @@ def _build_config(local_root: Path, *, retain_cache: bool = True) -> Config:
                 label="Eq 1",
                 local_root=str(local_root),
                 nas_root="/nas",
-                transport=RcloneTransport(
-                    type="rclone",
-                    rclone_remote="lab-nas",
-                    rclone_remote_path="/srv/nas",
+                transport=RcloneSftpTransport(
+                    type="rclone_sftp",
+                    host="nas.lab.example",
+                    user="testuser",
+                    remote_path="/srv/nas",
                     bandwidth=BandwidthConfig(),
                 ),
             )

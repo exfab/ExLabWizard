@@ -28,9 +28,11 @@ def _state_filled_for(step: str) -> EquipmentWizardState:
     s.local_root = "/data/lab"
     s.nas_root = "//nas01/lab"
     s.sync_mode = "nas"
-    s.transport_type = "rclone"
-    s.rclone_remote = "lab-nas"
-    s.rclone_remote_path = "lab/FLOW_99"
+    s.transport_type = "rclone_sftp"
+    s.sftp_host = "nas.lab.example"
+    s.sftp_port = 22
+    s.sftp_user = "labuser"
+    s.sftp_remote_path = "lab/FLOW_99"
     return s
 
 
@@ -60,7 +62,7 @@ def test_can_advance_paths_requires_both_roots() -> None:
 def test_can_advance_sync_mode_nas_requires_rclone_fields() -> None:
     s = _state_filled_for("sync_mode")
     assert can_advance(s) is True
-    s.rclone_remote = ""
+    s.sftp_host = ""
     assert can_advance(s) is False
 
 

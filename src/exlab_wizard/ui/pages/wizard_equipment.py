@@ -56,14 +56,23 @@ class EquipmentWizardState:
     # Step 2
     local_root: str = ""
     nas_root: str = ""
-    # Step 3
+    # Step 3 -- transport_type is one of "rclone_sftp" / "rclone_smb".
+    # Both are password-based; the password is entered in Settings after
+    # registration, not in this wizard.
     sync_mode: str = "nas"
-    transport_type: str = "rclone"
-    rclone_remote: str = ""
-    rclone_remote_path: str = ""
-    ssh_target: str = ""
-    ssh_key_path: str = ""
-    rsync_remote_path: str = ""
+    transport_type: str = "rclone_sftp"
+    # rclone_sftp fields
+    sftp_host: str = ""
+    sftp_port: int = 22
+    sftp_user: str = ""
+    sftp_remote_path: str = ""
+    # rclone_smb fields
+    smb_host: str = ""
+    smb_share: str = ""
+    smb_user: str = ""
+    smb_domain: str = ""
+    smb_remote_path: str = ""
+    # Stage-mode fields
     staging_transport_type: str = "smb_mount"
     staging_mount_point: str = ""
     staging_subpath: str = ""
@@ -89,9 +98,17 @@ def can_advance(state: EquipmentWizardState) -> bool:
             return bool(state.local_root.strip() and state.nas_root.strip())
         case "sync_mode":
             if state.sync_mode == "nas":
-                if state.transport_type == "rclone":
-                    return bool(state.rclone_remote.strip() and state.rclone_remote_path.strip())
-                return bool(state.ssh_target.strip() and state.rsync_remote_path.strip())
+                if state.transport_type == "rclone_smb":
+                    return bool(
+                        state.smb_host.strip()
+                        and state.smb_share.strip()
+                        and state.smb_user.strip()
+                    )
+                return bool(
+                    state.sftp_host.strip()
+                    and state.sftp_user.strip()
+                    and state.sftp_remote_path.strip()
+                )
             # stage
             return bool(state.staging_mount_point.strip() and state.staging_subpath.strip())
         case "review":
@@ -114,11 +131,15 @@ def assemble_equipment_config(
         nas_root=state.nas_root,
         sync_mode=state.sync_mode,
         transport_type=state.transport_type,
-        rclone_remote=state.rclone_remote,
-        rclone_remote_path=state.rclone_remote_path,
-        ssh_target=state.ssh_target,
-        ssh_key_path=state.ssh_key_path,
-        rsync_remote_path=state.rsync_remote_path,
+        sftp_host=state.sftp_host,
+        sftp_port=state.sftp_port,
+        sftp_user=state.sftp_user,
+        sftp_remote_path=state.sftp_remote_path,
+        smb_host=state.smb_host,
+        smb_share=state.smb_share,
+        smb_user=state.smb_user,
+        smb_domain=state.smb_domain,
+        smb_remote_path=state.smb_remote_path,
         staging_transport_type=state.staging_transport_type,
         staging_mount_point=state.staging_mount_point,
         staging_subpath=state.staging_subpath,
@@ -295,27 +316,39 @@ def _render_sync_mode_step(
         ).props('data-testid="wizard-equipment-sync-mode"').bind_value(state, "sync_mode")
     if state.sync_mode == "nas":
         ui.radio(
-            ["rclone", "rsync_ssh"],
+            ["rclone_sftp", "rclone_smb"],
             value=state.transport_type,
             on_change=lambda _e: refresh_body(),
         ).props('data-testid="wizard-equipment-transport-type"').bind_value(state, "transport_type")
-        if state.transport_type == "rclone":
-            ui.input(label="rclone remote", on_change=lambda _e: sync_next()).props(
-                'data-testid="wizard-equipment-rclone-remote"'
-            ).bind_value(state, "rclone_remote")
-            ui.input(label="rclone remote path", on_change=lambda _e: sync_next()).props(
-                'data-testid="wizard-equipment-rclone-remote-path"'
-            ).bind_value(state, "rclone_remote_path")
+        if state.transport_type == "rclone_smb":
+            ui.input(label="SMB host", on_change=lambda _e: sync_next()).props(
+                'data-testid="wizard-equipment-smb-host"'
+            ).bind_value(state, "smb_host")
+            ui.input(label="SMB share", on_change=lambda _e: sync_next()).props(
+                'data-testid="wizard-equipment-smb-share"'
+            ).bind_value(state, "smb_share")
+            ui.input(label="SMB user", on_change=lambda _e: sync_next()).props(
+                'data-testid="wizard-equipment-smb-user"'
+            ).bind_value(state, "smb_user")
+            ui.input(label="SMB domain (optional)", on_change=lambda _e: sync_next()).props(
+                'data-testid="wizard-equipment-smb-domain"'
+            ).bind_value(state, "smb_domain")
+            ui.input(label="Remote subpath (optional)", on_change=lambda _e: sync_next()).props(
+                'data-testid="wizard-equipment-smb-remote-path"'
+            ).bind_value(state, "smb_remote_path")
         else:
-            ui.input(label="SSH target", on_change=lambda _e: sync_next()).props(
-                'data-testid="wizard-equipment-ssh-target"'
-            ).bind_value(state, "ssh_target")
-            ui.input(label="SSH key path", on_change=lambda _e: sync_next()).props(
-                'data-testid="wizard-equipment-ssh-key-path"'
-            ).bind_value(state, "ssh_key_path")
-            ui.input(label="rsync remote path", on_change=lambda _e: sync_next()).props(
-                'data-testid="wizard-equipment-rsync-remote-path"'
-            ).bind_value(state, "rsync_remote_path")
+            ui.input(label="SFTP host", on_change=lambda _e: sync_next()).props(
+                'data-testid="wizard-equipment-sftp-host"'
+            ).bind_value(state, "sftp_host")
+            ui.number(label="SFTP port", value=22, on_change=lambda _e: sync_next()).props(
+                'data-testid="wizard-equipment-sftp-port"'
+            ).bind_value(state, "sftp_port")
+            ui.input(label="SFTP user", on_change=lambda _e: sync_next()).props(
+                'data-testid="wizard-equipment-sftp-user"'
+            ).bind_value(state, "sftp_user")
+            ui.input(label="Remote path", on_change=lambda _e: sync_next()).props(
+                'data-testid="wizard-equipment-sftp-remote-path"'
+            ).bind_value(state, "sftp_remote_path")
     else:  # stage
         ui.radio(
             ["smb_mount", "file_transfer"],
@@ -355,6 +388,13 @@ def _render_review_step(
             ui.label(f"Staging transport: {state.staging_transport_type}")
             ui.label(f"Mount point: {state.staging_mount_point}")
             ui.label(f"Staging subpath: {state.staging_subpath}")
+    if state.sync_mode == "nas":
+        ui.label(
+            "You'll set the NAS password in Settings → NAS credentials before the first sync runs."
+        ).style(
+            "color: var(--color-muted); margin-top: var(--sp-2); "
+            "font-size: var(--text-xs); font-style: italic;"
+        ).props('data-testid="wizard-equipment-credential-hint"')
     if state.last_error:
         ui.label(f"Error: {state.last_error}").style("color: var(--color-danger);").props(
             'data-testid="wizard-equipment-error"'

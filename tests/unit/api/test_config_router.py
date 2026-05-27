@@ -12,7 +12,7 @@ from exlab_wizard.config.models import (
     EquipmentConfig,
     OrchestratorConfig,
     PathsConfig,
-    RcloneTransport,
+    RcloneSftpTransport,
 )
 
 
@@ -29,10 +29,11 @@ def _ready_config() -> Config:
                 label="Equipment 1",
                 local_root="/d",
                 nas_root="/n",
-                transport=RcloneTransport(
-                    type="rclone",
-                    rclone_remote="lab-nas",
-                    rclone_remote_path="lab/EQ1",
+                transport=RcloneSftpTransport(
+                    type="rclone_sftp",
+                    host="nas.lab.example",
+                    user="testuser",
+                    remote_path="lab/EQ1",
                 ),
             )
         ],
@@ -116,9 +117,10 @@ def test_append_equipment_persists_and_re_evaluates_state() -> None:
             "local_root": "/data",
             "nas_root": "/srv/nas",
             "transport": {
-                "type": "rclone",
-                "rclone_remote": "lab-nas",
-                "rclone_remote_path": "lab/FLOW_99",
+                "type": "rclone_sftp",
+                "host": "nas.lab.example",
+                "user": "testuser",
+                "remote_path": "lab/FLOW_99",
             },
         }
     )
@@ -141,9 +143,10 @@ def test_append_equipment_rejects_duplicate_id() -> None:
             "local_root": "/data",
             "nas_root": "/srv/nas",
             "transport": {
-                "type": "rclone",
-                "rclone_remote": "lab-nas",
-                "rclone_remote_path": "lab/EQ1",
+                "type": "rclone_sftp",
+                "host": "nas.lab.example",
+                "user": "testuser",
+                "remote_path": "lab/EQ1",
             },
         }
     )

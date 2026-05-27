@@ -24,7 +24,7 @@ from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
     PathsConfig,
-    RcloneTransport,
+    RcloneSftpTransport,
 )
 from exlab_wizard.constants import KEYRING_USERNAME_LIMS, SyncMode
 from exlab_wizard.lims.keyring_store import KeyringStore
@@ -94,10 +94,11 @@ def test_build_production_dependencies_nas_sync_is_a_client(
                 local_root=str(local_root),
                 nas_root="/nas",
                 sync_mode=SyncMode.NAS,
-                transport=RcloneTransport(
-                    type="rclone",
-                    rclone_remote="lab-nas",
-                    rclone_remote_path="/srv/nas",
+                transport=RcloneSftpTransport(
+                    type="rclone_sftp",
+                    host="nas.lab.example",
+                    user="testuser",
+                    remote_path="/srv/nas",
                     bandwidth=BandwidthConfig(),
                 ),
             ),

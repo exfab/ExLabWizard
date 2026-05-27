@@ -24,12 +24,18 @@ from typing import Any
 from exlab_wizard.api.schemas import CreationJson
 from exlab_wizard.cache.creation_writer import CreationWriter
 from exlab_wizard.cache.sync_state_writer import SyncStateWriter
-from exlab_wizard.config.models import Config, EquipmentConfig, RcloneTransport, RsyncSshTransport
+from exlab_wizard.config.models import (
+    Config,
+    EquipmentConfig,
+    RcloneSftpTransport,
+    RcloneSmbTransport,
+)
 from exlab_wizard.constants import (
     RunSyncState,
     SyncHandleState,
     SyncStatus,
 )
+from exlab_wizard.constants.keyring import keyring_nas_username
 from exlab_wizard.logging import get_logger
 from exlab_wizard.paths import cache_dir, creation_json_path
 from exlab_wizard.sync.bandwidth import effective_bandwidth_limit_kibps
@@ -46,8 +52,12 @@ from exlab_wizard.sync.transports import (
     TransportErrorKind,
     TransportResult,
 )
-from exlab_wizard.sync.transports.rclone import RcloneTransport as RcloneDriver
-from exlab_wizard.sync.transports.rsync_ssh import RsyncSshTransport as RsyncDriver
+from exlab_wizard.sync.transports.rclone import (
+    RcloneDriver,
+    build_rclone_env,
+    obscure,
+    pass_env_keys_for,
+)
 from exlab_wizard.sync.verifier import Verifier, VerifyResult
 from exlab_wizard.utils.time import utc_now, utc_now_iso
 from exlab_wizard.validator.engine import Validator
@@ -104,16 +114,79 @@ class SyncJobHandle:
 # ---------------------------------------------------------------------------
 
 
-def _build_transport_driver(equipment: EquipmentConfig) -> tuple[Any, Callable[..., Any]]:
+def _remote_name_for(equipment: EquipmentConfig) -> str:
+    """Return the inline rclone remote name used for ``equipment``.
+
+    The remote name lives only in env (``RCLONE_CONFIG_<REMOTE>_*``);
+    its identity has no effect outside the subprocess. Deriving it from
+    the equipment id keeps every concurrent push self-named and avoids
+    colliding with anything in a user's ``rclone.conf``.
+    """
+    return f"exlab_{equipment.id.lower()}"
+
+
+def _build_target_for(
+    transport: RcloneSftpTransport | RcloneSmbTransport,
+    remote_name: str,
+    run: Path,
+) -> str:
+    """Compose the rclone destination string for a run directory."""
+    if isinstance(transport, RcloneSftpTransport):
+        return f"{remote_name}:{transport.remote_path.rstrip('/')}/{run.name}"
+    # SMB: share is required, remote_path beneath it is optional.
+    base = f"{remote_name}:{transport.share.rstrip('/')}"
+    if transport.remote_path:
+        return f"{base}/{transport.remote_path.strip('/')}/{run.name}"
+    return f"{base}/{run.name}"
+
+
+async def _resolve_env_for_equipment(
+    equipment: EquipmentConfig,
+    keyring_store: Any,
+) -> tuple[dict[str, str], tuple[str, ...], str]:
+    """Look up the password, obscure it, build the rclone env.
+
+    Returns ``(env, mask_for_log, remote_name)``. Raises
+    :class:`TransportError(AUTH)` when the keyring entry is missing or
+    when ``rclone obscure`` fails. The keyring lookup happens fresh on
+    every call so a credential cleared mid-flight surfaces as the next
+    push's AUTH failure rather than silently using a stale password.
+    """
+    transport = equipment.transport
+    if not isinstance(transport, RcloneSftpTransport | RcloneSmbTransport):
+        msg = f"unsupported transport type: {type(transport).__name__}"
+        raise ValueError(msg)
+
+    password: str | None = None
+    if keyring_store is not None:
+        getter = getattr(keyring_store, "get_password", None)
+        if getter is not None:
+            with contextlib.suppress(Exception):
+                password = getter(username=keyring_nas_username(equipment.id))
+    if not password:
+        msg = f"NAS password not set in keyring for equipment {equipment.id!r}"
+        raise TransportError(msg, error_kind=TransportErrorKind.AUTH)
+
+    obscured = await obscure(password)
+    remote_name = _remote_name_for(equipment)
+    env = build_rclone_env(
+        transport=transport,
+        password_obscured=obscured,
+        remote_name=remote_name,
+    )
+    return env, pass_env_keys_for(remote_name), remote_name
+
+
+def _build_transport_driver(
+    equipment: EquipmentConfig,
+    keyring_store: Any,
+) -> tuple[Any, Callable[..., Any]]:
     """Return a ``(driver, push_callable)`` pair for ``equipment.transport``.
 
-    The push callable closes over the equipment's static ``ssh_target`` /
-    ``rclone_remote`` so the queue worker only needs the local source
-    path and the per-equipment bandwidth cap at call time. Both rclone
-    and rsync_ssh push closures nest the remote target under
-    ``<remote_path>/<local.name>`` so each run lives in its own subdir
-    on the NAS, matching the §7.1.4 hashsum probe layout.
-
+    Both supported transports (SFTP and SMB) route through the same
+    :class:`RcloneDriver`. The push closure resolves the keyring password
+    + obscures + builds env on every invocation so credential changes
+    take effect on the next sync without restarting the worker.
     Stage-mode equipment (Redesign §3.2, ``sync_mode == 'stage'``) has no
     ``transport`` block — the orchestrator owns the NAS sync. The
     EquipmentConfig validator guarantees this function only runs against
@@ -127,61 +200,45 @@ def _build_transport_driver(equipment: EquipmentConfig) -> tuple[Any, Callable[.
             f"nas-mode equipment with a configured transport"
         )
         raise ValueError(msg)
-    if isinstance(transport, RcloneTransport):
-        rclone_driver = RcloneDriver()
-        remote_name = transport.rclone_remote
-        remote_path = transport.rclone_remote_path
+    if not isinstance(transport, RcloneSftpTransport | RcloneSmbTransport):
+        msg = f"unsupported transport type: {type(transport).__name__}"
+        raise ValueError(msg)
 
-        async def _push_rclone(
-            local: Path,
-            *,
-            bwlimit_kibps: int | None,
-            files_from: Path | None = None,
-        ) -> TransportResult:
-            target = f"{remote_name}:{remote_path}/{local.name}"
-            return await rclone_driver.push(
-                local, target, bwlimit_kibps=bwlimit_kibps, files_from=files_from
-            )
+    rclone_driver = RcloneDriver()
 
-        return rclone_driver, _push_rclone
+    async def _push(
+        local: Path,
+        *,
+        bwlimit_kibps: int | None,
+        files_from: Path | None = None,
+    ) -> TransportResult:
+        env, mask, remote_name = await _resolve_env_for_equipment(equipment, keyring_store)
+        target = _build_target_for(transport, remote_name, local)
+        return await rclone_driver.push(
+            local,
+            target,
+            bwlimit_kibps=bwlimit_kibps,
+            files_from=files_from,
+            env=env,
+            mask_for_log=mask,
+        )
 
-    if isinstance(transport, RsyncSshTransport):
-        rsync_driver = RsyncDriver()
-        ssh_key = Path(transport.ssh_key_path).expanduser()
-        ssh_target = transport.ssh_target
-        remote_path_value = transport.remote_path
-
-        async def _push_rsync(
-            local: Path,
-            *,
-            bwlimit_kibps: int | None,
-            files_from: Path | None = None,
-        ) -> TransportResult:
-            target = f"{remote_path_value}/{local.name}"
-            return await rsync_driver.push(
-                local,
-                ssh_target,
-                ssh_key,
-                target,
-                bwlimit_kibps=bwlimit_kibps,
-                files_from=files_from,
-            )
-
-        return rsync_driver, _push_rsync
-
-    msg = f"unsupported transport type: {type(transport).__name__}"
-    raise ValueError(msg)
+    return rclone_driver, _push
 
 
 def _build_hashsum_callable(
     equipment: EquipmentConfig,
+    keyring_store: Any,
 ) -> Callable[[Path], Awaitable[dict[str, str]]]:
     """Return a remote-hashsum closure for ``equipment.transport``.
 
-    The closure takes a local run directory and asks the remote-side
-    hash probe (``rclone hashsum sha256`` or ``ssh ... sha256sum``) for
-    the manifest of ``<remote_path>/<run_dir.name>``. Backend Spec
-    §7.1.4 (integrity-in-transit gap closure). Only called for nas-mode
+    Phase 1 of the rclone-only migration keeps this legacy probe alive
+    so the verify path stays intact at the phase boundary. Phase 2
+    replaces it with :meth:`RcloneDriver.check`.
+
+    The closure resolves credentials lazily (same pattern as
+    :func:`_build_transport_driver`). Backend Spec §7.1.4
+    (integrity-in-transit gap closure). Only called for nas-mode
     equipment (Redesign §3.2).
     """
     transport = equipment.transport
@@ -192,31 +249,18 @@ def _build_hashsum_callable(
             f"apply to nas-mode equipment with a configured transport"
         )
         raise ValueError(msg)
-    if isinstance(transport, RcloneTransport):
-        rclone_driver = RcloneDriver()
-        remote_name = transport.rclone_remote
-        remote_path = transport.rclone_remote_path
+    if not isinstance(transport, RcloneSftpTransport | RcloneSmbTransport):
+        msg = f"unsupported transport type: {type(transport).__name__}"
+        raise ValueError(msg)
 
-        async def _hashsum_rclone(run_dir: Path) -> dict[str, str]:
-            target = f"{remote_name}:{remote_path}/{run_dir.name}"
-            return await rclone_driver.hashsum(target)
+    rclone_driver = RcloneDriver()
 
-        return _hashsum_rclone
+    async def _hashsum(run_dir: Path) -> dict[str, str]:
+        env, mask, remote_name = await _resolve_env_for_equipment(equipment, keyring_store)
+        target = _build_target_for(transport, remote_name, run_dir)
+        return await rclone_driver.hashsum(target, env=env, mask_for_log=mask)
 
-    if isinstance(transport, RsyncSshTransport):
-        rsync_driver = RsyncDriver()
-        ssh_key = Path(transport.ssh_key_path).expanduser()
-        ssh_target = transport.ssh_target
-        remote_path_value = transport.remote_path
-
-        async def _hashsum_rsync(run_dir: Path) -> dict[str, str]:
-            run_remote_path = f"{remote_path_value}/{run_dir.name}"
-            return await rsync_driver.hashsum(ssh_target, ssh_key, run_remote_path)
-
-        return _hashsum_rsync
-
-    msg = f"unsupported transport type: {type(transport).__name__}"
-    raise ValueError(msg)
+    return _hashsum
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +297,7 @@ class NASSyncClient:
         cache_creation: CreationWriter,
         sync_state_writer: SyncStateWriter | None = None,
         verifier: Verifier | None = None,
+        keyring_store: Any = None,
         worker_poll_interval_s: float = 0.05,
         push_callable_factory: Callable[[EquipmentConfig], Callable[..., Any]] | None = None,
         hashsum_callable_factory: (
@@ -266,6 +311,11 @@ class NASSyncClient:
         self._cache_creation = cache_creation
         self._sync_state_writer = sync_state_writer or SyncStateWriter()
         self._verifier = verifier or Verifier()
+        # Operator-typed NAS passwords are resolved from the keyring on
+        # every push so a credential cleared / replaced mid-flight
+        # surfaces as the next push's AUTH failure rather than silently
+        # using a stale value. Tests inject a stub keyring_store.
+        self._keyring_store = keyring_store
         self._queue = SyncQueue(queue_db)
         self._equipment_by_id = {e.id: e for e in config.equipment}
         self._worker_poll_interval_s = worker_poll_interval_s
@@ -640,7 +690,7 @@ class NASSyncClient:
         """
         if self._push_callable_factory is not None:
             return self._push_callable_factory(equipment)
-        _, push = _build_transport_driver(equipment)
+        _, push = _build_transport_driver(equipment, self._keyring_store)
         return push
 
     def _build_hashsum(
@@ -654,7 +704,7 @@ class NASSyncClient:
         """
         if self._hashsum_callable_factory is not None:
             return self._hashsum_callable_factory(equipment)
-        return _build_hashsum_callable(equipment)
+        return _build_hashsum_callable(equipment, self._keyring_store)
 
     async def _handle_push_failure(self, job: SyncJobRow, result: TransportResult) -> None:
         """Translate a transport failure into a queue update."""

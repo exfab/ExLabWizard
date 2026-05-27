@@ -1,7 +1,7 @@
 """Shared assembler for an :class:`EquipmentConfig` from raw form fields.
 
 GUI/Orchestrator Redesign §6: both the Settings → Equipment List section
-and the new Add-Equipment wizard build their final ``EquipmentConfig``
+and the Add-Equipment wizard build their final ``EquipmentConfig``
 through this single function so the two surfaces stay in lockstep
 without copy-paste drift.
 
@@ -15,8 +15,8 @@ from __future__ import annotations
 from exlab_wizard.config.models import (
     EquipmentConfig,
     OrchestratorStagingTransport,
-    RcloneTransport,
-    RsyncSshTransport,
+    RcloneSftpTransport,
+    RcloneSmbTransport,
 )
 from exlab_wizard.constants import (
     OrchestratorTransportType,
@@ -33,14 +33,20 @@ def build_equipment_config(
     local_root: str,
     nas_root: str,
     sync_mode: str = "nas",
-    # NAS transport fields (when sync_mode == "nas")
-    transport_type: str = "rclone",
-    rclone_remote: str = "",
-    rclone_remote_path: str = "",
-    ssh_target: str = "",
-    ssh_key_path: str = "",
-    rsync_remote_path: str = "",
-    # Stage transport fields (when sync_mode == "stage")
+    # NAS transport fields (when sync_mode == "nas").
+    transport_type: str = "rclone_sftp",
+    # rclone_sftp fields:
+    sftp_host: str = "",
+    sftp_port: int = 22,
+    sftp_user: str = "",
+    sftp_remote_path: str = "",
+    # rclone_smb fields:
+    smb_host: str = "",
+    smb_share: str = "",
+    smb_user: str = "",
+    smb_domain: str = "",
+    smb_remote_path: str = "",
+    # Stage transport fields (when sync_mode == "stage").
     staging_transport_type: str = "smb_mount",
     staging_mount_point: str = "",
     staging_subpath: str = "",
@@ -49,28 +55,33 @@ def build_equipment_config(
 
     Redesign §3.2: ``sync_mode`` ("nas" or "stage") dictates which
     transport sub-block is populated. ``nas`` requires the NAS
-    ``transport`` block (rclone or rsync_ssh); ``stage`` requires the
-    ``orchestrator_staging_transport`` block (smb_mount or file_transfer).
-    Pydantic validation enforces the exclusivity rule.
+    ``transport`` block (rclone_sftp or rclone_smb, both password-based);
+    ``stage`` requires the ``orchestrator_staging_transport`` block
+    (smb_mount or file_transfer). Pydantic validation enforces the
+    exclusivity rule.
     """
     mode = SyncMode(sync_mode)
 
-    transport: RcloneTransport | RsyncSshTransport | None = None
+    transport: RcloneSftpTransport | RcloneSmbTransport | None = None
     orch_staging: OrchestratorStagingTransport | None = None
 
     if mode is SyncMode.NAS:
-        if transport_type == "rsync_ssh":
-            transport = RsyncSshTransport(
-                type="rsync_ssh",
-                ssh_target=ssh_target.strip(),
-                ssh_key_path=ssh_key_path.strip() or "~/.ssh/id_ed25519",
-                remote_path=rsync_remote_path.strip(),
+        if transport_type == "rclone_smb":
+            transport = RcloneSmbTransport(
+                type="rclone_smb",
+                host=smb_host.strip(),
+                share=smb_share.strip(),
+                user=smb_user.strip(),
+                domain=smb_domain.strip(),
+                remote_path=smb_remote_path.strip(),
             )
         else:
-            transport = RcloneTransport(
-                type="rclone",
-                rclone_remote=rclone_remote.strip(),
-                rclone_remote_path=rclone_remote_path.strip(),
+            transport = RcloneSftpTransport(
+                type="rclone_sftp",
+                host=sftp_host.strip(),
+                port=int(sftp_port),
+                user=sftp_user.strip(),
+                remote_path=sftp_remote_path.strip(),
             )
     else:  # SyncMode.STAGE
         orch_staging = OrchestratorStagingTransport(

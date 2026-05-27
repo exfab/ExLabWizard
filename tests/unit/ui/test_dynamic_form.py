@@ -17,7 +17,7 @@ from pydantic import ValidationError
 
 # Prime the api package before importing ui.pages (import-cycle workaround).
 import exlab_wizard.api.app  # noqa: F401
-from exlab_wizard.config.models import RcloneTransport, RsyncSshTransport
+from exlab_wizard.config.models import RcloneSftpTransport, RcloneSmbTransport
 from exlab_wizard.ui.pages.settings import build_equipment_config
 from exlab_wizard.ui.pages.templates import (
     TemplateQuestion,
@@ -122,38 +122,47 @@ def _equipment_kwargs(**overrides: object) -> dict[str, object]:
         "label": "Confocal 1",
         "local_root": "/data/microscope1",
         "nas_root": "/nas/microscope1",
-        "transport_type": "rclone",
-        "rclone_remote": "lab-nas",
-        "rclone_remote_path": "lab/microscope1",
-        "ssh_target": "",
-        "ssh_key_path": "",
-        "rsync_remote_path": "",
+        "transport_type": "rclone_sftp",
+        "sftp_host": "nas.lab.example",
+        "sftp_port": 22,
+        "sftp_user": "testuser",
+        "sftp_remote_path": "lab/microscope1",
+        "smb_host": "",
+        "smb_share": "",
+        "smb_user": "",
+        "smb_domain": "",
+        "smb_remote_path": "",
     }
     base.update(overrides)
     return base
 
 
-def test_build_equipment_rclone() -> None:
+def test_build_equipment_sftp() -> None:
     entry = build_equipment_config(**_equipment_kwargs())  # type: ignore[arg-type]
     assert entry.id == "MICROSCOPE1"
-    assert isinstance(entry.transport, RcloneTransport)
-    assert entry.transport.rclone_remote == "lab-nas"
+    assert isinstance(entry.transport, RcloneSftpTransport)
+    assert entry.transport.host == "nas.lab.example"
 
 
-def test_build_equipment_rsync() -> None:
+def test_build_equipment_smb() -> None:
     entry = build_equipment_config(
         **_equipment_kwargs(  # type: ignore[arg-type]
-            transport_type="rsync_ssh",
-            rclone_remote="",
-            rclone_remote_path="",
-            ssh_target="operator@host",
-            ssh_key_path="~/.ssh/id_ed25519",
-            rsync_remote_path="/remote/microscope1",
+            transport_type="rclone_smb",
+            sftp_host="",
+            sftp_user="",
+            sftp_remote_path="",
+            smb_host="nas.lab.example",
+            smb_share="lab",
+            smb_user="operator",
+            smb_domain="LAB",
+            smb_remote_path="microscope1",
         )
     )
-    assert isinstance(entry.transport, RsyncSshTransport)
-    assert entry.transport.ssh_target == "operator@host"
-    assert entry.transport.remote_path == "/remote/microscope1"
+    assert isinstance(entry.transport, RcloneSmbTransport)
+    assert entry.transport.host == "nas.lab.example"
+    assert entry.transport.share == "lab"
+    assert entry.transport.user == "operator"
+    assert entry.transport.domain == "LAB"
 
 
 def test_build_equipment_rejects_bad_id() -> None:

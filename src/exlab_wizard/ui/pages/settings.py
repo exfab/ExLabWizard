@@ -473,37 +473,54 @@ def _render_equipment_section(draft: Config) -> None:
     # Widget refs the swap-panels and ``_add`` share.
     fields: dict[str, Any] = {}
 
-    # Transport: a radio that swaps the transport fieldset.
-    transport_radio = ui.radio(["rclone", "rsync_ssh"], value="rclone").props(
+    # Transport: a radio that swaps the transport fieldset. Both options
+    # use rclone under the hood; the password lives in the keyring and is
+    # set in the NAS-credentials section after the row is saved.
+    transport_radio = ui.radio(["rclone_sftp", "rclone_smb"], value="rclone_sftp").props(
         'data-testid="settings-equipment-transport"'
     )
 
     @ui.refreshable
     def _transport_fields() -> None:
-        if transport_radio.value == "rsync_ssh":
-            fields["ssh_target"] = ui.input(label="SSH target").props(
-                'data-testid="settings-equipment-ssh-target"'
+        if transport_radio.value == "rclone_smb":
+            fields["smb_host"] = ui.input(label="SMB host").props(
+                'data-testid="settings-equipment-smb-host"'
             )
-            fields["ssh_key"] = ui.input(label="SSH key path", value="~/.ssh/id_ed25519").props(
-                'data-testid="settings-equipment-ssh-key"'
+            fields["smb_share"] = ui.input(label="SMB share").props(
+                'data-testid="settings-equipment-smb-share"'
             )
-            fields["rsync_path"] = ui.input(label="Remote path").props(
-                'data-testid="settings-equipment-rsync-path"'
+            fields["smb_user"] = ui.input(label="SMB user").props(
+                'data-testid="settings-equipment-smb-user"'
             )
-            for stale in ("rclone_remote", "rclone_path"):
+            fields["smb_domain"] = ui.input(label="SMB domain (optional)").props(
+                'data-testid="settings-equipment-smb-domain"'
+            )
+            fields["smb_remote_path"] = ui.input(label="Remote subpath (optional)").props(
+                'data-testid="settings-equipment-smb-remote-path"'
+            )
+            for stale in ("sftp_host", "sftp_port", "sftp_user", "sftp_remote_path"):
                 fields.pop(stale, None)
         else:
-            fields["rclone_remote"] = ui.input(label="rclone remote").props(
-                'data-testid="settings-equipment-rclone-remote"'
+            fields["sftp_host"] = ui.input(label="SFTP host").props(
+                'data-testid="settings-equipment-sftp-host"'
             )
-            fields["rclone_path"] = ui.input(label="rclone remote path").props(
-                'data-testid="settings-equipment-rclone-path"'
+            fields["sftp_port"] = ui.number(label="SFTP port", value=22).props(
+                'data-testid="settings-equipment-sftp-port"'
             )
-            for stale in ("ssh_target", "ssh_key", "rsync_path"):
+            fields["sftp_user"] = ui.input(label="SFTP user").props(
+                'data-testid="settings-equipment-sftp-user"'
+            )
+            fields["sftp_remote_path"] = ui.input(label="Remote path").props(
+                'data-testid="settings-equipment-sftp-remote-path"'
+            )
+            for stale in ("smb_host", "smb_share", "smb_user", "smb_domain", "smb_remote_path"):
                 fields.pop(stale, None)
 
     _transport_fields()
     transport_radio.on_value_change(lambda _e: _transport_fields.refresh())
+
+    def _field(name: str) -> str:
+        return (fields[name].value or "") if name in fields else ""
 
     def _add(_evt: Any = None) -> None:
         try:
@@ -512,18 +529,18 @@ def _render_equipment_section(draft: Config) -> None:
                 label=eq_label.value or "",
                 local_root=eq_local.value or "",
                 nas_root=eq_nas.value or "",
-                transport_type=transport_radio.value or "rclone",
-                rclone_remote=(
-                    fields["rclone_remote"].value or "" if "rclone_remote" in fields else ""
-                ),
-                rclone_remote_path=(
-                    fields["rclone_path"].value or "" if "rclone_path" in fields else ""
-                ),
-                ssh_target=(fields["ssh_target"].value or "" if "ssh_target" in fields else ""),
-                ssh_key_path=(fields["ssh_key"].value or "" if "ssh_key" in fields else ""),
-                rsync_remote_path=(
-                    fields["rsync_path"].value or "" if "rsync_path" in fields else ""
-                ),
+                transport_type=transport_radio.value or "rclone_sftp",
+                sftp_host=_field("sftp_host"),
+                sftp_port=int(fields["sftp_port"].value or 22)
+                if "sftp_port" in fields
+                else 22,
+                sftp_user=_field("sftp_user"),
+                sftp_remote_path=_field("sftp_remote_path"),
+                smb_host=_field("smb_host"),
+                smb_share=_field("smb_share"),
+                smb_user=_field("smb_user"),
+                smb_domain=_field("smb_domain"),
+                smb_remote_path=_field("smb_remote_path"),
             )
         except Exception as exc:
             notifications.notify_error(f"Equipment invalid: {exc}")

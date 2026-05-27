@@ -24,7 +24,7 @@ from exlab_wizard.config.models import (
     LIMSConfig,
     OrchestratorConfig,
     PathsConfig,
-    RcloneTransport,
+    RcloneSftpTransport,
 )
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
@@ -61,10 +61,11 @@ def _ready_config(local_root: Path) -> Config:
                 label="Equipment 1",
                 local_root=str(local_root),
                 nas_root="/n",
-                transport=RcloneTransport(
-                    type="rclone",
-                    rclone_remote="lab-nas",
-                    rclone_remote_path="lab/EQ1",
+                transport=RcloneSftpTransport(
+                    type="rclone_sftp",
+                    host="nas.lab.example",
+                    user="testuser",
+                    remote_path="lab/EQ1",
                 ),
             )
         ],

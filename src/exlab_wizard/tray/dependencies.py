@@ -106,6 +106,7 @@ def build_production_dependencies(state_dir: Path) -> AppDependencies:
         validator,
         deps.cache_creation,
         deps.sync_state_writer,
+        keyring_store,
     )
     deps.nas_sync_snapshot = _make_nas_sync_snapshot(deps)
 
@@ -351,14 +352,15 @@ def _build_nas_sync(
     validator: Any,
     cache_creation: Any,
     sync_state_writer: Any,
+    keyring_store: Any,
 ) -> Any:
     """Build the :class:`NASSyncClient` -- the public NAS-sync surface.
 
     The client wires the durable queue, the transport drivers, the
-    verifier, the Pre-Sync Gate, and (operator-free per-file NAS sync,
-    2026-05-21) the ``sync_state.json`` writer used for per-file verify
-    reconciliation. ``verifier`` and the transport / hashsum factories
-    default correctly inside ``NASSyncClient`` so they are not passed.
+    verifier, the Pre-Sync Gate, the ``sync_state.json`` writer used
+    for per-file verify reconciliation, and (rclone-only migration,
+    2026-05-26) the keyring store used to resolve per-equipment NAS
+    passwords at push time.
 
     The poller and the force-sync route call ``enqueue`` / ``status`` on
     this object; returning a bare ``SyncQueue`` (which has neither) would
@@ -382,6 +384,7 @@ def _build_nas_sync(
         validator=validator,
         cache_creation=cache_creation,
         sync_state_writer=sync_state_writer,
+        keyring_store=keyring_store,
     )
 
 

@@ -3,12 +3,11 @@
 Pydantic models that mirror ``config.yaml`` (Backend Spec §9). These tests
 exercise the happy path, every ``Field(...)`` constraint, every
 ``field_validator``, and every ``model_validator`` -- including the
-cross-field invariants on ``Config``. The loader (``exlab_wizard.config.loader``)
-is responsible for converting Pydantic ``ValidationError``s into ``ConfigError``;
-this file only checks the model layer in isolation, so most assertions raise
-``ValidationError`` directly. The one exception is :class:`RsyncSshTransport`,
-which raises a custom ``ConfigError`` from a ``mode='before'`` validator before
-Pydantic ever sees the input.
+cross-field invariants on ``Config``. The loader
+(``exlab_wizard.config.loader``) is responsible for converting Pydantic
+``ValidationError``s into ``ConfigError``; this file only checks the
+model layer in isolation, so most assertions raise ``ValidationError``
+directly.
 """
 
 from __future__ import annotations
@@ -30,13 +29,14 @@ from exlab_wizard.config.models import (
     OrchestratorStagingTransport,
     PathsConfig,
     PluginsConfig,
-    RcloneTransport,
+    RcloneSftpTransport,
+    RcloneSmbTransport,
     READMEConfig,
     READMEDefaultField,
-    RsyncSshTransport,
     SyncConfig,
     ValidatorConfig,
     config_with_equipment_appended,
+    transport_requires_keyring_password,
 )
 from exlab_wizard.errors import ConfigError
 
@@ -45,21 +45,24 @@ from exlab_wizard.errors import ConfigError
 # ---------------------------------------------------------------------------
 
 
-def _rclone_transport_dict() -> dict:
-    """Minimal valid rclone transport block."""
+def _sftp_transport_dict() -> dict:
+    """Minimal valid rclone_sftp transport block."""
     return {
-        "type": "rclone",
-        "rclone_remote": "lab-nas",
-        "rclone_remote_path": "lab/CONFOCAL_01",
+        "type": "rclone_sftp",
+        "host": "nas01.lab.example",
+        "port": 22,
+        "user": "labuser",
+        "remote_path": "/srv/lab/CONFOCAL_01",
     }
 
 
-def _rsync_transport_dict() -> dict:
-    """Minimal valid rsync_ssh transport block."""
+def _smb_transport_dict() -> dict:
+    """Minimal valid rclone_smb transport block."""
     return {
-        "type": "rsync_ssh",
-        "ssh_target": "labuser@nas01.lab.example",
-        "remote_path": "/srv/lab/FLOW_01",
+        "type": "rclone_smb",
+        "host": "nas01.lab.example",
+        "share": "lab",
+        "user": "labuser",
     }
 
 
@@ -74,7 +77,7 @@ def _equipment_dict(
         "label": "Confocal Microscope 1",
         "local_root": "/data/lab",
         "nas_root": "//nas01/lab",
-        "transport": transport or _rclone_transport_dict(),
+        "transport": transport or _sftp_transport_dict(),
     }
 
 
@@ -111,9 +114,11 @@ def _full_config_dict() -> dict:
                 "nas_root": "//nas01/lab",
                 "sync_mode": "nas",
                 "transport": {
-                    "type": "rclone",
-                    "rclone_remote": "lab-nas",
-                    "rclone_remote_path": "lab/CONFOCAL_01",
+                    "type": "rclone_sftp",
+                    "host": "nas01.lab.example",
+                    "port": 22,
+                    "user": "labuser",
+                    "remote_path": "/srv/lab/CONFOCAL_01",
                     "bandwidth": {
                         "upload_mbps": 50.0,
                         "schedule": [
@@ -134,10 +139,12 @@ def _full_config_dict() -> dict:
                 "nas_root": "/mnt/nas/lab",
                 "sync_mode": "nas",
                 "transport": {
-                    "type": "rsync_ssh",
-                    "ssh_target": "labuser@nas01.lab.example",
-                    "ssh_key_path": "~/.ssh/id_ed25519",
-                    "remote_path": "/srv/lab/FLOW_01",
+                    "type": "rclone_smb",
+                    "host": "nas01.lab.example",
+                    "share": "lab",
+                    "user": "labuser",
+                    "domain": "LAB",
+                    "remote_path": "FLOW_01",
                     "bandwidth": {
                         "upload_mbps": None,
                         "schedule": [],
@@ -374,69 +381,95 @@ def test_bandwidth_config_accepts_positive_upload_mbps() -> None:
 
 
 # ---------------------------------------------------------------------------
-# RcloneTransport
+# RcloneSftpTransport
 # ---------------------------------------------------------------------------
 
 
-def test_rclone_transport_minimal() -> None:
-    t = RcloneTransport.model_validate(_rclone_transport_dict())
-    assert t.type == "rclone"
-    assert t.rclone_remote == "lab-nas"
+def test_sftp_transport_minimal() -> None:
+    t = RcloneSftpTransport.model_validate(_sftp_transport_dict())
+    assert t.type == "rclone_sftp"
+    assert t.host == "nas01.lab.example"
+    assert t.port == 22
 
 
-def test_rclone_transport_rejects_missing_remote() -> None:
+def test_sftp_transport_rejects_missing_host() -> None:
+    bad = dict(_sftp_transport_dict())
+    bad.pop("host")
     with pytest.raises(ValidationError):
-        RcloneTransport.model_validate({"type": "rclone", "rclone_remote_path": "x"})
+        RcloneSftpTransport.model_validate(bad)
 
 
-def test_rclone_transport_rejects_empty_remote() -> None:
+def test_sftp_transport_rejects_empty_user() -> None:
+    bad = dict(_sftp_transport_dict())
+    bad["user"] = ""
     with pytest.raises(ValidationError):
-        RcloneTransport.model_validate(
-            {"type": "rclone", "rclone_remote": "", "rclone_remote_path": "x"}
-        )
+        RcloneSftpTransport.model_validate(bad)
 
 
-def test_rclone_transport_rejects_wrong_type_tag() -> None:
-    with pytest.raises(ValidationError):
-        RcloneTransport.model_validate(
-            {"type": "rsync_ssh", "rclone_remote": "x", "rclone_remote_path": "y"}
-        )
-
-
-# ---------------------------------------------------------------------------
-# RsyncSshTransport
-# ---------------------------------------------------------------------------
-
-
-def test_rsync_ssh_transport_minimal() -> None:
-    t = RsyncSshTransport.model_validate(_rsync_transport_dict())
-    assert t.type == "rsync_ssh"
-    assert t.ssh_key_path == "~/.ssh/id_ed25519"
-
-
-def test_rsync_ssh_rejects_password_field() -> None:
-    # The mode='before' validator catches this and raises ConfigError directly,
-    # not a Pydantic ValidationError, so the loader's user-facing message is
-    # crisp even when extra='forbid' would otherwise fire first.
-    bad = dict(_rsync_transport_dict())
-    bad["password"] = "hunter2"
-    with pytest.raises(ConfigError) as info:
-        RsyncSshTransport.model_validate(bad)
-    assert "password" in str(info.value).lower()
-
-
-def test_rsync_ssh_rejects_empty_ssh_target() -> None:
-    bad = dict(_rsync_transport_dict())
-    bad["ssh_target"] = ""
-    with pytest.raises(ValidationError):
-        RsyncSshTransport.model_validate(bad)
-
-
-def test_rsync_ssh_rejects_empty_remote_path() -> None:
-    bad = dict(_rsync_transport_dict())
+def test_sftp_transport_rejects_empty_remote_path() -> None:
+    bad = dict(_sftp_transport_dict())
     bad["remote_path"] = ""
     with pytest.raises(ValidationError):
-        RsyncSshTransport.model_validate(bad)
+        RcloneSftpTransport.model_validate(bad)
+
+
+def test_sftp_transport_rejects_out_of_range_port() -> None:
+    bad = dict(_sftp_transport_dict())
+    bad["port"] = 70000
+    with pytest.raises(ValidationError):
+        RcloneSftpTransport.model_validate(bad)
+
+
+def test_sftp_transport_rejects_wrong_type_tag() -> None:
+    bad = dict(_sftp_transport_dict())
+    bad["type"] = "rclone_smb"
+    with pytest.raises(ValidationError):
+        RcloneSftpTransport.model_validate(bad)
+
+
+# ---------------------------------------------------------------------------
+# RcloneSmbTransport
+# ---------------------------------------------------------------------------
+
+
+def test_smb_transport_minimal() -> None:
+    t = RcloneSmbTransport.model_validate(_smb_transport_dict())
+    assert t.type == "rclone_smb"
+    assert t.share == "lab"
+    assert t.domain == ""
+    assert t.remote_path == ""
+
+
+def test_smb_transport_accepts_optional_domain_and_subpath() -> None:
+    blob = dict(_smb_transport_dict())
+    blob["domain"] = "LAB"
+    blob["remote_path"] = "projects/active"
+    t = RcloneSmbTransport.model_validate(blob)
+    assert t.domain == "LAB"
+    assert t.remote_path == "projects/active"
+
+
+def test_smb_transport_rejects_missing_share() -> None:
+    bad = dict(_smb_transport_dict())
+    bad.pop("share")
+    with pytest.raises(ValidationError):
+        RcloneSmbTransport.model_validate(bad)
+
+
+# ---------------------------------------------------------------------------
+# transport_requires_keyring_password
+# ---------------------------------------------------------------------------
+
+
+def test_requires_keyring_password_true_for_sftp_and_smb() -> None:
+    sftp = RcloneSftpTransport.model_validate(_sftp_transport_dict())
+    smb = RcloneSmbTransport.model_validate(_smb_transport_dict())
+    assert transport_requires_keyring_password(sftp) is True
+    assert transport_requires_keyring_password(smb) is True
+
+
+def test_requires_keyring_password_false_for_none() -> None:
+    assert transport_requires_keyring_password(None) is False
 
 
 # ---------------------------------------------------------------------------
@@ -444,19 +477,19 @@ def test_rsync_ssh_rejects_empty_remote_path() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_equipment_transport_discriminates_on_type_rclone() -> None:
+def test_equipment_transport_discriminates_on_type_sftp() -> None:
     eq = EquipmentConfig.model_validate(_equipment_dict())
-    assert isinstance(eq.transport, RcloneTransport)
+    assert isinstance(eq.transport, RcloneSftpTransport)
 
 
-def test_equipment_transport_discriminates_on_type_rsync() -> None:
+def test_equipment_transport_discriminates_on_type_smb() -> None:
     eq = EquipmentConfig.model_validate(
         _equipment_dict(
             equipment_id="FLOW_01",
-            transport=_rsync_transport_dict(),
+            transport=_smb_transport_dict(),
         )
     )
-    assert isinstance(eq.transport, RsyncSshTransport)
+    assert isinstance(eq.transport, RcloneSmbTransport)
 
 
 def test_equipment_transport_rejects_unknown_type() -> None:
@@ -910,7 +943,7 @@ def test_distinct_equipment_ids_accepted() -> None:
             _equipment_dict(equipment_id="CONFOCAL_01"),
             _equipment_dict(
                 equipment_id="FLOW_01",
-                transport=_rsync_transport_dict(),
+                transport=_smb_transport_dict(),
             ),
         ],
     }
@@ -1023,11 +1056,7 @@ def test_config_with_equipment_appended_preserves_existing_state() -> None:
     second = EquipmentConfig.model_validate(
         _equipment_dict(
             equipment_id="FLOW_02",
-            transport={
-                "type": "rclone",
-                "rclone_remote": "lab-nas",
-                "rclone_remote_path": "lab/FLOW_02",
-            },
+            transport=_smb_transport_dict(),
         )
     )
     result = config_with_equipment_appended(base, second)

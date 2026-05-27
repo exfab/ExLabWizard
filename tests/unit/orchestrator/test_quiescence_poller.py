@@ -27,7 +27,7 @@ from exlab_wizard.config.models import (
     OrchestratorConfig,
     OrchestratorStagingTransport,
     PathsConfig,
-    RcloneTransport,
+    RcloneSftpTransport,
     SyncConfig,
 )
 from exlab_wizard.constants import RUNS_DIR_NAME, SyncMode
@@ -57,11 +57,12 @@ class _StubNasSync:
 # ---------------------------------------------------------------------------
 
 
-def _transport() -> RcloneTransport:
-    return RcloneTransport(
-        type="rclone",
-        rclone_remote="lab-nas",
-        rclone_remote_path="/srv/nas",
+def _transport() -> RcloneSftpTransport:
+    return RcloneSftpTransport(
+        type="rclone_sftp",
+        host="nas.lab.example",
+        user="testuser",
+        remote_path="/srv/nas",
         bandwidth=BandwidthConfig(),
     )
 

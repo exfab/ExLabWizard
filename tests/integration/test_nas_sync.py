@@ -37,7 +37,7 @@ from exlab_wizard.config.models import (
     EquipmentConfig,
     NASCleanupConfig,
     PathsConfig,
-    RcloneTransport,
+    RcloneSftpTransport,
 )
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
@@ -50,20 +50,33 @@ from exlab_wizard.sync.queue import SyncJobRow, SyncJobState
 from exlab_wizard.validator.engine import Validator
 
 
+class _StubKeyring:
+    """Minimal keyring stub returning a fixed password for every username.
+
+    The new env-injection factory in nas_client looks up the per-equipment
+    NAS password before each push / hashsum. The integration stub returns
+    a non-empty string so the factory clears the AUTH-on-missing-password
+    gate; stub_rclone consumes the resulting env without authenticating.
+    """
+
+    def __init__(self, password: str = "testpw") -> None:
+        self._password = password
+
+    def get_password(self, *, username: str) -> str:
+        del username
+        return self._password
+
+
 @pytest.fixture()
 def stub_binaries_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Install the rclone + rsync stubs onto PATH for the test."""
+    """Install the rclone stub on PATH for the test."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     fixtures = Path(__file__).parent.parent / "fixtures"
-    for src_name, dst_name in (
-        ("stub_rclone.py", "rclone"),
-        ("stub_rsync.py", "rsync"),
-    ):
-        target = bin_dir / dst_name
-        shutil.copy(fixtures / src_name, target)
-        st = target.stat()
-        target.chmod(st.st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    target = bin_dir / "rclone"
+    shutil.copy(fixtures / "stub_rclone.py", target)
+    st = target.stat()
+    target.chmod(st.st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     return bin_dir
 
@@ -77,10 +90,11 @@ def _build_config(local_root: Path) -> Config:
                 label="Equipment 1",
                 local_root=str(local_root),
                 nas_root="/nas",
-                transport=RcloneTransport(
-                    type="rclone",
-                    rclone_remote="lab-nas",
-                    rclone_remote_path="/srv/nas",
+                transport=RcloneSftpTransport(
+                    type="rclone_sftp",
+                    host="nas.lab.example",
+                    user="testuser",
+                    remote_path="/srv/nas",
                     bandwidth=BandwidthConfig(),
                 ),
             )
@@ -181,6 +195,7 @@ async def test_full_happy_path_via_stub_rclone(
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
+        keyring_store=_StubKeyring(),
         worker_poll_interval_s=0.01,
     )
     await client.init()
@@ -239,6 +254,7 @@ async def test_pre_sync_gate_blocks_run_with_placeholder_in_path(
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
+        keyring_store=_StubKeyring(),
         worker_poll_interval_s=0.01,
     )
     await client.init()
@@ -270,6 +286,7 @@ async def test_auth_error_terminates_failed(
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
+        keyring_store=_StubKeyring(),
         worker_poll_interval_s=0.01,
     )
     await client.init()
@@ -296,6 +313,7 @@ async def test_force_verify_returns_ok_after_compute(
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
+        keyring_store=_StubKeyring(),
     )
     await client.init()
     try:
@@ -367,6 +385,7 @@ async def test_remote_hash_mismatch_triggers_retry(
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
+        keyring_store=_StubKeyring(),
         worker_poll_interval_s=0.01,
         hashsum_callable_factory=_factory,
     )
@@ -446,6 +465,7 @@ async def test_remote_hashsum_probe_failure_does_not_skip_verify(
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
+        keyring_store=_StubKeyring(),
         worker_poll_interval_s=0.01,
         hashsum_callable_factory=_factory,
     )
@@ -508,6 +528,7 @@ async def test_remote_hash_mismatch_terminal(
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
+        keyring_store=_StubKeyring(),
         worker_poll_interval_s=0.01,
         hashsum_callable_factory=_factory,
     )
@@ -559,6 +580,7 @@ async def test_poller_per_file_enqueue_drives_to_synced_state(
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
+        keyring_store=_StubKeyring(),
         sync_state_writer=sync_state,
         worker_poll_interval_s=0.01,
     )
@@ -646,6 +668,7 @@ async def test_poller_to_cleanup_honors_keep_local_and_stamps_cleared(
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
+        keyring_store=_StubKeyring(),
         sync_state_writer=sync_state,
         worker_poll_interval_s=0.01,
     )

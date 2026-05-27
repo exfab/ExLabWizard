@@ -5,8 +5,7 @@ These models are the typed schema for the on-disk ``config.yaml``. The loader
 ``Config.model_validate``, and converts any Pydantic ``ValidationError`` into a
 ``ConfigError`` at the boundary; nothing here raises ``ConfigError`` directly
 except for cases that need a custom message before the model layer sees the
-input (for instance the ``password``-key rejection in
-:class:`RsyncSshTransport`).
+input.
 
 Style:
 - ``model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)`` on
@@ -59,10 +58,11 @@ __all__ = [
     "PluginsConfig",
     "READMEConfig",
     "READMEDefaultField",
-    "RcloneTransport",
-    "RsyncSshTransport",
+    "RcloneSftpTransport",
+    "RcloneSmbTransport",
     "SyncConfig",
     "ValidatorConfig",
+    "transport_requires_keyring_password",
 ]
 
 
@@ -224,52 +224,65 @@ class BandwidthConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class RcloneTransport(BaseModel):
-    """``transport:`` block when ``type == 'rclone'``."""
+class RcloneSftpTransport(BaseModel):
+    """``transport:`` block for SFTP over SSH with password auth.
 
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    type: Literal["rclone"]
-    rclone_remote: str = Field(min_length=1)
-    rclone_remote_path: str = Field(min_length=1)
-    bandwidth: BandwidthConfig = Field(default_factory=BandwidthConfig)
-
-
-class RsyncSshTransport(BaseModel):
-    """``transport:`` block when ``type == 'rsync_ssh'``.
-
-    The model rejects any input dict that contains a ``password`` key. SSH
-    password auth is forbidden by spec; only key-based auth is supported. The
-    ``extra='forbid'`` setting also rejects the field, but the explicit
-    ``mode='before'`` validator emits a more actionable error message.
+    The wizard invokes rclone with an inline-configured ``sftp`` backend
+    so no entry in ``rclone.conf`` is required. The per-equipment password
+    lives in the OS keyring under
+    :func:`exlab_wizard.constants.keyring.keyring_nas_username` and is
+    injected as ``RCLONE_CONFIG_<remote>_PASS`` at subprocess time.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    type: Literal["rsync_ssh"]
-    ssh_target: str = Field(min_length=1)
-    ssh_key_path: str = "~/.ssh/id_ed25519"
+    type: Literal["rclone_sftp"]
+    host: str = Field(min_length=1)
+    port: int = Field(default=22, ge=1, le=65535)
+    user: str = Field(min_length=1)
     remote_path: str = Field(min_length=1)
     bandwidth: BandwidthConfig = Field(default_factory=BandwidthConfig)
 
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_password_field(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "password" in data:
-            msg = (
-                "rsync_ssh transport must not declare a 'password' field; "
-                "SSH password auth is unsupported. Use ssh_key_path instead."
-            )
-            raise ConfigError(msg)
-        return data
+
+class RcloneSmbTransport(BaseModel):
+    """``transport:`` block for an SMB share with password auth.
+
+    The wizard invokes rclone with an inline-configured ``smb`` backend.
+    ``domain`` is the optional Active-Directory domain prefix; ``remote_path``
+    is an optional subpath beneath ``share``. The per-equipment password is
+    sourced from the keyring exactly like
+    :class:`RcloneSftpTransport`.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    type: Literal["rclone_smb"]
+    host: str = Field(min_length=1)
+    share: str = Field(min_length=1)
+    user: str = Field(min_length=1)
+    domain: str = ""
+    remote_path: str = ""
+    bandwidth: BandwidthConfig = Field(default_factory=BandwidthConfig)
 
 
 # Discriminated union over the transport ``type`` tag. Pydantic 2 picks the
 # right submodel by inspecting the ``type`` value.
 EquipmentTransport = Annotated[
-    RcloneTransport | RsyncSshTransport,
+    RcloneSftpTransport | RcloneSmbTransport,
     Field(discriminator="type"),
 ]
+
+
+def transport_requires_keyring_password(transport: EquipmentTransport | None) -> bool:
+    """Return True when ``transport`` sources its credential from the keyring.
+
+    Both currently-supported transports (SFTP and SMB) require an
+    operator-typed password; the predicate exists so consumers (the
+    setup-state gate, the Settings UI, the equipment probe) can ask the
+    question without an isinstance branch and so a future password-less
+    backend can opt out cleanly.
+    """
+    return isinstance(transport, RcloneSftpTransport | RcloneSmbTransport)
 
 
 class OrchestratorStagingTransport(BaseModel):

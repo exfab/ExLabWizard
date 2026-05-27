@@ -58,9 +58,10 @@ def _make_equipment(equipment_id: str = "CONFOCAL_01") -> EquipmentConfig:
             "local_root": "/data/lab",
             "nas_root": "//nas01/lab",
             "transport": {
-                "type": "rclone",
-                "rclone_remote": "lab-nas",
-                "rclone_remote_path": "lab/CONFOCAL_01",
+                "type": "rclone_sftp",
+                "host": "nas.lab.example",
+                "user": "testuser",
+                "remote_path": "lab/CONFOCAL_01",
             },
         }
     )

@@ -13,7 +13,7 @@ from exlab_wizard.config.models import (
     LIMSConfig,
     OrchestratorConfig,
     PathsConfig,
-    RcloneTransport,
+    RcloneSftpTransport,
 )
 from exlab_wizard.controller.creation import ProjectCreateRequest
 from exlab_wizard.controller.session_store import SessionStore
@@ -29,10 +29,11 @@ def _ready_config() -> Config:
                 label="Equipment 1",
                 local_root="/d",
                 nas_root="/n",
-                transport=RcloneTransport(
-                    type="rclone",
-                    rclone_remote="lab-nas",
-                    rclone_remote_path="lab/EQ1",
+                transport=RcloneSftpTransport(
+                    type="rclone_sftp",
+                    host="nas.lab.example",
+                    user="testuser",
+                    remote_path="lab/EQ1",
                 ),
             )
         ],

@@ -1,21 +1,32 @@
 """rclone transport driver. Backend Spec §7.1.3.
 
-Shells out to ``rclone copy --checksum --bwlimit=<K>K <local> <remote>:<path>``.
-The remote name and path live in ``config.yaml``
-(``equipment.transport.rclone_remote`` + ``rclone_remote_path``); rclone
-itself reads ``rclone.conf`` for the credential map.
+Single transport binary for the NAS sync subsystem. Push uses
+``rclone copy --checksum --files-from``; verify uses ``rclone check
+--download --combined`` (Phase 2 of the migration); the legacy
+``hashsum`` method survives Phase 1 only.
 
-The driver is intentionally thin: it calls the binary, captures stdout /
-stderr, and translates the exit-code + stderr-substring into one of the
-``TransportErrorKind`` retry classes. Hash verification is the
-:mod:`exlab_wizard.sync.verifier` module's responsibility, NOT this
-driver's.
+The driver is intentionally thin: it builds an argv, hands it to
+:func:`exlab_wizard.sync.transports._run.run_subprocess` along with an
+``env`` dict carrying ``RCLONE_CONFIG_<remote>_*`` credentials, and
+translates the exit-code + stderr-substring into one of the
+``TransportErrorKind`` retry classes. The :class:`RcloneSftpTransport`
+and :class:`RcloneSmbTransport` config models provide the per-backend
+connection params; :func:`build_rclone_env` assembles them into the env
+dict consumed by ``run_subprocess``.
+
+Passwords cross the wire via env-var injection only. ``rclone`` refuses
+raw passwords in ``RCLONE_CONFIG_<remote>_PASS``; the value must be the
+output of ``rclone obscure``. :func:`obscure` shells out once per push
+to produce the obscured form; the cleartext password lives only in the
+OS keyring and never touches disk.
 """
 
 from __future__ import annotations
 
 import shlex
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from exlab_wizard.logging import get_logger
 from exlab_wizard.sync.transports import (
@@ -25,13 +36,22 @@ from exlab_wizard.sync.transports import (
 )
 from exlab_wizard.sync.transports._run import run_subprocess
 
-__all__ = ["RcloneTransport"]
+if TYPE_CHECKING:
+    from exlab_wizard.config.models import EquipmentTransport
+
+__all__ = [
+    "AboutResult",
+    "CheckResult",
+    "RcloneDriver",
+    "build_rclone_env",
+    "obscure",
+]
 
 _log = get_logger(__name__)
 
 
 # Substrings that indicate authentication failure rather than a transient
-# network error. The match is case-insensitive.
+# network error. Match case-insensitive against the stderr.
 _AUTH_FAILURE_MARKERS: tuple[str, ...] = (
     "auth_error",
     "authentication failed",
@@ -39,14 +59,18 @@ _AUTH_FAILURE_MARKERS: tuple[str, ...] = (
     "401 unauthorized",
     "403 forbidden",
     "access denied",
+    "nt_status_logon_failure",
+    "nt_status_access_denied",
 )
 
 
 def _classify_failure(stderr: str, returncode: int) -> TransportErrorKind:
     """Map a (returncode, stderr) into a :class:`TransportErrorKind`.
 
-    Auth failures (``401 / 403 / "permission denied"``) are terminal;
-    every other non-zero code is treated as a retryable network error.
+    Auth failures (auth markers, ``401``, ``403``, "permission denied")
+    are terminal; "hash mismatch" / "checksum mismatch" surfaces as
+    :attr:`TransportErrorKind.HASH_MISMATCH`; every other non-zero code
+    is treated as a retryable network error.
     """
     lowered = stderr.lower()
     if any(marker in lowered for marker in _AUTH_FAILURE_MARKERS):
@@ -58,7 +82,140 @@ def _classify_failure(stderr: str, returncode: int) -> TransportErrorKind:
     return TransportErrorKind.UNKNOWN
 
 
-class RcloneTransport:
+# ---------------------------------------------------------------------------
+# Public DTOs
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class CheckResult:
+    """Parsed result of a ``rclone check --combined`` run.
+
+    The combined-output format emits one prefixed line per file:
+
+    - ``= path`` -- present and identical on both sides
+    - ``* path`` -- present on both sides but differs
+    - ``+ path`` -- present on the destination only
+    - ``- path`` -- missing on the destination
+    - ``! path`` -- error encountered checking this path
+
+    Each field below carries the run-relative POSIX paths corresponding
+    to its prefix.
+    """
+
+    equal: tuple[str, ...] = ()
+    differ: tuple[str, ...] = ()
+    extra_on_dst: tuple[str, ...] = ()
+    missing_on_dst: tuple[str, ...] = ()
+    errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class AboutResult:
+    """Outcome of ``rclone about <remote> --json``.
+
+    Surfaces as the equipment-probe response. ``ok`` flips true when
+    rclone returned 0; ``reason`` carries the classified failure mode
+    otherwise. ``info`` holds the parsed JSON payload on success
+    (free-space, used, etc.) so the Settings panel can render it.
+    """
+
+    ok: bool
+    reason: str | None = None
+    info: dict[str, int] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Env builder
+# ---------------------------------------------------------------------------
+
+
+def build_rclone_env(
+    *,
+    transport: EquipmentTransport,
+    password_obscured: str,
+    remote_name: str,
+) -> dict[str, str]:
+    """Build the ``RCLONE_CONFIG_<remote>_*`` env dict for an inline backend.
+
+    The output dict is suitable for passing as ``env`` to
+    :func:`run_subprocess`. ``password_obscured`` is the output of
+    :func:`obscure` -- rclone refuses raw passwords in ``_PASS``.
+
+    The dict overrides any pre-existing rclone.conf entry with the same
+    ``remote_name`` for the duration of the subprocess.
+    """
+    from exlab_wizard.config.models import RcloneSftpTransport, RcloneSmbTransport
+
+    prefix = f"RCLONE_CONFIG_{remote_name.upper()}_"
+    env: dict[str, str] = {}
+    if isinstance(transport, RcloneSftpTransport):
+        env[f"{prefix}TYPE"] = "sftp"
+        env[f"{prefix}HOST"] = transport.host
+        env[f"{prefix}PORT"] = str(transport.port)
+        env[f"{prefix}USER"] = transport.user
+        env[f"{prefix}PASS"] = password_obscured
+        return env
+    if isinstance(transport, RcloneSmbTransport):
+        env[f"{prefix}TYPE"] = "smb"
+        env[f"{prefix}HOST"] = transport.host
+        env[f"{prefix}USER"] = transport.user
+        env[f"{prefix}PASS"] = password_obscured
+        if transport.domain:
+            env[f"{prefix}DOMAIN"] = transport.domain
+        return env
+    msg = f"unsupported transport type for env build: {type(transport).__name__}"
+    raise ValueError(msg)
+
+
+def pass_env_keys_for(remote_name: str) -> tuple[str, ...]:
+    """Return the env-key tuple that must be redacted from subprocess logs.
+
+    The only secret in :func:`build_rclone_env`'s output is the obscured
+    password; this helper names it so callers can pass it as
+    ``mask_for_log`` without rebuilding the env-key string manually.
+    """
+    return (f"RCLONE_CONFIG_{remote_name.upper()}_PASS",)
+
+
+# ---------------------------------------------------------------------------
+# obscure helper
+# ---------------------------------------------------------------------------
+
+
+async def obscure(password: str, *, binary: str = "rclone") -> str:
+    """Return the rclone-obscured form of ``password``.
+
+    rclone refuses raw passwords in ``RCLONE_CONFIG_<remote>_PASS``; the
+    value must be the output of ``rclone obscure``. This helper shells
+    out to ``rclone obscure -`` (cleartext on stdin) so the password
+    never appears in argv or env.
+
+    A failed shell-out (binary missing, non-zero exit) raises
+    :class:`TransportError` with :attr:`TransportErrorKind.AUTH` so the
+    queue treats a broken rclone install as a terminal failure rather
+    than retrying forever.
+    """
+    cmd: list[str] = [binary, "obscure", "-"]
+    try:
+        rc, stdout, stderr = await run_subprocess(cmd, stdin=password.encode("utf-8"))
+    except FileNotFoundError as exc:
+        msg = f"rclone binary not found: {binary!r}"
+        raise TransportError(msg, error_kind=TransportErrorKind.AUTH) from exc
+
+    if rc != 0:
+        msg = f"rclone obscure failed rc={rc}: {stderr.strip()}"
+        _log.warning("rclone obscure failed rc=%d", rc)
+        raise TransportError(msg, error_kind=TransportErrorKind.AUTH)
+    return stdout.strip()
+
+
+# ---------------------------------------------------------------------------
+# Driver
+# ---------------------------------------------------------------------------
+
+
+class RcloneDriver:
     """rclone transport driver. Backend Spec §7.1.3."""
 
     def __init__(self, *, binary: str = "rclone") -> None:
@@ -71,22 +228,22 @@ class RcloneTransport:
         *,
         bwlimit_kibps: int | None = None,
         files_from: Path | None = None,
+        env: dict[str, str] | None = None,
+        mask_for_log: tuple[str, ...] = (),
     ) -> TransportResult:
         """Run ``rclone copy --checksum`` from ``local`` to ``remote``.
 
-        ``remote`` is the full ``<remote_name>:<path>`` string per the
-        rclone spec. ``bwlimit_kibps`` (KiB/s) is forwarded as
-        ``--bwlimit <K>K`` when set.
+        ``remote`` is the full ``<remote_name>:<path>`` string. ``env``
+        carries the ``RCLONE_CONFIG_<remote>_*`` connection map produced
+        by :func:`build_rclone_env`; ``mask_for_log`` lists env keys to
+        redact in the debug log (use :func:`pass_env_keys_for`).
+        ``bwlimit_kibps`` is forwarded as ``--bwlimit <K>K`` when set;
+        ``files_from`` is forwarded as ``--files-from <path>`` so only a
+        subset of the local tree transfers.
 
-        ``files_from`` (operator-free per-file NAS sync, 2026-05-21), when
-        set, is a path to a text file listing run-relative paths to copy --
-        forwarded as ``--files-from <path>`` so only that subset transfers.
-        ``None`` keeps the whole-directory copy behaviour.
-
-        Returns a :class:`TransportResult` describing the outcome. A
-        process-spawn failure (binary missing) raises
-        :class:`TransportError` because no retry will help -- the lab
-        admin needs to install the binary.
+        Returns a :class:`TransportResult`. A spawn failure raises
+        :class:`TransportError` so the queue terminates rather than
+        looping on a missing binary.
         """
         cmd: list[str] = [self._binary, "copy", "--checksum"]
         if bwlimit_kibps is not None and bwlimit_kibps > 0:
@@ -97,7 +254,7 @@ class RcloneTransport:
         _log.debug("rclone cmd: %s", shlex.join(cmd))
 
         try:
-            rc, stdout, stderr = await run_subprocess(cmd)
+            rc, stdout, stderr = await run_subprocess(cmd, env=env, mask_for_log=mask_for_log)
         except FileNotFoundError as exc:
             msg = f"rclone binary not found: {self._binary!r}"
             raise TransportError(msg) from exc
@@ -115,24 +272,136 @@ class RcloneTransport:
             returncode=rc,
         )
 
-    async def hashsum(self, remote: str) -> dict[str, str]:
-        """Probe ``remote`` via ``rclone hashsum sha256`` and parse the manifest.
+    async def check(
+        self,
+        local: Path,
+        remote: str,
+        *,
+        files_from: Path,
+        env: dict[str, str] | None = None,
+        mask_for_log: tuple[str, ...] = (),
+    ) -> CheckResult:
+        """Run ``rclone check --download --files-from --combined`` over ``files_from``.
 
-        Returns a ``{relative-path: sha256-hex}`` dict mirroring the
-        on-disk manifest format on success (``rc == 0``). The dict may
-        legitimately be empty if the remote subtree contains no files.
+        Streams the remote files back to compute their SHA-256 locally
+        (the only way to integrity-check SFTP and SMB backends, which
+        expose no server-side hashing). ``--combined`` writes one
+        ``= / * / + / - / !`` line per file to a tempfile that this
+        method parses and returns as a :class:`CheckResult`.
 
-        Failure modes are surfaced as :class:`TransportError` with the
-        classified ``error_kind`` so the caller (the verifier / queue
-        worker) can route via the spec-correct §7.1.5 retry path:
+        Raises :class:`TransportError` with a classified ``error_kind``
+        when rclone itself failed (auth / network / unknown) -- a clean
+        run with files in the ``differ`` or ``missing_on_dst`` columns
+        returns ``ok=True`` so the caller can route partial-failure
+        reconciliation correctly.
+        """
+        import tempfile
 
-        - ``AUTH`` -- terminal FAILED.
-        - ``NETWORK`` / ``UNKNOWN`` -- backoff retry.
+        combined_handle = tempfile.NamedTemporaryFile(  # noqa: SIM115 -- explicit close
+            mode="w",
+            encoding="utf-8",
+            prefix="exlab-rclone-combined-",
+            suffix=".txt",
+            delete=False,
+        )
+        combined_path = Path(combined_handle.name)
+        combined_handle.close()
 
-        Spawn failure (binary missing) also raises :class:`TransportError`
-        but with ``error_kind=None`` so the worker treats it as a
-        non-terminal failure (operator can install the binary and the job
-        will retry rather than terminating).
+        cmd: list[str] = [
+            self._binary,
+            "check",
+            "--download",
+            "--files-from",
+            str(files_from),
+            "--combined",
+            str(combined_path),
+            str(local),
+            remote,
+        ]
+        _log.debug("rclone check cmd: %s", shlex.join(cmd))
+
+        try:
+            try:
+                rc, _stdout, stderr = await run_subprocess(cmd, env=env, mask_for_log=mask_for_log)
+            except FileNotFoundError as exc:
+                msg = f"rclone binary not found: {self._binary!r}"
+                raise TransportError(msg) from exc
+
+            # rclone check returns non-zero whenever any file differs.
+            # Differences are an expected and parseable outcome, so the
+            # combined-output file must still be read on rc != 0; only an
+            # auth / network failure with no combined output should raise.
+            # One-shot read of a small tempfile written by rclone — sync I/O
+            # is fine here and avoids a trio/anyio dep in the sync subsystem.
+            try:
+                combined_text = combined_path.read_text(encoding="utf-8")  # noqa: ASYNC240
+            except OSError:
+                combined_text = ""
+
+            if rc != 0 and not combined_text:
+                kind = _classify_failure(stderr, rc)
+                if kind in (
+                    TransportErrorKind.AUTH,
+                    TransportErrorKind.NETWORK,
+                    TransportErrorKind.UNKNOWN,
+                ):
+                    _log.warning("rclone check failed rc=%d kind=%s", rc, kind.value)
+                    msg = f"rclone check failed rc={rc} kind={kind.value}: {stderr.strip()}"
+                    raise TransportError(msg, error_kind=kind)
+
+            return _parse_combined(combined_text)
+        finally:
+            combined_path.unlink(missing_ok=True)  # noqa: ASYNC240
+
+    async def about(
+        self,
+        remote: str,
+        *,
+        env: dict[str, str] | None = None,
+        mask_for_log: tuple[str, ...] = (),
+    ) -> AboutResult:
+        """Run ``rclone about <remote> --json`` -- the equipment probe.
+
+        Used by the Settings "Test connection" affordance. Confirms
+        authentication and reachability; surfaces parsed free-space
+        info on success. Failure paths are translated into
+        :class:`AboutResult` rather than raised, so the UI panel can
+        render the reason inline.
+        """
+        import json as _json
+
+        cmd: list[str] = [self._binary, "about", remote, "--json"]
+        _log.debug("rclone about cmd: %s", shlex.join(cmd))
+
+        try:
+            rc, stdout, stderr = await run_subprocess(cmd, env=env, mask_for_log=mask_for_log)
+        except FileNotFoundError:
+            return AboutResult(ok=False, reason="rclone binary not found")
+
+        if rc != 0:
+            kind = _classify_failure(stderr, rc)
+            return AboutResult(ok=False, reason=f"{kind.value}: {stderr.strip()}")
+
+        try:
+            parsed = _json.loads(stdout) if stdout.strip() else {}
+        except _json.JSONDecodeError:
+            return AboutResult(ok=True, info={})
+        info = {key: int(value) for key, value in parsed.items() if isinstance(value, int | float)}
+        return AboutResult(ok=True, info=info)
+
+    async def hashsum(
+        self,
+        remote: str,
+        *,
+        env: dict[str, str] | None = None,
+        mask_for_log: tuple[str, ...] = (),
+    ) -> dict[str, str]:
+        """Legacy ``rclone hashsum sha256`` probe -- kept through Phase 1 only.
+
+        Returns a ``{relative-path: sha256-hex}`` dict. Phase 2 of the
+        rclone-only migration replaces every caller with
+        :meth:`check`; this method exists so Phase 1 leaves the verify
+        path intact at its boundary.
         """
         from exlab_wizard.sync.verifier import parse_manifest
 
@@ -140,7 +409,7 @@ class RcloneTransport:
         _log.debug("rclone hashsum cmd: %s", shlex.join(cmd))
 
         try:
-            rc, stdout, stderr = await run_subprocess(cmd)
+            rc, stdout, stderr = await run_subprocess(cmd, env=env, mask_for_log=mask_for_log)
         except FileNotFoundError as exc:
             msg = f"rclone binary not found: {self._binary!r}"
             raise TransportError(msg) from exc
@@ -152,3 +421,49 @@ class RcloneTransport:
             raise TransportError(msg, error_kind=kind)
 
         return parse_manifest(stdout)
+
+
+# ---------------------------------------------------------------------------
+# Combined-output parser
+# ---------------------------------------------------------------------------
+
+
+def _parse_combined(text: str) -> CheckResult:
+    """Parse ``rclone check --combined`` output into a :class:`CheckResult`.
+
+    Each non-empty line begins with one of ``=``, ``*``, ``+``, ``-``,
+    ``!`` followed by a space and the file path. Unknown prefixes are
+    silently ignored so a future rclone format extension doesn't crash
+    the verifier.
+    """
+    equal: list[str] = []
+    differ: list[str] = []
+    extra_on_dst: list[str] = []
+    missing_on_dst: list[str] = []
+    errors: list[str] = []
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        if not line or len(line) < 2 or line[1] != " ":
+            continue
+        prefix = line[0]
+        path = line[2:]
+        match prefix:
+            case "=":
+                equal.append(path)
+            case "*":
+                differ.append(path)
+            case "+":
+                extra_on_dst.append(path)
+            case "-":
+                missing_on_dst.append(path)
+            case "!":
+                errors.append(path)
+            case _:
+                _log.debug("rclone check: unknown prefix %r in line %r", prefix, line)
+    return CheckResult(
+        equal=tuple(equal),
+        differ=tuple(differ),
+        extra_on_dst=tuple(extra_on_dst),
+        missing_on_dst=tuple(missing_on_dst),
+        errors=tuple(errors),
+    )

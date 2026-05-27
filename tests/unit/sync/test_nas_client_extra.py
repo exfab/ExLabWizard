@@ -30,8 +30,8 @@ from exlab_wizard.config.models import (
     EquipmentConfig,
     NASCleanupConfig,
     PathsConfig,
-    RcloneTransport,
-    RsyncSshTransport,
+    RcloneSftpTransport,
+    RcloneSmbTransport,
 )
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
@@ -57,10 +57,11 @@ def _build_config(
     min_age_hours: int = 0,
     cleanup_enabled: bool = True,
 ) -> Config:
-    transport = transport or RcloneTransport(
-        type="rclone",
-        rclone_remote="lab-nas",
-        rclone_remote_path="/srv",
+    transport = transport or RcloneSftpTransport(
+        type="rclone_sftp",
+        host="nas.lab.example",
+        user="testuser",
+        remote_path="/srv",
         bandwidth=BandwidthConfig(),
     )
     return Config(
@@ -120,39 +121,53 @@ def _factory(
 # ---------------------------------------------------------------------------
 
 
-def test_build_transport_driver_rclone(tmp_path: Path) -> None:
+class _StubKeyring:
+    """Minimal keyring stub returning a fixed password by username."""
+
+    def __init__(self, password: str = "topsecret") -> None:
+        self._password = password
+
+    def get_password(self, *, username: str) -> str:
+        del username
+        return self._password
+
+
+def test_build_transport_driver_sftp(tmp_path: Path) -> None:
     eq = EquipmentConfig(
         id="EQ1",
         label="Eq 1",
         local_root=str(tmp_path),
         nas_root="/nas",
-        transport=RcloneTransport(
-            type="rclone",
-            rclone_remote="lab-nas",
-            rclone_remote_path="/srv",
+        transport=RcloneSftpTransport(
+            type="rclone_sftp",
+            host="nas.lab.example",
+            user="testuser",
+            remote_path="/srv",
             bandwidth=BandwidthConfig(),
         ),
     )
-    driver, push = _build_transport_driver(eq)
+    driver, push = _build_transport_driver(eq, _StubKeyring())
     assert driver is not None
     assert callable(push)
 
 
-def test_build_transport_driver_rsync_ssh(tmp_path: Path) -> None:
+def test_build_transport_driver_smb(tmp_path: Path) -> None:
     eq = EquipmentConfig(
         id="EQ1",
         label="Eq 1",
         local_root=str(tmp_path),
         nas_root="/nas",
-        transport=RsyncSshTransport(
-            type="rsync_ssh",
-            ssh_target="user@host",
-            ssh_key_path="~/.ssh/id_ed25519",
-            remote_path="/srv/nas",
+        transport=RcloneSmbTransport(
+            type="rclone_smb",
+            host="nas.lab.example",
+            share="lab",
+            user="testuser",
+            domain="LAB",
+            remote_path="EQ1",
             bandwidth=BandwidthConfig(),
         ),
     )
-    driver, push = _build_transport_driver(eq)
+    driver, push = _build_transport_driver(eq, _StubKeyring())
     assert driver is not None
     assert callable(push)
 
@@ -953,7 +968,7 @@ async def test_build_transport_driver_rejects_unknown_type(tmp_path: Path) -> No
         transport=_BogusTransport(),  # type: ignore[arg-type]
     )
     with pytest.raises(ValueError, match="unsupported transport"):
-        _build_transport_driver(eq)
+        _build_transport_driver(eq, _StubKeyring())
 
 
 async def test_mark_synced_no_op_when_creation_missing(tmp_path: Path) -> None:
