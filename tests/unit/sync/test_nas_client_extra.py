@@ -1027,7 +1027,6 @@ async def test_partial_batch_credits_verified_files_in_sync_state(tmp_path: Path
     """A batch where one file fails verification still credits the others
     in ``sync_state.json`` -- operator-free per-file NAS sync 'Failure
     handling': a single bad file must not block the good ones."""
-    import hashlib
 
     from exlab_wizard.cache.sync_state_writer import SyncStateWriter
 
@@ -1070,6 +1069,12 @@ async def test_partial_batch_credits_verified_files_in_sync_state(tmp_path: Path
         assert "data.bin" in state.files
         assert state.files["data.bin"].synced_signature is not None
         assert state.files["data.bin"].verified_at is not None
+        # Slot A: the verified file carries its local SHA-256 digest
+        # captured at sync time, so the audit trail survives the
+        # partial-failure batch.
+        sha = state.files["data.bin"].verified_sha256
+        assert sha is not None
+        assert len(sha) == 64
         assert "subdir/child.txt" not in state.files
     finally:
         await client.close()
@@ -1116,5 +1121,9 @@ async def test_full_batch_credits_every_file_in_sync_state(tmp_path: Path) -> No
         for rec in state.files.values():
             assert rec.synced_signature is not None
             assert rec.verified_at is not None
+            # Slot A: every credited file carries the SHA-256 of its
+            # local bytes at sync time.
+            assert rec.verified_sha256 is not None
+            assert len(rec.verified_sha256) == 64
     finally:
         await client.close()

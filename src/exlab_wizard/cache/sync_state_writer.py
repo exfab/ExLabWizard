@@ -116,17 +116,24 @@ class SyncStateWriter:
     ) -> SyncStateJson:
         """Create or update one file record under an exclusive lock.
 
-        The record for ``rel_path`` (a run-relative POSIX path) is created if
-        absent, otherwise updated in place. ``synced_signature``,
-        ``verified_at``, and ``verified_sha256`` overwrite the record's
-        fields when supplied; the record's other fields (notably
-        ``keep_local``) are preserved.
+        The record for ``rel_path`` (a run-relative POSIX path) is
+        created if absent, otherwise updated in place. ``keep_local`` is
+        preserved by this method (toggle it via :meth:`set_keep_local`).
 
-        ``verified_sha256`` is the Slot A capture: the SHA-256 hex digest
-        of the local bytes at sync time. The caller is expected to pass
-        it once when crediting a freshly verified file from
-        ``_reconcile_synced_files``; later updates (``set_keep_local``,
-        ``mark_cleared``) preserve it.
+        The three remaining kwargs have **asymmetric None handling** by
+        design:
+
+        * ``synced_signature`` and ``verified_at`` are always
+          overwritten -- even with ``None``. The poller's
+          re-modified-file flow relies on this: it calls
+          ``upsert_file(... synced_signature=None, verified_at=None)``
+          to drop the verify marks on a file whose local bytes have
+          changed, which flips the run-level rollup from ``SYNCED``
+          back to ``SYNCING``.
+        * ``verified_sha256`` is preserved when ``None`` is passed --
+          the audit-trail digest survives re-verify passes that carry
+          no fresh local SHA (notably the operator-triggered
+          ``force_verify`` path).
         """
         return await asyncio.to_thread(
             self._upsert_file_blocking,

@@ -539,7 +539,7 @@ class NASSyncClient:
           terminal FAILED. On HASH_MISMATCH, single retry then terminal.
           On NETWORK or UNKNOWN, schedule a backoff retry.
         - On push success, transition RUNNING -> AWAITING_VERIFY and run
-          :meth:`_verify_pass` (local manifest + remote hashsum probe).
+          ``rclone check --download --combined`` via the check callable.
         - On verify success, transition to VERIFIED and bump
           ``sync_status`` to ``"synced"``.
         - On verify failure, route by ``VerifyResult.error_kind``: AUTH
@@ -692,22 +692,22 @@ class NASSyncClient:
         await self._reconcile_synced_files(run_path, verify_result, local_shas)
 
         if not verify_result.ok:
-            # Spec §7.1.5 retry-class routing for verify failures. The
-            # remote hashsum probe may have raised TransportError before
-            # the verifier could compare manifests; in that case
+            # Spec §7.1.5 retry-class routing for verify failures.
+            # ``rclone check`` may have raised TransportError before the
+            # combined output was usable; in that case
             # ``verify_result.error_kind`` carries the transport's
             # classification:
             #
             # - AUTH -- terminal FAILED (configuration problem, no retry).
             # - NETWORK / UNKNOWN -- non-terminal failure with backoff.
-            # - Any other case (genuine hash mismatch from
-            #   ``verify_against_remote``, or a TransportError raised
-            #   without a classified ``error_kind``, e.g. binary spawn
-            #   failure) -- the §7.1.5 HASH_MISMATCH single-retry-then-
-            #   terminal branch. A spawn failure routed this way means the
-            #   worker re-queues once, retries the push+probe, and
-            #   terminates FAILED on the second failure; the operator
-            #   surfaces the binary-missing reason via ``last_error``.
+            # - Any other case (genuine ``*`` lines from the combined
+            #   output, or a TransportError raised without a classified
+            #   ``error_kind``, e.g. binary spawn failure) -- the §7.1.5
+            #   HASH_MISMATCH single-retry-then-terminal branch. A spawn
+            #   failure routed this way means the worker re-queues once,
+            #   retries the push+check, and terminates FAILED on the
+            #   second failure; the operator surfaces the binary-missing
+            #   reason via ``last_error``.
             kind = verify_result.error_kind
             if kind is TransportErrorKind.AUTH:
                 await self._queue.record_failure(

@@ -2,19 +2,14 @@
 """Stub ``rclone`` binary for tests.
 
 Acts like the rclone CLI under the test harness's PATH override. Verbs
-covered: ``copy``, ``hashsum`` (legacy, Phase 1 only), ``obscure``,
-``about``, ``check`` (Phase 2). Deterministic outcomes are selected via
-``STUB_RCLONE_BEHAVIOR``:
+covered: ``copy``, ``obscure``, ``about``, ``check``. Deterministic
+outcomes are selected via ``STUB_RCLONE_BEHAVIOR``:
 
 Push (``rclone copy ... <local> <remote>:<path>``):
 - ``success`` (default) — copies ``local`` to ``<dest_root>/<path>``.
 - ``network_error`` — prints "network timeout" to stderr, exits 1.
 - ``auth_error`` — prints "401 Unauthorized" to stderr, exits 1.
 - ``hash_mismatch`` — prints "hash mismatch on file" to stderr, exits 1.
-
-Hashsum (``rclone hashsum sha256 <remote>:<path>``):
-- ``hashsum_success`` / ``success`` — emits a manifest from
-  ``STUB_RCLONE_HASHSUM_PATH`` or by walking ``STUB_RCLONE_DEST_ROOT``.
 
 Obscure (``rclone obscure -``):
 - ``obscure_success`` — emits ``STUB_RCLONE_OBSCURE_OUT`` (default
@@ -42,7 +37,6 @@ Optional env probes (any verb):
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
@@ -78,36 +72,6 @@ def _is_flag_value(arg: str, argv: list[str]) -> bool:
     if idx == 0:
         return False
     return argv[idx - 1] in flags_with_value
-
-
-def _emit_hashsum(argv: list[str]) -> int:
-    """Emit a SHA-256 manifest on stdout for the ``hashsum`` verb."""
-    source_path = os.environ.get("STUB_RCLONE_HASHSUM_PATH", "")
-    if source_path:
-        try:
-            sys.stdout.write(Path(source_path).read_text())
-        except OSError as exc:
-            sys.stderr.write(f"stub_rclone hashsum: cannot read {source_path}: {exc}\n")
-            return 1
-        return 0
-
-    dest_root = os.environ.get("STUB_RCLONE_DEST_ROOT", "")
-    if not dest_root:
-        return 0
-
-    target_arg = argv[-1] if len(argv) >= 4 else ""
-    remote_path = ""
-    if ":" in target_arg:
-        _, remote_path = target_arg.split(":", 1)
-    root = Path(dest_root) / remote_path.lstrip("/") if remote_path else Path(dest_root)
-    if not root.exists():
-        return 0
-    files = sorted(p for p in root.rglob("*") if p.is_file())
-    for f in files:
-        digest = hashlib.sha256(f.read_bytes()).hexdigest()
-        rel = f.relative_to(root).as_posix()
-        sys.stdout.write(f"{digest}  {rel}\n")
-    return 0
 
 
 def _emit_combined(argv: list[str], prefix: str) -> int:
@@ -220,19 +184,6 @@ def main() -> int:
         # default / "success" / "check_success" -> all equal
         return _emit_combined(sys.argv, "=")
 
-    # ---- hashsum ----------------------------------------------------------
-    if verb == "hashsum":
-        if behavior == "network_error":
-            sys.stderr.write("network timeout\n")
-            return 1
-        if behavior == "auth_error":
-            sys.stderr.write("401 Unauthorized\n")
-            return 1
-        if behavior in ("success", "hashsum_success"):
-            return _emit_hashsum(sys.argv)
-        sys.stderr.write(f"stub_rclone hashsum: unknown behavior {behavior!r}\n")
-        return 2
-
     # ---- copy (default verb) ---------------------------------------------
     if behavior == "network_error":
         sys.stderr.write("network timeout\n")
@@ -244,7 +195,7 @@ def main() -> int:
         sys.stderr.write("hash mismatch on file\n")
         return 1
 
-    if behavior not in ("success", "hashsum_success", "obscure_success", "about_success"):
+    if behavior not in ("success", "obscure_success", "about_success"):
         sys.stderr.write(f"stub_rclone: unknown behavior {behavior!r}\n")
         return 2
 
