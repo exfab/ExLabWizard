@@ -156,10 +156,17 @@ class SetupState(StrEnum):
 
 
 class TransportType(StrEnum):
-    """NAS sync transport. Backend Spec §7.1.3."""
+    """NAS sync transport. Backend Spec §7.1.3.
 
-    RCLONE = "rclone"
-    RSYNC_SSH = "rsync_ssh"
+    Both supported transports are password-based and route through the
+    rclone binary; SFTP is the SSH-over-password path (mac/linux) and
+    SMB is the Windows-share path. The legacy ``rclone`` and
+    ``rsync_ssh`` members were removed in the 2026-05-26 rclone-only
+    migration.
+    """
+
+    RCLONE_SFTP = "rclone_sftp"
+    RCLONE_SMB = "rclone_smb"
 
 
 class SyncMode(StrEnum):

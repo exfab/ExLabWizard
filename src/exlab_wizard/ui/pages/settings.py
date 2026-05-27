@@ -438,8 +438,10 @@ def _render_equipment_section(draft: Config) -> None:
     draft is re-validated and persisted when the operator clicks Save.
 
     The sub-form covers the full §9 equipment surface: a transport
-    radio (``rclone`` / ``rsync_ssh``) that swaps the transport
-    fieldset.
+    radio (``rclone_sftp`` / ``rclone_smb``) that swaps the transport
+    fieldset. Both options are password-based and route through rclone;
+    the per-equipment password lives in the OS keyring and is entered in
+    the NAS-credentials section below this one.
     """
     from nicegui import ui
 
@@ -531,9 +533,7 @@ def _render_equipment_section(draft: Config) -> None:
                 nas_root=eq_nas.value or "",
                 transport_type=transport_radio.value or "rclone_sftp",
                 sftp_host=_field("sftp_host"),
-                sftp_port=int(fields["sftp_port"].value or 22)
-                if "sftp_port" in fields
-                else 22,
+                sftp_port=int(fields["sftp_port"].value or 22) if "sftp_port" in fields else 22,
                 sftp_user=_field("sftp_user"),
                 sftp_remote_path=_field("sftp_remote_path"),
                 smb_host=_field("smb_host"),

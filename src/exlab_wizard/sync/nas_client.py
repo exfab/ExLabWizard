@@ -161,9 +161,18 @@ async def _resolve_env_for_equipment(
     if keyring_store is not None:
         getter = getattr(keyring_store, "get_password", None)
         if getter is not None:
-            with contextlib.suppress(Exception):
+            # A keyring backend failure is structurally distinct from an
+            # absent entry: surface the underlying exception in the error
+            # message so the operator can tell the two apart.
+            try:
                 password = getter(username=keyring_nas_username(equipment.id))
-    if not password:
+            except Exception as exc:
+                msg = (
+                    f"keyring lookup failed for equipment {equipment.id!r}: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                raise TransportError(msg, error_kind=TransportErrorKind.AUTH) from exc
+    if password is None or password == "":
         msg = f"NAS password not set in keyring for equipment {equipment.id!r}"
         raise TransportError(msg, error_kind=TransportErrorKind.AUTH)
 

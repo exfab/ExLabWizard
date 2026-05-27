@@ -169,11 +169,11 @@ def test_setup_state_values() -> None:
 
 
 def test_transport_type_values() -> None:
-    # Backend Spec §7.1.3.
+    # Backend Spec §7.1.3 -- updated by the 2026-05-26 rclone-only migration.
     assert issubclass(enums.TransportType, StrEnum)
-    assert enums.TransportType.RCLONE.value == "rclone"
-    assert enums.TransportType.RSYNC_SSH.value == "rsync_ssh"
-    assert {m.value for m in enums.TransportType} == {"rclone", "rsync_ssh"}
+    assert enums.TransportType.RCLONE_SFTP.value == "rclone_sftp"
+    assert enums.TransportType.RCLONE_SMB.value == "rclone_smb"
+    assert {m.value for m in enums.TransportType} == {"rclone_sftp", "rclone_smb"}
 
 
 def test_completeness_signal_enum_removed() -> None:
