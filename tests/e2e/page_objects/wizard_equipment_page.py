@@ -41,12 +41,34 @@ class WizardEquipmentPage:
         return self._page.locator('[data-testid="wizard-equipment-sync-mode"]')
 
     @property
-    def rclone_remote(self) -> Any:
-        return self._page.locator('[data-testid="wizard-equipment-rclone-remote"]')
+    def transport_type(self) -> Any:
+        return self._page.locator('[data-testid="wizard-equipment-transport-type"]')
+
+    # SFTP transport fields (rclone_sftp)
+    @property
+    def sftp_host(self) -> Any:
+        return self._page.locator('[data-testid="wizard-equipment-sftp-host"]')
 
     @property
-    def rclone_remote_path(self) -> Any:
-        return self._page.locator('[data-testid="wizard-equipment-rclone-remote-path"]')
+    def sftp_user(self) -> Any:
+        return self._page.locator('[data-testid="wizard-equipment-sftp-user"]')
+
+    @property
+    def sftp_remote_path(self) -> Any:
+        return self._page.locator('[data-testid="wizard-equipment-sftp-remote-path"]')
+
+    # SMB transport fields (rclone_smb)
+    @property
+    def smb_host(self) -> Any:
+        return self._page.locator('[data-testid="wizard-equipment-smb-host"]')
+
+    @property
+    def smb_share(self) -> Any:
+        return self._page.locator('[data-testid="wizard-equipment-smb-share"]')
+
+    @property
+    def smb_user(self) -> Any:
+        return self._page.locator('[data-testid="wizard-equipment-smb-user"]')
 
     # Review / confirm
     @property

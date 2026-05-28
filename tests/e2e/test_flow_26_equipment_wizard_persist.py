@@ -73,10 +73,12 @@ def test_equipment_wizard_confirm_persists_to_config(browser, prod_server) -> No
         wiz.nas_root.fill("/srv/nas/MICROSCOPE_01")
         wiz.next_button.click()
 
-        # 3. Sync mode -- nas / rclone are the defaults.
-        wiz.rclone_remote.wait_for(state="visible", timeout=10_000)
-        wiz.rclone_remote.fill("lab-nas")
-        wiz.rclone_remote_path.fill("lab/MICROSCOPE_01")
+        # 3. Sync mode -- nas / rclone_sftp are the defaults; fill the
+        #    SFTP transport fields (the password is set later in Settings).
+        wiz.sftp_host.wait_for(state="visible", timeout=10_000)
+        wiz.sftp_host.fill("nas.lab.example")
+        wiz.sftp_user.fill("testuser")
+        wiz.sftp_remote_path.fill("lab/MICROSCOPE_01")
         wiz.next_button.click()
 
         # 4. Review -> Confirm.

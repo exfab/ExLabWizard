@@ -144,10 +144,21 @@ def _goto(page, url: str, *, retries: int = 2) -> None:
 
 @pytest.fixture
 def prod_server(tmp_path: Path):
-    """Yield a started :class:`ProdServer` rooted at a fresh tmp HOME."""
+    """Yield a started :class:`ProdServer` rooted at a fresh tmp HOME.
+
+    The keyring is pinned to the encrypted-at-rest fallback so the
+    NAS-credential round-trip (rclone-only migration, 2026-05-26) is
+    deterministic and never prompts an OS keychain.
+    """
     home = tmp_path / "home"
     home.mkdir()
-    server = ProdServer(home)
+    server = ProdServer(
+        home,
+        extra_env={
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.fail.Keyring",
+            "EXLAB_WIZARD_SECRET_PASSPHRASE": "e2e-lifecycle-passphrase",
+        },
+    )
     if not server.start():
         pytest.skip("production wizard app did not become healthy within 30s")
     try:
@@ -220,26 +231,30 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         _fill(page, "settings-lims-offline-path", str(catalogue_path))
 
         # ---- Phase 4: add equipment ------------------------------------
-        # 4a. rclone transport (the default radio).
+        # 4a. rclone_sftp transport (the default radio). The per-equipment
+        #     NAS password is entered later in the NAS-credentials section,
+        #     not here (rclone-only migration, 2026-05-26).
         page.get_by_test_id("settings-nav-equipment").click()
         _fill(page, "settings-equipment-id", "MICROSCOPE1")
         _fill(page, "settings-equipment-label", "Confocal Microscope 1")
         _fill(page, "settings-equipment-local-root", str(data_root))
         _fill(page, "settings-equipment-nas-root", "/srv/nas/microscope1")
-        _fill(page, "settings-equipment-rclone-remote", "lab-nas")
-        _fill(page, "settings-equipment-rclone-path", "lab/microscope1")
+        _fill(page, "settings-equipment-sftp-host", "nas.lab.example")
+        _fill(page, "settings-equipment-sftp-user", "operator")
+        _fill(page, "settings-equipment-sftp-remote-path", "lab/microscope1")
         page.get_by_test_id("settings-equipment-add").click()
         page.get_by_test_id("settings-equipment-row").first.wait_for(state="visible", timeout=8_000)
 
-        # 4b. rsync_ssh transport -- exercises the transport radio
+        # 4b. rclone_smb transport -- exercises the transport radio
         #     swapping the transport fieldset.
         _fill(page, "settings-equipment-id", "SPECTROMETER1")
         _fill(page, "settings-equipment-label", "Mass Spectrometer 1")
         _fill(page, "settings-equipment-local-root", str(data_root))
         _fill(page, "settings-equipment-nas-root", "/srv/nas/spectrometer1")
-        _pick_radio(page, "settings-equipment-transport", "rsync_ssh")
-        _fill(page, "settings-equipment-ssh-target", "operator@nas.example.test")
-        _fill(page, "settings-equipment-rsync-path", "/srv/nas/spectrometer1/incoming")
+        _pick_radio(page, "settings-equipment-transport", "rclone_smb")
+        _fill(page, "settings-equipment-smb-host", "nas.lab.example")
+        _fill(page, "settings-equipment-smb-share", "spectrometer1")
+        _fill(page, "settings-equipment-smb-user", "operator")
         page.get_by_test_id("settings-equipment-add").click()
         # Two equipment rows now present.
         page.wait_for_function(
@@ -254,7 +269,7 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         config_text = config_path.read_text(encoding="utf-8")
         assert "MICROSCOPE1" in config_text
         assert "SPECTROMETER1" in config_text
-        assert "rsync_ssh" in config_text
+        assert "rclone_smb" in config_text
         assert str(data_root) in config_text
 
         # ---- Phase 6: restart so the controller picks up the config ----
@@ -263,6 +278,23 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         # page avoids the stale NiceGUI client racing the new boot.
         page.close()
         page = context.new_page()
+
+        # ---- Phase 6b: set NAS passwords ------------------------------
+        # The two nas-mode equipment registered above leave the install in
+        # the INCOMPLETE_NO_NAS_CREDENTIAL state (rclone-only migration,
+        # 2026-05-26) which gates every creation flow. The NAS-credentials
+        # section appears now that config.yaml carries the equipment;
+        # set both passwords so the gate clears before project creation.
+        _goto(page, f"{server.base_url}/settings")
+        page.get_by_test_id("settings-dialog").wait_for(state="visible", timeout=10_000)
+        for equipment_id in ("MICROSCOPE1", "SPECTROMETER1"):
+            page.get_by_test_id("settings-nav-nas_credentials").click()
+            page.get_by_test_id(f"settings-nas-password-{equipment_id}-primary").click()
+            inp = page.get_by_test_id(f"settings-nas-password-{equipment_id}-input")
+            inp.wait_for(state="visible", timeout=5_000)
+            inp.fill("nas-secret")
+            page.get_by_test_id(f"settings-nas-password-{equipment_id}-save").click()
+            page.wait_for_timeout(300)
 
         # ---- Phase 7: create a project template ------------------------
         _goto(page, f"{server.base_url}/templates")

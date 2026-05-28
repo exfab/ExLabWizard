@@ -37,9 +37,16 @@ state/
 *.tmp
 .tmp/
 
+# NAS emulator (tests/docker/) — keep the layout, ignore generated state
+tests/docker/nas-data/*
+!tests/docker/nas-data/.gitkeep
+
 # Local secrets / env (never commit)
 .env
 .env.*
+# ...but the committed templates carry no secrets.
+!.env.example
+!tests/docker/.env.example
 *.secret
 
 # pre-commit cache

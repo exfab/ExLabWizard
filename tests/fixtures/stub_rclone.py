@@ -33,6 +33,13 @@ Optional env probes (any verb):
 - ``STUB_RCLONE_ENV_DUMP`` — write ``KEY=VALUE\\n`` lines for every env
   var starting with ``RCLONE_CONFIG_`` to that path so tests can assert
   on env injection.
+- ``STUB_RCLONE_REQUIRE_ENV`` — a comma-separated list of env-key
+  *suffixes* (e.g. ``TYPE,HOST,USER,PASS``). The stub fails with exit 3
+  unless, for some ``RCLONE_CONFIG_<remote>_`` prefix, every listed
+  suffix is present (and ``PASS`` is non-empty). This proves the
+  production code path injected the inline backend credentials rather
+  than the stub silently accepting an unconfigured remote. The
+  ``obscure`` verb is exempt (it runs before the env is built).
 """
 
 from __future__ import annotations
@@ -125,6 +132,37 @@ def _dump_env() -> None:
                 f.write(f"{key}={value}\n")
 
 
+def _require_env() -> int:
+    """Enforce ``STUB_RCLONE_REQUIRE_ENV``; return 0 if satisfied else 3.
+
+    Confirms the production code injected a full inline backend: for at
+    least one ``RCLONE_CONFIG_<remote>_`` prefix, every required suffix
+    is present (``PASS`` additionally must be non-empty).
+    """
+    spec = os.environ.get("STUB_RCLONE_REQUIRE_ENV")
+    if not spec:
+        return 0
+    required = [s.strip().upper() for s in spec.split(",") if s.strip()]
+    # Group the rclone env by remote prefix (everything up to the suffix).
+    prefixes: set[str] = set()
+    for key in os.environ:
+        if key.startswith("RCLONE_CONFIG_"):
+            prefixes.add(key.rsplit("_", 1)[0] + "_")
+    for prefix in prefixes:
+        ok = True
+        for suffix in required:
+            value = os.environ.get(f"{prefix}{suffix}")
+            if value is None or (suffix == "PASS" and not value):
+                ok = False
+                break
+        if ok:
+            return 0
+    sys.stderr.write(
+        f"stub_rclone: STUB_RCLONE_REQUIRE_ENV={spec!r} not satisfied by injected env\n"
+    )
+    return 3
+
+
 def main() -> int:
     record_path = os.environ.get("STUB_RCLONE_RECORD_PATH")
     if record_path:
@@ -157,6 +195,12 @@ def main() -> int:
             return 1
         sys.stdout.write(os.environ.get("STUB_RCLONE_OBSCURE_OUT", "OBSCURED") + "\n")
         return 0
+
+    # Every non-obscure verb runs after the production code has built the
+    # inline backend env, so this is where the injection assertion applies.
+    env_rc = _require_env()
+    if env_rc != 0:
+        return env_rc
 
     # ---- about ------------------------------------------------------------
     if verb == "about":

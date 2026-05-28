@@ -43,13 +43,22 @@ flow test.
 | `/settings` | `settings-equipment-label` | input | Type the equipment label | Provides the EquipmentConfig.label for the new entry. |
 | `/settings` | `settings-equipment-local-root` | input | Type the equipment local root | Provides the EquipmentConfig.local_root for the new entry. |
 | `/settings` | `settings-equipment-nas-root` | input | Type the equipment NAS root | Provides the EquipmentConfig.nas_root for the new entry. |
-| `/settings` | `settings-equipment-transport` | radio | Pick the transport (rclone / rsync_ssh) | Swaps the transport fieldset between rclone and rsync_ssh. |
-| `/settings` | `settings-equipment-rclone-remote` | input | Type the rclone remote | Sets the rclone transport remote for the new entry. |
-| `/settings` | `settings-equipment-rclone-path` | input | Type the rclone remote path | Sets the rclone transport remote path for the new entry. |
-| `/settings` | `settings-equipment-ssh-target` | input | Type the rsync_ssh SSH target | Sets the rsync_ssh transport ssh_target for the new entry. |
-| `/settings` | `settings-equipment-ssh-key` | input | Type the rsync_ssh SSH key path | Sets the rsync_ssh transport ssh_key_path for the new entry. |
-| `/settings` | `settings-equipment-rsync-path` | input | Type the rsync_ssh remote path | Sets the rsync_ssh transport remote_path for the new entry. |
+| `/settings` | `settings-equipment-transport` | radio | Pick the transport (rclone_sftp / rclone_smb) | Swaps the transport fieldset between the SFTP and SMB backends. |
+| `/settings` | `settings-equipment-sftp-host` | input | Type the SFTP host | Sets the rclone_sftp transport host for the new entry. |
+| `/settings` | `settings-equipment-sftp-user` | input | Type the SFTP user | Sets the rclone_sftp transport user for the new entry. |
+| `/settings` | `settings-equipment-sftp-remote-path` | input | Type the SFTP remote path | Sets the rclone_sftp transport remote_path for the new entry. |
+| `/settings` | `settings-equipment-smb-host` | input | Type the SMB host | Sets the rclone_smb transport host for the new entry. |
+| `/settings` | `settings-equipment-smb-share` | input | Type the SMB share | Sets the rclone_smb transport share for the new entry. |
+| `/settings` | `settings-equipment-smb-user` | input | Type the SMB user | Sets the rclone_smb transport user for the new entry. |
 | `/settings` | `settings-equipment-add` | button | Click 'Add equipment' | Validates and appends an EquipmentConfig to the draft; row appears. |
+
+## NAS Credentials
+
+| Route | Test ID | Element | Action | Outcome |
+|---|---|---|---|---|
+| `/settings` | `settings-nav-nas_credentials` | nav row | Click the 'NAS Credentials' sidebar row | Shows one keyring-credential row per password-requiring equipment. |
+| `/settings` | `settings-nas-password-EQ1` | credential field | Set / Replace / Clear the equipment's NAS password | Writes the per-equipment password to the OS keyring at click time. |
+| `/settings` | `settings-nas-test-EQ1` | button | Click 'Test connection' | Runs the rclone probe and renders the result inline. |
 
 ## New template
 

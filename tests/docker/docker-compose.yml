@@ -1,0 +1,56 @@
+# Local password-based NAS emulator for ExLab-Wizard sync tests
+# (rclone-only migration, 2026-05-26). IT policy forbids SSH keys, so both
+# backends authenticate by an operator-typed password:
+#
+#   - rclone_sftp:  host=localhost port=${SFTP_HOST_PORT} user=${NAS_USER}
+#                   remote_path=data; password = ${NAS_PASSWORD}
+#   - rclone_smb:   host=localhost port=${SMB_HOST_PORT} user=${NAS_USER}
+#                   share=${SMB_SHARE}; password = ${NAS_PASSWORD}
+#
+# The wizard injects the password through RCLONE_CONFIG_<remote>_PASS at
+# push time (see build_rclone_env); for an ad-hoc rclone CLI smoke test
+# see rclone.conf.example. See README.md for the full walkthrough.
+
+services:
+
+  nas-sftp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NAS_USER: ${NAS_USER}
+        NAS_UID: ${NAS_UID}
+        NAS_GID: ${NAS_GID}
+    image: exlab/nas-emulator-sftp:local
+    container_name: exlab-nas-sftp
+    env_file: .env
+    ports:
+      - "${SFTP_HOST_PORT:-2222}:22"
+    volumes:
+      # Bind-mount so the host can inspect what the sync wrote.
+      - ./nas-data:/home/${NAS_USER}/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "ss -ltn | grep -q ':22 '"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+      start_period: 3s
+
+  nas-smb:
+    build:
+      context: .
+      dockerfile: Dockerfile.smb
+      args:
+        NAS_USER: ${NAS_USER}
+        NAS_UID: ${NAS_UID}
+        NAS_GID: ${NAS_GID}
+        SMB_SHARE: ${SMB_SHARE}
+    image: exlab/nas-emulator-smb:local
+    container_name: exlab-nas-smb
+    env_file: .env
+    ports:
+      - "${SMB_HOST_PORT:-1445}:445"
+    volumes:
+      - ./nas-data:/srv/${SMB_SHARE}
+    restart: unless-stopped

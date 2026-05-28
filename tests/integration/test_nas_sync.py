@@ -185,6 +185,10 @@ async def test_full_happy_path_via_stub_rclone(
     nas_root = tmp_path / "nas"
     monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
     monkeypatch.setenv("STUB_RCLONE_DEST_ROOT", str(nas_root))
+    # Prove the production push/check path injects the full inline SFTP
+    # backend env (rclone-only migration). If any of these are missing the
+    # stub exits 3 and the job never reaches VERIFIED, failing the test.
+    monkeypatch.setenv("STUB_RCLONE_REQUIRE_ENV", "TYPE,HOST,USER,PASS")
 
     cfg = _build_config(local_root)
     run_dir = await _populate_run(local_root)

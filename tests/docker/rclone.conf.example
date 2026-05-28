@@ -1,0 +1,39 @@
+# Ad-hoc rclone CLI smoke test against the local password-based NAS
+# emulator (rclone-only migration, 2026-05-26).
+#
+# NOTE: the ExLab-Wizard app no longer reads rclone.conf at all -- it
+# builds an inline backend from RCLONE_CONFIG_<remote>_* env vars at push
+# time (see exlab_wizard.sync.transports.rclone.build_rclone_env). This
+# file exists only so you can reproduce what the app does from a shell.
+#
+# rclone refuses a cleartext password in config / env, so obscure it:
+#     RCLONE_PASS=$(rclone obscure 'changeme')
+#
+# Either drop the obscured stanzas below into your rclone config, or point
+# rclone at this file for an isolated run:
+#     RCLONE_CONFIG=$PWD/tests/docker/rclone.conf rclone lsd nas-sftp:
+#
+# Equivalent env-only form (mirrors the app's injection, no conf file):
+#     RCLONE_CONFIG_NAS_SFTP_TYPE=sftp \
+#     RCLONE_CONFIG_NAS_SFTP_HOST=localhost \
+#     RCLONE_CONFIG_NAS_SFTP_PORT=2222 \
+#     RCLONE_CONFIG_NAS_SFTP_USER=testuser \
+#     RCLONE_CONFIG_NAS_SFTP_PASS=$(rclone obscure 'changeme') \
+#     rclone lsd nas_sftp:
+
+[nas-sftp]
+type = sftp
+host = localhost
+port = 2222
+user = testuser
+# pass = <output of: rclone obscure 'changeme'>
+# Disable host-key checking against an ephemeral container.
+known_hosts_file = /dev/null
+shell_type = unix
+
+[nas-smb]
+type = smb
+host = localhost
+port = 1445
+user = testuser
+# pass = <output of: rclone obscure 'changeme'>
