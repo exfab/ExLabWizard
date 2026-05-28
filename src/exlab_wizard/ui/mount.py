@@ -645,17 +645,43 @@ def _render_restart_required(ui: Any) -> Any:
         return None
 
 
+def _nas_credential_missing(deps: Any, config: Any) -> bool:
+    """True when a password-requiring nas-mode equipment lacks its keyring entry.
+
+    Rclone-only NAS sync migration (2026-05-26). Shared by
+    :func:`_is_setup_ready` (so the §4.9 ``INCOMPLETE_NO_NAS_CREDENTIAL``
+    hard block keeps the operator on the welcome/banner path) and
+    :func:`_missing_setup_sections` (so the Settings page surfaces the
+    section). Mirrors the gate in ``paths._nas_slot_satisfied``.
+    """
+    from exlab_wizard.api._dependencies import nas_password_present
+    from exlab_wizard.config.models import transport_requires_keyring_password
+    from exlab_wizard.constants import SyncMode
+
+    return any(
+        eq.sync_mode == SyncMode.NAS
+        and transport_requires_keyring_password(eq.transport)
+        and not nas_password_present(deps, eq.id)
+        for eq in getattr(config, "equipment", ()) or ()
+    )
+
+
 def _is_setup_ready(deps: Any) -> bool:
     """Mirror ``api.setup.compute_setup_state``'s readiness verdict.
 
     Re-evaluated here rather than calling the API so the NiceGUI mount
     stays independent of the setup-state *evaluator*; the keyring read
     still routes through the shared ``lims_password_present`` helper so
-    a change to that semantics propagates here too.
+    a change to that semantics propagates here too. The NAS-credential
+    gate (rclone-only migration, 2026-05-26) is mirrored alongside the
+    LIMS gate so a registered-but-uncredentialed NAS equipment keeps the
+    setup-incomplete banner up rather than reading as ready.
     """
     from exlab_wizard.api._dependencies import lims_password_present
 
     if deps is None or getattr(deps, "config", None) is None:
+        return False
+    if _nas_credential_missing(deps, deps.config):
         return False
     keyring = lims_password_present(deps)
     lims_reachable = getattr(deps, "lims_reachable", True)
@@ -1279,9 +1305,7 @@ def _missing_setup_sections(deps: Any) -> tuple[str, ...]:
     other than READY surfaces at least one section. The Settings page
     uses this to auto-select the first incomplete section.
     """
-    from exlab_wizard.api._dependencies import lims_password_present, nas_password_present
-    from exlab_wizard.config.models import transport_requires_keyring_password
-    from exlab_wizard.constants import SyncMode
+    from exlab_wizard.api._dependencies import lims_password_present
 
     if deps is None:
         return ("paths", "lims")
@@ -1298,13 +1322,7 @@ def _missing_setup_sections(deps: Any) -> tuple[str, ...]:
     # NAS-credentials section when any password-requiring nas-mode
     # equipment lacks its keyring entry, so the setup-incomplete banner
     # auto-selects it (matching the §4.9 INCOMPLETE_NO_NAS_CREDENTIAL gate).
-    needs_nas_credential = any(
-        eq.sync_mode == SyncMode.NAS
-        and transport_requires_keyring_password(eq.transport)
-        and not nas_password_present(deps, eq.id)
-        for eq in config.equipment
-    )
-    if needs_nas_credential:
+    if _nas_credential_missing(deps, config):
         missing.append("nas_credentials")
     if not config.lims.endpoint or not config.lims.email:
         missing.append("lims")

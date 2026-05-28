@@ -194,6 +194,27 @@ def test_is_setup_ready_true_when_all_satisfied() -> None:
     assert mount._is_setup_ready(deps) is True
 
 
+def test_is_setup_ready_false_when_nas_credential_missing() -> None:
+    """A registered nas-mode equipment without its keyring password blocks ready."""
+    deps = _deps(
+        config=_nas_config(),
+        keyring_password_present=True,
+        lims_reachable=True,
+        nas_password_present=set(),
+    )
+    assert mount._is_setup_ready(deps) is False
+
+
+def test_is_setup_ready_true_when_nas_credential_present() -> None:
+    deps = _deps(
+        config=_nas_config(),
+        keyring_password_present=True,
+        lims_reachable=True,
+        nas_password_present={"EQ1"},
+    )
+    assert mount._is_setup_ready(deps) is True
+
+
 # ---------------------------------------------------------------------------
 # _build_main_state
 # ---------------------------------------------------------------------------

@@ -103,9 +103,21 @@ class SettingsState:
 
 
 def first_incomplete_section(incomplete: tuple[str, ...]) -> str | None:
-    """Return the first section ID in canonical order that's incomplete."""
+    """Return the first section ID in canonical order that's incomplete.
 
+    The dynamic NAS-credentials section is not part of the static
+    :data:`SETTINGS_SECTIONS` tuple, so it is folded into the canonical
+    order here (right after ``equipment``) -- otherwise an
+    ``INCOMPLETE_NO_NAS_CREDENTIAL`` install would auto-select nothing
+    and land the operator on the default section (rclone-only migration,
+    2026-05-26).
+    """
+    order: list[str] = []
     for section in SETTINGS_SECTIONS:
+        order.append(section)
+        if section == "equipment":
+            order.append(NAS_CREDENTIALS_SECTION)
+    for section in order:
         if section in incomplete:
             return section
     return None
