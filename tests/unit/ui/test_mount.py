@@ -163,6 +163,15 @@ class _FakeController:
 # ---------------------------------------------------------------------------
 
 
+# ``_is_setup_ready`` delegates to ``api.setup.compute_setup_state`` (the
+# single source of truth ``/setup/status`` uses), so these assert the
+# delegation -- READY -> True, any INCOMPLETE_* -> False -- across the
+# real §4.9 gate chain rather than a hand-rolled LIMS-only mirror. The
+# fully-satisfied configs use ``_nas_config`` because the real evaluator
+# requires non-empty equipment, ``plugin_dir``, and orchestrator identity
+# that the lightweight ``_config`` stand-in deliberately omits.
+
+
 def test_is_setup_ready_false_when_deps_none() -> None:
     assert mount._is_setup_ready(None) is False
 
@@ -172,24 +181,32 @@ def test_is_setup_ready_false_when_config_missing() -> None:
 
 
 def test_is_setup_ready_false_when_keyring_missing() -> None:
-    deps = _deps(config=_config(), keyring_password_present=False)
+    """Live-LIMS branch with the keyring password absent -> not ready."""
+    deps = _deps(
+        config=_nas_config(),
+        keyring_password_present=False,
+        lims_reachable=True,
+        nas_password_present={"EQ1"},
+    )
     assert mount._is_setup_ready(deps) is False
 
 
 def test_is_setup_ready_false_when_lims_unreachable() -> None:
     deps = _deps(
-        config=_config(),
+        config=_nas_config(),
         keyring_password_present=True,
         lims_reachable=False,
+        nas_password_present={"EQ1"},
     )
     assert mount._is_setup_ready(deps) is False
 
 
 def test_is_setup_ready_true_when_all_satisfied() -> None:
     deps = _deps(
-        config=_config(),
+        config=_nas_config(),
         keyring_password_present=True,
         lims_reachable=True,
+        nas_password_present={"EQ1"},
     )
     assert mount._is_setup_ready(deps) is True
 
@@ -205,10 +222,16 @@ def test_is_setup_ready_false_when_nas_credential_missing() -> None:
     assert mount._is_setup_ready(deps) is False
 
 
-def test_is_setup_ready_true_when_nas_credential_present() -> None:
+def test_is_setup_ready_true_with_offline_catalogue_lims() -> None:
+    """Regression: LIMS satisfied via the offline catalogue (no keyring
+    password) must read as ready on the main page, matching
+    ``GET /setup/status``. The earlier narrow mirror checked only the
+    LIMS keyring branch and so kept the setup-incomplete banner up for a
+    disconnected-workstation install that the API reported as READY.
+    """
     deps = _deps(
-        config=_nas_config(),
-        keyring_password_present=True,
+        config=_nas_config(offline_catalogue=True),
+        keyring_password_present=False,
         lims_reachable=True,
         nas_password_present={"EQ1"},
     )
@@ -277,8 +300,15 @@ def test_missing_sections_empty_when_fully_configured() -> None:
     assert mount._missing_setup_sections(deps) == ()
 
 
-def _nas_config() -> Any:
-    """Real Config with one password-requiring nas-mode equipment."""
+def _nas_config(*, offline_catalogue: bool = False) -> Any:
+    """Real Config with one password-requiring nas-mode equipment.
+
+    ``offline_catalogue`` swaps the live-LIMS slot (endpoint + email +
+    keyring password) for the offline-catalogue branch
+    (``offline_catalogue_path`` set, no endpoint / email / keyring) --
+    the disconnected-workstation setup that exposed the main-page banner
+    staying up despite a ``READY`` ``/setup/status``.
+    """
     from exlab_wizard.config.models import (
         Config,
         EquipmentConfig,
@@ -288,9 +318,14 @@ def _nas_config() -> Any:
         RcloneSftpTransport,
     )
 
+    lims = (
+        LIMSConfig(offline_catalogue_path="/cat/projects.json")
+        if offline_catalogue
+        else LIMSConfig(endpoint="https://lims.example", email="op@example")
+    )
     return Config(
         paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
-        lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),
+        lims=lims,
         equipment=[
             EquipmentConfig(
                 id="EQ1",

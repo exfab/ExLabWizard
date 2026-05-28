@@ -26,7 +26,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from exlab_wizard.constants import KEYRING_USERNAME_LIMS, AuditScopeKind, RunKind, RunSyncState
+from exlab_wizard.constants import (
+    KEYRING_USERNAME_LIMS,
+    AuditScopeKind,
+    RunKind,
+    RunSyncState,
+    SetupState,
+)
 from exlab_wizard.logging import get_logger
 from exlab_wizard.orchestrator.staging_clear import clear_run_dir
 from exlab_wizard.orchestrator.staging_query import list_staged_runs
@@ -667,25 +673,35 @@ def _nas_credential_missing(deps: Any, config: Any) -> bool:
 
 
 def _is_setup_ready(deps: Any) -> bool:
-    """Mirror ``api.setup.compute_setup_state``'s readiness verdict.
+    """Return True when the §4.9 setup state is ``READY``.
 
-    Re-evaluated here rather than calling the API so the NiceGUI mount
-    stays independent of the setup-state *evaluator*; the keyring read
-    still routes through the shared ``lims_password_present`` helper so
-    a change to that semantics propagates here too. The NAS-credential
-    gate (rclone-only migration, 2026-05-26) is mirrored alongside the
-    LIMS gate so a registered-but-uncredentialed NAS equipment keeps the
-    setup-incomplete banner up rather than reading as ready.
+    Delegates to :func:`api.setup.compute_setup_state` -- the single
+    source of truth that ``GET /api/v1/setup/status``, the route gate,
+    and the banner subline (:func:`_setup_next_action`) all consult --
+    so the main-page setup-incomplete banner agrees with the API's
+    verdict on every gate (paths, orchestrator, equipment, NAS
+    credentials, and *both* LIMS branches).
+
+    An earlier hand-rolled mirror checked only the LIMS *keyring*
+    branch, so it kept the banner up for an otherwise-ready install
+    whose LIMS slot is satisfied by ``offline_catalogue_path`` rather
+    than a stored password -- a disconnected-workstation setup read as
+    perpetually incomplete even though ``/setup/status`` reported
+    ``ready`` (rclone-only migration follow-up, 2026-05-28).
+
+    Best-effort: any evaluation failure degrades to "not ready" so a
+    half-wired backend keeps the operator on the onboarding path rather
+    than leaking a stack trace into the index route.
     """
-    from exlab_wizard.api._dependencies import lims_password_present
-
     if deps is None or getattr(deps, "config", None) is None:
         return False
-    if _nas_credential_missing(deps, deps.config):
+    try:
+        from exlab_wizard.api.setup import compute_setup_state
+
+        return compute_setup_state(deps) is SetupState.READY
+    except Exception as exc:
+        _log.warning("setup-readiness computation failed: %s", exc)
         return False
-    keyring = lims_password_present(deps)
-    lims_reachable = getattr(deps, "lims_reachable", True)
-    return bool(keyring and lims_reachable)
 
 
 def _apply_autostart(deps: Any, enabled: bool) -> None:
