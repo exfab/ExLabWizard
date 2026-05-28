@@ -54,3 +54,9 @@ services:
     volumes:
       - ./nas-data:/srv/${SMB_SHARE}
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "ss -ltn 2>/dev/null | grep -q ':445 '"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+      start_period: 5s

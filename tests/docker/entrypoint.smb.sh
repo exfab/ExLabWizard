@@ -13,8 +13,13 @@ if [ -z "${NAS_PASSWORD}" ]; then
     exit 1
 fi
 
-# smbpasswd -a needs the password twice on stdin; -s reads it silently.
-printf '%s\n%s\n' "${NAS_PASSWORD}" "${NAS_PASSWORD}" | smbpasswd -a -s "${NAS_USER}"
+# smbpasswd needs the password twice on stdin; -s reads it silently. The
+# Samba TDB lives in the container's writable layer and survives a
+# `docker compose restart`, so `-a` (add) fails on the second boot and
+# would crash-loop under `restart: unless-stopped`. Add on first boot,
+# fall back to a plain password change on later boots -- both idempotent.
+printf '%s\n%s\n' "${NAS_PASSWORD}" "${NAS_PASSWORD}" | smbpasswd -a -s "${NAS_USER}" 2>/dev/null \
+    || printf '%s\n%s\n' "${NAS_PASSWORD}" "${NAS_PASSWORD}" | smbpasswd -s "${NAS_USER}"
 smbpasswd -e "${NAS_USER}"
 echo "[entrypoint] set Samba password for ${NAS_USER} (SMB, password auth)"
 
