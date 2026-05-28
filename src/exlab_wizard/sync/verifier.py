@@ -31,7 +31,7 @@ from exlab_wizard.logging import get_logger
 from exlab_wizard.sync.transports import TransportError, TransportErrorKind
 
 if TYPE_CHECKING:
-    from exlab_wizard.sync.transports.rclone import RcloneDriver
+    from exlab_wizard.sync.transports.rclone import CheckResult, RcloneDriver
 
 __all__ = ["Verifier", "VerifyResult"]
 
@@ -67,6 +67,27 @@ class VerifyResult:
     # path does not have to re-derive it from ``job.files`` minus the
     # bad subsets.
     verified: tuple[str, ...] = ()
+
+    @classmethod
+    def from_check_result(cls, check_result: CheckResult) -> VerifyResult:
+        """Translate a successful ``rclone check`` into a :class:`VerifyResult`.
+
+        ``ok`` is True iff nothing differs, nothing is missing on the
+        destination, and rclone reported no per-file errors. ``extra``
+        (present on the destination only) is carried for reporting but
+        does not flip ``ok``. The single source of truth for the
+        ``CheckResult -> VerifyResult`` mapping shared by the queue
+        worker, the ``force_verify`` path, and :meth:`Verifier.verify`.
+        """
+        ok = not check_result.differ and not check_result.missing_on_dst and not check_result.errors
+        return cls(
+            ok=ok,
+            mismatched=check_result.differ,
+            missing=check_result.missing_on_dst,
+            extra=check_result.extra_on_dst,
+            errors=check_result.errors,
+            verified=check_result.equal,
+        )
 
 
 class Verifier:
@@ -116,12 +137,4 @@ class Verifier:
                 error_kind=exc.error_kind,
             )
 
-        ok = not check_result.differ and not check_result.missing_on_dst and not check_result.errors
-        return VerifyResult(
-            ok=ok,
-            mismatched=check_result.differ,
-            missing=check_result.missing_on_dst,
-            extra=check_result.extra_on_dst,
-            errors=check_result.errors,
-            verified=check_result.equal,
-        )
+        return VerifyResult.from_check_result(check_result)

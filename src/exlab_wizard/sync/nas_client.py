@@ -58,7 +58,7 @@ from exlab_wizard.sync.transports.rclone import (
     obscure,
     pass_env_keys_for,
 )
-from exlab_wizard.sync.verifier import Verifier, VerifyResult
+from exlab_wizard.sync.verifier import VerifyResult
 from exlab_wizard.utils.time import utc_now, utc_now_iso
 from exlab_wizard.validator.engine import Validator
 from exlab_wizard.validator.findings import Finding
@@ -282,7 +282,6 @@ class NASSyncClient:
         validator: Validator,
         cache_creation: CreationWriter,
         sync_state_writer: SyncStateWriter | None = None,
-        verifier: Verifier | None = None,
         keyring_store: Any = None,
         worker_poll_interval_s: float = 0.05,
         push_callable_factory: Callable[[EquipmentConfig], Callable[..., Any]] | None = None,
@@ -294,7 +293,6 @@ class NASSyncClient:
         self._validator = validator
         self._cache_creation = cache_creation
         self._sync_state_writer = sync_state_writer or SyncStateWriter()
-        self._verifier = verifier or Verifier()
         # Operator-typed NAS passwords are resolved from the keyring on
         # every push so a credential cleared / replaced mid-flight
         # surfaces as the next push's AUTH failure rather than silently
@@ -484,15 +482,7 @@ class NASSyncClient:
         finally:
             with contextlib.suppress(OSError):
                 files_from.unlink()
-        ok = not check_result.differ and not check_result.missing_on_dst and not check_result.errors
-        return VerifyResult(
-            ok=ok,
-            mismatched=check_result.differ,
-            missing=check_result.missing_on_dst,
-            extra=check_result.extra_on_dst,
-            errors=check_result.errors,
-            verified=check_result.equal,
-        )
+        return VerifyResult.from_check_result(check_result)
 
     # ----------------------------------------------------------- worker
 
@@ -661,19 +651,7 @@ class NASSyncClient:
                     )
                     return
                 else:
-                    ok = (
-                        not check_result.differ
-                        and not check_result.missing_on_dst
-                        and not check_result.errors
-                    )
-                    verify_result = VerifyResult(
-                        ok=ok,
-                        mismatched=check_result.differ,
-                        missing=check_result.missing_on_dst,
-                        extra=check_result.extra_on_dst,
-                        errors=check_result.errors,
-                        verified=check_result.equal,
-                    )
+                    verify_result = VerifyResult.from_check_result(check_result)
             finally:
                 if check_files_from is not None and check_files_from is not files_from_path:
                     with contextlib.suppress(OSError):
