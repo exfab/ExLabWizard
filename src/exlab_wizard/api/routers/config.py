@@ -19,7 +19,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
-from exlab_wizard.api._dependencies import lims_password_present, require_deps
+from exlab_wizard.api._dependencies import (
+    lims_password_present,
+    nas_password_present,
+    require_deps,
+)
 from exlab_wizard.config.models import Config, EquipmentConfig, config_with_equipment_appended
 from exlab_wizard.constants import SetupState
 from exlab_wizard.errors import ConfigError
@@ -92,14 +96,16 @@ def build_config_router() -> APIRouter:
             await _await_or_call(saver, body)
         deps.config = body
         # Re-evaluate setup state with the new config.
+        nas_lookup = lambda equipment_id: nas_password_present(deps, equipment_id)  # noqa: E731
         state = evaluate_setup_state(
             deps.config,
             lims_reachable=getattr(deps, "lims_reachable", True),
             keyring_password_present=lims_password_present(deps),
+            nas_password_present_for=nas_lookup,
         )
         return ConfigUpdateResponse(
             state=state.value,
-            missing=setup_state_missing(state, deps.config),
+            missing=setup_state_missing(state, deps.config, nas_password_present_for=nas_lookup),
             next_action=setup_state_next_action(state),
             ready=state is SetupState.READY,
         )
@@ -126,15 +132,17 @@ def build_config_router() -> APIRouter:
         if saver is not None:
             await _await_or_call(saver, new_config)
         deps.config = new_config
+        nas_lookup = lambda equipment_id: nas_password_present(deps, equipment_id)  # noqa: E731
         state = evaluate_setup_state(
             deps.config,
             lims_reachable=getattr(deps, "lims_reachable", True),
             keyring_password_present=lims_password_present(deps),
+            nas_password_present_for=nas_lookup,
         )
         return EquipmentAppendResponse(
             appended_id=body.id,
             state=state.value,
-            missing=setup_state_missing(state, deps.config),
+            missing=setup_state_missing(state, deps.config, nas_password_present_for=nas_lookup),
             next_action=setup_state_next_action(state),
             ready=state is SetupState.READY,
         )

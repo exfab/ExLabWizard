@@ -49,7 +49,15 @@ from exlab_wizard.constants import enums
         (enums.Platform, frozenset({"macos", "windows", "linux"})),
         (
             enums.SetupNextAction,
-            frozenset({"set_paths", "add_equipment", "configure_lims", "test_lims"}),
+            frozenset(
+                {
+                    "set_paths",
+                    "add_equipment",
+                    "set_nas_credentials",
+                    "configure_lims",
+                    "test_lims",
+                }
+            ),
         ),
         (enums.SyncHandleState, frozenset({"queued", "blocked"})),
         (enums.PluginSourceRoot, frozenset({"bundled", "lab"})),

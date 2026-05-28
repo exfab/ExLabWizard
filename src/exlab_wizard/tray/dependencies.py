@@ -26,7 +26,8 @@ from typing import Any
 
 from exlab_wizard.api.app import AppDependencies
 from exlab_wizard.config.loader import load_config, save_config
-from exlab_wizard.constants import KEYRING_USERNAME_LIMS
+from exlab_wizard.constants import KEYRING_USERNAME_LIMS, SyncMode
+from exlab_wizard.constants.keyring import keyring_nas_username
 from exlab_wizard.logging import get_logger
 from exlab_wizard.paths import os_config_path
 from exlab_wizard.tray.autostart import AutostartManager
@@ -119,7 +120,22 @@ def build_production_dependencies(state_dir: Path) -> AppDependencies:
     )
 
     deps.autostart_toggle = _make_autostart_toggle()
-    deps.equipment_probe = None
+
+    # Rclone-only NAS sync migration (2026-05-26). The per-equipment NAS
+    # password-presence set drives the §4.9 setup gate and the Settings
+    # credential field's "Set / Not set" badge. Hydrated once at tray
+    # boot; the Settings handlers mutate it on Save / Clear so the gate
+    # flips without waiting for a relaunch.
+    deps.nas_password_present = (
+        _try(
+            "nas_password_check",
+            _check_nas_passwords_present,
+            keyring_store,
+            deps.config,
+        )
+        or set()
+    )
+    deps.equipment_probe = _make_equipment_probe(deps)
 
     deps.session_store_snapshot = _make_session_store_snapshot(deps)
 
@@ -327,6 +343,113 @@ def _build_lims_client(config: Any, keyring_store: Any) -> Any:
         email=email,
         keyring_password_provider=_provider,
     )
+
+
+def _nas_keyring_password(keyring_store: Any, equipment_id: str) -> str | None:
+    """Return the stored NAS password for ``equipment_id`` or ``None``.
+
+    The credential lives under ``(KEYRING_SERVICE,
+    keyring_nas_username(equipment_id))``. ``KeyringStore.get_password``
+    is keyword-only; any backend error or absent entry degrades to
+    ``None`` so callers treat the password as not-yet-configured rather
+    than crashing.
+    """
+    if keyring_store is None:
+        return None
+    getter = getattr(keyring_store, "get_password", None)
+    if getter is None:
+        return None
+    with contextlib.suppress(Exception):
+        return getter(username=keyring_nas_username(equipment_id))
+    return None
+
+
+def _check_nas_passwords_present(keyring_store: Any, config: Any) -> set[str]:
+    """Return the set of nas-mode equipment ids that have a keyring entry.
+
+    Rclone-only NAS sync migration (2026-05-26). Iterates the
+    nas-mode equipment whose transport requires a keyring-stored
+    password, returning the subset whose entry is populated. The
+    output is the hydrated form of ``deps.nas_password_present`` and
+    feeds straight into :func:`paths.evaluate_setup_state`.
+    """
+    if keyring_store is None or config is None:
+        return set()
+    from exlab_wizard.config.models import transport_requires_keyring_password
+
+    out: set[str] = set()
+    for eq in getattr(config, "equipment", ()) or ():
+        if eq.sync_mode != SyncMode.NAS:
+            continue
+        if not transport_requires_keyring_password(eq.transport):
+            continue
+        if _nas_keyring_password(keyring_store, eq.id):
+            out.add(eq.id)
+    return out
+
+
+def _make_equipment_probe(deps: AppDependencies) -> Any:
+    """Build the ``deps.equipment_probe`` callable.
+
+    Rclone-only NAS sync migration (2026-05-26). The probe takes the
+    already-resolved :class:`EquipmentConfig` (the
+    ``POST /setup/test-equipment`` endpoint hands it in), reads the
+    keyring password under :func:`keyring_nas_username`, runs
+    ``rclone obscure -``, builds the per-backend env, and calls
+    :meth:`RcloneDriver.about`. Returns the canonical
+    ``{"ok", "reason", "latency_ms"}`` dict the endpoint surfaces.
+
+    A missing keyring entry short-circuits with
+    ``ok=False, reason="password not set in keyring"`` -- the probe
+    never spawns rclone in that case so the operator sees the gate
+    reason rather than an opaque rclone auth error.
+    """
+
+    async def _probe(equipment: Any) -> dict[str, Any]:
+        if equipment is None:
+            return {"ok": False, "reason": "no matching equipment configuration"}
+        keyring_store = getattr(deps, "keyring_store", None)
+        if keyring_store is None:
+            return {"ok": False, "reason": "OS keyring is unavailable"}
+        password = _nas_keyring_password(keyring_store, equipment.id)
+        if not password:
+            return {"ok": False, "reason": "password not set in keyring"}
+        # Local imports keep ``tray.dependencies`` cheap to load (the
+        # rclone driver pulls in subprocess + asyncio plumbing the tray
+        # otherwise wouldn't need until first sync).
+        from exlab_wizard.sync.nas_client import _remote_name_for
+        from exlab_wizard.sync.transports.rclone import (
+            RcloneDriver,
+            build_rclone_env,
+            obscure,
+            pass_env_keys_for,
+        )
+
+        try:
+            obscured = await obscure(password)
+        except Exception as exc:
+            return {"ok": False, "reason": f"rclone obscure failed: {exc}"}
+        remote_name = _remote_name_for(equipment)
+        env = build_rclone_env(
+            transport=equipment.transport,
+            password_obscured=obscured,
+            remote_name=remote_name,
+        )
+        mask_for_log = pass_env_keys_for(remote_name)
+        driver = RcloneDriver()
+        import time
+
+        started = time.monotonic()
+        try:
+            about = await driver.about(remote_name, env=env, mask_for_log=mask_for_log)
+        except Exception as exc:
+            return {"ok": False, "reason": str(exc)}
+        latency_ms = int((time.monotonic() - started) * 1000)
+        if not about.ok:
+            return {"ok": False, "reason": about.reason, "latency_ms": latency_ms}
+        return {"ok": True, "reason": None, "latency_ms": latency_ms}
+
+    return _probe
 
 
 def _make_lims_probe(deps: AppDependencies) -> Any:

@@ -27,12 +27,15 @@ from exlab_wizard.config.models import (
     RcloneSftpTransport,
 )
 from exlab_wizard.constants import KEYRING_USERNAME_LIMS, SyncMode
+from exlab_wizard.constants.keyring import keyring_nas_username
 from exlab_wizard.lims.keyring_store import KeyringStore
 from exlab_wizard.sync.nas_client import NASSyncClient
 from exlab_wizard.tray import dependencies as deps_module
 from exlab_wizard.tray.dependencies import (
     _build_lims_client,
     _check_keyring_present,
+    _check_nas_passwords_present,
+    _make_equipment_probe,
     build_production_dependencies,
 )
 
@@ -145,3 +148,86 @@ def test_lims_client_password_provider_reads_keyring_under_lims_username(
         client = _build_lims_client(config, store)
 
         assert client._password_provider() == "hunter2"
+
+
+# ---------------------------------------------------------------------------
+# NAS password presence + equipment probe
+# ---------------------------------------------------------------------------
+
+
+def _nas_config_with_two_equipment() -> Config:
+    """Build a two-equipment nas-mode config for the NAS-presence tests."""
+    return Config(
+        paths=PathsConfig(local_root="/data"),
+        equipment=[
+            EquipmentConfig(
+                id="EQ1",
+                label="One",
+                local_root="/data",
+                nas_root="/srv/nas",
+                sync_mode=SyncMode.NAS,
+                transport=RcloneSftpTransport(
+                    type="rclone_sftp",
+                    host="nas.lab.example",
+                    user="alice",
+                    remote_path="lab/EQ1",
+                ),
+            ),
+            EquipmentConfig(
+                id="EQ2",
+                label="Two",
+                local_root="/data",
+                nas_root="/srv/nas",
+                sync_mode=SyncMode.NAS,
+                transport=RcloneSftpTransport(
+                    type="rclone_sftp",
+                    host="nas.lab.example",
+                    user="bob",
+                    remote_path="lab/EQ2",
+                ),
+            ),
+        ],
+    )
+
+
+def test_check_nas_passwords_present_returns_only_populated_ids(
+    tmp_path: Path,
+) -> None:
+    with _swap_keyring(_InMemoryKeyring()):
+        store = KeyringStore(state_dir=tmp_path)
+        # Only EQ1 has its keyring entry; EQ2 must not appear.
+        store.set_password(username=keyring_nas_username("EQ1"), password="hunter2")
+        config = _nas_config_with_two_equipment()
+
+        present = _check_nas_passwords_present(store, config)
+
+        assert present == {"EQ1"}
+
+
+def test_check_nas_passwords_present_handles_none_store_and_config() -> None:
+    config = _nas_config_with_two_equipment()
+    assert _check_nas_passwords_present(None, config) == set()
+    assert _check_nas_passwords_present(object(), None) == set()
+
+
+def test_make_equipment_probe_short_circuits_when_password_missing(
+    tmp_path: Path,
+) -> None:
+    """Missing keyring entry must not spawn rclone."""
+    import asyncio
+
+    with _swap_keyring(_InMemoryKeyring()):
+        store = KeyringStore(state_dir=tmp_path)
+        config = _nas_config_with_two_equipment()
+
+        deps = build_production_dependencies(tmp_path)
+        # Override the wired store with our in-memory one so the probe
+        # consults the same backend we control.
+        deps.keyring_store = store
+        deps.config = config
+
+        probe = _make_equipment_probe(deps)
+        result = asyncio.run(probe(config.equipment[0]))
+
+        assert result["ok"] is False
+        assert "password not set" in (result["reason"] or "")

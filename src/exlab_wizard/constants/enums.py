@@ -150,6 +150,7 @@ class SetupState(StrEnum):
     INCOMPLETE_MISSING_PATHS = "incomplete_missing_paths"
     INCOMPLETE_NO_ORCHESTRATOR = "incomplete_no_orchestrator"
     INCOMPLETE_NO_EQUIPMENT = "incomplete_no_equipment"
+    INCOMPLETE_NO_NAS_CREDENTIAL = "incomplete_no_nas_credential"
     INCOMPLETE_NO_LIMS = "incomplete_no_lims"
     INCOMPLETE_LIMS_UNREACHABLE = "incomplete_lims_unreachable"
     READY = "ready"
@@ -309,6 +310,7 @@ class SetupNextAction(StrEnum):
 
     SET_PATHS = "set_paths"
     ADD_EQUIPMENT = "add_equipment"
+    SET_NAS_CREDENTIALS = "set_nas_credentials"
     CONFIGURE_LIMS = "configure_lims"
     TEST_LIMS = "test_lims"
 

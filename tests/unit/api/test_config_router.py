@@ -68,7 +68,10 @@ def test_put_config_persists_and_reevaluates_state() -> None:
     async def saver(config: Config) -> None:
         captured["saved"] = config
 
-    deps = AppDependencies(config=_empty_config(), save_config=saver)
+    # Pre-stamp the NAS presence for the equipment id the new config
+    # introduces so the NAS-credential gate (which now precedes the
+    # LIMS gate) does not steal this test's verdict.
+    deps = AppDependencies(config=_empty_config(), save_config=saver, nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     new_config = _ready_config()
@@ -133,7 +136,7 @@ def test_append_equipment_persists_and_re_evaluates_state() -> None:
 
 
 def test_append_equipment_rejects_duplicate_id() -> None:
-    deps = AppDependencies(config=_ready_config())
+    deps = AppDependencies(config=_ready_config(), nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     duplicate = EquipmentConfig.model_validate(

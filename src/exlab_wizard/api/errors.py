@@ -80,6 +80,7 @@ ERROR_CODES: frozenset[str] = frozenset(
         "schema_major_mismatch",
         "equipment_id_invalid",
         "equipment_id_conflict",
+        "equipment_not_found",
         "field_too_long",
         "disk_space_insufficient",
         "plugin_host_unavailable",

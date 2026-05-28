@@ -23,7 +23,7 @@ from exlab_wizard.config.models import (
     LIMSConfig,
     PathsConfig,
 )
-from exlab_wizard.constants import RunKind, SetupState
+from exlab_wizard.constants import RunKind, SetupNextAction, SetupState
 from exlab_wizard.errors import ConfigError
 from exlab_wizard.paths import (
     canonicalize_equipment_id,
@@ -798,6 +798,58 @@ def test_evaluate_setup_state_keyring_missing() -> None:
     assert (
         evaluate_setup_state(config, keyring_password_present=False)
         is SetupState.INCOMPLETE_NO_LIMS
+    )
+
+
+def test_evaluate_setup_state_nas_keyring_missing() -> None:
+    """Nas-mode equipment without its keyring entry gates with the new state."""
+    config = _ready_config()
+    state = evaluate_setup_state(config, nas_password_present_for=lambda _id: False)
+    assert state is SetupState.INCOMPLETE_NO_NAS_CREDENTIAL
+
+
+def test_evaluate_setup_state_nas_state_precedes_lims_state() -> None:
+    """A configured LIMS does not mask the missing NAS credential."""
+    config = _ready_config()
+    state = evaluate_setup_state(
+        config,
+        keyring_password_present=False,
+        nas_password_present_for=lambda _id: False,
+    )
+    # NAS slot is checked before LIMS in the gate order.
+    assert state is SetupState.INCOMPLETE_NO_NAS_CREDENTIAL
+
+
+def test_evaluate_setup_state_nas_state_resolves_once_password_added() -> None:
+    """Adding the keyring entry advances the state to the next gate."""
+    config = _ready_config()
+    state = evaluate_setup_state(
+        config,
+        nas_password_present_for=lambda equipment_id: equipment_id == "CONFOCAL_01",
+    )
+    assert state is SetupState.READY
+
+
+def test_setup_state_missing_for_no_nas_credential_lists_per_equipment() -> None:
+    """The missing list names each equipment id whose keyring entry is absent."""
+    from exlab_wizard.paths import setup_state_missing
+
+    config = _ready_config()
+    missing = setup_state_missing(
+        SetupState.INCOMPLETE_NO_NAS_CREDENTIAL,
+        config,
+        nas_password_present_for=lambda _id: False,
+    )
+    fields = {entry["field"] for entry in missing}
+    assert fields == {"equipment.CONFOCAL_01.nas_password"}
+
+
+def test_setup_state_next_action_for_no_nas_credential() -> None:
+    from exlab_wizard.paths import setup_state_next_action
+
+    assert (
+        setup_state_next_action(SetupState.INCOMPLETE_NO_NAS_CREDENTIAL)
+        is SetupNextAction.SET_NAS_CREDENTIALS
     )
 
 

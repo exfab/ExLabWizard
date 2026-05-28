@@ -28,7 +28,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from exlab_wizard.api._dependencies import lims_password_present, require_deps
+from exlab_wizard.api._dependencies import (
+    lims_password_present,
+    nas_password_present,
+    require_deps,
+)
 from exlab_wizard.config.models import (
     EquipmentConfig,
     EquipmentTransport,
@@ -93,12 +97,19 @@ class LIMSTestRequest(BaseModel):
 
 
 class EquipmentTestRequest(BaseModel):
-    """``POST /setup/test-equipment`` request body."""
+    """``POST /setup/test-equipment`` request body.
+
+    Rclone-only NAS sync migration (2026-05-26). The pre-save
+    body-equipment path was removed: the probe needs the keyring
+    password, which is looked up by equipment id, and a candidate
+    equipment that hasn't been saved yet cannot have a keyring entry
+    by definition. Callers must therefore reference an already-saved
+    equipment by id.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    equipment: EquipmentConfig | None = None
-    equipment_id: str | None = None
+    equipment_id: str
 
 
 class ProbeResult(BaseModel):
@@ -144,14 +155,17 @@ class AutostartResult(BaseModel):
 def compute_setup_state(deps: Any) -> SetupState:
     """Evaluate the §4.9.1 state for the app's current dependencies.
 
-    The dependency object exposes ``config`` and a
-    ``lims_reachable`` boolean (cached at startup; the
-    ``POST /setup/test-lims`` endpoint refreshes it).
+    The dependency object exposes ``config``, a ``lims_reachable``
+    boolean (cached at startup; the ``POST /setup/test-lims`` endpoint
+    refreshes it), and (rclone-only NAS sync migration, 2026-05-26)
+    the ``nas_password_present`` set of equipment ids with stored
+    keyring passwords.
     """
     return evaluate_setup_state(
         deps.config,
         lims_reachable=getattr(deps, "lims_reachable", True),
         keyring_password_present=lims_password_present(deps),
+        nas_password_present_for=lambda equipment_id: nas_password_present(deps, equipment_id),
     )
 
 
@@ -183,7 +197,11 @@ def setup_state_gate(request: Request) -> None:
     state = compute_setup_state(deps)
     if not is_creation_blocked(state):
         return
-    missing = setup_state_missing(state, deps.config)
+    missing = setup_state_missing(
+        state,
+        deps.config,
+        nas_password_present_for=lambda equipment_id: nas_password_present(deps, equipment_id),
+    )
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail={
@@ -210,7 +228,13 @@ def build_setup_router() -> APIRouter:
         state = compute_setup_state(deps)
         return SetupStatusResponse(
             state=state.value,
-            missing=setup_state_missing(state, deps.config),
+            missing=setup_state_missing(
+                state,
+                deps.config,
+                nas_password_present_for=lambda equipment_id: nas_password_present(
+                    deps, equipment_id
+                ),
+            ),
             next_action=setup_state_next_action(state),
             ready=state is SetupState.READY,
         )
@@ -235,9 +259,7 @@ def build_setup_router() -> APIRouter:
         return TestResult(ok=bool(result))
 
     @router.post("/test-equipment", response_model=TestResult)
-    async def test_equipment(
-        request: Request, body: TestEquipmentRequest | None = None
-    ) -> TestResult:
+    async def test_equipment(request: Request, body: TestEquipmentRequest) -> TestResult:
         deps = require_deps(request)
         probe = getattr(deps, "equipment_probe", None)
         if probe is None:
@@ -247,7 +269,13 @@ def build_setup_router() -> APIRouter:
             )
         equipment = _resolve_equipment(deps, body)
         if equipment is None:
-            return TestResult(ok=False, reason="no matching equipment configuration")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "equipment_not_found",
+                    "message": f"no equipment with id {body.equipment_id!r}",
+                },
+            )
         try:
             result = await _await_or_call(probe, equipment)
         except Exception as exc:
@@ -298,25 +326,23 @@ def _coerce_probe_dict(payload: dict[str, Any]) -> ProbeResult:
     )
 
 
-def _resolve_equipment(deps: Any, body: TestEquipmentRequest | None) -> EquipmentConfig | None:
-    """Pick the equipment to probe.
+def _resolve_equipment(deps: Any, body: TestEquipmentRequest) -> EquipmentConfig | None:
+    """Resolve the equipment to probe by id through ``deps.config``.
 
-    ``body.equipment`` wins when supplied (Settings UI's pre-save
-    "Test connection" affordance). Otherwise ``body.equipment_id``
-    resolves through the loaded config. Otherwise the first configured
-    equipment is used so the endpoint is callable with an empty body.
+    Rclone-only NAS sync migration (2026-05-26). The endpoint requires
+    ``equipment_id`` -- the probe needs the keyring password, which is
+    keyed by equipment id, so a body-equipment candidate that has not
+    been saved yet cannot satisfy the probe. Returns ``None`` when the
+    config is unloaded, the equipment list is empty, or the id does
+    not match a registered entry.
     """
-    if body is not None and body.equipment is not None:
-        return body.equipment
     config = getattr(deps, "config", None)
     if config is None or not getattr(config, "equipment", None):
         return None
-    if body is not None and body.equipment_id:
-        for entry in config.equipment:
-            if entry.id == body.equipment_id:
-                return entry
-        return None
-    return config.equipment[0]
+    for entry in config.equipment:
+        if entry.id == body.equipment_id:
+            return entry
+    return None
 
 
 async def _await_or_call(callable_: Callable[..., Any], *args: Any) -> Any:

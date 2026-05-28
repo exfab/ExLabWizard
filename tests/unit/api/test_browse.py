@@ -93,7 +93,7 @@ def test_get_tree_lists_equipment_and_projects(tmp_path: Path) -> None:
     _write_creation_json(run_dir)
     _write_creation_json(project_dir)
 
-    deps = AppDependencies(config=_config_with_local_root(local_root))
+    deps = AppDependencies(config=_config_with_local_root(local_root), nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.get("/api/v1/tree")
@@ -139,7 +139,7 @@ def test_get_run_returns_detail(tmp_path: Path) -> None:
     _write_creation_json(run_dir)
     (run_dir / README_FILE_NAME).write_text("# README\n", encoding="utf-8")
 
-    deps = AppDependencies(config=_config_with_local_root(local_root))
+    deps = AppDependencies(config=_config_with_local_root(local_root), nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.get(f"/api/v1/run/{run_dir}")
@@ -153,7 +153,7 @@ def test_get_run_returns_detail(tmp_path: Path) -> None:
 def test_get_run_404_when_creation_missing(tmp_path: Path) -> None:
     local_root = tmp_path / "data"
     local_root.mkdir()
-    deps = AppDependencies(config=_config_with_local_root(local_root))
+    deps = AppDependencies(config=_config_with_local_root(local_root), nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     bogus = local_root / "no_such_dir"
@@ -172,7 +172,7 @@ def test_get_tree_skips_unknown_dirs(tmp_path: Path) -> None:
     # An unmanaged sub-folder under the project; should NOT appear in
     # ``runs`` because it does not start with ``Run_``.
     (project_dir / "scratch").mkdir()
-    deps = AppDependencies(config=_config_with_local_root(local_root))
+    deps = AppDependencies(config=_config_with_local_root(local_root), nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     body = client.get("/api/v1/tree").json()
@@ -192,7 +192,7 @@ def test_get_tree_includes_test_runs(tmp_path: Path) -> None:
     test_run = test_runs_marker / f"{TEST_RUN_DIR_PREFIX}2026-04-17T14-00-00"
     test_run.mkdir(parents=True)
     _write_creation_json(test_run)
-    deps = AppDependencies(config=_config_with_local_root(local_root))
+    deps = AppDependencies(config=_config_with_local_root(local_root), nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     body = client.get("/api/v1/tree").json()
@@ -213,7 +213,7 @@ def test_get_run_returns_422_when_creation_json_malformed(tmp_path: Path) -> Non
 
     (run_dir / CACHE_DIR_NAME).mkdir(exist_ok=True)
     (run_dir / CACHE_DIR_NAME / CREATION_JSON_NAME).write_bytes(b"not json")
-    deps = AppDependencies(config=_config_with_local_root(local_root))
+    deps = AppDependencies(config=_config_with_local_root(local_root), nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.get(f"/api/v1/run/{run_dir}")
@@ -228,7 +228,7 @@ def test_get_run_returns_none_readme_when_absent(tmp_path: Path) -> None:
     run_dir = local_root / "EQ1" / "PROJ-0042" / "Run_2026-04-17T14-00-00"
     run_dir.mkdir(parents=True)
     _write_creation_json(run_dir)
-    deps = AppDependencies(config=_config_with_local_root(local_root))
+    deps = AppDependencies(config=_config_with_local_root(local_root), nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.get(f"/api/v1/run/{run_dir}")
@@ -248,7 +248,7 @@ def test_get_folder_returns_immediate_contents(tmp_path: Path) -> None:
     (folder / "scan.tif").write_bytes(b"\x00" * 1024)
     (folder / "metadata.json").write_text('{"k": "v"}', encoding="utf-8")
     (folder / "subdir").mkdir()
-    deps = AppDependencies(config=_config_with_local_root(local_root))
+    deps = AppDependencies(config=_config_with_local_root(local_root), nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.get(f"/api/v1/folder/{folder}")
@@ -263,7 +263,9 @@ def test_get_folder_returns_immediate_contents(tmp_path: Path) -> None:
 
 
 def test_get_folder_404_on_vanished_path(tmp_path: Path) -> None:
-    deps = AppDependencies(config=_config_with_local_root(tmp_path / "data"))
+    deps = AppDependencies(
+        config=_config_with_local_root(tmp_path / "data"), nas_password_present={"EQ1"}
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.get(f"/api/v1/folder/{tmp_path / 'does-not-exist'}")
@@ -274,7 +276,7 @@ def test_get_folder_404_on_vanished_path(tmp_path: Path) -> None:
 def test_get_tree_includes_sync_mode_on_equipment(tmp_path: Path) -> None:
     local_root = tmp_path / "data"
     local_root.mkdir()
-    deps = AppDependencies(config=_config_with_local_root(local_root))
+    deps = AppDependencies(config=_config_with_local_root(local_root), nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     body = client.get("/api/v1/tree").json()
@@ -291,7 +293,7 @@ def test_get_folder_rejects_path_outside_configured_roots(tmp_path: Path) -> Non
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "secret.txt").write_text("nope")
-    deps = AppDependencies(config=_config_with_local_root(local_root))
+    deps = AppDependencies(config=_config_with_local_root(local_root), nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.get(f"/api/v1/folder/{outside}")
@@ -340,6 +342,7 @@ def test_get_run_log_returns_queue_derived_history(tmp_path: Path) -> None:
     nas_sync = _StubNasSync(_StubJobRow(run_path=str(run_dir), state="verified"))
     deps = AppDependencies(
         config=_config_with_local_root(tmp_path / "data"),
+        nas_password_present={"EQ1"},
         nas_sync=nas_sync,
     )
     app = create_app(dependencies=deps)
@@ -373,6 +376,7 @@ def test_get_run_log_forwards_failure_extras_in_payload(tmp_path: Path) -> None:
     row.nas_path = "/srv/nas/EQ1/run"
     deps = AppDependencies(
         config=_config_with_local_root(tmp_path / "data"),
+        nas_password_present={"EQ1"},
         nas_sync=_StubNasSync(row),
     )
     app = create_app(dependencies=deps)
@@ -393,6 +397,7 @@ def test_get_run_log_empty_history_when_no_queue_job(tmp_path: Path) -> None:
     run_dir.mkdir(parents=True)
     deps = AppDependencies(
         config=_config_with_local_root(tmp_path / "data"),
+        nas_password_present={"EQ1"},
         nas_sync=_StubNasSync(),
     )
     app = create_app(dependencies=deps)
@@ -406,7 +411,7 @@ def test_get_run_log_empty_history_when_no_queue_job(tmp_path: Path) -> None:
 
 def test_get_run_log_404_when_run_missing(tmp_path: Path) -> None:
     """A run directory that does not exist returns 404 ``session_not_found``."""
-    deps = AppDependencies(config=_config_with_local_root(tmp_path))
+    deps = AppDependencies(config=_config_with_local_root(tmp_path), nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     resp = client.get(f"/api/v1/run/{tmp_path}/nope/log")
@@ -630,7 +635,7 @@ def test_build_run_node_rollup_from_sync_state(tmp_path: Path) -> None:
         run_dir,
         {"scan.tif": {"synced_signature": (10, 1), "verified_at": "2026-05-21T01:00:00Z"}},
     )
-    deps = AppDependencies(config=_config_with_local_root(local_root))
+    deps = AppDependencies(config=_config_with_local_root(local_root), nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     body = client.get("/api/v1/tree").json()
@@ -647,7 +652,7 @@ def test_build_run_node_rollup_cleared(tmp_path: Path) -> None:
         {"scan.tif": {"synced_signature": (10, 1), "verified_at": "2026-05-21T01:00:00Z"}},
         cleared=True,
     )
-    deps = AppDependencies(config=_config_with_local_root(local_root))
+    deps = AppDependencies(config=_config_with_local_root(local_root), nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     body = client.get("/api/v1/tree").json()

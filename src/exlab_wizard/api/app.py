@@ -179,6 +179,12 @@ class AppDependencies:
     # Setup-state inputs ------------------------------------------------
     lims_reachable: bool = True
     keyring_password_present: bool = True
+    # Per-equipment NAS-password presence set (rclone-only NAS sync
+    # migration, 2026-05-26). Hydrated once at tray boot from the
+    # keyring; mutated by the Settings UI's Save / Clear handlers. The
+    # ``nas_password_present`` reader in ``api/_dependencies.py`` is
+    # the only allowed read path.
+    nas_password_present: set[str] = field(default_factory=set)
     lims_reason: str | None = None
 
     # Restart-required gate ---------------------------------------------

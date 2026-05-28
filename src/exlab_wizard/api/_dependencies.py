@@ -22,6 +22,7 @@ from fastapi import HTTPException, Request, status
 
 __all__ = [
     "lims_password_present",
+    "nas_password_present",
     "require_controller",
     "require_deps",
 ]
@@ -45,6 +46,30 @@ def lims_password_present(deps: Any) -> bool:
     if deps is None:
         return False
     return bool(getattr(deps, "keyring_password_present", False))
+
+
+def nas_password_present(deps: Any, equipment_id: str) -> bool:
+    """Return whether the NAS keyring password is set for ``equipment_id``.
+
+    Rclone-only NAS sync migration (2026-05-26). Mirrors
+    :func:`lims_password_present`: every surface that asks "is the NAS
+    keyring password set for equipment X?" -- the setup-state evaluator,
+    the per-equipment credential field in Settings, the equipment probe
+    -- routes through here so the default and the ``deps is None``
+    handling stay consistent.
+
+    The presence set is hydrated once at tray boot
+    (``deps.nas_password_present``) and mutated by the Settings UI's
+    Save / Clear handlers; a missing attribute is treated as "no
+    passwords known", which is the correct boot-time default before
+    the field is wired.
+    """
+    if deps is None:
+        return False
+    present = getattr(deps, "nas_password_present", None)
+    if present is None:
+        return False
+    return equipment_id in present
 
 
 def require_deps(request: Request) -> Any:

@@ -41,7 +41,7 @@ def _ready_config() -> Config:
 
 
 def test_health_endpoint_status_ok_with_no_deps() -> None:
-    deps = AppDependencies(config=_ready_config())
+    deps = AppDependencies(config=_ready_config(), nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.get("/api/v1/health")
@@ -53,7 +53,9 @@ def test_health_endpoint_status_ok_with_no_deps() -> None:
 
 
 def test_health_endpoint_warn_when_lims_unreachable() -> None:
-    deps = AppDependencies(config=_ready_config(), lims_reachable=False)
+    deps = AppDependencies(
+        config=_ready_config(), nas_password_present={"EQ1"}, lims_reachable=False
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     body = client.get("/api/v1/health").json()
@@ -89,7 +91,9 @@ def test_component_rollup_handles_none_deps() -> None:
 
 
 def test_health_with_validator_last_audit() -> None:
-    deps = AppDependencies(config=_ready_config(), last_audit_at="2026-05-01T00:00:00Z")
+    deps = AppDependencies(
+        config=_ready_config(), nas_password_present={"EQ1"}, last_audit_at="2026-05-01T00:00:00Z"
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     body = client.get("/api/v1/health").json()
@@ -100,7 +104,9 @@ def test_health_nas_sync_snapshot_failure_marked_warn() -> None:
     def bad() -> dict[str, Any]:
         raise RuntimeError("queue closed")
 
-    deps = AppDependencies(config=_ready_config(), nas_sync_snapshot=bad)
+    deps = AppDependencies(
+        config=_ready_config(), nas_password_present={"EQ1"}, nas_sync_snapshot=bad
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     body = client.get("/api/v1/health").json()

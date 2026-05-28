@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from exlab_wizard.constants import (
     APP_NAME,
@@ -423,11 +424,48 @@ def _paths_complete(config: Config) -> bool:
     return bool(paths.templates_dir and paths.plugin_dir and paths.local_root)
 
 
+def _password_required_equipment(config: Config) -> list[Any]:
+    """Return nas-mode equipment whose transport sources a keyring password.
+
+    Internal helper -- both ``_nas_slot_satisfied`` and
+    ``_missing_nas_fields`` iterate the same subset, so the
+    ``transport_requires_keyring_password`` predicate is applied once and
+    shared.
+    """
+    # Local import: keeps ``paths.py`` a leaf of the import graph.
+    from exlab_wizard.config.models import transport_requires_keyring_password
+    from exlab_wizard.constants import SyncMode
+
+    return [
+        eq
+        for eq in config.equipment
+        if eq.sync_mode == SyncMode.NAS and transport_requires_keyring_password(eq.transport)
+    ]
+
+
+def _nas_slot_satisfied(
+    config: Config,
+    *,
+    nas_password_present_for: Callable[[str], bool],
+) -> bool:
+    """Return True when every nas-mode equipment has its keyring password.
+
+    Rclone-only NAS sync migration (2026-05-26). Every nas-mode
+    equipment whose transport requires a keyring-stored password
+    (currently both SFTP and SMB) must have a populated keyring entry
+    or the slot is incomplete. Equipment without a password-sourcing
+    transport (``stage`` mode, or a hypothetical future password-less
+    backend) do not gate.
+    """
+    return all(nas_password_present_for(eq.id) for eq in _password_required_equipment(config))
+
+
 def evaluate_setup_state(
     config: Config | None,
     *,
     lims_reachable: bool = True,
     keyring_password_present: bool = True,
+    nas_password_present_for: Callable[[str], bool] | None = None,
 ) -> SetupState:
     """Evaluate the §4.9.1 setup state.
 
@@ -437,16 +475,20 @@ def evaluate_setup_state(
     2. ``paths.templates_dir`` / ``plugin_dir`` / ``local_root`` any empty ->
        ``INCOMPLETE_MISSING_PATHS``
     3. equipment list empty -> ``INCOMPLETE_NO_EQUIPMENT``
-    4. lims slot incomplete (no endpoint+email AND no offline_catalogue_path)
+    4. any nas-mode equipment lacks its keyring password ->
+       ``INCOMPLETE_NO_NAS_CREDENTIAL`` (rclone-only migration, 2026-05-26)
+    5. lims slot incomplete (no endpoint+email AND no offline_catalogue_path)
        -> ``INCOMPLETE_NO_LIMS``
-    5. ``lims_reachable`` is ``False`` -> ``INCOMPLETE_LIMS_UNREACHABLE``
-    6. otherwise -> ``READY``
+    6. ``lims_reachable`` is ``False`` -> ``INCOMPLETE_LIMS_UNREACHABLE``
+    7. otherwise -> ``READY``
 
     The ``lims_reachable`` flag is supplied by the caller from the
     ``LIMSClient.health_check()`` result. Default True so unit tests can
     skip the network call. The ``keyring_password_present`` flag stubs the
     keyring lookup so unit tests can exercise every branch without a real
-    keyring backend.
+    keyring backend. ``nas_password_present_for`` defaults to "always
+    True" so legacy callers and tests that don't care about the NAS
+    gate behave as before.
     """
     if config is None:
         return SetupState.INCOMPLETE_NO_CONFIG
@@ -456,6 +498,11 @@ def evaluate_setup_state(
         return SetupState.INCOMPLETE_NO_ORCHESTRATOR
     if not config.equipment:
         return SetupState.INCOMPLETE_NO_EQUIPMENT
+    nas_lookup = (
+        nas_password_present_for if nas_password_present_for is not None else (lambda _id: True)
+    )
+    if not _nas_slot_satisfied(config, nas_password_present_for=nas_lookup):
+        return SetupState.INCOMPLETE_NO_NAS_CREDENTIAL
     if not _lims_slot_satisfied(config, keyring_password_present=keyring_password_present):
         return SetupState.INCOMPLETE_NO_LIMS
     if not lims_reachable:
@@ -472,12 +519,22 @@ def _orchestrator_identity_complete(config: Config) -> bool:
     return bool(config.orchestrator.label and config.orchestrator.staging_root)
 
 
-def setup_state_missing(state: SetupState, config: Config | None) -> list[dict[str, str]]:
+def setup_state_missing(
+    state: SetupState,
+    config: Config | None,
+    *,
+    nas_password_present_for: Callable[[str], bool] | None = None,
+) -> list[dict[str, str]]:
     """Translate a state into ``{field, reason}`` dicts for ``/api/v1/setup/status``.
 
     Backend Spec §4.9.3. Returns ``[]`` when the state is ``READY`` or
     ``INCOMPLETE_LIMS_UNREACHABLE`` (the soft-block state surfaces a
-    banner, not a missing-field list).
+    banner, not a missing-field list). When ``state`` is
+    ``INCOMPLETE_NO_NAS_CREDENTIAL`` and ``nas_password_present_for`` is
+    supplied, the missing list names the specific equipment ids whose
+    keyring entries are absent; without the callable the rollup degrades
+    to a single ``equipment.nas_password`` row (the state itself is
+    enough for the UI to deep-link to Settings).
     """
     if state in (SetupState.READY, SetupState.INCOMPLETE_LIMS_UNREACHABLE):
         return []
@@ -489,9 +546,34 @@ def setup_state_missing(state: SetupState, config: Config | None) -> list[dict[s
         return _missing_paths_fields(config)
     if state is SetupState.INCOMPLETE_NO_ORCHESTRATOR:
         return _missing_orchestrator_fields(config)
+    if state is SetupState.INCOMPLETE_NO_NAS_CREDENTIAL:
+        return _missing_nas_fields(config, nas_password_present_for=nas_password_present_for)
     if state is SetupState.INCOMPLETE_NO_LIMS:
         return _missing_lims_fields(config)
     return []
+
+
+def _missing_nas_fields(
+    config: Config | None,
+    *,
+    nas_password_present_for: Callable[[str], bool] | None,
+) -> list[dict[str, str]]:
+    """Per-equipment missing-keyring rows for ``INCOMPLETE_NO_NAS_CREDENTIAL``.
+
+    Returns one row per nas-mode equipment whose transport requires a
+    keyring password but whose entry is absent. With ``config is None``
+    or no ``nas_password_present_for`` callable, falls back to a single
+    bulk row so the UI still has something to render.
+    """
+    if config is None:
+        return [{"field": "equipment.nas_password", "reason": "missing_in_keyring"}]
+    if nas_password_present_for is None:
+        return [{"field": "equipment.nas_password", "reason": "missing_in_keyring"}]
+    return [
+        {"field": f"equipment.{eq.id}.nas_password", "reason": "missing_in_keyring"}
+        for eq in _password_required_equipment(config)
+        if not nas_password_present_for(eq.id)
+    ]
 
 
 def _missing_orchestrator_fields(config: Config | None) -> list[dict[str, str]]:
@@ -556,6 +638,8 @@ def setup_state_next_action(state: SetupState) -> SetupNextAction | None:
             return SetupNextAction.SET_PATHS
         case SetupState.INCOMPLETE_NO_EQUIPMENT:
             return SetupNextAction.ADD_EQUIPMENT
+        case SetupState.INCOMPLETE_NO_NAS_CREDENTIAL:
+            return SetupNextAction.SET_NAS_CREDENTIALS
         case SetupState.INCOMPLETE_NO_LIMS:
             return SetupNextAction.CONFIGURE_LIMS
         case SetupState.INCOMPLETE_LIMS_UNREACHABLE:

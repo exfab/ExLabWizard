@@ -121,6 +121,7 @@ def _write_creation_json(directory: Path) -> None:
 def test_list_problems_returns_findings(tmp_path: Path) -> None:
     deps = AppDependencies(
         config=_ready_config(tmp_path),
+        nas_password_present={"EQ1"},
         validator=_StubValidator(_findings()),
     )
     app = create_app(dependencies=deps)
@@ -137,6 +138,7 @@ def test_list_problems_returns_findings(tmp_path: Path) -> None:
 def test_list_problems_filters_by_severity(tmp_path: Path) -> None:
     deps = AppDependencies(
         config=_ready_config(tmp_path),
+        nas_password_present={"EQ1"},
         validator=_StubValidator(_findings()),
     )
     app = create_app(dependencies=deps)
@@ -149,6 +151,7 @@ def test_list_problems_filters_by_severity(tmp_path: Path) -> None:
 def test_list_problems_filters_by_class(tmp_path: Path) -> None:
     deps = AppDependencies(
         config=_ready_config(tmp_path),
+        nas_password_present={"EQ1"},
         validator=_StubValidator(_findings()),
     )
     app = create_app(dependencies=deps)
@@ -161,6 +164,7 @@ def test_list_problems_filters_by_class(tmp_path: Path) -> None:
 def test_list_problems_with_equipment_scope(tmp_path: Path) -> None:
     deps = AppDependencies(
         config=_ready_config(tmp_path),
+        nas_password_present={"EQ1"},
         validator=_StubValidator(_findings()),
     )
     app = create_app(dependencies=deps)
@@ -172,6 +176,7 @@ def test_list_problems_with_equipment_scope(tmp_path: Path) -> None:
 def test_list_problems_unknown_scope_returns_422(tmp_path: Path) -> None:
     deps = AppDependencies(
         config=_ready_config(tmp_path),
+        nas_password_present={"EQ1"},
         validator=_StubValidator([]),
     )
     app = create_app(dependencies=deps)
@@ -184,7 +189,9 @@ def test_list_problems_unknown_scope_returns_422(tmp_path: Path) -> None:
 
 def test_refresh_runs_audit(tmp_path: Path) -> None:
     stub = _StubValidator(_findings())
-    deps = AppDependencies(config=_ready_config(tmp_path), validator=stub)
+    deps = AppDependencies(
+        config=_ready_config(tmp_path), nas_password_present={"EQ1"}, validator=stub
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.post("/api/v1/problems/refresh")
@@ -202,6 +209,7 @@ async def test_append_override_writes_entry(tmp_path: Path) -> None:
     cache_writer = CreationWriter()
     deps = AppDependencies(
         config=_ready_config(tmp_path),
+        nas_password_present={"EQ1"},
         validator=_StubValidator([]),
         cache_creation=cache_writer,
     )
@@ -232,6 +240,7 @@ async def test_append_override_404_when_path_absent(tmp_path: Path) -> None:
     cache_writer = CreationWriter()
     deps = AppDependencies(
         config=_ready_config(tmp_path),
+        nas_password_present={"EQ1"},
         validator=_StubValidator([]),
         cache_creation=cache_writer,
     )
@@ -256,6 +265,7 @@ def test_problems_websocket_sends_snapshot_on_connect(tmp_path: Path) -> None:
 
     deps = AppDependencies(
         config=_ready_config(tmp_path),
+        nas_password_present={"EQ1"},
         validator=_StubValidator(_findings()),
         audit_channel=AuditChannel(),
     )
@@ -273,6 +283,7 @@ def test_problems_websocket_closes_when_no_channel(tmp_path: Path) -> None:
 
     deps = AppDependencies(
         config=_ready_config(tmp_path),
+        nas_password_present={"EQ1"},
         validator=_StubValidator([]),
         audit_channel=None,
     )
@@ -296,6 +307,7 @@ def test_refresh_publishes_snapshot_to_channel(tmp_path: Path) -> None:
     channel = AuditChannel()
     deps = AppDependencies(
         config=_ready_config(tmp_path),
+        nas_password_present={"EQ1"},
         validator=_StubValidator(_findings()),
         audit_channel=channel,
     )
@@ -315,6 +327,7 @@ async def test_revoke_override_writes_tombstone(tmp_path: Path) -> None:
     cache_writer = CreationWriter()
     deps = AppDependencies(
         config=_ready_config(tmp_path),
+        nas_password_present={"EQ1"},
         validator=_StubValidator([]),
         cache_creation=cache_writer,
     )

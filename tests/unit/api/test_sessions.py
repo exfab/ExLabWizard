@@ -120,7 +120,9 @@ class _StubController:
 
 def test_create_session_project(tmp_path: Path) -> None:
     controller = _StubController()
-    deps = AppDependencies(config=_ready_config(), controller=controller)
+    deps = AppDependencies(
+        config=_ready_config(), nas_password_present={"EQ1"}, controller=controller
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     body = {
@@ -149,7 +151,9 @@ def test_create_session_project(tmp_path: Path) -> None:
 
 def test_create_session_run(tmp_path: Path) -> None:
     controller = _StubController()
-    deps = AppDependencies(config=_ready_config(), controller=controller)
+    deps = AppDependencies(
+        config=_ready_config(), nas_password_present={"EQ1"}, controller=controller
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     body = {
@@ -173,7 +177,9 @@ def test_create_session_run(tmp_path: Path) -> None:
 
 def test_get_session_returns_snapshot() -> None:
     controller = _StubController()
-    deps = AppDependencies(config=_ready_config(), controller=controller)
+    deps = AppDependencies(
+        config=_ready_config(), nas_password_present={"EQ1"}, controller=controller
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     # First create a session to populate the store.
@@ -198,7 +204,9 @@ def test_get_session_returns_snapshot() -> None:
 
 def test_get_session_404_for_unknown() -> None:
     controller = _StubController()
-    deps = AppDependencies(config=_ready_config(), controller=controller)
+    deps = AppDependencies(
+        config=_ready_config(), nas_password_present={"EQ1"}, controller=controller
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.get("/api/v1/sessions/no_such_id")
@@ -209,7 +217,9 @@ def test_get_session_404_for_unknown() -> None:
 
 def test_post_resume_invokes_controller() -> None:
     controller = _StubController()
-    deps = AppDependencies(config=_ready_config(), controller=controller)
+    deps = AppDependencies(
+        config=_ready_config(), nas_password_present={"EQ1"}, controller=controller
+    )
     app = create_app(dependencies=deps)
     # Create + flip to INPUT_REQUIRED so resume is legal.
     session = controller.session_store.open("project", _make_request())
@@ -228,7 +238,9 @@ def test_post_resume_invokes_controller() -> None:
 
 def test_post_cancel_invokes_controller() -> None:
     controller = _StubController()
-    deps = AppDependencies(config=_ready_config(), controller=controller)
+    deps = AppDependencies(
+        config=_ready_config(), nas_password_present={"EQ1"}, controller=controller
+    )
     app = create_app(dependencies=deps)
     session = controller.session_store.open("project", _make_request())
     controller.session_store.transition(session.session_id, SessionState.VALIDATING)
@@ -243,7 +255,9 @@ def test_post_cancel_invokes_controller() -> None:
 
 def test_post_cancel_404_for_unknown() -> None:
     controller = _StubController()
-    deps = AppDependencies(config=_ready_config(), controller=controller)
+    deps = AppDependencies(
+        config=_ready_config(), nas_password_present={"EQ1"}, controller=controller
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.post("/api/v1/sessions/no_id/cancel", json={"discard_files": False})
@@ -252,7 +266,9 @@ def test_post_cancel_404_for_unknown() -> None:
 
 def test_post_resume_409_for_terminal_session() -> None:
     controller = _StubController()
-    deps = AppDependencies(config=_ready_config(), controller=controller)
+    deps = AppDependencies(
+        config=_ready_config(), nas_password_present={"EQ1"}, controller=controller
+    )
     app = create_app(dependencies=deps)
     session = controller.session_store.open("project", _make_request())
     controller.session_store.transition(session.session_id, SessionState.VALIDATING)
@@ -269,7 +285,9 @@ def test_websocket_streams_session_events() -> None:
     import json
 
     controller = _StubController()
-    deps = AppDependencies(config=_ready_config(), controller=controller)
+    deps = AppDependencies(
+        config=_ready_config(), nas_password_present={"EQ1"}, controller=controller
+    )
     app = create_app(dependencies=deps)
     session = controller.session_store.open("project", _make_request())
     session.event_queue = asyncio.Queue()
@@ -288,7 +306,9 @@ def test_websocket_streams_session_events() -> None:
 
 def test_websocket_unknown_session_closes() -> None:
     controller = _StubController()
-    deps = AppDependencies(config=_ready_config(), controller=controller)
+    deps = AppDependencies(
+        config=_ready_config(), nas_password_present={"EQ1"}, controller=controller
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     try:
@@ -318,7 +338,9 @@ def _make_request() -> ProjectCreateRequest:
 def test_create_session_validation_error_returns_422() -> None:
     """Posting without ``kind`` discriminator must 422."""
     controller = _StubController()
-    deps = AppDependencies(config=_ready_config(), controller=controller)
+    deps = AppDependencies(
+        config=_ready_config(), nas_password_present={"EQ1"}, controller=controller
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.post("/api/v1/sessions", json={"equipment_id": "EQ1"})

@@ -154,6 +154,7 @@ def test_setup_state_values() -> None:
     assert enums.SetupState.INCOMPLETE_NO_CONFIG.value == "incomplete_no_config"
     assert enums.SetupState.INCOMPLETE_MISSING_PATHS.value == "incomplete_missing_paths"
     assert enums.SetupState.INCOMPLETE_NO_EQUIPMENT.value == "incomplete_no_equipment"
+    assert enums.SetupState.INCOMPLETE_NO_NAS_CREDENTIAL.value == "incomplete_no_nas_credential"
     assert enums.SetupState.INCOMPLETE_NO_LIMS.value == "incomplete_no_lims"
     assert enums.SetupState.INCOMPLETE_LIMS_UNREACHABLE.value == "incomplete_lims_unreachable"
     assert enums.SetupState.READY.value == "ready"
@@ -162,6 +163,7 @@ def test_setup_state_values() -> None:
         "incomplete_missing_paths",
         "incomplete_no_orchestrator",
         "incomplete_no_equipment",
+        "incomplete_no_nas_credential",
         "incomplete_no_lims",
         "incomplete_lims_unreachable",
         "ready",

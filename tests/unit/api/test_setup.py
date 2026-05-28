@@ -54,7 +54,9 @@ def _ready_config() -> Config:
 
 
 def test_compute_setup_state_returns_ready_for_complete_config() -> None:
-    deps = AppDependencies(config=_ready_config(), lims_reachable=True)
+    deps = AppDependencies(
+        config=_ready_config(), lims_reachable=True, nas_password_present={"EQ1"}
+    )
     assert compute_setup_state(deps) is SetupState.READY
 
 
@@ -69,7 +71,26 @@ def test_is_creation_blocked_treats_lims_unreachable_as_soft() -> None:
     assert is_creation_blocked(SetupState.INCOMPLETE_NO_CONFIG) is True
     assert is_creation_blocked(SetupState.INCOMPLETE_MISSING_PATHS) is True
     assert is_creation_blocked(SetupState.INCOMPLETE_NO_EQUIPMENT) is True
+    assert is_creation_blocked(SetupState.INCOMPLETE_NO_NAS_CREDENTIAL) is True
     assert is_creation_blocked(SetupState.INCOMPLETE_NO_LIMS) is True
+
+
+def test_compute_setup_state_returns_incomplete_no_nas_credential() -> None:
+    """Equipment with a password-requiring transport but no keyring entry gates."""
+    deps = AppDependencies(config=_ready_config(), lims_reachable=True)
+    assert compute_setup_state(deps) is SetupState.INCOMPLETE_NO_NAS_CREDENTIAL
+
+
+def test_get_setup_status_lists_missing_nas_credential_per_equipment() -> None:
+    deps = AppDependencies(config=_ready_config(), lims_reachable=True)
+    app = create_app(dependencies=deps)
+    client = TestClient(app)
+    response = client.get("/api/v1/setup/status")
+    body = response.json()
+    assert body["state"] == "incomplete_no_nas_credential"
+    assert body["next_action"] == "set_nas_credentials"
+    field_names = {entry["field"] for entry in body["missing"]}
+    assert "equipment.EQ1.nas_password" in field_names
 
 
 def test_setup_state_gate_returns_503_in_incomplete_states() -> None:
@@ -117,7 +138,7 @@ def test_setup_state_gate_returns_503_in_incomplete_states() -> None:
 
 def test_setup_state_gate_lims_unreachable_does_not_block() -> None:
     config = _ready_config()
-    deps = AppDependencies(config=config, lims_reachable=False)
+    deps = AppDependencies(config=config, lims_reachable=False, nas_password_present={"EQ1"})
     app = FastAPI()
     app.state.dependencies = deps
 
@@ -147,7 +168,9 @@ def test_setup_state_gate_no_op_without_dependencies() -> None:
 
 
 def test_get_setup_status_ready() -> None:
-    deps = AppDependencies(config=_ready_config(), lims_reachable=True)
+    deps = AppDependencies(
+        config=_ready_config(), lims_reachable=True, nas_password_present={"EQ1"}
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.get("/api/v1/setup/status")
@@ -175,7 +198,7 @@ def test_post_test_lims_invokes_probe() -> None:
     async def probe(_body: LIMSTestRequest | None) -> ProbeResult:
         return ProbeResult(ok=True, latency_ms=42)
 
-    deps = AppDependencies(config=_ready_config(), lims_probe=probe)
+    deps = AppDependencies(config=_ready_config(), lims_probe=probe, nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.post("/api/v1/setup/test-lims", json={})
@@ -187,7 +210,9 @@ def test_post_test_lims_probe_raises_returns_reason() -> None:
     async def bad_probe(_body: LIMSTestRequest | None) -> ProbeResult:
         raise RuntimeError("network down")
 
-    deps = AppDependencies(config=_ready_config(), lims_probe=bad_probe)
+    deps = AppDependencies(
+        config=_ready_config(), lims_probe=bad_probe, nas_password_present={"EQ1"}
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.post("/api/v1/setup/test-lims", json={})
@@ -197,27 +222,25 @@ def test_post_test_lims_probe_raises_returns_reason() -> None:
 
 
 def test_post_test_lims_without_probe_reports_not_wired() -> None:
-    deps = AppDependencies(config=_ready_config())
+    deps = AppDependencies(config=_ready_config(), nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.post("/api/v1/setup/test-lims", json={})
     assert response.json()["ok"] is False
 
 
-def test_post_test_equipment_invokes_probe() -> None:
-    captured: dict[str, Any] = {}
-
-    def probe(equipment: Any) -> dict[str, Any]:
-        captured["id"] = equipment.id
-        return {"ok": True, "reason": None, "latency_ms": 10}
-
-    deps = AppDependencies(config=_ready_config(), equipment_probe=probe)
+def test_post_test_equipment_requires_equipment_id() -> None:
+    deps = AppDependencies(
+        config=_ready_config(),
+        equipment_probe=lambda _e: True,
+        nas_password_present={"EQ1"},
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
+    # Rclone-only migration: the body-equipment pre-save path is gone, so
+    # an empty body is rejected by pydantic with 422.
     response = client.post("/api/v1/setup/test-equipment", json={})
-    assert response.status_code == 200
-    assert response.json()["ok"] is True
-    assert captured["id"] == "EQ1"
+    assert response.status_code == 422
 
 
 def test_post_test_equipment_with_explicit_equipment_id() -> None:
@@ -227,7 +250,9 @@ def test_post_test_equipment_with_explicit_equipment_id() -> None:
         captured["id"] = equipment.id
         return True
 
-    deps = AppDependencies(config=_ready_config(), equipment_probe=probe)
+    deps = AppDependencies(
+        config=_ready_config(), equipment_probe=probe, nas_password_present={"EQ1"}
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     body = {"equipment_id": "EQ1"}
@@ -236,12 +261,17 @@ def test_post_test_equipment_with_explicit_equipment_id() -> None:
     assert captured["id"] == "EQ1"
 
 
-def test_post_test_equipment_unknown_id_returns_no_match() -> None:
-    deps = AppDependencies(config=_ready_config(), equipment_probe=lambda _e: True)
+def test_post_test_equipment_unknown_id_returns_404() -> None:
+    deps = AppDependencies(
+        config=_ready_config(),
+        equipment_probe=lambda _e: True,
+        nas_password_present={"EQ1"},
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.post("/api/v1/setup/test-equipment", json={"equipment_id": "NO_SUCH"})
-    assert response.json()["ok"] is False
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "equipment_not_found"
 
 
 def test_post_autostart_calls_toggle() -> None:
@@ -251,7 +281,9 @@ def test_post_autostart_calls_toggle() -> None:
         captured["value"] = enabled
         return enabled
 
-    deps = AppDependencies(config=_ready_config(), autostart_toggle=toggle)
+    deps = AppDependencies(
+        config=_ready_config(), autostart_toggle=toggle, nas_password_present={"EQ1"}
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.post("/api/v1/setup/autostart", json={"enabled": True})
@@ -263,7 +295,7 @@ def test_post_autostart_calls_toggle() -> None:
 
 
 def test_post_autostart_without_toggle_echoes_state() -> None:
-    deps = AppDependencies(config=_ready_config())
+    deps = AppDependencies(config=_ready_config(), nas_password_present={"EQ1"})
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.post("/api/v1/setup/autostart", json={"enabled": False})
