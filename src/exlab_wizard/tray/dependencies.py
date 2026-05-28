@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -437,8 +438,6 @@ def _make_equipment_probe(deps: AppDependencies) -> Any:
         )
         mask_for_log = pass_env_keys_for(remote_name)
         driver = RcloneDriver()
-        import time
-
         started = time.monotonic()
         try:
             about = await driver.about(remote_name, env=env, mask_for_log=mask_for_log)

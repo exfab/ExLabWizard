@@ -46,6 +46,7 @@ __all__ = [
     "RcloneDriver",
     "build_rclone_env",
     "obscure",
+    "pass_env_keys_for",
 ]
 
 _log = get_logger(__name__)

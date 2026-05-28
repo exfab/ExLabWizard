@@ -53,6 +53,31 @@ def _ready_config() -> Config:
     )
 
 
+def _ready_config_without_lims() -> Config:
+    """``_ready_config`` minus the LIMS slot, for exercising the LIMS gate."""
+    from exlab_wizard.config.models import OrchestratorConfig
+
+    return Config(
+        paths=PathsConfig(templates_dir="/tpl", plugin_dir="/plugin", local_root="/data"),
+        equipment=[
+            EquipmentConfig(
+                id="EQ1",
+                label="Equipment 1",
+                local_root="/data",
+                nas_root="/srv/nas",
+                transport=RcloneSftpTransport(
+                    type="rclone_sftp",
+                    host="nas.lab.example",
+                    user="testuser",
+                    remote_path="lab/EQ1",
+                ),
+            )
+        ],
+        lims=LIMSConfig(endpoint="", email="", offline_catalogue_path=""),
+        orchestrator=OrchestratorConfig(label="LAB-1", staging_root="/staging"),
+    )
+
+
 def test_compute_setup_state_returns_ready_for_complete_config() -> None:
     deps = AppDependencies(
         config=_ready_config(), lims_reachable=True, nas_password_present={"EQ1"}
@@ -97,11 +122,18 @@ def test_setup_state_gate_returns_503_in_incomplete_states() -> None:
     """Each non-soft INCOMPLETE_* state returns a 503 with the right code."""
     from exlab_wizard.config.models import OrchestratorConfig
 
+    # A config that is complete up to (but not including) the NAS-credential
+    # gate. Reused for the last two hard-block cases by varying the deps'
+    # ``nas_password_present`` set.
+    nas_ready = _ready_config()
+
+    # (config, nas_password_present, expected_state)
     test_cases = [
-        (None, "incomplete_no_config"),
-        (Config(), "incomplete_missing_paths"),
+        (None, set[str](), "incomplete_no_config"),
+        (Config(), set[str](), "incomplete_missing_paths"),
         (
             Config(paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d")),
+            set[str](),
             "incomplete_no_orchestrator",
         ),
         (
@@ -109,11 +141,21 @@ def test_setup_state_gate_returns_503_in_incomplete_states() -> None:
                 paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
                 orchestrator=OrchestratorConfig(label="LAB", staging_root="/s"),
             ),
+            set[str](),
             "incomplete_no_equipment",
         ),
+        # NAS gate: nas-mode equipment present but no keyring entry.
+        (nas_ready, set[str](), "incomplete_no_nas_credential"),
+        # LIMS gate: satisfy the NAS gate so the LIMS gate is the first failure.
+        # ``_ready_config`` carries a configured LIMS, so drop it for this case.
+        (
+            _ready_config_without_lims(),
+            {"EQ1"},
+            "incomplete_no_lims",
+        ),
     ]
-    for config, expected_state in test_cases:
-        deps = AppDependencies(config=config)
+    for config, nas_present, expected_state in test_cases:
+        deps = AppDependencies(config=config, nas_password_present=set(nas_present))
         app = FastAPI()
         app.state.dependencies = deps
 
