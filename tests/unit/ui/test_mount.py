@@ -256,6 +256,56 @@ def test_missing_sections_empty_when_fully_configured() -> None:
     assert mount._missing_setup_sections(deps) == ()
 
 
+def _nas_config() -> Any:
+    """Real Config with one password-requiring nas-mode equipment."""
+    from exlab_wizard.config.models import (
+        Config,
+        EquipmentConfig,
+        LIMSConfig,
+        OrchestratorConfig,
+        PathsConfig,
+        RcloneSftpTransport,
+    )
+
+    return Config(
+        paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
+        lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),
+        equipment=[
+            EquipmentConfig(
+                id="EQ1",
+                label="Equipment 1",
+                local_root="/d",
+                nas_root="/n",
+                transport=RcloneSftpTransport(
+                    type="rclone_sftp",
+                    host="nas.lab.example",
+                    user="testuser",
+                    remote_path="lab/EQ1",
+                ),
+            )
+        ],
+        orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
+    )
+
+
+def test_missing_sections_includes_nas_credentials_when_password_absent() -> None:
+    deps = _deps(
+        config=_nas_config(),
+        keyring_password_present=True,
+        nas_password_present=set(),
+    )
+    assert "nas_credentials" in mount._missing_setup_sections(deps)
+
+
+def test_missing_sections_excludes_nas_credentials_when_password_present() -> None:
+    deps = _deps(
+        config=_nas_config(),
+        keyring_password_present=True,
+        nas_password_present={"EQ1"},
+    )
+    assert "nas_credentials" not in mount._missing_setup_sections(deps)
+
+
 # ---------------------------------------------------------------------------
 # _safe_audit
 # ---------------------------------------------------------------------------
@@ -556,6 +606,62 @@ def test_lims_credential_handlers_swallow_backend_errors() -> None:
     on_save, on_clear = mount._lims_credential_handlers(_deps(keyring_store=store), None)
 
     on_save("hunter2")
+    on_clear()
+
+
+# ---------------------------------------------------------------------------
+# _nas_credential_handlers
+# ---------------------------------------------------------------------------
+
+
+def test_nas_credential_handlers_save_writes_under_nas_username() -> None:
+    from exlab_wizard.constants.keyring import keyring_nas_username
+
+    store = _RecordingKeyringStore()
+    present: set[str] = set()
+    deps = _deps(keyring_store=store, nas_password_present=present)
+    on_save, _on_clear = mount._nas_credential_handlers(deps, None, "EQ1")
+
+    on_save("hunter2")
+
+    assert store.set_calls == [(keyring_nas_username("EQ1"), "hunter2")]
+    # Save must add the id to the live presence set so the gate flips
+    # without a relaunch.
+    assert present == {"EQ1"}
+
+
+def test_nas_credential_handlers_clear_deletes_and_discards() -> None:
+    from exlab_wizard.constants.keyring import keyring_nas_username
+
+    store = _RecordingKeyringStore()
+    present: set[str] = {"EQ1"}
+    deps = _deps(keyring_store=store, nas_password_present=present)
+    _on_save, on_clear = mount._nas_credential_handlers(deps, None, "EQ1")
+
+    on_clear()
+
+    assert store.delete_calls == [keyring_nas_username("EQ1")]
+    assert present == set()
+
+
+def test_nas_credential_handlers_isolate_per_equipment_id() -> None:
+    store = _RecordingKeyringStore()
+    present: set[str] = set()
+    deps = _deps(keyring_store=store, nas_password_present=present)
+
+    save_one, _ = mount._nas_credential_handlers(deps, None, "EQ1")
+    save_two, _ = mount._nas_credential_handlers(deps, None, "EQ2")
+    save_one("a")
+    save_two("b")
+
+    assert present == {"EQ1", "EQ2"}
+
+
+def test_nas_credential_handlers_tolerate_missing_keyring_store() -> None:
+    on_save, on_clear = mount._nas_credential_handlers(
+        _deps(keyring_store=None, nas_password_present=set()), None, "EQ1"
+    )
+    on_save("hunter2")  # must not raise
     on_clear()
 
 

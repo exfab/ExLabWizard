@@ -35,16 +35,61 @@ SETTINGS_SECTIONS: tuple[str, ...] = (
     "application",
 )
 
+# Rclone-only NAS sync migration (2026-05-26). The NAS-credentials
+# section is *not* part of the canonical onboarding-order constant
+# (``SETTINGS_SECTIONS`` stays at the original eight); it is inserted
+# dynamically after ``equipment`` by :func:`settings_sections_for` only
+# when password-requiring nas-mode equipment exists.
+NAS_CREDENTIALS_SECTION = "nas_credentials"
+
 SECTION_TITLES: dict[str, str] = {
     "paths": "Paths",
     "lims": "LIMS",
     "equipment": "Equipment List",
+    NAS_CREDENTIALS_SECTION: "NAS Credentials",
     "nas_cleanup": "NAS Cleanup",
     "validator": "Validator",
     "logging": "Logging",
     "orchestrator": "Orchestrator Mode",
     "application": "Application",
 }
+
+
+def _password_requiring_nas_equipment(config: Config | None) -> list[Any]:
+    """Return nas-mode equipment whose transport sources a keyring password.
+
+    Shared by :func:`settings_sections_for` (visibility) and the
+    NAS-credentials section renderer (one row per entry).
+    """
+    if config is None:
+        return []
+    from exlab_wizard.config.models import transport_requires_keyring_password
+    from exlab_wizard.constants import SyncMode
+
+    return [
+        eq
+        for eq in config.equipment
+        if eq.sync_mode == SyncMode.NAS and transport_requires_keyring_password(eq.transport)
+    ]
+
+
+def settings_sections_for(config: Config | None) -> tuple[str, ...]:
+    """Return the visible section ids for ``config``.
+
+    The NAS-credentials section is inserted right after ``equipment``
+    only when at least one nas-mode equipment requires a keyring
+    password; otherwise the canonical :data:`SETTINGS_SECTIONS` order is
+    returned unchanged (so a stage-only / no-equipment install never
+    sees an empty credentials pane).
+    """
+    if not _password_requiring_nas_equipment(config):
+        return SETTINGS_SECTIONS
+    out: list[str] = []
+    for section in SETTINGS_SECTIONS:
+        out.append(section)
+        if section == "equipment":
+            out.append(NAS_CREDENTIALS_SECTION)
+    return tuple(out)
 
 
 @dataclass
@@ -140,6 +185,10 @@ def render_settings_page(
     on_save_lims_password: Callable[[str], None] | None = None,
     on_clear_lims_password: Callable[[], None] | None = None,
     lims_password_present: bool = False,
+    nas_password_present_for: Callable[[str], bool] | None = None,
+    nas_credential_handlers: Callable[[str], tuple[Callable[[str], None], Callable[[], None]]]
+    | None = None,
+    on_test_equipment: Callable[[str], Any] | None = None,
 ) -> Any:
     """Render the settings dialog.
 
@@ -159,6 +208,15 @@ def render_settings_page(
     click time, so the host wires them to a :class:`KeyringStore` rather
     than to the draft. ``lims_password_present`` seeds the credential
     row's resting state from whether the keyring already holds one.
+
+    The NAS-credentials hooks (rclone-only migration, 2026-05-26) mirror
+    that contract per equipment: ``nas_password_present_for(id)`` seeds
+    each row's resting state, ``nas_credential_handlers(id)`` returns the
+    ``(on_save, on_clear)`` pair the row writes through, and
+    ``on_test_equipment(id)`` runs the rclone probe and returns a
+    :class:`TestConnectionResult` (or an awaitable of one) for the inline
+    panel. All three are optional so unit tests can render the section
+    without a wired keyring.
     """
 
     s = state or SettingsState()
@@ -180,10 +238,15 @@ def render_settings_page(
     # the re-validated result.
     draft = build_settings_draft(config)
 
+    # Section visibility is draft-derived: the NAS-credentials section
+    # appears only when password-requiring nas-mode equipment exists.
+    sections = settings_sections_for(draft)
+
     payload = {
         "active": s.active_section,
         "save_label": save_button_label(s),
-        "warnings": [section for section in SETTINGS_SECTIONS if section_has_warning(s, section)],
+        "sections": list(sections),
+        "warnings": [section for section in sections if section_has_warning(s, section)],
         "config": draft.model_dump(mode="python"),
     }
 
@@ -227,7 +290,7 @@ def render_settings_page(
 
         with ui.splitter(value=22).classes("w-full") as split:
             with split.before, ui.column().classes("w-full").style("gap: 0.25rem;"):
-                for section in SETTINGS_SECTIONS:
+                for section in sections:
                     nav_row = (
                         ui.row()
                         .classes("items-center w-full")
@@ -255,7 +318,7 @@ def render_settings_page(
                         if section_has_warning(s, section):
                             ui.icon("warning").style("color: var(--color-warning);")
             with split.after:
-                for section in SETTINGS_SECTIONS:
+                for section in sections:
                     body = ui.column().classes("w-full")
                     body.visible = section == s.active_section
                     with body:
@@ -265,6 +328,9 @@ def render_settings_page(
                             on_save_lims_password=on_save_lims_password,
                             on_clear_lims_password=on_clear_lims_password,
                             lims_password_present=lims_password_present,
+                            nas_password_present_for=nas_password_present_for,
+                            nas_credential_handlers=nas_credential_handlers,
+                            on_test_equipment=on_test_equipment,
                         )
                     section_bodies[section] = body
 
@@ -307,6 +373,10 @@ def _render_section_body(
     on_save_lims_password: Callable[[str], None] | None = None,
     on_clear_lims_password: Callable[[], None] | None = None,
     lims_password_present: bool = False,
+    nas_password_present_for: Callable[[str], bool] | None = None,
+    nas_credential_handlers: Callable[[str], tuple[Callable[[str], None], Callable[[], None]]]
+    | None = None,
+    on_test_equipment: Callable[[str], Any] | None = None,
 ) -> None:
     """Render the content for a single section, bound to ``draft``.
 
@@ -371,6 +441,13 @@ def _render_section_body(
             test_connection_panel.test_connection_panel(None)
         elif section == "equipment":
             _render_equipment_section(draft)
+        elif section == NAS_CREDENTIALS_SECTION:
+            _render_nas_credentials_section(
+                draft,
+                nas_password_present_for=nas_password_present_for or (lambda _id: False),
+                nas_credential_handlers=nas_credential_handlers,
+                on_test_equipment=on_test_equipment,
+            )
         elif section == "nas_cleanup":
             ui.checkbox("Cleanup enabled", value=draft.nas_cleanup.enabled).bind_value(
                 draft.nas_cleanup, "enabled"
@@ -555,3 +632,79 @@ def _render_equipment_section(draft: Config) -> None:
         notifications.notify_success(f"Equipment {entry.id!r} added")
 
     ui.button("Add equipment", on_click=_add).props('data-testid="settings-equipment-add"')
+
+
+def _render_nas_credentials_section(
+    draft: Config,
+    *,
+    nas_password_present_for: Callable[[str], bool],
+    nas_credential_handlers: Callable[[str], tuple[Callable[[str], None], Callable[[], None]]]
+    | None,
+    on_test_equipment: Callable[[str], Any] | None,
+) -> None:
+    """Render one keyring-credential row + Test-connection panel per equipment.
+
+    Rclone-only NAS sync migration (2026-05-26). Each nas-mode
+    equipment whose transport requires a password gets its own row:
+    a :func:`credential_field` writing straight to the keyring (via the
+    per-equipment ``(on_save, on_clear)`` pair from
+    ``nas_credential_handlers``) plus a "Test connection" button that
+    runs the rclone probe and renders the result inline.
+
+    The handler closures are built per equipment id so a Save in one
+    row never writes another equipment's keyring slot.
+    """
+    import inspect
+
+    from nicegui import ui
+
+    equipment = _password_requiring_nas_equipment(draft)
+    if not equipment:
+        ui.label("No NAS-mode equipment requires a password.").props(
+            'data-testid="settings-nas-credentials-empty"'
+        )
+        return
+
+    ui.label(
+        "Each NAS-mode equipment authenticates with a password stored in the OS keyring. "
+        "Set it here, then use Test connection to confirm the NAS is reachable."
+    ).style("font-size: var(--text-sm); color: var(--color-muted);")
+
+    for eq in equipment:
+        with (
+            ui.column()
+            .classes("w-full")
+            .props(f'data-testid="settings-nas-credential-row-{eq.id}"')
+            .style("gap: 0.25rem; padding-bottom: 0.75rem;")
+        ):
+            if nas_credential_handlers is not None:
+                on_save, on_clear = nas_credential_handlers(eq.id)
+            else:
+                on_save, on_clear = (lambda _value: None), (lambda: None)
+            credential_field.credential_field(
+                label=f"NAS password — {eq.id}",
+                on_save=on_save,
+                on_clear=on_clear,
+                initial_state=lims_credential_initial_state(
+                    present=nas_password_present_for(eq.id)
+                ),
+                data_testid=f"settings-nas-password-{eq.id}",
+            )
+            panel = ui.column().classes("w-full")
+
+            def _make_test(equipment_id: str, container: Any) -> Callable[[], Any]:
+                async def _test() -> None:
+                    container.clear()
+                    if on_test_equipment is None:
+                        return
+                    result = on_test_equipment(equipment_id)
+                    if inspect.isawaitable(result):
+                        result = await result
+                    with container:
+                        test_connection_panel.test_connection_panel(result)
+
+                return _test
+
+            ui.button("Test connection", on_click=_make_test(eq.id, panel)).props(
+                f'flat data-testid="settings-nas-test-{eq.id}"'
+            )

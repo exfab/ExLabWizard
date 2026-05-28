@@ -337,7 +337,7 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
 
     @ui.page("/settings")
     def _settings(active: str = "") -> Any:
-        from exlab_wizard.api._dependencies import lims_password_present
+        from exlab_wizard.api._dependencies import lims_password_present, nas_password_present
 
         deps = _deps()
         if _restart_gate(deps, ui):
@@ -362,6 +362,14 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
 
         on_save_lims_password, on_clear_lims_password = _lims_credential_handlers(deps, ui)
 
+        def _nas_handlers(
+            equipment_id: str,
+        ) -> tuple[Callable[[str], None], Callable[[], None]]:
+            return _nas_credential_handlers(deps, ui, equipment_id)
+
+        async def _on_test_equipment(equipment_id: str) -> Any:
+            return await _nas_test_connection(deps, equipment_id)
+
         # ``on_select_section`` is left unset: the settings dialog swaps
         # sections client-side, so a navigation hook would only reload
         # the page and discard the operator's in-progress edits.
@@ -373,6 +381,9 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             on_save_lims_password=on_save_lims_password,
             on_clear_lims_password=on_clear_lims_password,
             lims_password_present=lims_password_present(deps),
+            nas_password_present_for=lambda equipment_id: nas_password_present(deps, equipment_id),
+            nas_credential_handlers=_nas_handlers,
+            on_test_equipment=_on_test_equipment,
         )
 
     @ui.page("/problems")
@@ -474,6 +485,113 @@ def _lims_credential_handlers(
     return _on_save, _on_clear
 
 
+def _nas_credential_handlers(
+    deps: Any, ui: Any, equipment_id: str
+) -> tuple[Callable[[str], None], Callable[[], None]]:
+    """Build the NAS-password Save / Clear handlers for one equipment.
+
+    Rclone-only NAS sync migration (2026-05-26). Mirrors
+    :func:`_lims_credential_handlers` but keys the keyring entry by
+    ``keyring_nas_username(equipment_id)`` and maintains the
+    per-equipment ``deps.nas_password_present`` set (which the §4.9 setup
+    gate and the credential row's badge both read). The handlers are
+    built per equipment id so each row writes only its own keyring slot.
+    """
+    from exlab_wizard.constants.keyring import keyring_nas_username
+
+    keyring_store = getattr(deps, "keyring_store", None) if deps is not None else None
+    username = keyring_nas_username(equipment_id)
+
+    def _on_save(value: str) -> None:
+        if keyring_store is None:
+            _show_toast(
+                ui, "Cannot save the password: the OS keyring is unavailable", positive=False
+            )
+            return
+        try:
+            keyring_store.set_password(username=username, password=value)
+        except Exception as exc:
+            _log.exception("NAS keyring set_password failed")
+            _show_toast(ui, f"Could not save the NAS password: {exc}", positive=False)
+            return
+        # The §4.9 gate reads ``deps.nas_password_present`` (hydrated once
+        # at tray boot), so add the id here -- otherwise a freshly saved
+        # password still reads as absent until a relaunch.
+        present = getattr(deps, "nas_password_present", None) if deps is not None else None
+        if isinstance(present, set):
+            present.add(equipment_id)
+        _show_toast(ui, f"NAS password for {equipment_id} saved", positive=True)
+
+    def _on_clear() -> None:
+        if keyring_store is None:
+            _show_toast(
+                ui, "Cannot clear the password: the OS keyring is unavailable", positive=False
+            )
+            return
+        try:
+            keyring_store.delete_password(username=username)
+        except Exception as exc:
+            _log.exception("NAS keyring delete_password failed")
+            _show_toast(ui, f"Could not clear the NAS password: {exc}", positive=False)
+            return
+        present = getattr(deps, "nas_password_present", None) if deps is not None else None
+        if isinstance(present, set):
+            present.discard(equipment_id)
+        _show_toast(ui, f"NAS password for {equipment_id} removed", positive=True)
+
+    return _on_save, _on_clear
+
+
+async def _nas_test_connection(deps: Any, equipment_id: str) -> Any:
+    """Run the rclone equipment probe for ``equipment_id`` and adapt it.
+
+    Resolves the equipment by id, invokes ``deps.equipment_probe`` (the
+    same probe the ``POST /setup/test-equipment`` endpoint uses), and
+    maps the ``{ok, reason, latency_ms}`` dict to a
+    :class:`TestConnectionResult` for the inline panel.
+    """
+    import json
+
+    from exlab_wizard.ui.components.test_connection_panel import TestConnectionResult
+
+    config = getattr(deps, "config", None) if deps is not None else None
+    probe = getattr(deps, "equipment_probe", None) if deps is not None else None
+    equipment = None
+    if config is not None:
+        equipment = next((e for e in config.equipment if e.id == equipment_id), None)
+    if probe is None or equipment is None:
+        return TestConnectionResult(
+            success=False,
+            headline="Connection failed",
+            detail="equipment probe is not available",
+            raw="",
+        )
+    try:
+        result = probe(equipment)
+        if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+            result = await result
+    except Exception as exc:
+        return TestConnectionResult(
+            success=False, headline="Connection failed", detail=str(exc), raw=str(exc)
+        )
+    payload = result if isinstance(result, dict) else {"ok": bool(result)}
+    ok = bool(payload.get("ok"))
+    reason = payload.get("reason")
+    latency_ms = payload.get("latency_ms")
+    if ok:
+        detail = f"reachable ({latency_ms} ms)" if latency_ms is not None else "reachable"
+        headline = "Connected"
+    else:
+        detail = str(reason) if reason else "connection failed"
+        headline = "Connection failed"
+    return TestConnectionResult(
+        success=ok,
+        headline=headline,
+        detail=detail,
+        raw=json.dumps(payload, indent=2, sort_keys=True),
+    )
+
+
 def _persist_config(deps: Any, updated: Any, ui: Any) -> bool:
     """Write ``updated`` via ``deps.save_config`` and arm the restart gate.
 
@@ -572,12 +690,36 @@ def _build_main_state(
     # centre pane shows the right folder.
     return main_page.MainPageState(
         setup_incomplete=not _is_setup_ready(deps),
+        setup_next_action=_setup_next_action(deps),
         selected_node=selected_node,
         selected_node_kind=node_kind,
         selected_node_is_received=is_received,
         right_pane_collapsed=right_pane_collapsed,
         folder_feed_path=selected_node,
     )
+
+
+def _setup_next_action(deps: Any) -> str | None:
+    """Return the §4.9.3 next-action string for the banner subline.
+
+    Unlike :func:`_is_setup_ready` (a deliberately narrow LIMS-only
+    readiness mirror), this consults the real evaluator via
+    ``compute_setup_state`` so the banner names the actual first-failing
+    gate -- notably the NAS-credentials gate added by the rclone-only
+    migration (2026-05-26). Best-effort: any failure yields ``None`` so
+    the banner falls back to its generic subline.
+    """
+    if deps is None:
+        return None
+    try:
+        from exlab_wizard.api.setup import compute_setup_state
+        from exlab_wizard.paths import setup_state_next_action
+
+        action = setup_state_next_action(compute_setup_state(deps))
+        return action.value if action is not None else None
+    except Exception as exc:
+        _log.warning("setup next-action computation failed: %s", exc)
+        return None
 
 
 def _build_main_query(selected: str, right_pane: str) -> str:
@@ -1137,7 +1279,9 @@ def _missing_setup_sections(deps: Any) -> tuple[str, ...]:
     other than READY surfaces at least one section. The Settings page
     uses this to auto-select the first incomplete section.
     """
-    from exlab_wizard.api._dependencies import lims_password_present
+    from exlab_wizard.api._dependencies import lims_password_present, nas_password_present
+    from exlab_wizard.config.models import transport_requires_keyring_password
+    from exlab_wizard.constants import SyncMode
 
     if deps is None:
         return ("paths", "lims")
@@ -1150,6 +1294,18 @@ def _missing_setup_sections(deps: Any) -> tuple[str, ...]:
     missing: list[str] = []
     if not config.paths.local_root or not config.paths.templates_dir:
         missing.append("paths")
+    # Rclone-only NAS sync migration (2026-05-26): surface the
+    # NAS-credentials section when any password-requiring nas-mode
+    # equipment lacks its keyring entry, so the setup-incomplete banner
+    # auto-selects it (matching the §4.9 INCOMPLETE_NO_NAS_CREDENTIAL gate).
+    needs_nas_credential = any(
+        eq.sync_mode == SyncMode.NAS
+        and transport_requires_keyring_password(eq.transport)
+        and not nas_password_present(deps, eq.id)
+        for eq in config.equipment
+    )
+    if needs_nas_credential:
+        missing.append("nas_credentials")
     if not config.lims.endpoint or not config.lims.email:
         missing.append("lims")
     if not lims_password_present(deps) and "lims" not in missing:

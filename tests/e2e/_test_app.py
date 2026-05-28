@@ -543,8 +543,10 @@ def build_test_app() -> FastAPI:
                 label="Flow Cytometer 99",
                 local_root="/data",
                 nas_root="/srv/nas",
-                rclone_remote="lab-nas",
-                rclone_remote_path="lab/FLOW_99",
+                transport_type="rclone_sftp",
+                sftp_host="nas.lab.example",
+                sftp_user="testuser",
+                sftp_remote_path="lab/FLOW_99",
             )
 
         def _confirm(eq: Any) -> None:

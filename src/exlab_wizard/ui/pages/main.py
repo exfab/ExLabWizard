@@ -39,6 +39,9 @@ class MainPageState:
     """
 
     setup_incomplete: bool = False
+    # §4.9.3 next-action discriminator, used to tailor the setup-incomplete
+    # banner subline (rclone-only NAS migration, 2026-05-26).
+    setup_next_action: str | None = None
     selected_node: str | None = None
     chip_state: filter_chips.ChipState = field(
         default_factory=lambda: filter_chips.initial_state(_default_chips())
@@ -94,12 +97,28 @@ def problems_badge_text(state: MainPageState) -> str:
     return f"{state.problems_count_hard} + {state.problems_count_soft}"
 
 
-def setup_incomplete_banner_props() -> dict[str, str]:
-    """Banner content for the setup-incomplete state (§3.1.4)."""
+def setup_incomplete_banner_props(next_action: str | None = None) -> dict[str, str]:
+    """Banner content for the setup-incomplete state (§3.1.4).
 
+    ``next_action`` is the §4.9.3 next-action discriminator (e.g.
+    ``set_nas_credentials``). When supplied it tailors the subline so
+    the operator knows exactly which section to open; the rclone-only
+    NAS migration (2026-05-26) added the NAS-credentials variant.
+    """
+
+    sublines = {
+        "set_nas_credentials": ("Set the NAS password in Settings → NAS Credentials to begin."),
+        "configure_lims": "Open Settings → LIMS to finish configuring LIMS.",
+        "test_lims": "Open Settings → LIMS to finish configuring LIMS.",
+        "set_paths": "Open Settings and complete the highlighted sections to begin.",
+        "add_equipment": "Add an equipment in Settings to begin.",
+    }
     return {
         "headline": "Setup incomplete: required configuration is missing.",
-        "subline": "Open Settings and complete the highlighted sections to begin.",
+        "subline": sublines.get(
+            next_action or "",
+            "Open Settings and complete the highlighted sections to begin.",
+        ),
         "cta_label": "Open Settings",
         "color_var": "--color-warning",
     }
@@ -199,7 +218,7 @@ def render_file_explorer_page(
             notifications.BannerId.SETUP_INCOMPLETE,
             container=notifications.ContainerId.GLOBAL,
             severity=notifications.Severity.WARNING,
-            message=setup_incomplete_banner_props()["subline"],
+            message=setup_incomplete_banner_props(s.setup_next_action)["subline"],
             action=notifications.ActionSpec(
                 label="Open Settings",
                 on_click=on_open_settings,

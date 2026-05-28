@@ -91,6 +91,16 @@ def test_main_setup_incomplete_banner_uses_warning() -> None:
     assert props["cta_label"] == "Open Settings"
 
 
+def test_main_setup_banner_subline_tailored_for_nas_credentials() -> None:
+    """The NAS-credential next-action points the operator at the section."""
+
+    props = main.setup_incomplete_banner_props("set_nas_credentials")
+    assert "NAS" in props["subline"]
+    # The generic next-action falls back to the original subline.
+    generic = main.setup_incomplete_banner_props()["subline"]
+    assert props["subline"] != generic
+
+
 # ---------------------------------------------------------------------------
 # wizard_project
 # ---------------------------------------------------------------------------
