@@ -210,6 +210,15 @@ def main() -> int:
         if behavior == "network_error":
             sys.stderr.write("network timeout\n")
             return 1
+        # The remote must be a proper rclone spec ("<remote>:"); a bare
+        # name is read by real rclone as a local path and fails with
+        # "directory not found". Reject it here so a probe that forgets
+        # the colon can't pass under the stub (regression guard for the
+        # 2026-05-28 equipment-probe fix).
+        remote_arg = next((a for a in sys.argv[2:] if not a.startswith("-")), "")
+        if ":" not in remote_arg:
+            sys.stderr.write(f"stub_rclone about: remote {remote_arg!r} is not a remote spec\n")
+            return 2
         sys.stdout.write(os.environ.get("STUB_RCLONE_ABOUT_JSON", "{}"))
         return 0
 

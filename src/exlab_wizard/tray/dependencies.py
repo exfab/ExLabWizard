@@ -440,7 +440,10 @@ def _make_equipment_probe(deps: AppDependencies) -> Any:
         driver = RcloneDriver()
         started = time.monotonic()
         try:
-            about = await driver.about(remote_name, env=env, mask_for_log=mask_for_log)
+            # ``rclone about`` needs the remote *spec* (``<remote>:``) to
+            # target the backend root; a bare name is read as a local
+            # path and fails with "directory not found".
+            about = await driver.about(f"{remote_name}:", env=env, mask_for_log=mask_for_log)
         except Exception as exc:
             return {"ok": False, "reason": str(exc)}
         latency_ms = int((time.monotonic() - started) * 1000)

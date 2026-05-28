@@ -12,6 +12,7 @@ writes to.
 from __future__ import annotations
 
 import contextlib
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -231,3 +232,41 @@ def test_make_equipment_probe_short_circuits_when_password_missing(
 
         assert result["ok"] is False
         assert "password not set" in (result["reason"] or "")
+
+
+def test_make_equipment_probe_targets_remote_root_with_colon(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The probe must call ``rclone about <remote>:`` (spec, not bare name).
+
+    Regression: it once passed the bare remote name, which real rclone
+    reads as a local path and fails with "directory not found" -- caught
+    only by a live-NAS walkthrough because the stub ignored the arg.
+    The stub now rejects a colon-less ``about`` remote, so this probe
+    succeeds iff the colon is present.
+    """
+    import asyncio
+    import shutil
+    import stat
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fixtures = Path(__file__).resolve().parents[2] / "fixtures"
+    target = bin_dir / "rclone"
+    shutil.copy(fixtures / "stub_rclone.py", target)
+    target.chmod(target.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+
+    with _swap_keyring(_InMemoryKeyring()):
+        store = KeyringStore(state_dir=tmp_path)
+        config = _nas_config_with_two_equipment()
+        store.set_password(username=keyring_nas_username("EQ1"), password="hunter2")
+
+        deps = build_production_dependencies(tmp_path)
+        deps.keyring_store = store
+        deps.config = config
+
+        probe = _make_equipment_probe(deps)
+        result = asyncio.run(probe(config.equipment[0]))
+
+        assert result["ok"] is True, result
