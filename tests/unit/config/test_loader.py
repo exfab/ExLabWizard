@@ -438,7 +438,9 @@ def test_loader_round_trips_nas_block(tmp_path):
     assert cfg.nas.remote == "nas01"
     assert cfg.nas.perf.transfers == 2
     save_config(p, cfg, original_text=text)
-    assert "nas01" in p.read_text(encoding="utf-8")
+    reloaded = load_config(p)
+    assert reloaded.nas.remote == "nas01"
+    assert reloaded.nas.perf.transfers == 2
 
 
 def test_load_config_uses_ruamel_round_trip(tmp_path: Path) -> None:
