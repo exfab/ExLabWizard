@@ -149,6 +149,13 @@ def build_production_dependencies(state_dir: Path) -> AppDependencies:
         )
         or set()
     )
+    # rclone.conf NAS-sync migration. The §4.9 setup gate now keys on
+    # whether the configured ``nas.remote`` is present in rclone.conf
+    # (rather than a per-equipment keyring password). Snapshot the
+    # operator's remotes once at boot via ``rclone listremotes`` and
+    # expose a sync predicate the API's setup evaluator reads.
+    deps.nas_remotes = _try("nas_remotes", _hydrate_nas_remotes, deps.config) or ()
+    deps.nas_remote_available = lambda remote: f"{remote}:" in deps.nas_remotes
     deps.equipment_probe = _make_equipment_probe(deps)
 
     deps.session_store_snapshot = _make_session_store_snapshot(deps)
@@ -664,61 +671,56 @@ def _check_nas_passwords_present(keyring_store: Any, config: Any) -> set[str]:
     return out
 
 
+def _hydrate_nas_remotes(config: Any) -> tuple[str, ...]:
+    """Snapshot the rclone remotes defined in the operator's rclone.conf.
+
+    rclone.conf NAS-sync migration. Reads ``rclone listremotes`` (offline,
+    cheap -- no network) so the setup gate can answer "is ``nas.remote``
+    configured?" without re-shelling on every request. Each entry carries
+    its trailing ``:``. Any failure (no binary, unreadable config) degrades
+    to ``()`` so the gate treats it as "no remotes".
+    """
+    nas = getattr(config, "nas", None)
+    if nas is None:
+        return ()
+    from exlab_wizard.sync.transports.rclone import RcloneDriver
+
+    driver = RcloneDriver(config_path=getattr(nas, "rclone_config_path", "") or None)
+    try:
+        return asyncio.run(driver.listremotes())
+    except Exception:
+        return ()
+
+
 def _make_equipment_probe(deps: AppDependencies) -> Any:
     """Build the ``deps.equipment_probe`` callable.
 
-    Rclone-only NAS sync migration (2026-05-26). The probe takes the
-    already-resolved :class:`EquipmentConfig` (the
-    ``POST /setup/test-equipment`` endpoint hands it in), reads the
-    keyring password under :func:`keyring_nas_username`, runs
-    ``rclone obscure -``, builds the per-backend env, and calls
-    :meth:`RcloneDriver.about`. Returns the canonical
+    rclone.conf NAS-sync migration. The "Test connection" probe now
+    targets the configured ``nas:`` remote rather than a per-equipment
+    keyring password: it runs ``rclone about <nas.remote>:`` through the
+    driver (using the operator's rclone.conf, optionally pinned by
+    ``nas.rclone_config_path``) and returns the canonical
     ``{"ok", "reason", "latency_ms"}`` dict the endpoint surfaces.
 
-    A missing keyring entry short-circuits with
-    ``ok=False, reason="password not set in keyring"`` -- the probe
-    never spawns rclone in that case so the operator sees the gate
-    reason rather than an opaque rclone auth error.
+    A missing ``nas.remote`` short-circuits with
+    ``ok=False, reason="no NAS remote configured"`` -- the probe never
+    spawns rclone in that case so the operator sees the gate reason
+    rather than an opaque rclone error.
     """
 
     async def _probe(equipment: Any) -> dict[str, Any]:
-        if equipment is None:
-            return {"ok": False, "reason": "no matching equipment configuration"}
-        keyring_store = getattr(deps, "keyring_store", None)
-        if keyring_store is None:
-            return {"ok": False, "reason": "OS keyring is unavailable"}
-        password = _nas_keyring_password(keyring_store, equipment.id)
-        if not password:
-            return {"ok": False, "reason": "password not set in keyring"}
-        # Local imports keep ``tray.dependencies`` cheap to load (the
+        nas = getattr(deps.config, "nas", None)
+        if nas is None or not nas.remote:
+            return {"ok": False, "reason": "no NAS remote configured"}
+        # Local import keeps ``tray.dependencies`` cheap to load (the
         # rclone driver pulls in subprocess + asyncio plumbing the tray
         # otherwise wouldn't need until first sync).
-        from exlab_wizard.sync.nas_client import _remote_name_for
-        from exlab_wizard.sync.transports.rclone import (
-            RcloneDriver,
-            build_rclone_env,
-            obscure,
-            pass_env_keys_for,
-        )
+        from exlab_wizard.sync.transports.rclone import RcloneDriver
 
-        try:
-            obscured = await obscure(password)
-        except Exception as exc:
-            return {"ok": False, "reason": f"rclone obscure failed: {exc}"}
-        remote_name = _remote_name_for(equipment)
-        env = build_rclone_env(
-            transport=equipment.transport,
-            password_obscured=obscured,
-            remote_name=remote_name,
-        )
-        mask_for_log = pass_env_keys_for(remote_name)
-        driver = RcloneDriver()
+        driver = RcloneDriver(config_path=getattr(nas, "rclone_config_path", "") or None)
         started = time.monotonic()
         try:
-            # ``rclone about`` needs the remote *spec* (``<remote>:``) to
-            # target the backend root; a bare name is read as a local
-            # path and fails with "directory not found".
-            about = await driver.about(f"{remote_name}:", env=env, mask_for_log=mask_for_log)
+            about = await driver.about(f"{nas.remote}:")
         except Exception as exc:
             return {"ok": False, "reason": str(exc)}
         latency_ms = int((time.monotonic() - started) * 1000)

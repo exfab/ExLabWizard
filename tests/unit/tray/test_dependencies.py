@@ -12,7 +12,6 @@ writes to.
 from __future__ import annotations
 
 import contextlib
-import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -211,62 +210,115 @@ def test_check_nas_passwords_present_handles_none_store_and_config() -> None:
     assert _check_nas_passwords_present(object(), None) == set()
 
 
-def test_make_equipment_probe_short_circuits_when_password_missing(
-    tmp_path: Path,
-) -> None:
-    """Missing keyring entry must not spawn rclone."""
-    import asyncio
+def _nas_config_with_remote(remote: str = "nas01") -> Config:
+    """``_nas_config_with_two_equipment`` plus a configured ``nas:`` block."""
+    from exlab_wizard.config.models import NasConfig
 
-    with _swap_keyring(_InMemoryKeyring()):
-        store = KeyringStore(state_dir=tmp_path)
-        config = _nas_config_with_two_equipment()
-
-        deps = build_production_dependencies(tmp_path)
-        # Override the wired store with our in-memory one so the probe
-        # consults the same backend we control.
-        deps.keyring_store = store
-        deps.config = config
-
-        probe = _make_equipment_probe(deps)
-        result = asyncio.run(probe(config.equipment[0]))
-
-        assert result["ok"] is False
-        assert "password not set" in (result["reason"] or "")
+    config = _nas_config_with_two_equipment()
+    return config.model_copy(update={"nas": NasConfig(remote=remote, base_root="/srv/nas")})
 
 
-def test_make_equipment_probe_targets_remote_root_with_colon(
+class _StubAbout:
+    def __init__(self, *, ok: bool, reason: str | None = None) -> None:
+        self.ok = ok
+        self.reason = reason
+        self.info: dict[str, int] = {}
+
+
+def test_make_equipment_probe_targets_nas_remote_not_keyring(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The probe must call ``rclone about <remote>:`` (spec, not bare name).
-
-    Regression: it once passed the bare remote name, which real rclone
-    reads as a local path and fails with "directory not found" -- caught
-    only by a live-NAS walkthrough because the stub ignored the arg.
-    The stub now rejects a colon-less ``about`` remote, so this probe
-    succeeds iff the colon is present.
-    """
+    """The probe must call ``rclone about <nas.remote>:`` and ignore the keyring."""
     import asyncio
-    import shutil
-    import stat
 
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    fixtures = Path(__file__).resolve().parents[2] / "fixtures"
-    target = bin_dir / "rclone"
-    shutil.copy(fixtures / "stub_rclone.py", target)
-    target.chmod(target.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    from exlab_wizard.sync.transports import rclone as rclone_module
 
-    with _swap_keyring(_InMemoryKeyring()):
-        store = KeyringStore(state_dir=tmp_path)
-        config = _nas_config_with_two_equipment()
-        store.set_password(username=keyring_nas_username("EQ1"), password="hunter2")
+    calls: list[str] = []
 
-        deps = build_production_dependencies(tmp_path)
-        deps.keyring_store = store
-        deps.config = config
+    class _StubDriver:
+        def __init__(self, *, config_path: str | None = None) -> None:
+            self.config_path = config_path
 
-        probe = _make_equipment_probe(deps)
-        result = asyncio.run(probe(config.equipment[0]))
+        async def about(self, remote: str, **_kwargs: object) -> _StubAbout:
+            calls.append(remote)
+            return _StubAbout(ok=True)
 
-        assert result["ok"] is True, result
+    monkeypatch.setattr(rclone_module, "RcloneDriver", _StubDriver)
+
+    deps = build_production_dependencies(tmp_path)
+    # No keyring password is set; the new probe must not consult it.
+    deps.keyring_store = None
+    deps.config = _nas_config_with_remote("nas01")
+
+    probe = _make_equipment_probe(deps)
+    result = asyncio.run(probe(deps.config.equipment[0]))
+
+    assert result["ok"] is True, result
+    assert calls == ["nas01:"]
+
+
+def test_make_equipment_probe_short_circuits_without_remote(tmp_path: Path) -> None:
+    """No configured ``nas.remote`` must not spawn rclone."""
+    import asyncio
+
+    deps = build_production_dependencies(tmp_path)
+    deps.config = _nas_config_with_two_equipment()  # default NasConfig() -> blank remote
+
+    probe = _make_equipment_probe(deps)
+    result = asyncio.run(probe(deps.config.equipment[0]))
+
+    assert result["ok"] is False
+    assert "no NAS remote configured" in (result["reason"] or "")
+
+
+def test_make_equipment_probe_surfaces_about_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failing ``rclone about`` surfaces as ``ok=False`` with the reason."""
+    import asyncio
+
+    from exlab_wizard.sync.transports import rclone as rclone_module
+
+    class _StubDriver:
+        def __init__(self, *, config_path: str | None = None) -> None:
+            self.config_path = config_path
+
+        async def about(self, remote: str, **_kwargs: object) -> _StubAbout:
+            return _StubAbout(ok=False, reason="auth_error: 401 Unauthorized")
+
+    monkeypatch.setattr(rclone_module, "RcloneDriver", _StubDriver)
+
+    deps = build_production_dependencies(tmp_path)
+    deps.config = _nas_config_with_remote("nas01")
+
+    probe = _make_equipment_probe(deps)
+    result = asyncio.run(probe(deps.config.equipment[0]))
+
+    assert result["ok"] is False
+    assert "401" in (result["reason"] or "")
+
+
+def test_nas_remote_available_reflects_listremotes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Boot-time hydration drives ``deps.nas_remote_available`` from listremotes."""
+    from exlab_wizard.sync.transports import rclone as rclone_module
+    from exlab_wizard.tray import dependencies as deps_mod
+
+    class _StubDriver:
+        def __init__(self, *, config_path: str | None = None) -> None:
+            self.config_path = config_path
+
+        async def listremotes(self) -> tuple[str, ...]:
+            return ("nas01:", "archive:")
+
+    monkeypatch.setattr(rclone_module, "RcloneDriver", _StubDriver)
+
+    config = _nas_config_with_remote("nas01")
+    remotes = deps_mod._hydrate_nas_remotes(config)
+    assert remotes == ("nas01:", "archive:")
+
+    # The predicate the API setup gate reads matches on ``<remote>:``.
+    available = lambda remote: f"{remote}:" in remotes  # noqa: E731
+    assert available("nas01") is True
+    assert available("missing") is False
