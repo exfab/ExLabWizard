@@ -196,6 +196,7 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             on_open_settings=lambda: ui.navigate.to("/settings"),
             on_refresh=_refresh,
             on_select_node=_on_select_node,
+            on_open_operations=lambda: _open_operations_modal(deps, ui),
             on_navigate_breadcrumb=_on_select_node,
             on_toggle_right_pane=_on_toggle_right_pane,
             on_run_staging_action=_on_run_staging_action,
@@ -710,6 +711,7 @@ def _build_main_state(
     # surface always renders, so MainPageState.orchestrator_enabled keeps
     # its True default. Folder-feed path mirrors the selected node so the
     # centre pane shows the right folder.
+    ops_count, ops_input_required = _operation_counts(deps)
     return main_page.MainPageState(
         setup_incomplete=not _is_setup_ready(deps),
         setup_next_action=_setup_next_action(deps),
@@ -718,7 +720,34 @@ def _build_main_state(
         selected_node_is_received=is_received,
         right_pane_collapsed=right_pane_collapsed,
         folder_feed_path=selected_node,
+        operations_count=ops_count,
+        operations_input_required=ops_input_required,
     )
+
+
+def _operation_counts(deps: Any) -> tuple[int, int]:
+    """Return ``(in_flight, input_required)`` operation counts for the toolbar.
+
+    "In flight" excludes the terminal ``DONE`` / ``ABORTED`` states (matching
+    the ``/operations`` panel rows; ``FAILED`` stays so the operator sees a
+    recent failure). ``input_required`` counts suspended sessions awaiting a
+    plugin answer (Frontend §9.5 / §3.5.5).
+    """
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    store = getattr(controller, "session_store", None) if controller is not None else None
+    if store is None:
+        return (0, 0)
+    from exlab_wizard.controller import SessionState
+
+    in_flight = 0
+    input_required = 0
+    for _sid, session in store.iter_sorted():
+        if session.state in (SessionState.DONE, SessionState.ABORTED):
+            continue
+        in_flight += 1
+        if session.state is SessionState.INPUT_REQUIRED:
+            input_required += 1
+    return (in_flight, input_required)
 
 
 def _setup_next_action(deps: Any) -> str | None:
@@ -1244,6 +1273,107 @@ def _open_in_os(path: str) -> bool:
         _log.warning("open_in_os failed for %s: %s", path, exc)
         return False
     return False
+
+
+def _build_operation_rows(deps: Any) -> list[Any]:
+    """Build the Operations-panel rows from the live session store (T3).
+
+    Mirrors the ``/operations`` route filter: terminal ``DONE`` / ``ABORTED``
+    sessions fall off; ``FAILED`` stays so a recent failure is visible.
+    """
+    from exlab_wizard.controller import SessionState
+    from exlab_wizard.ui.components.operations_modal import OperationRow
+
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    store = getattr(controller, "session_store", None) if controller is not None else None
+    if store is None:
+        return []
+    return [
+        OperationRow.from_session(sid, session)
+        for sid, session in store.iter_sorted()
+        if session.state not in (SessionState.DONE, SessionState.ABORTED)
+    ]
+
+
+def _open_operations_modal(deps: Any, ui: Any) -> None:
+    """Open the in-flight Operations panel (Frontend §9.5).
+
+    Builds a fresh snapshot on each open (true auto-refresh is the wizard's
+    live stream, T2). Row actions dispatch to resume / cancel / details.
+    """
+    from exlab_wizard.ui.components.operations_modal import operations_modal
+
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    if controller is None:
+        _show_toast(ui, "Operations unavailable: controller not initialized", positive=False)
+        return
+    rows = _build_operation_rows(deps)
+    dialog = operations_modal(
+        rows,
+        on_resume=lambda oid: _resume_operation(deps, oid, ui),
+        on_cancel=lambda oid: _cancel_operation(deps, oid, ui),
+        on_view_log=lambda oid: _open_operation_details(deps, oid, ui),
+    )
+    opener = getattr(dialog, "open", None)
+    if callable(opener):
+        opener()
+
+
+def _open_operation_details(deps: Any, session_id: str, ui: Any) -> None:
+    """Show a lightweight details/"log" dialog for one in-flight operation.
+
+    The §9.5 "View log" action: surfaces the session's current state plus
+    any suspend reason or error. (The NAS-sync run log is a separate,
+    post-creation concern handled by :func:`_open_log_dialog`.)
+    """
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    store = getattr(controller, "session_store", None) if controller is not None else None
+    session = store.get(session_id) if store is not None else None
+    if session is None:
+        _show_toast(ui, "Operation not found", positive=False)
+        return
+    state_val = getattr(session.state, "value", str(session.state))
+    dialog = ui.dialog()
+    with (
+        dialog,
+        ui.card().props('data-testid="operation-log-dialog"').style("min-width: 480px;"),
+    ):
+        ui.label(f"Operation {session_id}").style("font-weight: 600;")
+        ui.label(f"State: {state_val}").style("color: var(--color-muted);")
+        pending = getattr(session, "pending_input", None)
+        if pending:
+            ui.label(f"Awaiting input: {pending.get('reason', '')}").style(
+                "font-family: var(--font-mono); font-size: 0.85em;"
+            )
+        error = getattr(session, "error", None)
+        if error:
+            ui.label(f"Error: {error.get('message', error.get('code', ''))}").style(
+                "color: var(--color-danger); font-family: var(--font-mono); font-size: 0.85em;"
+            )
+    dialog.open()
+
+
+def _cancel_operation(deps: Any, session_id: str, ui: Any) -> None:
+    """Cancel an in-flight session (T3 baseline; T4 adds the §9.4 dialog)."""
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    if controller is None:
+        _show_toast(ui, "Cancel unavailable: controller not initialized", positive=False)
+        return
+
+    async def _run() -> None:
+        try:
+            await controller.cancel(session_id, discard_files=False)
+            _show_toast(ui, "Operation cancelled", positive=True)
+        except Exception as exc:
+            _show_toast(ui, f"Cancel failed: {exc}", positive=False)
+
+    _spawn_background(_run())
+
+
+def _resume_operation(deps: Any, session_id: str, ui: Any) -> None:
+    """Resume a suspended session (T5 replaces this with the input dialog)."""
+    del deps, session_id
+    _show_toast(ui, "Answer the plugin's input prompt to resume", positive=False)
 
 
 def _open_log_dialog(deps: Any, run_path: Path, ui: Any) -> None:

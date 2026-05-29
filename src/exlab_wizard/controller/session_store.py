@@ -126,6 +126,15 @@ class SessionStore:
         """Return the session keyed by ``session_id``, or ``None``."""
         return self._sessions.get(session_id)
 
+    def iter_sorted(self) -> list[tuple[str, Session]]:
+        """Return ``(session_id, session)`` pairs, oldest-created first.
+
+        The public, narrow read accessor over the otherwise-private
+        session map: used by the ``/operations`` route and the in-process
+        Operations panel so neither reaches into ``_sessions`` directly.
+        """
+        return sorted(self._sessions.items(), key=lambda pair: pair[1].created_at)
+
     def transition(self, session_id: str, new_state: SessionState) -> None:
         """Move ``session_id`` to ``new_state``, updating ``current_phase``.
 
@@ -240,3 +249,24 @@ class SessionStore:
                 "session GC closed abandoned INPUT_REQUIRED session",
                 extra={"context": {"session_id": session_id}},
             )
+
+
+def project_identifier(request: Any) -> str | None:
+    """Pluck a project identifier off a project / run creation request.
+
+    A project request carries the LIMS ``short_id`` in its ``lims_project``
+    block; a run request carries the parent project's folder name (the
+    human-readable LIMS name, Backend Spec §3.2). Shared by the
+    ``/operations`` route and the in-process Operations panel so both label
+    rows identically.
+    """
+    short = getattr(request, "project_short_id", None)
+    if short:
+        return short
+    lims_project = getattr(request, "lims_project", None)
+    if isinstance(lims_project, dict):
+        value = lims_project.get("short_id")
+        if isinstance(value, str) and value:
+            return value
+    project_name = getattr(request, "project_name", None)
+    return project_name if isinstance(project_name, str) and project_name else None

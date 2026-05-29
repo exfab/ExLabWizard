@@ -40,6 +40,38 @@ class OperationRow:
     run: str
     plugin: str | None = None
 
+    @classmethod
+    def from_session(cls, session_id: str, session: Any) -> OperationRow:
+        """Map a controller ``Session`` to a panel row.
+
+        Collapses the §4.7 state machine onto the panel's three buckets:
+        ``INPUT_REQUIRED`` -> suspended (offers Resume/Cancel), ``DONE`` ->
+        completed, every other non-terminal state -> running. Shares
+        ``project_identifier`` with the ``/operations`` route so both label
+        rows identically (imported lazily to respect the controller/api
+        import ordering).
+        """
+        from exlab_wizard.controller import SessionState, project_identifier
+        from exlab_wizard.utils.time import dt_to_iso
+
+        if session.state is SessionState.INPUT_REQUIRED:
+            row_state = STATE_SUSPENDED
+        elif session.state is SessionState.DONE:
+            row_state = STATE_COMPLETED
+        else:
+            row_state = STATE_RUNNING
+        request = session.request
+        plugin = session.pending_input.get("plugin") if session.pending_input else None
+        return cls(
+            operation_id=session_id,
+            state=row_state,
+            started_at=dt_to_iso(session.created_at) if session.created_at is not None else "",
+            equipment=getattr(request, "equipment_id", None) or "",
+            project=project_identifier(request) or "",
+            run=getattr(request, "label", None) or "",
+            plugin=plugin,
+        )
+
 
 def operation_columns() -> list[dict[str, Any]]:
     """Column definitions for the NiceGUI table (Frontend §9.5)."""

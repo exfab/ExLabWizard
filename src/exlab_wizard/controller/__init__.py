@@ -18,7 +18,11 @@ from exlab_wizard.controller.creation import (
     RunCreateRequest,
     SessionHandle,
 )
-from exlab_wizard.controller.session_store import Session, SessionStore
+from exlab_wizard.controller.session_store import (
+    Session,
+    SessionStore,
+    project_identifier,
+)
 from exlab_wizard.controller.state_machine import (
     VALID_TRANSITIONS,
     Phase,
@@ -43,5 +47,6 @@ __all__ = [
     "SessionState",
     "SessionStore",
     "assert_transition",
+    "project_identifier",
     "state_to_phase",
 ]

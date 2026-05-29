@@ -538,6 +538,45 @@ def test_operations_modal_state_glyph_known_states() -> None:
     assert operations_modal.state_glyph("completed") == "check"
 
 
+def test_operation_row_from_session_maps_state_buckets_and_fields() -> None:
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from exlab_wizard.controller import SessionState
+
+    request = SimpleNamespace(
+        equipment_id="EQ1",
+        label="My Run",
+        lims_project={"short_id": "PROJ-0042"},
+        project_short_id=None,
+    )
+    suspended = SimpleNamespace(
+        state=SessionState.INPUT_REQUIRED,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        request=request,
+        pending_input={"plugin": "demo", "reason": "need value"},
+    )
+    row = operations_modal.OperationRow.from_session("s1", suspended)
+    assert row.state == operations_modal.STATE_SUSPENDED
+    assert (row.operation_id, row.equipment, row.project, row.run) == ("s1", "EQ1", "PROJ-0042", "My Run")
+    assert row.plugin == "demo"
+
+    running = SimpleNamespace(
+        state=SessionState.RENDERING, created_at=None, request=request, pending_input=None
+    )
+    r2 = operations_modal.OperationRow.from_session("s2", running)
+    assert r2.state == operations_modal.STATE_RUNNING
+    assert r2.started_at == ""  # created_at None -> empty
+    assert r2.plugin is None
+
+    done = SimpleNamespace(
+        state=SessionState.DONE, created_at=None, request=request, pending_input=None
+    )
+    assert operations_modal.OperationRow.from_session("s3", done).state == (
+        operations_modal.STATE_COMPLETED
+    )
+
+
 # ---------------------------------------------------------------------------
 # bandwidth_schedule_editor
 # ---------------------------------------------------------------------------

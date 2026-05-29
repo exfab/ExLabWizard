@@ -69,7 +69,7 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   emits no `progress` frame today, so the §9.3 per-plugin sub-row stays dormant until the plugin
   host emits one (`apply_frame` handles it for when it lands). Suite green (2205 passed).
 
-### - [ ] T3 — Render the Operations modal + toolbar/footer hooks
+### - [x] T3 — Render the Operations modal + toolbar/footer hooks
 - **Spec:** [§B1](./REMAINING_WORK.md#b1--operations-modal-is-built-exported-and-rendered-nowhere--highest-impact) · **Category:** B · **Effort:** M · **Priority:** High
 - **Why:** `operations_modal` is built/exported but rendered nowhere; no `[Operations…]`
   action exists, so sessions can't be inspected or acted on from the GUI.
@@ -78,8 +78,19 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   opens the modal populated from `deps.controller.session_store`; footer Sync segment shows
   the "N need input" state and opens the same modal.
 - **Depends on:** T2 (for auto-refresh).
-- **Status:** ⬜ Not started
-- **Impl note:** _(pending)_
+- **Status:** ✅ Done
+- **Impl note:** Added a public `SessionStore.iter_sorted()` accessor + a shared
+  `project_identifier(request)` (both in `controller/session_store.py`) so the `/operations` route
+  and the in-process panel stop reaching into `store._sessions` and label rows identically;
+  refactored the route onto them. Added `OperationRow.from_session()` (maps the §4.7 states onto the
+  panel's running/suspended/completed buckets). `main.py`: `[Operations…]` toolbar button (shown
+  when `operations_count > 0`, warning-colored if any need input) + footer Sync segment flips to
+  "N operations need input" and opens the same modal; `MainPageState` gains
+  `operations_count`/`operations_input_required`. `mount.py`: `_operation_counts`,
+  `_build_operation_rows`, `_open_operations_modal` (fresh snapshot per open), and an
+  `_open_operation_details` "view log" dialog. Fixed a latent circular import by importing
+  `SessionState`/`project_identifier` from submodules in `operations.py`. Resume/cancel row actions
+  are placeholders here (cancel does a keep-files cancel) — fully wired in T4/T5. Suite green.
 
 ### - [ ] T4 — Wire Resume / Cancel (+ §9.4 confirm, §9.6 disable rule)
 - **Spec:** [§B2](./REMAINING_WORK.md#b2--no-gui-path-to-resume-or-cancel-a-session) · **Category:** B · **Effort:** M · **Priority:** High
@@ -191,4 +202,4 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   between `api/routers/operations.py` and the in-process modal.
 
 ## Progress
-2 / 13 complete.
+3 / 13 complete.
