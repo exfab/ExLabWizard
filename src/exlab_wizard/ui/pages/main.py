@@ -109,13 +109,13 @@ def setup_incomplete_banner_props(next_action: str | None = None) -> dict[str, s
     """Banner content for the setup-incomplete state (§3.1.4).
 
     ``next_action`` is the §4.9.3 next-action discriminator (e.g.
-    ``set_nas_credentials``). When supplied it tailors the subline so
+    ``configure_rclone_remote``). When supplied it tailors the subline so
     the operator knows exactly which section to open; the rclone-only
-    NAS migration (2026-05-26) added the NAS-credentials variant.
+    NAS migration (2026-05-26) added the rclone-remote variant.
     """
 
     sublines = {
-        "set_nas_credentials": ("Set the NAS password in Settings → NAS Credentials to begin."),
+        "configure_rclone_remote": ("Configure the rclone remote (see setup docs) to begin."),
         "configure_lims": "Open Settings → LIMS to finish configuring LIMS.",
         "test_lims": "Open Settings → LIMS to finish configuring LIMS.",
         "set_paths": "Open Settings and complete the highlighted sections to begin.",

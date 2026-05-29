@@ -53,7 +53,7 @@ from exlab_wizard.constants import enums
                 {
                     "set_paths",
                     "add_equipment",
-                    "set_nas_credentials",
+                    "configure_rclone_remote",
                     "configure_lims",
                     "test_lims",
                 }
