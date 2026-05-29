@@ -1073,3 +1073,35 @@ def test_config_with_equipment_appended_rejects_duplicate_id() -> None:
     dupe = EquipmentConfig.model_validate(_equipment_dict(equipment_id="CONFOCAL_01"))
     with pytest.raises(ConfigError, match="CONFOCAL_01"):
         config_with_equipment_appended(base, dupe)
+
+
+# ---------------------------------------------------------------------------
+# NasConfig / RclonePerf
+# ---------------------------------------------------------------------------
+
+
+from exlab_wizard.config.models import Config, NasConfig, RclonePerf
+
+
+def test_nas_config_defaults():
+    nas = NasConfig(remote="nas01", base_root="/srv/lab")
+    assert nas.remote == "nas01"
+    assert nas.base_root == "/srv/lab"
+    assert nas.rclone_config_path == ""
+    assert nas.perf.transfers == 4
+    assert nas.perf.checkers == 8
+    assert nas.bandwidth.upload_mbps is None
+    assert nas.mtime_tolerance_s == 2
+
+
+def test_nas_config_rejects_nonpositive_perf():
+    with pytest.raises(ValueError):
+        RclonePerf(transfers=0)
+    with pytest.raises(ValueError):
+        RclonePerf(checkers=0)
+
+
+def test_config_has_default_nas_block():
+    cfg = Config()
+    assert cfg.nas.remote == ""
+    assert cfg.nas.base_root == ""

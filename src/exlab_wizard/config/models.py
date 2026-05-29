@@ -50,12 +50,14 @@ __all__ = [
     "LIMSConfig",
     "LoggingConfig",
     "NASCleanupConfig",
+    "NasConfig",
     "OperatorsConfig",
     "OrchestratorConfig",
     "OrchestratorStagingCleanup",
     "OrchestratorStagingTransport",
     "PathsConfig",
     "PluginsConfig",
+    "RclonePerf",
     "READMEConfig",
     "READMEDefaultField",
     "RcloneSftpTransport",
@@ -217,6 +219,48 @@ class BandwidthConfig(BaseModel):
             msg = f"upload_mbps must be > 0 when set; got {value}"
             raise ValueError(msg)
         return value
+
+
+# ---------------------------------------------------------------------------
+# nas
+# ---------------------------------------------------------------------------
+
+
+class RclonePerf(BaseModel):
+    """Parallelism knobs forwarded to rclone (``--transfers`` / ``--checkers``).
+
+    These double as the memory dial on space- and RAM-constrained
+    acquisition machines: peak memory scales with these counts times
+    rclone's per-stream buffer.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    transfers: int = Field(default=4, ge=1, le=64)
+    checkers: int = Field(default=8, ge=1, le=64)
+
+
+class NasConfig(BaseModel):
+    """``nas:`` block — the single rclone remote + base root for NAS sync.
+
+    ``remote`` is the name of a remote defined in the operator's
+    ``rclone.conf`` (set up separately with ``rclone config``). Equipment
+    run folders live under ``<remote>:<base_root>/<equipment_id>/…``.
+    ``rclone_config_path`` optionally pins ``rclone --config <path>`` for
+    when the app runs as a different OS user than the one who created the
+    config; blank means rclone's default discovery.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    remote: str = ""
+    base_root: str = ""
+    rclone_config_path: str = ""
+    # Reconcile tolerance: a file counts as synced only when its remote modtime
+    # is within this many seconds of local (absorbs SFTP/SMB modtime rounding).
+    mtime_tolerance_s: int = Field(default=2, ge=0)
+    perf: RclonePerf = Field(default_factory=RclonePerf)
+    bandwidth: BandwidthConfig = Field(default_factory=BandwidthConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -560,6 +604,7 @@ class Config(BaseModel):
     lims: LIMSConfig = Field(default_factory=LIMSConfig)
     readme: READMEConfig = Field(default_factory=READMEConfig)
     equipment: list[EquipmentConfig] = []
+    nas: NasConfig = Field(default_factory=NasConfig)
     nas_cleanup: NASCleanupConfig = Field(default_factory=NASCleanupConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     operators: OperatorsConfig = Field(default_factory=OperatorsConfig)
