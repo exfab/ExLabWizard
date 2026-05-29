@@ -35,7 +35,6 @@ from exlab_wizard.config.models import (
     PathsConfig,
     RclonePerf,
 )
-from exlab_wizard.sync.bandwidth import effective_bandwidth_limit_kibps
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
     CREATION_JSON_NAME,
@@ -45,6 +44,7 @@ from exlab_wizard.constants import (
 from exlab_wizard.constants import (
     SyncHandleState as HandleState,
 )
+from exlab_wizard.sync.bandwidth import effective_bandwidth_limit_kibps
 from exlab_wizard.sync.nas_client import NASSyncClient
 from exlab_wizard.sync.queue import SyncJobState
 from exlab_wizard.sync.transports import TransportErrorKind, TransportResult
@@ -986,7 +986,7 @@ async def test_drive_job_bandwidth_comes_from_nas_block(
     )
     await client.init()
     try:
-        handle = await client.enqueue(run_dir)
+        await client.enqueue(run_dir)
         # Wait for the worker to complete at least the push step (recorded
         # bwlimit is set before the push call in _drive_job).
         for _ in range(200):
