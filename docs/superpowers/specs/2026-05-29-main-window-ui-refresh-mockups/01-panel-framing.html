@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Superpowers Brainstorming</title>
+  <style>
+    /*
+     * BRAINSTORM COMPANION FRAME TEMPLATE
+     *
+     * This template provides a consistent frame with:
+     * - OS-aware light/dark theming
+     * - Fixed header and selection indicator bar
+     * - Scrollable main content area
+     * - CSS helpers for common UI patterns
+     *
+     * Content is injected via placeholder comment in #claude-content.
+     */
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+
+    /* ===== THEME VARIABLES ===== */
+    :root {
+      --bg-primary: #f5f5f7;
+      --bg-secondary: #ffffff;
+      --bg-tertiary: #e5e5e7;
+      --border: #d1d1d6;
+      --text-primary: #1d1d1f;
+      --text-secondary: #86868b;
+      --text-tertiary: #aeaeb2;
+      --accent: #0071e3;
+      --accent-hover: #0077ed;
+      --success: #34c759;
+      --warning: #ff9f0a;
+      --error: #ff3b30;
+      --selected-bg: #e8f4fd;
+      --selected-border: #0071e3;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-primary: #1d1d1f;
+        --bg-secondary: #2d2d2f;
+        --bg-tertiary: #3d3d3f;
+        --border: #424245;
+        --text-primary: #f5f5f7;
+        --text-secondary: #86868b;
+        --text-tertiary: #636366;
+        --accent: #0a84ff;
+        --accent-hover: #409cff;
+        --selected-bg: rgba(10, 132, 255, 0.15);
+        --selected-border: #0a84ff;
+      }
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      display: flex;
+      flex-direction: column;
+      line-height: 1.5;
+    }
+
+    /* ===== FRAME STRUCTURE ===== */
+    .header {
+      background: var(--bg-secondary);
+      padding: 0.5rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .header h1 { font-size: 0.85rem; font-weight: 500; color: var(--text-secondary); }
+    .header .status { font-size: 0.7rem; color: var(--success); display: flex; align-items: center; gap: 0.4rem; }
+    .header .status::before { content: ''; width: 6px; height: 6px; background: var(--success); border-radius: 50%; }
+
+    .main { flex: 1; overflow-y: auto; }
+    #claude-content { padding: 2rem; min-height: 100%; }
+
+    .indicator-bar {
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border);
+      padding: 0.5rem 1.5rem;
+      flex-shrink: 0;
+      text-align: center;
+    }
+    .indicator-bar span {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+    .indicator-bar .selected-text {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    /* ===== TYPOGRAPHY ===== */
+    h2 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
+    h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .subtitle { color: var(--text-secondary); margin-bottom: 1.5rem; }
+    .section { margin-bottom: 2rem; }
+    .label { font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+
+    /* ===== OPTIONS (for A/B/C choices) ===== */
+    .options { display: flex; flex-direction: column; gap: 0.75rem; }
+    .option {
+      background: var(--bg-secondary);
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+    .option:hover { border-color: var(--accent); }
+    .option.selected { background: var(--selected-bg); border-color: var(--selected-border); }
+    .option .letter {
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      width: 1.75rem; height: 1.75rem;
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 600; font-size: 0.85rem; flex-shrink: 0;
+    }
+    .option.selected .letter { background: var(--accent); color: white; }
+    .option .content { flex: 1; }
+    .option .content h3 { font-size: 0.95rem; margin-bottom: 0.15rem; }
+    .option .content p { color: var(--text-secondary); font-size: 0.85rem; margin: 0; }
+
+    /* ===== CARDS (for showing designs/mockups) ===== */
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    .card.selected { border-color: var(--selected-border); border-width: 2px; }
+    .card-image { background: var(--bg-tertiary); aspect-ratio: 16/10; display: flex; align-items: center; justify-content: center; }
+    .card-body { padding: 1rem; }
+    .card-body h3 { margin-bottom: 0.25rem; }
+    .card-body p { color: var(--text-secondary); font-size: 0.85rem; }
+
+    /* ===== MOCKUP CONTAINER ===== */
+    .mockup {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+    }
+    .mockup-header {
+      background: var(--bg-tertiary);
+      padding: 0.5rem 1rem;
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border);
+    }
+    .mockup-body { padding: 1.5rem; }
+
+    /* ===== SPLIT VIEW (side-by-side comparison) ===== */
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    @media (max-width: 700px) { .split { grid-template-columns: 1fr; } }
+
+    /* ===== PROS/CONS ===== */
+    .pros-cons { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+    .pros, .cons { background: var(--bg-secondary); border-radius: 8px; padding: 1rem; }
+    .pros h4 { color: var(--success); font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .cons h4 { color: var(--error); font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .pros ul, .cons ul { margin-left: 1.25rem; font-size: 0.85rem; color: var(--text-secondary); }
+    .pros li, .cons li { margin-bottom: 0.25rem; }
+
+    /* ===== PLACEHOLDER (for mockup areas) ===== */
+    .placeholder {
+      background: var(--bg-tertiary);
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      padding: 2rem;
+      text-align: center;
+      color: var(--text-tertiary);
+    }
+
+    /* ===== INLINE MOCKUP ELEMENTS ===== */
+    .mock-nav { background: var(--accent); color: white; padding: 0.75rem 1rem; display: flex; gap: 1.5rem; font-size: 0.9rem; }
+    .mock-sidebar { background: var(--bg-tertiary); padding: 1rem; min-width: 180px; }
+    .mock-content { padding: 1.5rem; flex: 1; }
+    .mock-button { background: var(--accent); color: white; border: none; padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.85rem; }
+    .mock-input { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; width: 100%; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1><a href="https://github.com/obra/superpowers" style="color: inherit; text-decoration: none;">Superpowers Brainstorming</a></h1>
+    <div class="status">Connected</div>
+  </div>
+
+  <div class="main">
+    <div id="claude-content">
+      <!-- CONTENT -->
+    </div>
+  </div>
+
+  <div class="indicator-bar">
+    <span id="indicator-text">Click an option above, then return to the terminal</span>
+  </div>
+
+</body>
+</html>
+<div style="max-width:1100px;margin:0 auto 22px;padding:12px 16px;background:#13313f;border:1px solid #2d5566;border-radius:10px;color:#bfe3f0;font-size:13px;line-height:1.55;"><strong>01-panel-framing.html</strong><br>DECISION: Panel framing = elevated cards (soft shadow, rounded, grey canvas) + titled header strips. Metadata pane keeps its tabs. Header count pills kept. All defaults approved.</div>
+<h2>Framing: elevated cards + titled headers</h2>
+<p class="subtitle">B's elevated cards (soft shadow, rounded corners, light-grey canvas) with C's titled header strip on each pane. Rendered with realistic content. Colors/radius/shadow shown here are placeholders — the real build pulls <code>--color-border</code>, <code>--radius-md</code>, <code>--shadow-sm</code>, <code>--color-surface</code> from your token set.</p>
+
+<style>
+  .demo { font-family: ui-sans-serif, system-ui, sans-serif; }
+  .canvas { background:#eef1f5; border:1px solid #e2e6ec; border-radius:8px; padding:10px; }
+  .toolbar { display:flex; align-items:center; gap:8px; padding:4px 4px 12px; }
+  .toolbar .ttl { font-weight:600; color:#2c3440; font-size:13px; margin-right:auto; }
+  .b { font-size:10px; border-radius:4px; padding:4px 9px; color:#fff; background:#4a90d9; }
+  .b.warn{background:#e69f00;} .b.flat{background:transparent;color:#4a90d9;}
+  .crumb { font-size:10px; color:#8892a4; padding:0 4px 10px; }
+  .grid { display:flex; gap:10px; align-items:stretch; }
+  .card3 { background:#fff; border:1px solid #e2e7ee; border-radius:8px; box-shadow:0 1px 3px rgba(0,54,96,.12); display:flex; flex-direction:column; overflow:hidden; }
+  .hd { background:#f4f6f9; border-bottom:1px solid #e3e8ef; padding:6px 10px; font-size:9px; letter-spacing:.09em; text-transform:uppercase; color:#7a8494; font-weight:600; display:flex; align-items:center; gap:6px; }
+  .hd .count { margin-left:auto; background:#e2e7ee; color:#6b7585; border-radius:9px; padding:0 6px; font-size:8px; letter-spacing:0; }
+  .bd { padding:9px 10px; font-size:11px; color:#4b5563; }
+  /* tree */
+  .tcol{flex:0 0 23%;}
+  .search{border:1px solid #dde3ed;border-radius:5px;padding:4px 7px;font-size:9px;color:#9aa3b2;margin-bottom:7px;}
+  .chips{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:9px;}
+  .chip{font-size:8px;border-radius:9px;padding:2px 8px;border:1px solid #cfe0f3;background:#e8f1fb;color:#3a78c2;}
+  .chip.off{background:#fff;color:#9aa3b2;border-color:#e0e4ea;}
+  .tn{padding:2px 0;color:#3a4250;} .tn.ind{padding-left:13px;} .tn.ind2{padding-left:26px;color:#5b6472;}
+  .eq{font-weight:600;color:#2c3440;}
+  /* file list */
+  .fcol{flex:1 1 auto;min-width:0;}
+  table{width:100%;border-collapse:collapse;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;}
+  th{ text-align:left;color:#9aa3b2;font-weight:500;font-size:8px;letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid #e3e8ef;padding:3px 8px;}
+  td{padding:4px 8px;color:#4b5563;border-bottom:1px solid #eef1f5;}
+  tr.zebra td{background:#f7f9fb;}
+  .ico{color:#7a8494;}
+  /* meta */
+  .mcol{flex:0 0 30%;}
+  .tabs{display:flex;gap:14px;border-bottom:1px solid #e3e8ef;padding:0 10px;}
+  .tab{font-size:9px;padding:6px 0;color:#9aa3b2;} .tab.on{color:#2c3440;border-bottom:2px solid #2c3440;font-weight:600;}
+  .kv{display:flex;justify-content:space-between;font-size:10px;padding:3px 0;border-bottom:1px solid #f1f4f8;}
+  .kv .k{color:#9aa3b2;} .kv .v{color:#3a4250;font-family:ui-monospace,Menlo,monospace;}
+  .footer{display:flex;gap:8px;align-items:center;margin-top:10px;padding:5px 6px;background:#fff;border:1px solid #e2e7ee;border-radius:6px;font-size:9px;color:#7a8494;}
+  .seg{padding:2px 7px;border-radius:4px;background:#f4f6f9;}
+</style>
+
+<div class="cards">
+  <div class="card" data-choice="hybrid" onclick="toggleSelect(this)" style="cursor:default;">
+    <div class="card-image" style="padding:0;background:#fff;">
+      <div class="demo" style="padding:12px;">
+        <div class="canvas">
+          <div class="toolbar">
+            <span class="ttl">ExLab-Wizard</span>
+            <span class="b">New Project</span><span class="b">New Run</span><span class="b warn">New Test Run</span>
+            <span class="b flat">Refresh</span><span class="b flat">Settings</span>
+          </div>
+          <div class="crumb">EQ1 &nbsp;/&nbsp; Photobioreactor calibration &nbsp;/&nbsp; Run_2026-05-29</div>
+          <div class="grid">
+
+            <div class="card3 tcol">
+              <div class="hd">Explorer</div>
+              <div class="bd" style="font-size:10px;">
+                <div class="search">Search…</div>
+                <div class="chips"><span class="chip">Active</span><span class="chip off">Archived</span><span class="chip">Test runs</span></div>
+                <div class="tn eq">▾ EQ1</div>
+                <div class="tn ind">▾ Photobioreactor calib · P-0142</div>
+                <div class="tn ind2">🖫 Run_2026-05-29 — baseline</div>
+                <div class="tn ind2">☁ Run_2026-05-21 — sweep</div>
+                <div class="tn ind">▸ Spectral QC · P-0138</div>
+              </div>
+            </div>
+
+            <div class="card3 fcol">
+              <div class="hd">Files <span class="count">7 items</span></div>
+              <div class="bd" style="padding:0;">
+                <table>
+                  <tr><th>Name</th><th>Size</th><th>Modified</th></tr>
+                  <tr><td><span class="ico">▤</span> readme.md</td><td>2.1 KiB</td><td>14:02</td></tr>
+                  <tr class="zebra"><td><span class="ico">▤</span> protocol.yaml</td><td>0.8 KiB</td><td>14:02</td></tr>
+                  <tr><td><span class="ico">▤</span> calibration.csv</td><td>318 KiB</td><td>14:03</td></tr>
+                  <tr class="zebra"><td><span class="ico">▤</span> spectra_001.dat</td><td>4.2 MiB</td><td>14:05</td></tr>
+                  <tr><td><span class="ico">▤</span> spectra_002.dat</td><td>4.2 MiB</td><td>14:06</td></tr>
+                  <tr class="zebra"><td><span class="ico">▤</span> notes.txt</td><td>1.1 KiB</td><td>14:09</td></tr>
+                  <tr><td><span class="ico">▤</span> manifest.json</td><td>0.4 KiB</td><td>14:09</td></tr>
+                </table>
+              </div>
+            </div>
+
+            <div class="card3 mcol">
+              <div class="hd" style="padding:0;background:transparent;border:0;">
+                <div class="tabs" style="width:100%;"><span class="tab on">Metadata</span><span class="tab">Problems (0)</span></div>
+              </div>
+              <div class="bd">
+                <div class="kv"><span class="k">Run</span><span class="v">Run_2026-05-29</span></div>
+                <div class="kv"><span class="k">Equipment</span><span class="v">EQ1</span></div>
+                <div class="kv"><span class="k">Operator</span><span class="v">a.nguyen</span></div>
+                <div class="kv"><span class="k">Sync</span><span class="v">synced</span></div>
+                <div class="kv"><span class="k">Files</span><span class="v">7 · 8.9 MiB</span></div>
+              </div>
+            </div>
+
+          </div>
+          <div class="footer">
+            <span class="seg">Sync</span><span class="seg">Validator</span><span class="seg">LIMS</span><span class="seg">Staging</span>
+            <span style="margin-left:auto;color:#3a78c2;">Clear verified runs</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Elevated cards + titled headers</h3>
+      <p>Each region is a white card (rounded, soft shadow) on a light-grey canvas, topped by an uppercase title strip. The Metadata pane keeps its tabs instead of a static title (tabs already name it). The footer status bar also becomes a card. Zebra striping is previewed in the Files table — that's the next decision.</p>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:16px;">Does this hybrid match what you pictured? A few sub-choices to confirm or correct in the terminal:</p>
+<ul style="font-size:13px;color:#5b6472;line-height:1.7;max-width:760px;">
+  <li><strong>Canvas tint</strong> — keep the light-grey page behind the cards (makes them pop), or keep the page white and rely on border+shadow alone?</li>
+  <li><strong>Metadata header</strong> — leave the existing tabs as-is (shown), or add a "DETAILS" title strip <em>above</em> the tabs too?</li>
+  <li><strong>Header counts</strong> — the little "7 items" / "Problems (0)" pills in the header strips — useful, or noise?</li>
+</ul>
+
+  </div>
+  <script>function toggleSelect(el){var c=el.parentElement;if(c){Array.prototype.forEach.call(c.querySelectorAll('.selected'),function(n){if(n!==el)n.classList.remove('selected');});}el.classList.toggle('selected');}</script>
+</body>
+</html>

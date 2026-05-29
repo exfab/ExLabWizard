@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Superpowers Brainstorming</title>
+  <style>
+    /*
+     * BRAINSTORM COMPANION FRAME TEMPLATE
+     *
+     * This template provides a consistent frame with:
+     * - OS-aware light/dark theming
+     * - Fixed header and selection indicator bar
+     * - Scrollable main content area
+     * - CSS helpers for common UI patterns
+     *
+     * Content is injected via placeholder comment in #claude-content.
+     */
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+
+    /* ===== THEME VARIABLES ===== */
+    :root {
+      --bg-primary: #f5f5f7;
+      --bg-secondary: #ffffff;
+      --bg-tertiary: #e5e5e7;
+      --border: #d1d1d6;
+      --text-primary: #1d1d1f;
+      --text-secondary: #86868b;
+      --text-tertiary: #aeaeb2;
+      --accent: #0071e3;
+      --accent-hover: #0077ed;
+      --success: #34c759;
+      --warning: #ff9f0a;
+      --error: #ff3b30;
+      --selected-bg: #e8f4fd;
+      --selected-border: #0071e3;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-primary: #1d1d1f;
+        --bg-secondary: #2d2d2f;
+        --bg-tertiary: #3d3d3f;
+        --border: #424245;
+        --text-primary: #f5f5f7;
+        --text-secondary: #86868b;
+        --text-tertiary: #636366;
+        --accent: #0a84ff;
+        --accent-hover: #409cff;
+        --selected-bg: rgba(10, 132, 255, 0.15);
+        --selected-border: #0a84ff;
+      }
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      display: flex;
+      flex-direction: column;
+      line-height: 1.5;
+    }
+
+    /* ===== FRAME STRUCTURE ===== */
+    .header {
+      background: var(--bg-secondary);
+      padding: 0.5rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .header h1 { font-size: 0.85rem; font-weight: 500; color: var(--text-secondary); }
+    .header .status { font-size: 0.7rem; color: var(--success); display: flex; align-items: center; gap: 0.4rem; }
+    .header .status::before { content: ''; width: 6px; height: 6px; background: var(--success); border-radius: 50%; }
+
+    .main { flex: 1; overflow-y: auto; }
+    #claude-content { padding: 2rem; min-height: 100%; }
+
+    .indicator-bar {
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border);
+      padding: 0.5rem 1.5rem;
+      flex-shrink: 0;
+      text-align: center;
+    }
+    .indicator-bar span {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+    .indicator-bar .selected-text {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    /* ===== TYPOGRAPHY ===== */
+    h2 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
+    h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .subtitle { color: var(--text-secondary); margin-bottom: 1.5rem; }
+    .section { margin-bottom: 2rem; }
+    .label { font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+
+    /* ===== OPTIONS (for A/B/C choices) ===== */
+    .options { display: flex; flex-direction: column; gap: 0.75rem; }
+    .option {
+      background: var(--bg-secondary);
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+    .option:hover { border-color: var(--accent); }
+    .option.selected { background: var(--selected-bg); border-color: var(--selected-border); }
+    .option .letter {
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      width: 1.75rem; height: 1.75rem;
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 600; font-size: 0.85rem; flex-shrink: 0;
+    }
+    .option.selected .letter { background: var(--accent); color: white; }
+    .option .content { flex: 1; }
+    .option .content h3 { font-size: 0.95rem; margin-bottom: 0.15rem; }
+    .option .content p { color: var(--text-secondary); font-size: 0.85rem; margin: 0; }
+
+    /* ===== CARDS (for showing designs/mockups) ===== */
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    .card.selected { border-color: var(--selected-border); border-width: 2px; }
+    .card-image { background: var(--bg-tertiary); aspect-ratio: 16/10; display: flex; align-items: center; justify-content: center; }
+    .card-body { padding: 1rem; }
+    .card-body h3 { margin-bottom: 0.25rem; }
+    .card-body p { color: var(--text-secondary); font-size: 0.85rem; }
+
+    /* ===== MOCKUP CONTAINER ===== */
+    .mockup {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+    }
+    .mockup-header {
+      background: var(--bg-tertiary);
+      padding: 0.5rem 1rem;
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border);
+    }
+    .mockup-body { padding: 1.5rem; }
+
+    /* ===== SPLIT VIEW (side-by-side comparison) ===== */
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    @media (max-width: 700px) { .split { grid-template-columns: 1fr; } }
+
+    /* ===== PROS/CONS ===== */
+    .pros-cons { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+    .pros, .cons { background: var(--bg-secondary); border-radius: 8px; padding: 1rem; }
+    .pros h4 { color: var(--success); font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .cons h4 { color: var(--error); font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .pros ul, .cons ul { margin-left: 1.25rem; font-size: 0.85rem; color: var(--text-secondary); }
+    .pros li, .cons li { margin-bottom: 0.25rem; }
+
+    /* ===== PLACEHOLDER (for mockup areas) ===== */
+    .placeholder {
+      background: var(--bg-tertiary);
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      padding: 2rem;
+      text-align: center;
+      color: var(--text-tertiary);
+    }
+
+    /* ===== INLINE MOCKUP ELEMENTS ===== */
+    .mock-nav { background: var(--accent); color: white; padding: 0.75rem 1rem; display: flex; gap: 1.5rem; font-size: 0.9rem; }
+    .mock-sidebar { background: var(--bg-tertiary); padding: 1rem; min-width: 180px; }
+    .mock-content { padding: 1.5rem; flex: 1; }
+    .mock-button { background: var(--accent); color: white; border: none; padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.85rem; }
+    .mock-input { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; width: 100%; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1><a href="https://github.com/obra/superpowers" style="color: inherit; text-decoration: none;">Superpowers Brainstorming</a></h1>
+    <div class="status">Connected</div>
+  </div>
+
+  <div class="main">
+    <div id="claude-content">
+      <!-- CONTENT -->
+    </div>
+  </div>
+
+  <div class="indicator-bar">
+    <span id="indicator-text">Click an option above, then return to the terminal</span>
+  </div>
+
+</body>
+</html>
+<div style="max-width:1100px;margin:0 auto 22px;padding:12px 16px;background:#13313f;border:1px solid #2d5566;border-radius:10px;color:#bfe3f0;font-size:13px;line-height:1.55;"><strong>02-metadata-pane.html</strong><br>DECISION: Option B - Anchored context + nested file detail. The right pane stays bound to the tree selection (equipment/project/run); selecting a file reveals a 'Selected file' sub-card within that context. Folders are selectable and show folder metadata.</div>
+<h2>Right pane: how should it show equipment / project / file metadata?</h2>
+<p class="subtitle">Today the pane already renders <strong>equipment</strong>, <strong>project</strong>, and <strong>run</strong> metadata — but only driven by the <em>left tree</em>. Selecting a <strong>file</strong> in the centre list does nothing. So the question is really an interaction model: there are two selection surfaces (tree + file list) and one pane. Three ways to wire it. Pick one (click), or mix-and-match in the terminal.</p>
+
+<style>
+  .opt-demo{font-family:ui-sans-serif,system-ui,sans-serif;}
+  .pane{background:#fff;border:1px solid #e2e7ee;border-radius:8px;box-shadow:0 1px 3px rgba(0,54,96,.12);overflow:hidden;font-size:11px;}
+  .ptabs{display:flex;gap:14px;border-bottom:1px solid #e3e8ef;padding:0 12px;}
+  .ptab{font-size:9px;padding:7px 0;color:#9aa3b2;} .ptab.on{color:#2c3440;border-bottom:2px solid #2c3440;font-weight:600;}
+  .pbody{padding:10px 12px;}
+  .subj{display:flex;align-items:center;gap:6px;font-weight:600;color:#2c3440;font-size:12px;margin-bottom:2px;}
+  .subj .pill{font-size:7px;letter-spacing:.06em;text-transform:uppercase;background:#eef1f5;color:#7a8494;border-radius:9px;padding:1px 6px;font-weight:600;}
+  .bc{font-size:8px;color:#9aa3b2;margin-bottom:8px;}
+  .kv{display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #f1f4f8;}
+  .kv .k{color:#9aa3b2;} .kv .v{color:#3a4250;font-family:ui-monospace,Menlo,monospace;font-size:10px;}
+  .sec{margin-top:8px;border:1px solid #e8ebf0;border-radius:6px;overflow:hidden;}
+  .sec .sh{background:#f4f6f9;border-bottom:1px solid #e8ebf0;padding:4px 8px;font-size:8px;letter-spacing:.07em;text-transform:uppercase;color:#7a8494;font-weight:600;display:flex;align-items:center;gap:5px;}
+  .sec .sh .car{margin-left:auto;color:#aab2bf;}
+  .sec .sb{padding:7px 8px;}
+  .sec.collapsed .sb{display:none;}
+  .note{font-size:8px;color:#9aa3b2;margin-top:8px;font-style:italic;}
+  .seltag{display:inline-block;font-size:8px;background:#e8f1fb;color:#3a78c2;border:1px solid #cfe0f3;border-radius:4px;padding:1px 5px;margin-bottom:7px;}
+  .card .card-body h3{margin-bottom:4px;}
+</style>
+
+<div class="cards">
+
+  <!-- OPTION A -->
+  <div class="card" data-choice="a-follows" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:14px;background:#eef1f5;">
+      <div class="opt-demo">
+        <div class="pane">
+          <div class="ptabs"><span class="ptab on">Metadata</span><span class="ptab">Problems (0)</span></div>
+          <div class="pbody">
+            <span class="seltag">▤ selected file: calibration.csv</span>
+            <div class="subj">calibration.csv <span class="pill">File</span></div>
+            <div class="bc">EQ1 / Photobioreactor calib / Run_2026-05-29</div>
+            <div class="kv"><span class="k">Size</span><span class="v">318 KiB</span></div>
+            <div class="kv"><span class="k">Modified</span><span class="v">2026-05-29 14:03</span></div>
+            <div class="kv"><span class="k">Sync</span><span class="v">synced ☁</span></div>
+            <div class="kv"><span class="k">Path</span><span class="v">…/Run_2026-05-29/</span></div>
+            <div class="note">Click EQ1 in the tree → this same pane swaps to equipment fields. Last thing clicked wins.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A · Follows selection (one subject)</h3>
+      <p>The pane always describes <em>whatever you last clicked</em> — tree node OR file row. A breadcrumb header names the subject so you never lose your place. File becomes a new "kind" alongside equipment/project/run. Simplest mental model; one thing at a time (matches your "not all at once").</p>
+    </div>
+  </div>
+
+  <!-- OPTION B -->
+  <div class="card" data-choice="b-anchored" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:14px;background:#eef1f5;">
+      <div class="opt-demo">
+        <div class="pane">
+          <div class="ptabs"><span class="ptab on">Metadata</span><span class="ptab">Problems (0)</span></div>
+          <div class="pbody">
+            <div class="subj">Run_2026-05-29 <span class="pill">Run</span></div>
+            <div class="bc">EQ1 / Photobioreactor calib</div>
+            <div class="kv"><span class="k">Operator</span><span class="v">a.nguyen</span></div>
+            <div class="kv"><span class="k">Sync</span><span class="v">synced</span></div>
+            <div class="sec">
+              <div class="sh">Selected file <span class="car">▾</span></div>
+              <div class="sb">
+                <div class="kv"><span class="k">Name</span><span class="v">calibration.csv</span></div>
+                <div class="kv"><span class="k">Size</span><span class="v">318 KiB</span></div>
+                <div class="kv"><span class="k">Sync</span><span class="v">synced ☁</span></div>
+              </div>
+            </div>
+            <div class="note">Pane stays anchored to the tree context (the run). Picking a file adds a sub-card; run context stays visible.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · Anchored context + nested file detail</h3>
+      <p>The pane stays bound to the <em>tree</em> selection (equipment/project/run). Selecting a file reveals a <strong>"Selected file"</strong> sub-section <em>within</em> that context, so you see run + file together. More context at once; the tree and file list don't fight over the pane.</p>
+    </div>
+  </div>
+
+  <!-- OPTION C -->
+  <div class="card" data-choice="c-chain" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:14px;background:#eef1f5;">
+      <div class="opt-demo">
+        <div class="pane">
+          <div class="ptabs"><span class="ptab on">Metadata</span><span class="ptab">Problems (0)</span></div>
+          <div class="pbody">
+            <div class="sec collapsed"><div class="sh">▣ Equipment · EQ1 <span class="car">▸</span></div></div>
+            <div class="sec collapsed"><div class="sh">▤ Project · Photobioreactor calib <span class="car">▸</span></div></div>
+            <div class="sec"><div class="sh">⧉ Run · Run_2026-05-29 <span class="car">▾</span></div>
+              <div class="sb"><div class="kv"><span class="k">Operator</span><span class="v">a.nguyen</span></div><div class="kv"><span class="k">Sync</span><span class="v">synced</span></div></div>
+            </div>
+            <div class="sec"><div class="sh">▦ File · calibration.csv <span class="car">▾</span></div>
+              <div class="sb"><div class="kv"><span class="k">Size</span><span class="v">318 KiB</span></div><div class="kv"><span class="k">Sync</span><span class="v">synced ☁</span></div></div>
+            </div>
+            <div class="note">The whole chain is present but collapsed; expand whichever level you care about.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C · Selection chain (accordion)</h3>
+      <p>The pane shows the full path of the selection as collapsible sections — Equipment ▸ Project ▸ Run ▸ File — auto-expanding the deepest one. You can always drill any ancestor without re-clicking the tree. Most powerful; closest to "all of it viewable, not all at once."</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:18px;">Two cross-cutting questions whichever you pick (answer in terminal):</p>
+<ul style="font-size:13px;color:#5b6472;line-height:1.7;max-width:780px;">
+  <li><strong>File selection mechanic</strong> — should a <em>single click</em> on a file row select it (and highlight the row), with double-click / "Open in OS" still launching it? (Today rows only have a right-click menu.)</li>
+  <li><strong>Folders</strong> — when a folder row is selected, show folder metadata (item count, total size, sync rollup), or treat folders as navigation-only?</li>
+</ul>
+
+  </div>
+  <script>function toggleSelect(el){var c=el.parentElement;if(c){Array.prototype.forEach.call(c.querySelectorAll('.selected'),function(n){if(n!==el)n.classList.remove('selected');});}el.classList.toggle('selected');}</script>
+</body>
+</html>
