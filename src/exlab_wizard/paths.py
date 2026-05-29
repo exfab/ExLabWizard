@@ -551,6 +551,10 @@ def setup_state_missing(
             return _missing_nas_fields(config)
         case SetupState.INCOMPLETE_NO_LIMS:
             return _missing_lims_fields(config)
+    # Defensive fallback: an unrecognized state (e.g. a future enum member or a
+    # non-SetupState passed by a misbehaving caller) yields no missing-field
+    # rows rather than ``None``, honouring the ``list[...]`` return contract.
+    return []
 
 
 def _missing_nas_fields(config: Config | None) -> list[dict[str, str]]:
