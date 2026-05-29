@@ -97,6 +97,23 @@ plot series, progress bars, status badges, and semantic states.
 | `--color-body`    | `#2e3a4e` | Primary body text                          |
 | `--color-heading` | `#003660` | All heading text (alias of navy)           |
 
+#### Main-window surface & interaction tokens (2026-05-29 UI refresh)
+
+Several are intentional aliases of existing chrome tokens, kept named so
+component CSS reads intent-first (e.g. `--color-row-selected-bar` over a bare
+blue).
+
+| Token                      | Hex       | Usage                                                  |
+|----------------------------|-----------|--------------------------------------------------------|
+| `--color-bg-subtle`        | `#f4f6f9` | Breadcrumb bar, pane title strips (subtle surface tint)|
+| `--color-pane-header`      | `#f4f6f9` | Framed-pane title-strip background (= bg-subtle)       |
+| `--color-link`             | `#1b75bc` | Hyperlink / breadcrumb segment text (= blue)           |
+| `--color-highlight`        | `#fff6e0` | New-file row highlight; "kept local" badge fill        |
+| `--color-zebra`            | `#f7f9fb` | File-list even-row stripe                               |
+| `--color-row-selected`     | `#dceaff` | Selected file / tree row fill                           |
+| `--color-row-selected-bar` | `#1b75bc` | Selected-row left accent bar (= blue)                  |
+| `--color-on-info`          | `#003660` | Text on a solid `--color-info` fill (= navy; ~6:1 on sky) |
+
 ### Semantic Color Assignments
 
 | State   | Token                | Hex       | Use Case                                     |
@@ -628,6 +645,16 @@ Include this `:root` block in all generated CSS files:
   --color-muted:   #8892a4;
   --color-body:    #2e3a4e;
   --color-heading: #003660;
+
+  /* Surface & interaction (2026-05-29 UI refresh); aliases noted */
+  --color-bg-subtle:        #f4f6f9;
+  --color-pane-header:      #f4f6f9;   /* = bg-subtle */
+  --color-link:             #1b75bc;   /* = blue */
+  --color-highlight:        #fff6e0;
+  --color-zebra:            #f7f9fb;
+  --color-row-selected:     #dceaff;
+  --color-row-selected-bar: #1b75bc;   /* = blue */
+  --color-on-info:          #003660;   /* = navy; text on --color-info */
 
   /* Data palette -- Okabe-Ito -- visualization only */
   --oi-orange:    #E69F00;

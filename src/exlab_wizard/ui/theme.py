@@ -45,6 +45,18 @@ def build_root_css() -> str:
         f"  --color-muted:   {design.COLOR_MUTED};\n"
         f"  --color-body:    {design.COLOR_BODY};\n"
         f"  --color-heading: {design.COLOR_HEADING};\n"
+        # Main-window UI-refresh surface tokens + three vars components already
+        # referenced but the block never emitted (latent dead styling): without
+        # these, the new-file highlight, breadcrumb link/bar tint, and relay-
+        # badge text colour silently resolved to empty and were dropped.
+        f"  --color-bg-subtle:        {design.COLOR_BG_SUBTLE};\n"
+        f"  --color-pane-header:      {design.COLOR_PANE_HEADER};\n"
+        f"  --color-highlight:        {design.COLOR_HIGHLIGHT};\n"
+        f"  --color-zebra:            {design.COLOR_ZEBRA};\n"
+        f"  --color-row-selected:     {design.COLOR_ROW_SELECTED};\n"
+        f"  --color-row-selected-bar: {design.COLOR_ROW_SELECTED_BAR};\n"
+        f"  --color-link:             {design.COLOR_LINK};\n"
+        f"  --color-on-info:          {design.COLOR_ON_INFO};\n"
         f"  --oi-orange:    {design.OI_ORANGE};\n"
         f"  --oi-sky:       {design.OI_SKY};\n"
         f"  --oi-green:     {design.OI_GREEN};\n"
