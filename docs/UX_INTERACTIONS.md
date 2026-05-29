@@ -51,13 +51,13 @@ flow test.
 | `/settings` | `settings-equipment-smb-user` | input | Type the SMB user | Sets the rclone_smb transport user for the new entry. |
 | `/settings` | `settings-equipment-add` | button | Click 'Add equipment' | Validates and appends an EquipmentConfig to the draft; row appears. |
 
-## NAS Credentials
+## NAS Remote
 
 | Route | Test ID | Element | Action | Outcome |
 |---|---|---|---|---|
-| `/settings` | `settings-nav-nas_credentials` | nav row | Click the 'NAS Credentials' sidebar row | Shows one keyring-credential row per password-requiring equipment. |
-| `/settings` | `settings-nas-password-EQ1` | credential field | Set / Replace / Clear the equipment's NAS password | Writes the per-equipment password to the OS keyring at click time. |
-| `/settings` | `settings-nas-test-EQ1` | button | Click 'Test connection' | Runs the rclone probe and renders the result inline. |
+| `/settings` | `settings-nav-nas_remote` | nav row | Click the 'NAS Remote' sidebar row | Shows the configured rclone remote name, base root, and found/not-found badge. |
+| `/settings` | `settings-nas-remote-name` | label | View the configured rclone remote name | Displays the remote name from config.nas.remote (or '(not configured)'). |
+| `/settings` | `settings-nas-test-connection` | button | Click 'Test connection' | Runs the rclone remote probe and renders the result inline. |
 
 ## New template
 

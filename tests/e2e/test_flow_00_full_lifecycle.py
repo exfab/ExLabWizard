@@ -275,22 +275,16 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         assert "rclone_smb" in config_text
         assert str(data_root) in config_text
 
-        # ---- Phase 6: set NAS passwords (config is already live) ------
+        # ---- Phase 6: verify NAS Remote section is present ---------------
         # The two nas-mode equipment registered above leave the install in
-        # the INCOMPLETE_NO_NAS_CREDENTIAL state (rclone-only migration,
-        # 2026-05-26) which gates every creation flow. The NAS-credentials
-        # section appears now that config.yaml carries the equipment;
-        # set both passwords so the gate clears before project creation.
+        # the INCOMPLETE_NO_NAS_REMOTE state (rclone.conf migration).
+        # The NAS Remote settings section (read-only) appears once equipment
+        # with sync_mode=NAS is present; the operator resolves the gate by
+        # running `rclone config` out-of-band and setting nas.remote in
+        # config.yaml. We verify the section nav is visible and can be clicked.
         _goto(page, f"{server.base_url}/settings")
         page.get_by_test_id("settings-dialog").wait_for(state="visible", timeout=10_000)
-        for equipment_id in ("MICROSCOPE1", "SPECTROMETER1"):
-            page.get_by_test_id("settings-nav-nas_credentials").click()
-            page.get_by_test_id(f"settings-nas-password-{equipment_id}-primary").click()
-            inp = page.get_by_test_id(f"settings-nas-password-{equipment_id}-input")
-            inp.wait_for(state="visible", timeout=5_000)
-            inp.fill("nas-secret")
-            page.get_by_test_id(f"settings-nas-password-{equipment_id}-save").click()
-            page.wait_for_timeout(300)
+        page.get_by_test_id("settings-nav-nas_remote").click()
 
         # ---- Phase 7: create a project template ------------------------
         _goto(page, f"{server.base_url}/templates")
