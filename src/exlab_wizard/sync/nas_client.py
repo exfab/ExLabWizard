@@ -27,19 +27,18 @@ from exlab_wizard.cache.sync_state_writer import SyncStateWriter
 from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
-    RcloneSftpTransport,
-    RcloneSmbTransport,
+    NasConfig,
 )
 from exlab_wizard.constants import (
     RunSyncState,
     SyncHandleState,
     SyncStatus,
 )
-from exlab_wizard.constants.keyring import keyring_nas_username
 from exlab_wizard.logging import get_logger
 from exlab_wizard.paths import cache_dir, creation_json_path
 from exlab_wizard.sync.bandwidth import effective_bandwidth_limit_kibps
 from exlab_wizard.sync.cleanup import cleanup_interlocks_satisfied
+from exlab_wizard.sync.manifest import RemoteManifest, parse_lsjson
 from exlab_wizard.sync.pre_sync_gate import is_eligible
 from exlab_wizard.sync.queue import (
     SyncJobRow,
@@ -52,12 +51,7 @@ from exlab_wizard.sync.transports import (
     TransportErrorKind,
     TransportResult,
 )
-from exlab_wizard.sync.transports.rclone import (
-    RcloneDriver,
-    build_rclone_env,
-    obscure,
-    pass_env_keys_for,
-)
+from exlab_wizard.sync.transports.rclone import RcloneDriver
 from exlab_wizard.sync.verifier import VerifyResult
 from exlab_wizard.utils.time import utc_now, utc_now_iso
 from exlab_wizard.validator.engine import Validator
@@ -125,128 +119,31 @@ def _remote_name_for(equipment: EquipmentConfig) -> str:
     return f"exlab_{equipment.id.lower()}"
 
 
-def _build_target_for(
-    transport: RcloneSftpTransport | RcloneSmbTransport,
-    remote_name: str,
-    run: Path,
-) -> str:
-    """Compose the rclone destination string for a run directory."""
-    if isinstance(transport, RcloneSftpTransport):
-        return f"{remote_name}:{transport.remote_path.rstrip('/')}/{run.name}"
-    # SMB: share is required, remote_path beneath it is optional.
-    base = f"{remote_name}:{transport.share.rstrip('/')}"
-    if transport.remote_path:
-        return f"{base}/{transport.remote_path.strip('/')}/{run.name}"
-    return f"{base}/{run.name}"
+def _build_target_for_run(*, remote: str, base_root: str, equipment_id: str, run: Path) -> str:
+    """Compose ``<remote>:/<base_root>/<equipment_id>/<run-leaf>``.
 
-
-async def _resolve_env_for_equipment(
-    equipment: EquipmentConfig,
-    keyring_store: Any,
-) -> tuple[dict[str, str], tuple[str, ...], str]:
-    """Look up the password, obscure it, build the rclone env.
-
-    Returns ``(env, mask_for_log, remote_name)``. Raises
-    :class:`TransportError(AUTH)` when the keyring entry is missing or
-    when ``rclone obscure`` fails. The keyring lookup happens fresh on
-    every call so a credential cleared mid-flight surfaces as the next
-    push's AUTH failure rather than silently using a stale password.
+    Leaf semantics preserved: the run directory name is appended after the
+    equipment folder. Empty components (a blank ``base_root``) are dropped so
+    the composed path never carries a doubled slash.
     """
-    transport = equipment.transport
-    if not isinstance(transport, RcloneSftpTransport | RcloneSmbTransport):
-        msg = f"unsupported transport type: {type(transport).__name__}"
-        raise ValueError(msg)
+    parts = [base_root.strip("/"), equipment_id, run.name]
+    path = "/".join(p for p in parts if p)
+    return f"{remote}:/{path}"
 
-    password: str | None = None
-    if keyring_store is not None:
-        getter = getattr(keyring_store, "get_password", None)
-        if getter is not None:
-            # A keyring backend failure is structurally distinct from an
-            # absent entry: surface the underlying exception in the error
-            # message so the operator can tell the two apart.
-            try:
-                password = getter(username=keyring_nas_username(equipment.id))
-            except Exception as exc:
-                msg = (
-                    f"keyring lookup failed for equipment {equipment.id!r}: "
-                    f"{type(exc).__name__}: {exc}"
-                )
-                raise TransportError(msg, error_kind=TransportErrorKind.AUTH) from exc
-    if password is None or password == "":
-        msg = f"NAS password not set in keyring for equipment {equipment.id!r}"
-        raise TransportError(msg, error_kind=TransportErrorKind.AUTH)
 
-    obscured = await obscure(password)
-    remote_name = _remote_name_for(equipment)
-    env = build_rclone_env(
-        transport=transport,
-        password_obscured=obscured,
-        remote_name=remote_name,
+def _build_driver(nas: NasConfig) -> RcloneDriver:
+    """Construct the shared :class:`RcloneDriver` from the ``nas:`` block.
+
+    The named remote lives in the operator's ``rclone.conf`` (set up with
+    ``rclone config``); the driver only needs the optional ``--config``
+    path override plus the parallelism dials. No keyring / env threading —
+    credentials are entirely the named remote's concern.
+    """
+    return RcloneDriver(
+        config_path=nas.rclone_config_path or None,
+        transfers=nas.perf.transfers,
+        checkers=nas.perf.checkers,
     )
-    return env, pass_env_keys_for(remote_name), remote_name
-
-
-def _build_transport_driver(
-    equipment: EquipmentConfig,
-    keyring_store: Any,
-) -> tuple[Any, Callable[..., Any], Callable[..., Any]]:
-    """Return a ``(driver, push_callable, check_callable)`` triple.
-
-    Both supported transports (SFTP and SMB) route through the same
-    :class:`RcloneDriver`. The push and check closures resolve the
-    keyring password, run ``rclone obscure``, build the env, and call
-    the matching driver method. The closures share the same equipment +
-    keyring binding so credentials never go out of sync between push
-    and verify.
-
-    Stage-mode equipment (Redesign §3.2, ``sync_mode == 'stage'``) has
-    no ``transport`` block — the orchestrator owns the NAS sync. The
-    EquipmentConfig validator guarantees this function only runs against
-    nas-mode equipment.
-    """
-    transport = equipment.transport
-    if transport is None:
-        msg = (
-            f"equipment {equipment.id!r} has sync_mode "
-            f"{equipment.sync_mode.value!r}; the NAS-sync queue only handles "
-            f"nas-mode equipment with a configured transport"
-        )
-        raise ValueError(msg)
-    if not isinstance(transport, RcloneSftpTransport | RcloneSmbTransport):
-        msg = f"unsupported transport type: {type(transport).__name__}"
-        raise ValueError(msg)
-
-    rclone_driver = RcloneDriver()
-
-    async def _push(
-        local: Path,
-        *,
-        bwlimit_kibps: int | None,
-        files_from: Path | None = None,
-    ) -> TransportResult:
-        env, mask, remote_name = await _resolve_env_for_equipment(equipment, keyring_store)
-        target = _build_target_for(transport, remote_name, local)
-        return await rclone_driver.push(
-            local,
-            target,
-            bwlimit_kibps=bwlimit_kibps,
-            files_from=files_from,
-            env=env,
-            mask_for_log=mask,
-        )
-
-    async def _check(local: Path, *, files_from: Path) -> Any:
-        env, mask, remote_name = await _resolve_env_for_equipment(equipment, keyring_store)
-        target = _build_target_for(transport, remote_name, local)
-        return await rclone_driver.check(
-            local,
-            target,
-            files_from=files_from,
-            env=env,
-            mask_for_log=mask,
-        )
-
-    return rclone_driver, _push, _check
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +183,7 @@ class NASSyncClient:
         worker_poll_interval_s: float = 0.05,
         push_callable_factory: Callable[[EquipmentConfig], Callable[..., Any]] | None = None,
         check_callable_factory: Callable[[EquipmentConfig], Callable[..., Any]] | None = None,
+        lsjson_callable_factory: Callable[[EquipmentConfig], Callable[..., Any]] | None = None,
         remote_stat_callable: Callable[[SyncJobRow], bool] | None = None,
     ) -> None:
         self._config = config
@@ -293,10 +191,11 @@ class NASSyncClient:
         self._validator = validator
         self._cache_creation = cache_creation
         self._sync_state_writer = sync_state_writer or SyncStateWriter()
-        # Operator-typed NAS passwords are resolved from the keyring on
-        # every push so a credential cleared / replaced mid-flight
-        # surfaces as the next push's AUTH failure rather than silently
-        # using a stale value. Tests inject a stub keyring_store.
+        # Retained for additive compatibility: the rclone-named-remote
+        # migration moved credential handling entirely into the operator's
+        # ``rclone.conf``, so the client no longer resolves passwords from
+        # the keyring. ``tray/dependencies.py`` still passes this arg; it is
+        # accepted and ignored here until that caller is migrated.
         self._keyring_store = keyring_store
         self._queue = SyncQueue(queue_db)
         self._equipment_by_id = {e.id: e for e in config.equipment}
@@ -306,6 +205,7 @@ class NASSyncClient:
         self._stopping = False
         self._push_callable_factory = push_callable_factory
         self._check_callable_factory = check_callable_factory
+        self._lsjson_callable_factory = lsjson_callable_factory
         # Default remote stat: optimistic OK so unit tests don't need
         # to wire a real network probe.
         self._remote_stat_callable = remote_stat_callable or (lambda _row: True)
@@ -618,126 +518,80 @@ class NASSyncClient:
             if not result.ok:
                 await self._handle_push_failure(job, result)
                 return
-
-            # Push succeeded. Transition RUNNING -> AWAITING_VERIFY.
-            await self._queue.transition(job.id, SyncJobState.AWAITING_VERIFY)
-
-            # ``rclone check --download --combined`` streams every file in
-            # the subset back from the NAS, hashes it locally, and writes
-            # one ``=/*/+/-/!`` line per file (see RcloneDriver.check).
-            # When the job carries no subset (a whole-run re-verify), we
-            # still need a files-from for the check call; build it from
-            # sync_state.json's tracked files. The whole-run case is rare
-            # (only a manual force_verify reaches it, and force_verify has
-            # its own code path), so we treat absence of ``job.files`` as
-            # a noop here.
-            check = self._build_check(equipment)
-            check_files_from = files_from_path
-            if check_files_from is None:
-                # Whole-run case (``job.files`` empty): scope the rclone
-                # check against every file we just SHA'd locally so the
-                # remote bytes are integrity-verified against the source.
-                # An empty discovery -- a completely empty run dir --
-                # short-circuits the verifier on the push alone.
-                if not verify_files:
-                    await self._queue.transition(
-                        job.id,
-                        SyncJobState.VERIFIED,
-                        increment_verify_passes=True,
-                        verified_at=utc_now_iso(),
-                    )
-                    await self._mark_synced(run_path)
-                    await self._maybe_cleanup(job.id, run_path)
-                    return
-                check_files_from = self._write_files_from(verify_files)
-
-            try:
-                try:
-                    check_result = await check(run_path, files_from=check_files_from)
-                except TransportError as exc:
-                    verify_result = VerifyResult(ok=False, error_kind=exc.error_kind)
-                except FileNotFoundError:
-                    await self._queue.record_failure(
-                        job.id,
-                        error=TransportErrorKind.LOCAL_FILE_VANISHED.value,
-                        terminal=True,
-                    )
-                    return
-                else:
-                    verify_result = VerifyResult.from_check_result(check_result)
-            finally:
-                if check_files_from is not None and check_files_from is not files_from_path:
-                    with contextlib.suppress(OSError):
-                        check_files_from.unlink()
         finally:
             if files_from_path is not None:
                 with contextlib.suppress(OSError):
                     files_from_path.unlink()
 
-        # Per-file verify reconciliation (operator-free per-file NAS sync,
-        # design "Failure handling"): credit every file that verified in
-        # ``sync_state.json`` -- even when the batch job is otherwise marked
-        # failed, so a single bad file does not block the good ones. Slot A
-        # also lands here -- ``verified_sha256`` is written from the
-        # ``local_shas`` dict captured before the push.
-        await self._reconcile_synced_files(run_path, verify_result, local_shas)
+        # Push succeeded. Transition RUNNING -> AWAITING_VERIFY.
+        await self._queue.transition(job.id, SyncJobState.AWAITING_VERIFY)
 
-        if not verify_result.ok:
-            # Spec §7.1.5 retry-class routing for verify failures.
-            # ``rclone check`` may have raised TransportError before the
-            # combined output was usable; in that case
-            # ``verify_result.error_kind`` carries the transport's
-            # classification:
-            #
-            # - AUTH -- terminal FAILED (configuration problem, no retry).
-            # - NETWORK / UNKNOWN -- non-terminal failure with backoff.
-            # - Any other case (genuine ``*`` lines from the combined
-            #   output, or a TransportError raised without a classified
-            #   ``error_kind``, e.g. binary spawn failure) -- the §7.1.5
-            #   HASH_MISMATCH single-retry-then-terminal branch. A spawn
-            #   failure routed this way means the worker re-queues once,
-            #   retries the push+check, and terminates FAILED on the
-            #   second failure; the operator surfaces the binary-missing
-            #   reason via ``last_error``.
-            kind = verify_result.error_kind
-            if kind is TransportErrorKind.AUTH:
-                await self._queue.record_failure(
-                    job.id,
-                    error=TransportErrorKind.AUTH.value,
-                    terminal=True,
-                )
-                return
-            if kind in (
-                TransportErrorKind.NETWORK,
-                TransportErrorKind.UNKNOWN,
-            ):
-                await self._queue.record_failure(
-                    job.id,
-                    error=kind.value,
-                    terminal=False,
-                )
-                return
-            # Genuine hash mismatch (or unclassified probe failure):
-            # single retry of the transport phase by re-queuing once.
-            # Track the previous hash mismatch via ``last_error`` so a
-            # second failure becomes terminal.
-            previous = job.last_error or ""
-            if TransportErrorKind.HASH_MISMATCH.value in previous:
-                await self._queue.transition(
-                    job.id,
-                    SyncJobState.FAILED,
-                    last_error=TransportErrorKind.HASH_MISMATCH.value,
-                )
-                return
+        # Routine reconcile (rclone-named-remote migration, 2026-05-28):
+        # replace the per-push ``rclone check --download`` hash-verify with a
+        # cheap ``rclone lsjson`` listing. A file counts as synced when the
+        # remote entry exists, its size equals local, and its modtime is
+        # within ``mtime_tolerance_s`` of local. The expensive
+        # download-and-rehash gate now runs once, immediately before local
+        # deletion, in ``_maybe_cleanup``.
+        #
+        # An empty subset (a completely empty run dir) short-circuits to
+        # VERIFIED on the push alone -- there is nothing to reconcile.
+        if not verify_files:
+            await self._queue.transition(
+                job.id,
+                SyncJobState.VERIFIED,
+                increment_verify_passes=True,
+                verified_at=utc_now_iso(),
+            )
+            await self._mark_synced(run_path)
+            await self._maybe_cleanup(job.id, run_path)
+            return
+
+        lsjson = self._build_lsjson(equipment)
+        try:
+            manifest = await lsjson(run_path)
+        except TransportError as exc:
+            await self._handle_verify_transport_error(job, exc)
+            return
+
+        # Per-file reconciliation + Slot A SHA capture. Credit every file
+        # whose remote entry matches the local signature, even when some
+        # files in the batch are still missing remotely -- a single
+        # lagging file must not block the good ones from being recorded.
+        tol = self._config.nas.mtime_tolerance_s
+        synced_at = utc_now_iso()
+        credited: list[str] = []
+        for rel in verify_files:
+            sig = self._file_signature(run_path / rel)
+            if sig is None:
+                continue
+            size, mtime_ns = sig
+            if manifest.matches(rel, size, mtime_ns / 1e9, tolerance_s=tol):
+                with contextlib.suppress(Exception):
+                    await self._sync_state_writer.upsert_file(
+                        run_path,
+                        rel,
+                        synced_signature=sig,
+                        verified_at=synced_at,
+                        verified_sha256=local_shas.get(rel),
+                    )
+                credited.append(rel)
+
+        if len(credited) != len(verify_files):
+            # Some files did not reconcile against the remote listing yet.
+            # Re-queue immediately (no backoff) so the next sweep re-pushes
+            # and re-reconciles the laggards; the credited files stay
+            # recorded in ``sync_state.json``.
             await self._queue.transition(
                 job.id,
                 SyncJobState.QUEUED,
-                last_error=TransportErrorKind.HASH_MISMATCH.value,
+                last_error="remote_reconcile_incomplete",
                 next_attempt_at="",
             )
             return
 
-        # Promote to VERIFIED and record one verify pass.
+        # Every file reconciled. Promote to VERIFIED and record one verify
+        # pass.
         verified_iso = utc_now_iso()
         await self._queue.transition(
             job.id,
@@ -751,30 +605,124 @@ class NASSyncClient:
         # CLEANUP_ELIGIBLE -> CLEANED in one pass.
         await self._maybe_cleanup(job.id, run_path)
 
+    async def _handle_verify_transport_error(
+        self, job: SyncJobRow, exc: TransportError
+    ) -> None:
+        """Route a verify-phase ``TransportError`` per spec §7.1.5.
+
+        Mirrors the push-phase classification so a reconcile listing that
+        fails on auth terminates the job, while a transient network /
+        unknown failure schedules a backoff retry. Any other case (an
+        unclassified probe failure) falls into the HASH_MISMATCH
+        single-retry-then-terminal branch.
+        """
+        kind = exc.error_kind
+        if kind is TransportErrorKind.AUTH:
+            await self._queue.record_failure(
+                job.id, error=TransportErrorKind.AUTH.value, terminal=True
+            )
+            return
+        if kind in (TransportErrorKind.NETWORK, TransportErrorKind.UNKNOWN):
+            await self._queue.record_failure(job.id, error=kind.value, terminal=False)
+            return
+        previous = job.last_error or ""
+        if TransportErrorKind.HASH_MISMATCH.value in previous:
+            await self._queue.transition(
+                job.id,
+                SyncJobState.FAILED,
+                last_error=TransportErrorKind.HASH_MISMATCH.value,
+            )
+            return
+        await self._queue.transition(
+            job.id,
+            SyncJobState.QUEUED,
+            last_error=TransportErrorKind.HASH_MISMATCH.value,
+            next_attempt_at="",
+        )
+
+    def _target_for_equipment(self, equipment: EquipmentConfig, run: Path) -> str:
+        """Resolve the rclone target string for ``equipment``'s ``run``.
+
+        Single source of target resolution. Branches by ``sync_mode`` in
+        a later phase; for now both nas-mode and the fallback compose the
+        target from the ``nas:`` block (named remote + base root).
+        """
+        nas = self._config.nas
+        return _build_target_for_run(
+            remote=nas.remote,
+            base_root=nas.base_root,
+            equipment_id=equipment.id,
+            run=run,
+        )
+
     def _build_push(self, equipment: EquipmentConfig) -> Callable[..., Any]:
-        """Resolve the push callable for ``equipment.transport``.
+        """Resolve the push callable for ``equipment``.
 
         Tests can inject a custom factory via the constructor's
         ``push_callable_factory`` argument so they don't need a real
-        rclone binary on PATH.
+        rclone binary on PATH. The default closure builds the target from
+        the ``nas:`` block and calls the named-remote driver.
         """
         if self._push_callable_factory is not None:
             return self._push_callable_factory(equipment)
-        _driver, push, _check = _build_transport_driver(equipment, self._keyring_store)
-        return push
+        driver = _build_driver(self._config.nas)
+
+        async def _push(
+            local: Path,
+            *,
+            bwlimit_kibps: int | None,
+            files_from: Path | None = None,
+        ) -> TransportResult:
+            target = self._target_for_equipment(equipment, local)
+            return await driver.push(
+                local, target, bwlimit_kibps=bwlimit_kibps, files_from=files_from
+            )
+
+        return _push
 
     def _build_check(self, equipment: EquipmentConfig) -> Callable[..., Any]:
-        """Resolve the ``rclone check`` callable for ``equipment.transport``.
+        """Resolve the ``rclone check --download`` callable for ``equipment``.
 
         Tests can inject a custom factory via the constructor's
-        ``check_callable_factory`` argument. The default builds the
-        check closure alongside the push closure so credentials never
-        drift between push and verify.
+        ``check_callable_factory`` argument. The default closure builds
+        the target from the ``nas:`` block and calls the named-remote
+        driver — the expensive hash-verify is now reserved for the
+        pre-deletion integrity gate in :meth:`_maybe_cleanup`.
         """
         if self._check_callable_factory is not None:
             return self._check_callable_factory(equipment)
-        _driver, _push, check = _build_transport_driver(equipment, self._keyring_store)
-        return check
+        driver = _build_driver(self._config.nas)
+
+        async def _check(local: Path, *, files_from: Path) -> Any:
+            target = self._target_for_equipment(equipment, local)
+            return await driver.check(local, target, files_from=files_from)
+
+        return _check
+
+    def _build_lsjson(self, equipment: EquipmentConfig) -> Callable[..., Any]:
+        """Resolve the cheap ``rclone lsjson`` reconcile probe for ``equipment``.
+
+        Tests can inject a custom factory via the constructor's
+        ``lsjson_callable_factory`` argument so they can supply a stub
+        returning a crafted :class:`RemoteManifest`. The default closure
+        lists the remote run subtree and parses it into a run-relative
+        manifest (the routine post-push reconcile and the cleanup
+        existence probe both consume the manifest, never the raw JSON).
+        """
+        if self._lsjson_callable_factory is not None:
+            return self._lsjson_callable_factory(equipment)
+        driver = _build_driver(self._config.nas)
+        nas = self._config.nas
+
+        async def _lsjson(run: Path) -> RemoteManifest:
+            target = self._target_for_equipment(equipment, run)
+            raw = await driver.lsjson(target)
+            prefix = "/".join(
+                p for p in [nas.base_root.strip("/"), equipment.id, run.name] if p
+            )
+            return parse_lsjson(raw, strip_prefix=prefix)
+
+        return _lsjson
 
     async def _compute_local_shas(
         self,
@@ -785,9 +733,9 @@ class NASSyncClient:
 
         Slot A of the 2026-05-26 rclone-only migration. The dict the
         method returns is keyed by run-relative POSIX path and consumed
-        by :meth:`_reconcile_synced_files` to populate
+        by the routine reconcile in :meth:`_drive_job` to populate
         ``sync_state.json:files[*].verified_sha256``. Files that
-        disappear between Slot A and ``rclone check`` (an equipment
+        disappear between Slot A and the lsjson reconcile (an equipment
         machine pulled mid-sweep) are simply absent from the dict and
         the reconcile path skips writing ``verified_sha256`` for them.
 
@@ -842,46 +790,6 @@ class NASSyncClient:
             return
         # NETWORK / UNKNOWN -> backoff retry.
         await self._queue.record_failure(job.id, error=kind.value, terminal=False)
-
-    async def _reconcile_synced_files(
-        self,
-        run_path: Path,
-        verify_result: VerifyResult,
-        local_shas: dict[str, str],
-    ) -> None:
-        """Credit every individually-verified file in ``sync_state.json``.
-
-        Per-file reconciliation: a per-run batch job may verify some
-        files and fail others. Every file that ``rclone check``
-        confirmed (an ``=`` line, captured into ``verify_result.verified``)
-        is recorded with its current ``(st_size, st_mtime_ns)``
-        ``synced_signature``, a ``verified_at`` timestamp, and the Slot A
-        ``verified_sha256`` digest from ``local_shas``. Crediting happens
-        even when the batch job is otherwise routed to retry / FAILED so
-        a single bad file does not block the good ones.
-
-        When the rclone subprocess could not run at all
-        (``error_kind`` set) nothing is credited -- no file's NAS copy
-        was confirmed.
-        """
-        if verify_result.error_kind is not None:
-            return
-        verified_rel = list(verify_result.verified)
-        if not verified_rel:
-            return
-        verified_at = utc_now_iso()
-        for rel in verified_rel:
-            signature = self._file_signature(run_path / rel)
-            if signature is None:
-                continue
-            with contextlib.suppress(Exception):
-                await self._sync_state_writer.upsert_file(
-                    run_path,
-                    rel,
-                    synced_signature=signature,
-                    verified_at=verified_at,
-                    verified_sha256=local_shas.get(rel),
-                )
 
     @staticmethod
     def _discover_run_files(run_path: Path) -> tuple[str, ...]:
@@ -984,6 +892,45 @@ class NASSyncClient:
         ):
             await self._queue.transition(job_id, SyncJobState.CLEANUP_ELIGIBLE)
             return
+
+        # Integrity gate (rclone-named-remote migration, 2026-05-28): the
+        # routine sync path only reconciled size + modtime via lsjson, so
+        # the expensive download-and-rehash runs exactly once here, right
+        # before any irreversible local deletion. Two stages over the
+        # tracked files: (1) a cheap lsjson existence probe confirms every
+        # tracked file is present remotely; (2) ``rclone check --download``
+        # streams each file back and hashes it locally. Any failure (a
+        # transport error, a missing file, or a hash mismatch) defers the
+        # run in CLEANUP_ELIGIBLE rather than deleting -- a later sweep
+        # retries the gate.
+        equipment = self._equipment_by_id.get(job.equipment_id)
+        tracked = tuple(sorted(sync_state.files.keys()))
+        if equipment is not None and tracked:
+            lsjson = self._build_lsjson(equipment)
+            try:
+                manifest = await lsjson(run_path)
+            except TransportError:
+                await self._queue.transition(job_id, SyncJobState.CLEANUP_ELIGIBLE)
+                return
+            if not all(manifest.has(rel) for rel in tracked):
+                await self._queue.transition(job_id, SyncJobState.CLEANUP_ELIGIBLE)
+                return
+
+            check = self._build_check(equipment)
+            files_from = self._write_files_from(tracked)
+            try:
+                try:
+                    check_result = await check(run_path, files_from=files_from)
+                except TransportError:
+                    await self._queue.transition(job_id, SyncJobState.CLEANUP_ELIGIBLE)
+                    return
+                verify = VerifyResult.from_check_result(check_result)
+            finally:
+                with contextlib.suppress(OSError):
+                    files_from.unlink()
+            if not verify.ok:
+                await self._queue.transition(job_id, SyncJobState.CLEANUP_ELIGIBLE)
+                return
 
         # Promote to CLEANUP_ELIGIBLE then perform the deletion. Files the
         # operator flagged ``keep_local`` survive the sweep.

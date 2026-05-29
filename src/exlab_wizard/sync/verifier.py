@@ -112,8 +112,6 @@ class Verifier:
         remote: str,
         *,
         files_from: Path,
-        env: dict[str, str] | None = None,
-        mask_for_log: tuple[str, ...] = (),
     ) -> VerifyResult:
         """Run ``rclone check --download`` over ``files_from`` and translate.
 
@@ -127,8 +125,6 @@ class Verifier:
                 run_path,
                 remote,
                 files_from=files_from,
-                env=env,
-                mask_for_log=mask_for_log,
             )
         except TransportError as exc:
             _log.warning("rclone check transport error: %s", exc)
