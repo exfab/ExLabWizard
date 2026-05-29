@@ -48,6 +48,10 @@ equipment:
       bandwidth:
         upload_mbps: null                       # unlimited
 
+nas:
+  remote: ""                                     # name of the rclone remote in operator's rclone.conf
+  base_root: ""                                  # equipment run folders live under <remote>:<base_root>/<equipment_id>/
+
 nas_cleanup:
   enabled: true                                 # disable to keep all local copies; operator deletes manually
   min_verify_passes: 2                          # successful hash verifications required before deletion (§7.1.6)

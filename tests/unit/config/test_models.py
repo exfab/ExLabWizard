@@ -23,12 +23,14 @@ from exlab_wizard.config.models import (
     LIMSConfig,
     LoggingConfig,
     NASCleanupConfig,
+    NasConfig,
     OperatorsConfig,
     OrchestratorConfig,
     OrchestratorStagingCleanup,
     OrchestratorStagingTransport,
     PathsConfig,
     PluginsConfig,
+    RclonePerf,
     RcloneSftpTransport,
     RcloneSmbTransport,
     READMEConfig,
@@ -196,6 +198,14 @@ def _full_config_dict() -> dict:
             "label": "Lab Acquisition Station 01",
             "staging_root": "/staging",
             "staging_cleanup": {"mode": "manual", "retain_hours": 24},
+        },
+        "nas": {
+            "remote": "",
+            "base_root": "",
+            "rclone_config_path": "",
+            "mtime_tolerance_s": 2,
+            "perf": {"transfers": 4, "checkers": 8},
+            "bandwidth": {"upload_mbps": None, "schedule": []},
         },
     }
 
@@ -1078,9 +1088,6 @@ def test_config_with_equipment_appended_rejects_duplicate_id() -> None:
 # ---------------------------------------------------------------------------
 # NasConfig / RclonePerf
 # ---------------------------------------------------------------------------
-
-
-from exlab_wizard.config.models import Config, NasConfig, RclonePerf
 
 
 def test_nas_config_defaults():
