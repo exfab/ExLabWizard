@@ -8,6 +8,7 @@ from exlab_wizard.ui.components.file_list import (
     FILE_CONTEXT_OPEN,
     FileListEntry,
     diff_file_lists,
+    row_background,
 )
 
 
@@ -146,3 +147,63 @@ def test_render_file_list_keep_local_menu_and_tombstone() -> None:
     # Building the page handler without raising is the assertion here;
     # the e2e suite drives the live DOM interaction.
     assert callable(_page)
+
+
+# ---------------------------------------------------------------------------
+# row_background precedence (Selected > New > Tombstone > Zebra) -- Redesign §4.2
+# ---------------------------------------------------------------------------
+
+
+def test_row_bg_selected_wins_over_new() -> None:
+    bg = row_background(_entry("/a"), is_selected=True, is_new=True, index=0)
+    assert "--color-row-selected" in bg
+    assert "inset 3px 0 0 var(--color-row-selected-bar)" in bg
+    assert "--color-highlight" not in bg
+
+
+def test_row_bg_new_wins_over_tombstone_and_zebra() -> None:
+    # New-file beats both tombstone and the would-be zebra stripe at odd index.
+    e = FileListEntry(name="a", path="/a", is_dir=False, tombstone=True)
+    bg = row_background(e, is_selected=False, is_new=True, index=1)
+    assert "--color-highlight" in bg
+    assert "--color-zebra" not in bg
+    # Tombstone decoration is additive regardless of which background tier won,
+    # so a new+tombstone row keeps the highlight fill AND the dim/italic.
+    assert "opacity: 0.65;" in bg
+    assert "font-style: italic;" in bg
+
+
+def test_row_bg_tombstone_suppresses_zebra_keeps_dim() -> None:
+    # An odd-index tombstone would otherwise be striped; the tombstone tier
+    # contributes no fill, but the dim/italic decoration is still applied.
+    e = FileListEntry(name="a", path="/a", is_dir=False, tombstone=True)
+    bg = row_background(e, is_selected=False, is_new=False, index=1)
+    assert "--color-zebra" not in bg
+    assert "--color-row-selected" not in bg
+    assert "--color-highlight" not in bg
+    assert "opacity: 0.65;" in bg
+    assert "font-style: italic;" in bg
+
+
+def test_row_bg_zebra_on_odd_index_only() -> None:
+    odd = row_background(_entry("/a"), is_selected=False, is_new=False, index=1)
+    even = row_background(_entry("/a"), is_selected=False, is_new=False, index=0)
+    assert "--color-zebra" in odd
+    assert "--color-zebra" not in even
+
+
+def test_row_bg_zebra_parity_is_index_based() -> None:
+    # Parity follows index, so interleaved state rows never shift the stripe.
+    assert "--color-zebra" in row_background(_entry("/d"), is_selected=False, is_new=False, index=3)
+
+
+def test_row_bg_selected_tombstone_keeps_both_treatments() -> None:
+    e = FileListEntry(name="a", path="/a", is_dir=False, tombstone=True)
+    bg = row_background(e, is_selected=True, is_new=False, index=0)
+    assert "--color-row-selected" in bg
+    assert "opacity: 0.65;" in bg
+    assert "font-style: italic;" in bg
+
+
+def test_row_bg_plain_even_row_is_empty() -> None:
+    assert row_background(_entry("/a"), is_selected=False, is_new=False, index=0) == ""

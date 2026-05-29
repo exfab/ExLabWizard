@@ -109,6 +109,57 @@ def diff_file_lists(
     )
 
 
+def row_background(
+    entry: FileListEntry,
+    *,
+    is_selected: bool,
+    is_new: bool,
+    index: int,
+) -> str:
+    """Return the CSS background + decoration fragment for one file-list row.
+
+    Pure function (no NiceGUI) so the row-state precedence is testable in
+    isolation. Implements the spec's row-state stack (Redesign §4.2).
+
+    **Background** -- first matching tier wins, top to bottom:
+
+    1. Selected   -> ``--color-row-selected`` fill + inset left accent bar.
+    2. New-file    -> ``--color-highlight`` (the just-arrived flash).
+    3. Tombstone   -> *no* fill (explicitly suppresses the zebra stripe).
+    4. Zebra       -> ``--color-zebra`` on odd ``index`` rows.
+    5. (otherwise) -> no background.
+
+    **Decoration** -- applied *additively* whenever the row is a tombstone,
+    independent of which background tier won, so a *selected* tombstone keeps
+    both the selected fill and the dim/italic "On NAS" treatment.
+
+    Zebra parity is computed from ``index`` (the row's position in the
+    rendered list), not CSS ``:nth-child``, so interleaved selected / new /
+    tombstone rows never shift the stripe pattern and the server-side
+    re-render stays deterministic. Odd ``index`` values (the 2nd, 4th, ...
+    rows) are striped, matching the even-row shading in the approved mockup.
+
+    The constant ``border-bottom`` rule is the caller's concern; this returns
+    only the state-dependent fragment.
+    """
+    parts: list[str] = []
+    if is_selected:
+        parts.append("background: var(--color-row-selected);")
+        parts.append("box-shadow: inset 3px 0 0 var(--color-row-selected-bar);")
+    elif is_new:
+        parts.append("background: var(--color-highlight);")
+    elif entry.tombstone:
+        # Tombstone tier contributes no fill -- it deliberately suppresses the
+        # zebra stripe so the dim/italic treatment below reads cleanly.
+        pass
+    elif index % 2 == 1:
+        parts.append("background: var(--color-zebra);")
+    if entry.tombstone:
+        parts.append("opacity: 0.65;")
+        parts.append("font-style: italic;")
+    return " ".join(parts)
+
+
 def render_file_list(
     *,
     state: FileListState,
