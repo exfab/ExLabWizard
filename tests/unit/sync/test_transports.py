@@ -313,10 +313,9 @@ def test_parse_combined_tolerates_blank_lines_and_unknown_prefix() -> None:
 # Task 2.1 — --config / --transfers / --checkers plumbing
 # ---------------------------------------------------------------------------
 
-import asyncio  # noqa: E402 — appended section; asyncio.run() used in plain-def tests
 
-
-def test_push_argv_includes_config_and_perf(monkeypatch, tmp_path):
+@pytest.mark.asyncio
+async def test_push_argv_includes_config_and_perf(monkeypatch, tmp_path):
     captured = {}
 
     async def fake_run(cmd, *, env=None, stdin=None, mask_for_log=()):
@@ -325,7 +324,7 @@ def test_push_argv_includes_config_and_perf(monkeypatch, tmp_path):
 
     monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
     drv = RcloneDriver(config_path="/etc/rclone.conf", transfers=2, checkers=3)
-    asyncio.run(drv.push(tmp_path, "nas01:/srv/lab/EQ/run", bwlimit_kibps=None))
+    await drv.push(tmp_path, "nas01:/srv/lab/EQ/run", bwlimit_kibps=None)
     cmd = captured["cmd"]
     assert "--config" in cmd and "/etc/rclone.conf" in cmd
     assert cmd[cmd.index("--transfers") + 1] == "2"
@@ -337,7 +336,8 @@ def test_push_argv_includes_config_and_perf(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_lsjson_argv_is_recursive_readonly(monkeypatch):
+@pytest.mark.asyncio
+async def test_lsjson_argv_is_recursive_readonly(monkeypatch):
     captured = {}
 
     async def fake_run(cmd, *, env=None, stdin=None, mask_for_log=()):
@@ -345,20 +345,21 @@ def test_lsjson_argv_is_recursive_readonly(monkeypatch):
         return 0, '[{"Path":"a.txt","Name":"a.txt","Size":3,"ModTime":"2026-05-28T00:00:00Z","IsDir":false}]', ""
 
     monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
-    out = asyncio.run(RcloneDriver().lsjson("nas01:/srv/lab/EQ/run"))
+    out = await RcloneDriver().lsjson("nas01:/srv/lab/EQ/run")
     assert captured["cmd"][:2] == ["rclone", "lsjson"]
     assert "-R" in captured["cmd"]
     assert "nas01:/srv/lab/EQ/run" in captured["cmd"]
     assert '"Path":"a.txt"' in out
 
 
-def test_lsjson_raises_transport_error_on_failure(monkeypatch):
+@pytest.mark.asyncio
+async def test_lsjson_raises_transport_error_on_failure(monkeypatch):
     async def fake_run(cmd, *, env=None, stdin=None, mask_for_log=()):
         return 1, "", "401 Unauthorized"
 
     monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
     with pytest.raises(TransportError):
-        asyncio.run(RcloneDriver().lsjson("nas01:/x"))
+        await RcloneDriver().lsjson("nas01:/x")
 
 
 # ---------------------------------------------------------------------------
@@ -366,19 +367,21 @@ def test_lsjson_raises_transport_error_on_failure(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_listremotes_parses_lines(monkeypatch):
+@pytest.mark.asyncio
+async def test_listremotes_parses_lines(monkeypatch):
     async def fake_run(cmd, *, env=None, stdin=None, mask_for_log=()):
         assert cmd[:2] == ["rclone", "listremotes"]
         return 0, "nas01:\nstagepc:\n", ""
 
     monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
-    remotes = asyncio.run(RcloneDriver().listremotes())
+    remotes = await RcloneDriver().listremotes()
     assert remotes == ("nas01:", "stagepc:")
 
 
-def test_listremotes_empty_on_failure(monkeypatch):
+@pytest.mark.asyncio
+async def test_listremotes_empty_on_failure(monkeypatch):
     async def fake_run(cmd, *, env=None, stdin=None, mask_for_log=()):
         return 1, "", "config not found"
 
     monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
-    assert asyncio.run(RcloneDriver().listremotes()) == ()
+    assert await RcloneDriver().listremotes() == ()
