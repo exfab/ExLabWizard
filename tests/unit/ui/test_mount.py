@@ -252,6 +252,14 @@ def test_build_main_state_marks_incomplete_without_config() -> None:
     assert state.orchestrator_enabled is True
 
 
+def test_build_main_state_sources_problems_counts_from_audit() -> None:
+    # Counts come straight off deps (the 30 s background audit), not a
+    # per-render re-audit (T6 / §B5).
+    state = mount._build_main_state(_deps(last_audit_hard=3, last_audit_soft=12))
+    assert state.problems_count_hard == 3
+    assert state.problems_count_soft == 12
+
+
 def test_build_main_state_always_on_orchestrator() -> None:
     """Redesign §3.1: the orchestrator pipeline is unconditional."""
     deps = _deps(

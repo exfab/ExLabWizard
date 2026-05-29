@@ -396,7 +396,10 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
     def _problems() -> Any:
         deps = _deps()
         findings = _safe_audit(deps)
-        return problems_page.render_problems_page(findings=findings)
+        return problems_page.render_problems_page(
+            findings=findings,
+            last_audit_at=getattr(deps, "last_audit_at", None),
+        )
 
     @ui.page("/staging")
     def _staging() -> Any:
@@ -753,6 +756,9 @@ def _build_main_state(
         operations_count=ops_count,
         operations_input_required=ops_input_required,
         creation_in_flight=ops_active > 0,
+        # Real Problems counts from the 30 s background audit (T6 / §B5).
+        problems_count_hard=int(getattr(deps, "last_audit_hard", 0) or 0),
+        problems_count_soft=int(getattr(deps, "last_audit_soft", 0) or 0),
     )
 
 

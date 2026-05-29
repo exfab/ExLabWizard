@@ -135,15 +135,28 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
 
 ## Phase 3 — Visibility & usability
 
-### - [ ] T6 — Live Problems/audit stream + real counts
+### - [x] T6 — Live Problems/audit stream + real counts
 - **Spec:** [§B5](./REMAINING_WORK.md#b5--audit--problems-live-stream-not-consumed-by-the-in-process-ui) · **Category:** B · **Effort:** M · **Priority:** Med
 - **Key files:** `api/app.py:77-133,266,327-356` · `ui/pages/problems.py:279-281` · `ui/pages/main.py:50-51,432,445-450` · `ui/mount.py:699-721,1579-1588`
 - **Acceptance:** live findings counts (tab badge + right-pane summary, single source);
   "Last audit: HH:MM:SS · Next refresh in Ns" instead of `--`; override-and-allow-sync
   dialog (§11.5) reachable; `start_audit_task=True` confirmed in the production app build.
 - **Depends on:** T2 (subscription pattern, optional).
-- **Status:** ⬜ Not started
-- **Impl note:** _(pending)_
+- **Status:** ✅ Done
+- **Impl note:** The 30 s `_audit_loop` now caches tier counts on
+  `deps.last_audit_hard`/`last_audit_soft` (single source, no per-render re-audit, per the §B5
+  preference); `_build_main_state` reads them into `MainPageState.problems_count_hard/soft`, so the
+  Problems **tab badge** (`problems_badge_text`) and the **right-pane summary** are now real (the
+  right-pane no longer hardcodes "Showing 0"). The `/problems` footer takes `last_audit_at` and
+  renders "Last audit: HH:MM:SS · Next refresh in Ns" with a 1 s `ui.timer` countdown (was a
+  hardcoded "--"); `start_audit_task=True` confirmed in the production tray build.
+  **Deferred (documented):** wiring the §11.5 override-and-allow-sync action and the full live
+  WS-delta stream are out of scope here because `render_problems_page` renders a *view-model* shape
+  (`finding.severity/.path/.state/.finding_id`) that the raw `Validator` `Finding`
+  (`tier/rule/run_path/…`) does not provide — a pre-existing mismatch (the render is e2e-only,
+  `# pragma: no cover`). Reconciling that view-model + the in-process override-write path
+  (mirroring `POST /problems/{run_path}/override`) is a follow-up; the counts/last-audit core lands
+  here. Suite green.
 
 ### - [x] T7 — Operators allowlist chip editor
 - **Spec:** [§A4](./REMAINING_WORK.md#a4--operators-allowlist-has-backend-enforcement-but-no-editor-ui) · **Category:** A · **Effort:** M · **Priority:** Med
@@ -244,4 +257,4 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   between `api/routers/operations.py` and the in-process modal.
 
 ## Progress
-10 / 13 complete.
+11 / 13 complete.

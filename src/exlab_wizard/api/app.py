@@ -218,6 +218,10 @@ class AppDependencies:
     # Audit / pub-sub ---------------------------------------------------
     audit_channel: AuditChannel | None = None
     last_audit_at: str | None = None
+    # Tier counts from the latest background audit pass, read by the GUI
+    # Problems tab badge + right-pane summary (T6 / §B5).
+    last_audit_hard: int = 0
+    last_audit_soft: int = 0
 
     # Health snapshot probes -------------------------------------------
     nas_sync_snapshot: Callable[[], dict[str, Any]] | None = None
@@ -351,6 +355,12 @@ async def _audit_loop(deps: AppDependencies, interval_seconds: float) -> None:
                 continue
             audit_at = utc_now_iso()
             deps.last_audit_at = audit_at
+            # Cache tier counts so the in-process GUI (Problems tab badge +
+            # right-pane summary) reads them straight off deps -- a single
+            # source, refreshed on the 30 s cadence -- without re-running a
+            # full O(tree) audit on every page render (T6 / §B5).
+            deps.last_audit_hard = sum(1 for f in findings if getattr(f, "tier", "") == "hard")
+            deps.last_audit_soft = sum(1 for f in findings if getattr(f, "tier", "") == "soft")
             added, removed, changed = _diff_findings(last, findings)
             if deps.audit_channel is not None:
                 if not last:

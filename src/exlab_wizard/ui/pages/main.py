@@ -478,8 +478,10 @@ def _render_right_pane(
                 on_run_staging_action=on_run_staging_action,
             )
         with ui.tab_panel("problems"):
+            total = state.problems_count_hard + state.problems_count_soft
             ui.label(
-                f"Showing 0 of {state.problems_count_hard + state.problems_count_soft} findings",
+                f"{total} findings ({state.problems_count_hard} hard, "
+                f"{state.problems_count_soft} soft)",
             ).props('data-testid="problems-summary"').style(
                 "font-family: var(--font-mono); color: var(--color-muted);"
             )
