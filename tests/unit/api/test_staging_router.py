@@ -22,7 +22,6 @@ from exlab_wizard.config.models import (
     OrchestratorConfig,
     OrchestratorStagingCleanup,
     PathsConfig,
-    RcloneSftpTransport,
 )
 from exlab_wizard.constants import CACHE_DIR_NAME, RUNS_DIR_NAME
 
@@ -58,12 +57,6 @@ def _make_config(staging_root: Path, *, enabled: bool = True) -> Config:
                 label="Equipment 1",
                 local_root=str(staging_root),
                 nas_root="/nas",
-                transport=RcloneSftpTransport(
-                    type="rclone_sftp",
-                    host="nas.lab.example",
-                    user="testuser",
-                    remote_path="/srv/nas",
-                ),
             ),
         ],
         orchestrator=OrchestratorConfig(

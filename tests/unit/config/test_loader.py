@@ -62,13 +62,14 @@ def test_load_config_complete_yaml() -> None:
     assert len(cfg.equipment) == 2
     confocal = cfg.equipment[0]
     assert confocal.id == "CONFOCAL_01"
-    assert confocal.transport.type == "rclone_sftp"
-    assert confocal.transport.host == "nas01.lab.example"
+    assert confocal.sync_mode.value == "nas"
 
     flow = cfg.equipment[1]
     assert flow.id == "FLOW_01"
-    assert flow.transport.type == "rclone_smb"
-    assert flow.transport.share == "lab"
+    assert flow.sync_mode.value == "nas"
+
+    # The NAS connection + bandwidth policy now live on the nas: block.
+    assert cfg.nas.bandwidth.upload_mbps == 50
 
     # Operators allowlist (one entry per the prompt).
     assert cfg.operators.allowlist == ["alex.nguyen"]
@@ -115,12 +116,7 @@ def test_load_config_validation_error_raises_config_error(tmp_path: Path) -> Non
         "  - id: lowercase\n"
         "    label: x\n"
         "    local_root: /tmp\n"
-        "    nas_root: /mnt\n"
-        "    transport:\n"
-        "      type: rclone_sftp\n"
-        "      host: nas.lab.example\n"
-        "      user: testuser\n"
-        "      remote_path: p\n",
+        "    nas_root: /mnt\n",
         encoding="utf-8",
     )
     with pytest.raises(ConfigError) as info:
@@ -250,12 +246,6 @@ def test_dump_config_round_trip() -> None:
                 "label": "Confocal",
                 "local_root": "/l",
                 "nas_root": "/n",
-                "transport": {
-                    "type": "rclone_sftp",
-                    "host": "nas.lab.example",
-                    "user": "testuser",
-                    "remote_path": "lab/CONFOCAL_01",
-                },
             },
         ],
     }
@@ -286,20 +276,10 @@ _TWO_EQUIPMENT_YAML = (
     "    label: First\n"
     "    local_root: /data/eq1\n"
     "    nas_root: /mnt/eq1\n"
-    "    transport:\n"
-    "      type: rclone_sftp\n"
-    "      host: nas.lab.example\n"
-    "      user: testuser\n"
-    "      remote_path: p\n"
     "  - id: EQ2\n"
     "    label: Second\n"
     "    local_root: /data/eq2\n"
     "    nas_root: /mnt/eq2\n"
-    "    transport:\n"
-    "      type: rclone_sftp\n"
-    "      host: nas.lab.example\n"
-    "      user: testuser\n"
-    "      remote_path: q\n"
 )
 
 
@@ -334,20 +314,10 @@ def test_test_mode_is_idempotent_on_already_prefixed_ids(
         "    label: Already prefixed\n"
         "    local_root: /data/eq1\n"
         "    nas_root: /mnt/eq1\n"
-        "    transport:\n"
-        "      type: rclone_sftp\n"
-        "      host: nas.lab.example\n"
-        "      user: testuser\n"
-        "      remote_path: p\n"
         "  - id: EQ2\n"
         "    label: Plain\n"
         "    local_root: /data/eq2\n"
         "    nas_root: /mnt/eq2\n"
-        "    transport:\n"
-        "      type: rclone_sftp\n"
-        "      host: nas.lab.example\n"
-        "      user: testuser\n"
-        "      remote_path: q\n"
     )
     cfg = load_config_from_text(seeded)
     # The first id is unchanged (no ``TEST_TEST_…`` doubling); the

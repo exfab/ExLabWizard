@@ -364,7 +364,6 @@ def _nas_config(*, offline_catalogue: bool = False, nas_remote: str = "nas01") -
         NasConfig,
         OrchestratorConfig,
         PathsConfig,
-        RcloneSftpTransport,
     )
 
     lims = (
@@ -381,12 +380,6 @@ def _nas_config(*, offline_catalogue: bool = False, nas_remote: str = "nas01") -
                 label="Equipment 1",
                 local_root="/d",
                 nas_root="/n",
-                transport=RcloneSftpTransport(
-                    type="rclone_sftp",
-                    host="nas.lab.example",
-                    user="testuser",
-                    remote_path="lab/EQ1",
-                ),
             )
         ],
         orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),

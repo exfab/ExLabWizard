@@ -475,14 +475,11 @@ class NASSyncClient:
         await self._queue.transition(job.id, SyncJobState.RUNNING)
 
         # Compute bandwidth cap for this attempt. Redesign §3.2: only
-        # nas-mode equipment reach the NAS sync queue (the EquipmentConfig
-        # validator guarantees transport is set when sync_mode == 'nas');
-        # the None case is defensive.
-        assert equipment.transport is not None, (
-            f"nas-mode equipment {equipment.id!r} must carry a transport block"
-        )
+        # nas-mode equipment reach the NAS sync queue. The bandwidth policy
+        # is defined once on the ``nas:`` block (rclone.conf NAS-sync
+        # migration) rather than per-equipment.
         bwlimit = effective_bandwidth_limit_kibps(
-            equipment.transport.bandwidth, now_local=datetime.now()
+            self._config.nas.bandwidth, now_local=datetime.now()
         )
 
         # Slot A SHA capture (rclone-only migration, 2026-05-26). Compute

@@ -57,12 +57,6 @@ def _make_equipment(equipment_id: str = "CONFOCAL_01") -> EquipmentConfig:
             "label": "Confocal Microscope",
             "local_root": "/data/lab",
             "nas_root": "//nas01/lab",
-            "transport": {
-                "type": "rclone_sftp",
-                "host": "nas.lab.example",
-                "user": "testuser",
-                "remote_path": "lab/CONFOCAL_01",
-            },
         }
     )
 
@@ -903,12 +897,6 @@ def _nas_remote_config(remote: str = "") -> Config:
                 label="Eq",
                 local_root="/l",
                 nas_root="//n/x",
-                transport={
-                    "type": "rclone_sftp",
-                    "host": "h",
-                    "user": "u",
-                    "remote_path": "/p",
-                },
             )
         ],
         lims={"endpoint": "https://x", "email": "a@b.c"},

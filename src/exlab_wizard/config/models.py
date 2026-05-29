@@ -20,7 +20,7 @@ Style:
 from __future__ import annotations
 
 from datetime import time
-from typing import Annotated, Any, Literal
+from typing import Any
 
 from pydantic import (
     BaseModel,
@@ -46,7 +46,6 @@ __all__ = [
     "BandwidthWindow",
     "Config",
     "EquipmentConfig",
-    "EquipmentTransport",
     "LIMSConfig",
     "LoggingConfig",
     "NASCleanupConfig",
@@ -60,11 +59,8 @@ __all__ = [
     "READMEConfig",
     "READMEDefaultField",
     "RclonePerf",
-    "RcloneSftpTransport",
-    "RcloneSmbTransport",
     "SyncConfig",
     "ValidatorConfig",
-    "transport_requires_keyring_password",
 ]
 
 
@@ -268,67 +264,6 @@ class NasConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class RcloneSftpTransport(BaseModel):
-    """``transport:`` block for SFTP over SSH with password auth.
-
-    The wizard invokes rclone with an inline-configured ``sftp`` backend
-    so no entry in ``rclone.conf`` is required. The per-equipment password
-    lives in the OS keyring under
-    :func:`exlab_wizard.constants.keyring.keyring_nas_username` and is
-    injected as ``RCLONE_CONFIG_<remote>_PASS`` at subprocess time.
-    """
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    type: Literal["rclone_sftp"]
-    host: str = Field(min_length=1)
-    port: int = Field(default=22, ge=1, le=65535)
-    user: str = Field(min_length=1)
-    remote_path: str = Field(min_length=1)
-    bandwidth: BandwidthConfig = Field(default_factory=BandwidthConfig)
-
-
-class RcloneSmbTransport(BaseModel):
-    """``transport:`` block for an SMB share with password auth.
-
-    The wizard invokes rclone with an inline-configured ``smb`` backend.
-    ``domain`` is the optional Active-Directory domain prefix; ``remote_path``
-    is an optional subpath beneath ``share``. The per-equipment password is
-    sourced from the keyring exactly like
-    :class:`RcloneSftpTransport`.
-    """
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    type: Literal["rclone_smb"]
-    host: str = Field(min_length=1)
-    share: str = Field(min_length=1)
-    user: str = Field(min_length=1)
-    domain: str = ""
-    remote_path: str = ""
-    bandwidth: BandwidthConfig = Field(default_factory=BandwidthConfig)
-
-
-# Discriminated union over the transport ``type`` tag. Pydantic 2 picks the
-# right submodel by inspecting the ``type`` value.
-EquipmentTransport = Annotated[
-    RcloneSftpTransport | RcloneSmbTransport,
-    Field(discriminator="type"),
-]
-
-
-def transport_requires_keyring_password(transport: EquipmentTransport | None) -> bool:
-    """Return True when ``transport`` sources its credential from the keyring.
-
-    Both currently-supported transports (SFTP and SMB) require an
-    operator-typed password; the predicate exists so consumers (the
-    setup-state gate, the Settings UI, the equipment probe) can ask the
-    question without an isinstance branch and so a future password-less
-    backend can opt out cleanly.
-    """
-    return isinstance(transport, RcloneSftpTransport | RcloneSmbTransport)
-
-
 class OrchestratorStagingTransport(BaseModel):
     """``orchestrator_staging_transport:`` -- staging hop only. Backend Spec §13."""
 
@@ -357,12 +292,10 @@ class EquipmentConfig(BaseModel):
     pushes them to a connected PC's staging area (requires
     ``orchestrator_staging_transport``).
 
-    rclone.conf NAS-sync migration: nas-mode no longer carries a per-equipment
-    ``transport`` block -- the connection is defined once by the ``nas:`` block
-    (a single rclone remote). ``transport`` is therefore optional and ignored
-    for nas-mode (kept on the model for backward-compatible configs that still
-    declare it); stage-mode still requires ``orchestrator_staging_transport``
-    and must not declare ``transport``.
+    rclone.conf NAS-sync migration: nas-mode carries no per-equipment
+    connection block -- the NAS connection is defined once by the ``nas:``
+    block (a single rclone remote). stage-mode still requires
+    ``orchestrator_staging_transport``.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -372,7 +305,6 @@ class EquipmentConfig(BaseModel):
     local_root: str = Field(min_length=1)
     nas_root: str = Field(min_length=1)
     sync_mode: SyncMode = SyncMode.NAS
-    transport: EquipmentTransport | None = None
     orchestrator_staging_transport: OrchestratorStagingTransport | None = None
 
     @field_serializer("sync_mode")
@@ -392,14 +324,13 @@ class EquipmentConfig(BaseModel):
             raise ValueError(str(exc)) from exc
 
     @model_validator(mode="after")
-    def _sync_mode_dictates_transport(self) -> EquipmentConfig:
+    def _sync_mode_dictates_staging(self) -> EquipmentConfig:
         match self.sync_mode:
             case SyncMode.NAS:
-                # rclone.conf NAS-sync migration: nas-mode no longer requires
-                # (nor forbids) a per-equipment ``transport`` block -- the
-                # ``nas:`` block carries the connection. A still-declared
-                # ``transport`` is simply allowed for backward compatibility;
-                # ``orchestrator_staging_transport`` remains nas-incompatible.
+                # rclone.conf NAS-sync migration: nas-mode carries no
+                # per-equipment connection block -- the ``nas:`` block carries
+                # the connection. ``orchestrator_staging_transport`` remains
+                # nas-incompatible.
                 if self.orchestrator_staging_transport is not None:
                     msg = (
                         "equipment.sync_mode == 'nas' must not declare "
@@ -412,9 +343,6 @@ class EquipmentConfig(BaseModel):
                         "equipment.sync_mode == 'stage' requires an "
                         "'orchestrator_staging_transport' block"
                     )
-                    raise ValueError(msg)
-                if self.transport is not None:
-                    msg = "equipment.sync_mode == 'stage' must not declare a 'transport' block"
                     raise ValueError(msg)
         return self
 

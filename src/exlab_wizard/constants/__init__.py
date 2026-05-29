@@ -40,7 +40,6 @@ from exlab_wizard.constants.enums import (
     SyncStatus,
     TemplateType,
     Tier,
-    TransportType,
     TreeProjectStatus,
 )
 
@@ -264,7 +263,6 @@ __all__ = [
     "SyncStatus",
     "TemplateType",
     "Tier",
-    "TransportType",
     "TreeProjectStatus",
     "keyring_nas_username",
 ]

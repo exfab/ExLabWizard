@@ -14,7 +14,6 @@ from exlab_wizard.config.models import (
     EquipmentConfig,
     LIMSConfig,
     PathsConfig,
-    RcloneSftpTransport,
 )
 from exlab_wizard.constants import RunKind
 from exlab_wizard.controller.creation import (
@@ -37,12 +36,6 @@ def _ready_config() -> Config:
                 label="Equipment 1",
                 local_root="/d",
                 nas_root="/n",
-                transport=RcloneSftpTransport(
-                    type="rclone_sftp",
-                    host="nas.lab.example",
-                    user="testuser",
-                    remote_path="lab/EQ1",
-                ),
             )
         ],
         lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),

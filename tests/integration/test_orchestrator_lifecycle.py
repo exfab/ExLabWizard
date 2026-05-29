@@ -24,13 +24,11 @@ from fastapi.testclient import TestClient
 from exlab_wizard.api import AppDependencies, create_app
 from exlab_wizard.cache.sync_state_writer import SyncStateWriter
 from exlab_wizard.config.models import (
-    BandwidthConfig,
     Config,
     EquipmentConfig,
     OrchestratorConfig,
     OrchestratorStagingCleanup,
     PathsConfig,
-    RcloneSftpTransport,
     SyncConfig,
 )
 from exlab_wizard.constants import RUNS_DIR_NAME
@@ -83,13 +81,6 @@ def _make_config(staging_root: Path, *, quiescence_minutes: int = 1) -> Config:
                 label="Equipment 1",
                 local_root=str(staging_root),
                 nas_root="/nas",
-                transport=RcloneSftpTransport(
-                    type="rclone_sftp",
-                    host="nas.lab.example",
-                    user="testuser",
-                    remote_path="/srv/nas",
-                    bandwidth=BandwidthConfig(),
-                ),
             ),
         ],
         orchestrator=OrchestratorConfig(

@@ -318,13 +318,6 @@ def _bootstrap_test_config(config_path: Path, *, include_samples: bool) -> None:
                     "local_root": str(sandbox / "local" / "TESTRIG"),
                     "nas_root": str(sandbox / "nas" / "TESTRIG"),
                     "sync_mode": "nas",
-                    "transport": {
-                        "type": "rclone_sftp",
-                        "host": "localhost",
-                        "port": 22,
-                        "user": "testuser",
-                        "remote_path": "test/TESTRIG",
-                    },
                 }
             )
         )

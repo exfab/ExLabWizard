@@ -18,13 +18,6 @@ equipment:
     local_root: "/data/lab"
     nas_root: "//nas01/lab"
     sync_mode: "nas"
-    transport:
-      type: "rclone_sftp"
-      host: "nas.lab.example"
-      user: "testuser"
-      remote_path: "lab/CONFOCAL_01"
-      bandwidth:
-        upload_mbps: 50
 
 nas_cleanup:
   enabled: true

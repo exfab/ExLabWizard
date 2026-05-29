@@ -177,12 +177,10 @@ def test_nas_remote_setup_members_exist() -> None:
     assert SetupNextAction.CONFIGURE_RCLONE_REMOTE.value == "configure_rclone_remote"
 
 
-def test_transport_type_values() -> None:
-    # Backend Spec §7.1.3 -- updated by the 2026-05-26 rclone-only migration.
-    assert issubclass(enums.TransportType, StrEnum)
-    assert enums.TransportType.RCLONE_SFTP.value == "rclone_sftp"
-    assert enums.TransportType.RCLONE_SMB.value == "rclone_smb"
-    assert {m.value for m in enums.TransportType} == {"rclone_sftp", "rclone_smb"}
+def test_transport_type_enum_removed() -> None:
+    # The rclone.conf NAS-sync migration (Phase 7) removed the per-equipment
+    # TransportType enum: NAS sync is now purely rclone.conf-driven.
+    assert not hasattr(enums, "TransportType")
 
 
 def test_completeness_signal_enum_removed() -> None:
@@ -338,7 +336,6 @@ def test_enums_re_exported_from_package() -> None:
     assert constants.LIMSProjectSource is enums.LIMSProjectSource
     assert constants.RunSyncState is enums.RunSyncState
     assert constants.SetupState is enums.SetupState
-    assert constants.TransportType is enums.TransportType
     assert constants.StagingCleanupMode is enums.StagingCleanupMode
     assert constants.PluginStatus is enums.PluginStatus
     assert constants.CreationLevel is enums.CreationLevel

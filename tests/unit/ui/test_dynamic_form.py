@@ -133,7 +133,7 @@ def test_build_equipment_nas_has_no_transport() -> None:
     entry = build_equipment_config(**_equipment_kwargs())  # type: ignore[arg-type]
     assert entry.id == "MICROSCOPE1"
     assert entry.sync_mode.value == "nas"
-    assert entry.transport is None
+    assert not hasattr(entry, "transport")
 
 
 def test_build_equipment_stage_has_staging_transport() -> None:
@@ -146,7 +146,7 @@ def test_build_equipment_stage_has_staging_transport() -> None:
         )
     )
     assert entry.sync_mode.value == "stage"
-    assert entry.transport is None
+    assert not hasattr(entry, "transport")
     assert entry.orchestrator_staging_transport is not None
     assert entry.orchestrator_staging_transport.mount_point == "/mnt/staging"
 

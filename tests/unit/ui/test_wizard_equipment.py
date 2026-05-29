@@ -76,7 +76,7 @@ def test_assemble_round_trips_to_valid_equipment_config_nas() -> None:
     assert eq.id == "FLOW_99"
     assert eq.sync_mode.value == "nas"
     # rclone.conf migration: nas-mode carries no per-equipment transport.
-    assert eq.transport is None
+    assert not hasattr(eq, "transport")
 
 
 def test_assemble_round_trips_to_valid_equipment_config_stage() -> None:
@@ -86,7 +86,7 @@ def test_assemble_round_trips_to_valid_equipment_config_stage() -> None:
     s.staging_subpath = "in/FLOW_99"
     eq = assemble_equipment_config(s)
     assert eq.sync_mode.value == "stage"
-    assert eq.transport is None
+    assert not hasattr(eq, "transport")
     assert eq.orchestrator_staging_transport is not None
 
 

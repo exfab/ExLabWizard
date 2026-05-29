@@ -26,12 +26,10 @@ from exlab_wizard.api.schemas import (
 )
 from exlab_wizard.cache.creation_writer import CreationWriter
 from exlab_wizard.config.models import (
-    BandwidthConfig,
     Config,
     EquipmentConfig,
     NASCleanupConfig,
     PathsConfig,
-    RcloneSftpTransport,
 )
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
@@ -68,13 +66,6 @@ def _build_config(local_root: Path, *, retain_cache: bool = True) -> Config:
                 label="Eq 1",
                 local_root=str(local_root),
                 nas_root="/nas",
-                transport=RcloneSftpTransport(
-                    type="rclone_sftp",
-                    host="nas.lab.example",
-                    user="testuser",
-                    remote_path="/srv/nas",
-                    bandwidth=BandwidthConfig(),
-                ),
             )
         ],
         nas_cleanup=NASCleanupConfig(
@@ -775,13 +766,6 @@ def test_apply_config_swaps_equipment_map(tmp_path: Path) -> None:
                 label="Eq 2",
                 local_root=str(tmp_path),
                 nas_root="/nas",
-                transport=RcloneSftpTransport(
-                    type="rclone_sftp",
-                    host="nas.lab.example",
-                    user="testuser",
-                    remote_path="/srv/nas",
-                    bandwidth=BandwidthConfig(),
-                ),
             )
         ],
     )

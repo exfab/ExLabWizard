@@ -21,13 +21,11 @@ from pathlib import Path
 
 from exlab_wizard.cache.sync_state_writer import SyncStateWriter
 from exlab_wizard.config.models import (
-    BandwidthConfig,
     Config,
     EquipmentConfig,
     OrchestratorConfig,
     OrchestratorStagingTransport,
     PathsConfig,
-    RcloneSftpTransport,
     SyncConfig,
 )
 from exlab_wizard.constants import RUNS_DIR_NAME, SyncMode
@@ -57,16 +55,6 @@ class _StubNasSync:
 # ---------------------------------------------------------------------------
 
 
-def _transport() -> RcloneSftpTransport:
-    return RcloneSftpTransport(
-        type="rclone_sftp",
-        host="nas.lab.example",
-        user="testuser",
-        remote_path="/srv/nas",
-        bandwidth=BandwidthConfig(),
-    )
-
-
 def _make_config(
     *,
     staging_root: Path | None = None,
@@ -83,7 +71,6 @@ def _make_config(
                 local_root=str(nas_equipment_root),
                 nas_root="/nas",
                 sync_mode=SyncMode.NAS,
-                transport=_transport(),
             ),
         )
     local_root = staging_root or nas_equipment_root or Path("/tmp")
@@ -246,7 +233,6 @@ async def test_co_rooted_stage_mode_equipment_run_is_not_enqueued(tmp_path: Path
                 local_root=str(shared_root),
                 nas_root="/nas",
                 sync_mode=SyncMode.NAS,
-                transport=_transport(),
             ),
             EquipmentConfig(
                 id="EQSTAGE",

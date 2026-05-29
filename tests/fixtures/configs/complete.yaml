@@ -23,34 +23,19 @@ equipment:
     local_root: "/data/lab"                     # shared equipment-first root on this workstation
     nas_root: "//nas01/lab"                     # shared equipment-first root on NAS (display value)
     sync_mode: "nas"                            # this device syncs runs straight to the NAS (Redesign §3.2)
-    transport:
-      type: "rclone_sftp"                       # rclone SFTP backend with password auth; password lives in keyring
-      host: "nas01.lab.example"                 # NAS hostname or IP
-      port: 22                                  # SFTP port
-      user: "labuser"
-      remote_path: "/srv/lab/CONFOCAL_01"       # absolute path on the SFTP server
-      bandwidth:
-        upload_mbps: 50                         # null/absent = unlimited
-        schedule:                               # optional time windows; outside windows = unlimited
-          - { days: ["mon", "tue", "wed", "thu", "fri"], from: "08:00", to: "18:00" }
   - id: "FLOW_01"
     label: "Flow Cytometer 1"
     local_root: "/data/lab"
     nas_root: "/mnt/nas/lab"
     sync_mode: "nas"                            # this device syncs runs straight to the NAS (Redesign §3.2)
-    transport:
-      type: "rclone_smb"                        # rclone SMB backend (Windows-side lab equipment); password in keyring
-      host: "nas01.lab.example"
-      share: "lab"
-      user: "labuser"
-      domain: ""                                # Optional Active-Directory domain
-      remote_path: "FLOW_01"                    # subpath beneath the share root
-      bandwidth:
-        upload_mbps: null                       # unlimited
 
 nas:
   remote: ""                                     # name of the rclone remote in operator's rclone.conf
   base_root: ""                                  # equipment run folders live under <remote>:<base_root>/<equipment_id>/
+  bandwidth:
+    upload_mbps: 50                             # null/absent = unlimited
+    schedule:                                   # optional time windows; outside windows = unlimited
+      - { days: ["mon", "tue", "wed", "thu", "fri"], from: "08:00", to: "18:00" }
 
 nas_cleanup:
   enabled: true                                 # disable to keep all local copies; operator deletes manually

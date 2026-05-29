@@ -13,7 +13,6 @@ from exlab_wizard.config.models import (
     NasConfig,
     OrchestratorConfig,
     PathsConfig,
-    RcloneSftpTransport,
 )
 
 
@@ -30,12 +29,6 @@ def _ready_config() -> Config:
                 label="Equipment 1",
                 local_root="/d",
                 nas_root="/n",
-                transport=RcloneSftpTransport(
-                    type="rclone_sftp",
-                    host="nas.lab.example",
-                    user="testuser",
-                    remote_path="lab/EQ1",
-                ),
             )
         ],
         orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
@@ -122,12 +115,6 @@ def test_append_equipment_persists_and_re_evaluates_state() -> None:
             "label": "Flow Cytometer 99",
             "local_root": "/data",
             "nas_root": "/srv/nas",
-            "transport": {
-                "type": "rclone_sftp",
-                "host": "nas.lab.example",
-                "user": "testuser",
-                "remote_path": "lab/FLOW_99",
-            },
         }
     )
     response = client.post("/api/v1/config/equipment", json=new_eq.model_dump(mode="json"))
@@ -148,12 +135,6 @@ def test_append_equipment_rejects_duplicate_id() -> None:
             "label": "Equipment 1 duplicate",
             "local_root": "/data",
             "nas_root": "/srv/nas",
-            "transport": {
-                "type": "rclone_sftp",
-                "host": "nas.lab.example",
-                "user": "testuser",
-                "remote_path": "lab/EQ1",
-            },
         }
     )
     response = client.post("/api/v1/config/equipment", json=duplicate.model_dump(mode="json"))

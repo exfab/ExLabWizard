@@ -156,28 +156,14 @@ class SetupState(StrEnum):
     READY = "ready"
 
 
-class TransportType(StrEnum):
-    """NAS sync transport. Backend Spec §7.1.3.
-
-    Both supported transports are password-based and route through the
-    rclone binary; SFTP is the SSH-over-password path (mac/linux) and
-    SMB is the Windows-share path. The legacy ``rclone`` and
-    ``rsync_ssh`` members were removed in the 2026-05-26 rclone-only
-    migration.
-    """
-
-    RCLONE_SFTP = "rclone_sftp"
-    RCLONE_SMB = "rclone_smb"
-
-
 class SyncMode(StrEnum):
     """Per-equipment sync role. GUI/Orchestrator Redesign Spec §3.2.
 
     Replaces the device-level orchestrator-mode toggle. Stored under
     ``sync_mode`` on each ``EquipmentConfig`` entry. An equipment is never
-    both: ``nas`` requires ``transport`` and forbids
-    ``orchestrator_staging_transport``; ``stage`` requires
-    ``orchestrator_staging_transport`` and forbids ``transport``.
+    both: ``nas`` syncs runs directly to the NAS remote defined in the
+    ``nas:`` block; ``stage`` requires ``orchestrator_staging_transport``
+    and pushes to a connected staging PC instead.
     """
 
     NAS = "nas"
@@ -214,8 +200,7 @@ class CreationLevel(StrEnum):
 class OrchestratorTransportType(StrEnum):
     """How the orchestrator delivered run data to the staging area.
 
-    Distinct from :class:`TransportType` (which describes the NAS sync
-    transport). Stored under ``transport`` in ingest.json. Backend Spec §13.3.
+    Stored under ``transport`` in ingest.json. Backend Spec §13.3.
     """
 
     SMB_MOUNT = "smb_mount"

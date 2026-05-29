@@ -20,13 +20,11 @@ import pytest
 import exlab_wizard.api.app  # noqa: F401  -- import order matters
 from exlab_wizard.api.app import AppDependencies
 from exlab_wizard.config.models import (
-    BandwidthConfig,
     Config,
     EquipmentConfig,
     LIMSConfig,
     LoggingConfig,
     PathsConfig,
-    RcloneSftpTransport,
 )
 from exlab_wizard.tray import dependencies as deps_mod
 from exlab_wizard.tray.dependencies import apply_live_config
@@ -57,13 +55,6 @@ def _equipment(eq_id: str = "EQ1") -> EquipmentConfig:
         label=f"Equipment {eq_id}",
         local_root="/tmp/data",
         nas_root="/nas",
-        transport=RcloneSftpTransport(
-            type="rclone_sftp",
-            host="nas.example",
-            user="u",
-            remote_path="/srv/nas",
-            bandwidth=BandwidthConfig(),
-        ),
     )
 
 

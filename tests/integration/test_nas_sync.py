@@ -32,13 +32,11 @@ from exlab_wizard.api.schemas import (
 )
 from exlab_wizard.cache.creation_writer import CreationWriter
 from exlab_wizard.config.models import (
-    BandwidthConfig,
     Config,
     EquipmentConfig,
     NASCleanupConfig,
     NasConfig,
     PathsConfig,
-    RcloneSftpTransport,
 )
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
@@ -93,13 +91,6 @@ def _build_config(local_root: Path) -> Config:
                 label="Equipment 1",
                 local_root=str(local_root),
                 nas_root="/nas",
-                transport=RcloneSftpTransport(
-                    type="rclone_sftp",
-                    host="nas.lab.example",
-                    user="testuser",
-                    remote_path="/srv/nas",
-                    bandwidth=BandwidthConfig(),
-                ),
             )
         ],
         # rclone-named-remote migration: the sync target is composed from

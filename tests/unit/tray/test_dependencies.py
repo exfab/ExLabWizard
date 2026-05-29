@@ -20,11 +20,9 @@ import keyring.backend
 import pytest
 
 from exlab_wizard.config.models import (
-    BandwidthConfig,
     Config,
     EquipmentConfig,
     PathsConfig,
-    RcloneSftpTransport,
 )
 from exlab_wizard.constants import KEYRING_USERNAME_LIMS, SyncMode
 from exlab_wizard.lims.keyring_store import KeyringStore
@@ -95,13 +93,6 @@ def test_build_production_dependencies_nas_sync_is_a_client(
                 local_root=str(local_root),
                 nas_root="/nas",
                 sync_mode=SyncMode.NAS,
-                transport=RcloneSftpTransport(
-                    type="rclone_sftp",
-                    host="nas.lab.example",
-                    user="testuser",
-                    remote_path="/srv/nas",
-                    bandwidth=BandwidthConfig(),
-                ),
             ),
         ],
     )
@@ -164,12 +155,6 @@ def _nas_config_with_two_equipment() -> Config:
                 local_root="/data",
                 nas_root="/srv/nas",
                 sync_mode=SyncMode.NAS,
-                transport=RcloneSftpTransport(
-                    type="rclone_sftp",
-                    host="nas.lab.example",
-                    user="alice",
-                    remote_path="lab/EQ1",
-                ),
             ),
             EquipmentConfig(
                 id="EQ2",
@@ -177,12 +162,6 @@ def _nas_config_with_two_equipment() -> Config:
                 local_root="/data",
                 nas_root="/srv/nas",
                 sync_mode=SyncMode.NAS,
-                transport=RcloneSftpTransport(
-                    type="rclone_sftp",
-                    host="nas.lab.example",
-                    user="bob",
-                    remote_path="lab/EQ2",
-                ),
             ),
         ],
     )

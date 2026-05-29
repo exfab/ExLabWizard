@@ -66,7 +66,6 @@ def _seed_config(home: Path, *, env: dict[str, str], local_root: Path, catalogue
         LIMSConfig,
         OrchestratorConfig,
         PathsConfig,
-        RcloneSftpTransport,
     )
 
     cfg = Config(
@@ -82,12 +81,6 @@ def _seed_config(home: Path, *, env: dict[str, str], local_root: Path, catalogue
                 label="Equipment 1",
                 local_root=str(local_root),
                 nas_root="/srv/nas",
-                transport=RcloneSftpTransport(
-                    type="rclone_sftp",
-                    host="nas.lab.example",
-                    user="testuser",
-                    remote_path="lab/EQ1",
-                ),
             )
         ],
         orchestrator=OrchestratorConfig(label="LAB-1", staging_root=str(local_root / "staging")),

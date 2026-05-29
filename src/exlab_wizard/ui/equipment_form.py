@@ -39,12 +39,11 @@ def build_equipment_config(
     """Assemble a validated :class:`EquipmentConfig` from raw form fields.
 
     Redesign §3.2: ``sync_mode`` ("nas" or "stage") dictates the device's
-    role. rclone.conf NAS-sync migration: nas-mode no longer carries a
-    per-equipment SFTP/SMB transport -- the connection is defined once by
-    the ``nas:`` remote -- so the nas-mode build path leaves
-    ``transport=None``. ``stage`` still requires the
-    ``orchestrator_staging_transport`` block (smb_mount or file_transfer);
-    Pydantic validation enforces the per-mode rules.
+    role. rclone.conf NAS-sync migration: nas-mode carries no per-equipment
+    connection block -- the connection is defined once by the ``nas:``
+    remote. ``stage`` still requires the ``orchestrator_staging_transport``
+    block (smb_mount or file_transfer); Pydantic validation enforces the
+    per-mode rules.
     """
     mode = SyncMode(sync_mode)
 
@@ -63,6 +62,5 @@ def build_equipment_config(
         local_root=local_root.strip(),
         nas_root=nas_root.strip(),
         sync_mode=mode,
-        transport=None,
         orchestrator_staging_transport=orch_staging,
     )

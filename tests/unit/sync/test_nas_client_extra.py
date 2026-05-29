@@ -25,12 +25,10 @@ from exlab_wizard.api.schemas import (
 )
 from exlab_wizard.cache.creation_writer import CreationWriter
 from exlab_wizard.config.models import (
-    BandwidthConfig,
     Config,
     EquipmentConfig,
     NASCleanupConfig,
     PathsConfig,
-    RcloneSftpTransport,
 )
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
@@ -52,19 +50,11 @@ from tests.unit.sync._helpers import (
 def _build_config(
     local_root: Path,
     *,
-    transport: Any | None = None,
     retain_cache: bool = True,
     min_verify_passes: int = 1,
     min_age_hours: int = 0,
     cleanup_enabled: bool = True,
 ) -> Config:
-    transport = transport or RcloneSftpTransport(
-        type="rclone_sftp",
-        host="nas.lab.example",
-        user="testuser",
-        remote_path="/srv",
-        bandwidth=BandwidthConfig(),
-    )
     return Config(
         paths=PathsConfig(templates_dir="/tpl", plugin_dir="/plg", local_root=str(local_root)),
         equipment=[
@@ -73,7 +63,6 @@ def _build_config(
                 label="Eq 1",
                 local_root=str(local_root),
                 nas_root="/nas",
-                transport=transport,
             )
         ],
         nas_cleanup=NASCleanupConfig(

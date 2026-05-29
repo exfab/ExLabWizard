@@ -35,7 +35,6 @@ from exlab_wizard.api._dependencies import (
 )
 from exlab_wizard.config.models import (
     EquipmentConfig,
-    EquipmentTransport,
     LIMSConfig,
 )
 from exlab_wizard.constants import SetupState
@@ -346,8 +345,3 @@ async def _await_or_call(callable_: Callable[..., Any], *args: Any) -> Any:
     if inspect.isawaitable(result):
         return await result
     return result
-
-
-# Internal types kept here so the router declaration above type-checks
-# without requiring the caller to import EquipmentTransport directly.
-__all_internal__ = (EquipmentTransport,)
