@@ -37,10 +37,17 @@ import pytest
 from tests.e2e._prod_server import free_port, prod_app_env, resolve_config_path
 from tests.e2e.conftest import PLAYWRIGHT_AVAILABLE
 
-pytestmark = pytest.mark.skipif(
-    not PLAYWRIGHT_AVAILABLE,
-    reason="playwright not installed",
-)
+pytestmark = [
+    pytest.mark.skip(
+        reason="NAS credential flow replaced by rclone-remote availability; "
+        "repurpose to the NAS Remote settings + incomplete_no_nas_remote gate in Phase 9 "
+        "(after the Phase 6 NAS Remote UI lands)."
+    ),
+    pytest.mark.skipif(
+        not PLAYWRIGHT_AVAILABLE,
+        reason="playwright not installed",
+    ),
+]
 
 
 def _seed_config(home: Path, *, env: dict[str, str], local_root: Path, catalogue: Path) -> Path:
