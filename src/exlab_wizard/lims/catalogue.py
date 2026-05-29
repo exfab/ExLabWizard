@@ -52,8 +52,9 @@ class OfflineCatalogue:
     """Decoded offline catalogue. Backend Spec §7.2.9.1.
 
     ``schema_version`` is pinned to the constant declared in
-    :mod:`exlab_wizard.constants.schema_versions`; mismatches surface
-    as :class:`exlab_wizard.errors.ConfigError`.
+    :mod:`exlab_wizard.constants.schema_versions`; a mismatch is treated
+    as catalogue-absent (WARN + ``None``) per §7.2.9.3 -- see
+    :func:`read_catalogue`.
 
     ``lims_endpoint`` is verified by :func:`read_catalogue` against the
     consumer's configured LIMS endpoint; mismatches are rejected per
