@@ -229,6 +229,14 @@ class AppDependencies:
     lims_probe: Callable[..., Any] | None = None
     equipment_probe: Callable[..., Any] | None = None
     autostart_toggle: Callable[[bool], Any] | None = None
+    # Real platform autostart-registration state, seeded at tray build so
+    # Settings -> Application can reflect it (T8).
+    autostart_is_registered: bool = False
+    # Graceful-shutdown hook + tray-availability flag, attached by the tray
+    # builder so the in-window Settings -> Application section can quit (T9)
+    # and show real tray status (T11). Absent in headless / server-only runs.
+    request_quit: Callable[[], None] | None = None
+    tray_available: bool = False
 
     # Background tasks --------------------------------------------------
     audit_task: asyncio.Task[None] | None = field(default=None, repr=False)

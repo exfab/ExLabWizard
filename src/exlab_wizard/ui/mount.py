@@ -345,6 +345,25 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
 
         on_save_lims_password, on_clear_lims_password = _lims_credential_handlers(deps, ui)
 
+        def _on_set_autostart(enabled: bool) -> bool | None:
+            return _apply_autostart(deps, enabled)
+
+        # Quit hook (T9): scheduled non-blocking so the HTTP response flushes
+        # before the server tears down (a synchronous quit would kill the
+        # server serving this page). Absent in headless/test fixtures.
+        _quit_hook = getattr(deps, "request_quit", None) if deps is not None else None
+        on_quit: Callable[[], None] | None = None
+        if _quit_hook is not None:
+
+            def on_quit() -> None:
+                def _do() -> None:
+                    try:
+                        _quit_hook()
+                    except Exception as exc:
+                        _log.warning("quit hook raised: %s", exc)
+
+                ui.timer(0.1, _do, once=True)
+
         def _nas_handlers(
             equipment_id: str,
         ) -> tuple[Callable[[str], None], Callable[[], None]]:
@@ -367,6 +386,10 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             nas_password_present_for=lambda equipment_id: nas_password_present(deps, equipment_id),
             nas_credential_handlers=_nas_handlers,
             on_test_equipment=_on_test_equipment,
+            autostart_registered=bool(getattr(deps, "autostart_is_registered", False)),
+            on_set_autostart=_on_set_autostart,
+            on_quit=on_quit,
+            tray_available=bool(getattr(deps, "tray_available", False)),
         )
 
     @ui.page("/problems")
@@ -685,16 +708,23 @@ def _is_setup_ready(deps: Any) -> bool:
         return False
 
 
-def _apply_autostart(deps: Any, enabled: bool) -> None:
+def _apply_autostart(deps: Any, enabled: bool) -> bool | None:
+    """Register / unregister platform autostart; return the real post-op state.
+
+    Returns ``deps.autostart_toggle``'s ``is_registered()`` result so callers
+    (Settings -> Application) can reflect / revert the checkbox to reality;
+    ``None`` when no toggle is wired or the op raised.
+    """
     if deps is None:
-        return
+        return None
     toggle: Callable[[bool], Any] | None = getattr(deps, "autostart_toggle", None)
     if toggle is None:
-        return
+        return None
     try:
-        toggle(enabled)
+        return bool(toggle(enabled))
     except Exception as exc:
-        _log.warning("autostart toggle failed in welcome: %s", exc)
+        _log.warning("autostart toggle failed: %s", exc)
+        return None
 
 
 def _build_main_state(

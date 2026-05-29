@@ -204,6 +204,10 @@ def render_settings_page(
     nas_credential_handlers: Callable[[str], tuple[Callable[[str], None], Callable[[], None]]]
     | None = None,
     on_test_equipment: Callable[[str], Any] | None = None,
+    autostart_registered: bool = False,
+    on_set_autostart: Callable[[bool], bool | None] | None = None,
+    on_quit: Callable[[], None] | None = None,
+    tray_available: bool = False,
 ) -> Any:
     """Render the settings dialog.
 
@@ -346,6 +350,10 @@ def render_settings_page(
                             nas_password_present_for=nas_password_present_for,
                             nas_credential_handlers=nas_credential_handlers,
                             on_test_equipment=on_test_equipment,
+                            autostart_registered=autostart_registered,
+                            on_set_autostart=on_set_autostart,
+                            on_quit=on_quit,
+                            tray_available=tray_available,
                         )
                     section_bodies[section] = body
 
@@ -475,6 +483,10 @@ def _render_section_body(
     nas_credential_handlers: Callable[[str], tuple[Callable[[str], None], Callable[[], None]]]
     | None = None,
     on_test_equipment: Callable[[str], Any] | None = None,
+    autostart_registered: bool = False,
+    on_set_autostart: Callable[[bool], bool | None] | None = None,
+    on_quit: Callable[[], None] | None = None,
+    tray_available: bool = False,
 ) -> None:
     """Render the content for a single section, bound to ``draft``.
 
@@ -619,12 +631,76 @@ def _render_section_body(
                 placeholder=str(suggested_staging_root()),
             ).bind_value(draft.orchestrator, "staging_root")
         elif section == "application":
-            # "Start at login" is the autostart toggle, not a config.yaml
-            # field -- it is set from the welcome card. Shown here for
-            # discoverability; wiring it is a follow-up.
-            ui.checkbox("Start ExLab-Wizard at login")
-            ui.label("Show in system tray: available")
-            ui.button("Quit ExLab-Wizard now").props("flat")
+            # "Start at login" (T8): applied immediately (NOT draft-bound,
+            # §7.13). Seeded from the real registration state; on toggle it
+            # reflects the actual post-op ``is_registered()`` and reverts on
+            # failure. Disabled when no toggle is wired (headless/tests).
+            _guard = {"busy": False}
+            box_holder: dict[str, Any] = {}
+
+            def _on_autostart(event: Any) -> None:
+                if _guard["busy"] or on_set_autostart is None:
+                    return
+                actual = on_set_autostart(bool(event.value))
+                box = box_holder.get("box")
+                if actual is not None and box is not None and bool(actual) != bool(event.value):
+                    _guard["busy"] = True
+                    try:
+                        box.value = bool(actual)
+                    finally:
+                        _guard["busy"] = False
+
+            autostart_box = ui.checkbox(
+                "Start ExLab-Wizard at login",
+                value=autostart_registered,
+                on_change=_on_autostart,
+            ).props('data-testid="settings-autostart"')
+            box_holder["box"] = autostart_box
+            if on_set_autostart is None:
+                autostart_box.props("disable")
+
+            # Real tray availability + window-on-close behavior (T11, §7.13).
+            tray_text = "available" if tray_available else "unavailable (window-only)"
+            ui.label(f"Show in system tray: {tray_text}").props(
+                'data-testid="settings-tray-status"'
+            )
+            ui.label(
+                "Closing the window keeps ExLab-Wizard running in the tray; "
+                "use Quit to exit completely."
+            ).style("color: var(--color-muted); font-size: var(--text-sm);")
+
+            # "Quit ExLab-Wizard now" (T9): graceful shutdown behind a confirm,
+            # scheduled non-blocking by the host. Disabled when no hook wired.
+            quit_btn = ui.button("Quit ExLab-Wizard now").props(
+                'flat data-testid="settings-quit"'
+            )
+            if on_quit is None:
+                quit_btn.props("disable")
+            else:
+
+                def _confirm_quit() -> None:
+                    confirm = ui.dialog()
+                    with (
+                        confirm,
+                        ui.card().props('data-testid="settings-quit-dialog"'),
+                    ):
+                        ui.label("Quit ExLab-Wizard?").style("font-weight: 600;")
+                        ui.label(
+                            "In-flight operations are allowed to finish first."
+                        ).style("color: var(--color-muted);")
+
+                        def _do_quit() -> None:
+                            confirm.close()
+                            on_quit()
+
+                        with ui.row().classes("justify-end w-full").style("gap: 0.5rem;"):
+                            ui.button("Cancel", on_click=lambda _e: confirm.close()).props("flat")
+                            ui.button("Quit", on_click=lambda _e: _do_quit()).props(
+                                'color=negative data-testid="settings-quit-confirm"'
+                            )
+                    confirm.open()
+
+                quit_btn.on("click", lambda _e: _confirm_quit())
 
 
 # Redesign §6: the canonical equipment-config assembler now lives in

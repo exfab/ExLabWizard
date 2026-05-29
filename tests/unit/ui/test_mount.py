@@ -823,6 +823,15 @@ def test_apply_autostart_invokes_toggle() -> None:
     assert calls == [True]
 
 
+def test_apply_autostart_returns_real_registration_state() -> None:
+    # The toggle returns is_registered(); _apply_autostart relays it so
+    # Settings can reflect / revert the checkbox (T8).
+    assert mount._apply_autostart(_deps(autostart_toggle=lambda _e: True), True) is True
+    assert mount._apply_autostart(_deps(autostart_toggle=lambda _e: False), False) is False
+    assert mount._apply_autostart(None, True) is None
+    assert mount._apply_autostart(_deps(autostart_toggle=None), True) is None
+
+
 def test_apply_autostart_swallows_toggle_failure(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

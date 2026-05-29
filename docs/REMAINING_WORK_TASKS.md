@@ -161,23 +161,34 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   verbatim (case-sensitive; whitespace trimmed on add only). Non-gating (not in
   `_missing_setup_sections`). Updated the section-count test (8→9). Suite green.
 
-### - [ ] T8 — "Start at login" checkbox wiring
+### - [x] T8 — "Start at login" checkbox wiring
 - **Spec:** [§A2](./REMAINING_WORK.md#a2--start-at-login-autostart-checkbox-is-not-bound) · **Category:** A · **Effort:** S · **Priority:** Med
 - **Key files:** `ui/pages/settings.py:514` · `tray/dependencies.py:130,840` (add `autostart_is_registered`) · `ui/mount.py:687`
 - **Acceptance:** checkbox reflects real `is_registered()` on open; `on_change` toggles
   immediately via `deps.autostart_toggle` and reflects the actual post-op result (reverts on
   failure); sandboxed in tests via `EXLAB_AUTOSTART_ROOT`.
-- **Status:** ⬜ Not started
-- **Impl note:** _(pending)_
+- **Status:** ✅ Done
+- **Impl note:** `tray/dependencies.py` seeds `deps.autostart_is_registered` from
+  `AutostartManager().is_registered()` at build. `_apply_autostart` now returns the toggle's
+  real `is_registered()` result (the welcome card still ignores it). `_settings` passes
+  `autostart_registered` + `on_set_autostart`; the Application checkbox (exempt from the draft,
+  §7.13) seeds from the real state and, on change, applies immediately and reverts to the actual
+  post-op result on mismatch (re-entrancy-guarded). Disabled when no toggle is wired. Tests cover
+  the return-value relay.
 
-### - [ ] T9 — "Quit ExLab-Wizard now" button (+ `deps` quit hook)
+### - [x] T9 — "Quit ExLab-Wizard now" button (+ `deps` quit hook)
 - **Spec:** [§A1](./REMAINING_WORK.md#a1--quit-exlab-wizard-now-button-has-no-handler) · **Category:** A · **Effort:** S · **Priority:** Low–Med
 - **Key files:** `ui/pages/settings.py:516` · `tray/main.py:77,80,84,171` · `tray/quit_coordinator.py:82` · `ui/mount.py:358`
 - **Acceptance:** a `deps.request_quit` hook exists; button triggers graceful shutdown
   **scheduled non-blocking** (response flushes first) behind a confirm; no-op/disabled when
   the hook is absent (headless/tests).
-- **Status:** ⬜ Not started
-- **Impl note:** _(pending)_
+- **Status:** ✅ Done
+- **Impl note:** The tray builder (`tray/main.py`) attaches `deps.request_quit =
+  tray_app.request_quit` after building `TrayApp`. `_settings` builds an `on_quit` that schedules
+  the hook via `ui.timer(0.1, …, once=True)` so the HTTP response flushes before the server tears
+  down, and passes it to the Application section, which renders the Quit button behind a confirm
+  dialog (§3.4.6). Disabled when the hook is absent (headless/tests). `AppDependencies` gains the
+  typed `request_quit` field.
 
 ### - [x] T10 — `content_scan_extensions` chip editor + reset-to-defaults
 - **Spec:** [§A5](./REMAINING_WORK.md#a5--content_scan_extensions-renders-read-only-partial) · **Category:** A · **Effort:** S · **Priority:** Low
@@ -192,13 +203,17 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   _default_content_scan_extensions()`) and an on-add validator rejecting entries that don't start
   with `.` (the `ValidatorConfig` dot-prefix rule also re-checks at Save). Landed with T7.
 
-### - [ ] T11 — Application-section status labels parity (§7.13)
+### - [x] T11 — Application-section status labels parity (§7.13)
 - **Spec:** [§A3](./REMAINING_WORK.md#a3--application-section-status-indicators-are-hardcoded--missing-713-parity) · **Category:** A · **Effort:** S · **Priority:** Low
 - **Key files:** `ui/pages/settings.py:515`
 - **Acceptance:** tray-availability label reflects real `pystray` init; window-on-close
   behavior text present.
-- **Status:** ⬜ Not started
-- **Impl note:** _(pending)_
+- **Status:** ✅ Done
+- **Impl note:** The tray builder sets `deps.tray_available` from `_tray_backend_available()`
+  (whether `pystray` imports; window-only per §15.7.4 otherwise). The Application section now shows
+  "Show in system tray: available / unavailable (window-only)" from that flag (no longer a static
+  literal) plus the window-on-close behavior copy. `AppDependencies` gains the typed
+  `tray_available` field. Landed with T8/T9.
 
 ---
 
@@ -229,4 +244,4 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   between `api/routers/operations.py` and the in-process modal.
 
 ## Progress
-7 / 13 complete.
+10 / 13 complete.
