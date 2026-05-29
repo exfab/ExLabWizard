@@ -353,12 +353,32 @@ def test_lsjson_argv_is_recursive_readonly(monkeypatch):
 
 
 def test_lsjson_raises_transport_error_on_failure(monkeypatch):
-    import pytest
-    from exlab_wizard.sync.transports import TransportError
-
     async def fake_run(cmd, *, env=None, stdin=None, mask_for_log=()):
         return 1, "", "401 Unauthorized"
 
     monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
     with pytest.raises(TransportError):
         asyncio.run(RcloneDriver().lsjson("nas01:/x"))
+
+
+# ---------------------------------------------------------------------------
+# Task 2.3 — RcloneDriver.listremotes
+# ---------------------------------------------------------------------------
+
+
+def test_listremotes_parses_lines(monkeypatch):
+    async def fake_run(cmd, *, env=None, stdin=None, mask_for_log=()):
+        assert cmd[:2] == ["rclone", "listremotes"]
+        return 0, "nas01:\nstagepc:\n", ""
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    remotes = asyncio.run(RcloneDriver().listremotes())
+    assert remotes == ("nas01:", "stagepc:")
+
+
+def test_listremotes_empty_on_failure(monkeypatch):
+    async def fake_run(cmd, *, env=None, stdin=None, mask_for_log=()):
+        return 1, "", "config not found"
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    assert asyncio.run(RcloneDriver().listremotes()) == ()

@@ -444,6 +444,22 @@ class RcloneDriver:
             raise TransportError(msg, error_kind=kind)
         return stdout
 
+    async def listremotes(self) -> tuple[str, ...]:
+        """Return the remote names defined in rclone.conf (each incl. trailing ``:``)
+
+        Offline and cheap — no network. Used by the setup-availability gate and
+        the Settings remote badge. A missing/unreadable config yields ``()`` so
+        callers treat "no remotes" the same as "remote not found".
+        """
+        cmd = [self._binary, "listremotes", *self._global_flags()]
+        try:
+            rc, stdout, _stderr = await run_subprocess(cmd)
+        except FileNotFoundError:
+            return ()
+        if rc != 0:
+            return ()
+        return tuple(line.strip() for line in stdout.splitlines() if line.strip())
+
 
 # ---------------------------------------------------------------------------
 # Combined-output parser
