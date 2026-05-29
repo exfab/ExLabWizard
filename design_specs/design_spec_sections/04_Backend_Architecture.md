@@ -616,7 +616,8 @@ The app maintains a single computed enum at startup (and after every `PUT /api/v
 |---|---|
 | `INCOMPLETE_NO_CONFIG` | `config.yaml` does not exist at the OS-appropriate path ([[09_Configuration_File|§9]]). |
 | `INCOMPLETE_MISSING_PATHS` | `config.yaml` exists but `paths.local_root`, `paths.templates_dir`, or `paths.plugin_dir` is unset, missing, or unreadable. |
-| `INCOMPLETE_NO_EQUIPMENT` | Paths are valid but the `equipment` list is empty. |
+| `INCOMPLETE_NO_ORCHESTRATOR` | Paths are valid but `orchestrator.label` is unset (the workstation identity stamped into every run's `creation.json`). `orchestrator.staging_root` is opt-in and does not gate. Next action: `set_paths`. |
+| `INCOMPLETE_NO_EQUIPMENT` | Paths and orchestrator identity are valid but the `equipment` list is empty. |
 | `INCOMPLETE_NO_NAS_REMOTE` | Equipment is configured and at least one entry uses `sync_mode: nas`, but `nas.remote` is blank or not present in `rclone listremotes` output. Next action: `configure_rclone_remote`. See `docs/setup/rclone-remote-setup.md`. |
 | `INCOMPLETE_NO_LIMS` | Equipment is configured but `lims.endpoint` or `lims.email` is unset, OR the keyring/encrypted-store has no password under `(service="exlab-wizard", username="lims")`. |
 | `INCOMPLETE_LIMS_UNREACHABLE` | LIMS configuration is complete but `LIMSClient.health_check()` fails on startup. (This is a soft block; setup proceeds, but operator sees a banner. See §4.9.4.) |

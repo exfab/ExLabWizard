@@ -22,11 +22,11 @@ All four components below are Python objects inside the FastAPI app process. The
 │  │  NAS sync module (NASSyncClient + workers)                  │ │
 │  │                                                             │ │
 │  │  ┌──────────────────────────┐  ┌────────────────────┐       │ │
-│  │  │ Durable Job Queue        │  │ Transport Drivers  │       │ │
-│  │  │ (SQLite at               │  │  - rclone          │       │ │
-│  │  │  {state_dir}/            │  │  - rsync-over-ssh  │       │ │
-│  │  │  sync_queue.db)          │  └────────────────────┘       │ │
-│  │  └──────────────────────────┘                               │ │
+│  │  │ Durable Job Queue        │  │ RcloneDriver       │       │ │
+│  │  │ (SQLite at               │  │  - copy   - check  │       │ │
+│  │  │  {state_dir}/            │  │  - lsjson - about  │       │ │
+│  │  │  sync_queue.db)          │  │  - listremotes     │       │ │
+│  │  └──────────────────────────┘  └────────────────────┘       │ │
 │  │  ┌──────────────────────────┐  ┌────────────────────┐       │ │
 │  │  │ Verifier (SHA-256)       │  │ Cleanup Reaper     │       │ │
 │  │  └──────────────────────────┘  └────────────────────┘       │ │
@@ -36,7 +36,7 @@ All four components below are Python objects inside the FastAPI app process. The
 
 The queue's SQLite file is durable so a server restart does not lose pending or in-flight syncs; the queue itself is just a table the in-process module reads and writes. The sole transport driver for v1 is `RcloneDriver` — a thin wrapper around the `rclone` binary ([[09_Configuration_File|§9]], `nas:` block). Connection details and credentials live entirely in the operator's `rclone.conf`; the app references remotes by name only. Both the NAS leg (for `sync_mode: nas` equipment) and the orchestrator staging leg (for `sync_mode: stage` equipment) use the same `RcloneDriver` methods, with the target composed from the appropriate remote name and base root.
 
-When the rclone or rsync transport drivers shell out to the upstream binary, that subprocess is a child of the app process — also not a separate "service." It runs for the duration of one transfer and exits.
+When the `RcloneDriver` shells out to the `rclone` binary, that subprocess is a child of the app process — also not a separate "service." It runs for the duration of one transfer and exits.
 
 ### 7.1.2 Job lifecycle
 
@@ -114,9 +114,11 @@ deletion inside the `_maybe_cleanup` path. Two stages over the tracked files:
 2. `rclone check --download --files-from <list> --combined <out>` streams each
    remote file back and computes its SHA-256 locally (the only reliable way to
    integrity-check SFTP and SMB backends, which expose no server-side hashing).
-   **No temporary files are written to disk** — rclone hashes the stream in
-   memory; disk cost is ≈ 0. Any transport error, missing file, or hash mismatch
-   defers the run in `CLEANUP_ELIGIBLE` rather than deleting.
+   **No *data* files are staged to disk** — rclone streams and hashes remote
+   bytes in memory. Only two small, immediately-cleaned-up tempfiles (the
+   `--combined` output and the `--files-from` list) touch disk, so disk cost is
+   ≈ 0 regardless of run size. Any transport error, missing file, or hash
+   mismatch defers the run in `CLEANUP_ELIGIBLE` rather than deleting.
 
 This design means a run's data is hashed exactly once from the remote before any
 irreversible local deletion. The `rclone check --download` call is also available
