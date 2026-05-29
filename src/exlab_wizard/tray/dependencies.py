@@ -28,8 +28,7 @@ from typing import Any
 
 from exlab_wizard.api.app import AppDependencies
 from exlab_wizard.config.loader import load_config, save_config
-from exlab_wizard.constants import KEYRING_USERNAME_LIMS, SyncMode
-from exlab_wizard.constants.keyring import keyring_nas_username
+from exlab_wizard.constants import KEYRING_USERNAME_LIMS
 from exlab_wizard.logging import get_logger
 from exlab_wizard.paths import os_config_path
 from exlab_wizard.tray.autostart import AutostartManager
@@ -135,20 +134,6 @@ def build_production_dependencies(state_dir: Path) -> AppDependencies:
     except Exception:
         deps.autostart_is_registered = False
 
-    # Rclone-only NAS sync migration (2026-05-26). The per-equipment NAS
-    # password-presence set drives the §4.9 setup gate and the Settings
-    # credential field's "Set / Not set" badge. Hydrated once at tray
-    # boot; the Settings handlers mutate it on Save / Clear so the gate
-    # flips without waiting for a relaunch.
-    deps.nas_password_present = (
-        _try(
-            "nas_password_check",
-            _check_nas_passwords_present,
-            keyring_store,
-            deps.config,
-        )
-        or set()
-    )
     # rclone.conf NAS-sync migration. The §4.9 setup gate now keys on
     # whether the configured ``nas.remote`` is present in rclone.conf
     # (rather than a per-equipment keyring password). Snapshot the
@@ -626,52 +611,6 @@ def _build_lims_client(config: Any, keyring_store: Any) -> Any:
         email=email,
         keyring_password_provider=_provider,
     )
-
-
-def _nas_keyring_password(keyring_store: Any, equipment_id: str) -> str | None:
-    """Return the stored NAS password for ``equipment_id`` or ``None``.
-
-    The credential lives under ``(KEYRING_SERVICE,
-    keyring_nas_username(equipment_id))``. ``KeyringStore.get_password``
-    is keyword-only; any backend error or absent entry degrades to
-    ``None`` so callers treat the password as not-yet-configured rather
-    than crashing.
-    """
-    if keyring_store is None:
-        return None
-    getter = getattr(keyring_store, "get_password", None)
-    if getter is None:
-        return None
-    with contextlib.suppress(Exception):
-        return getter(username=keyring_nas_username(equipment_id))
-    return None
-
-
-def _check_nas_passwords_present(keyring_store: Any, config: Any) -> set[str]:
-    """Return the set of nas-mode equipment ids that have a keyring entry.
-
-    Rclone-only NAS sync migration (2026-05-26). Iterates the
-    nas-mode equipment whose transport requires a keyring-stored
-    password, returning the subset whose entry is populated. The
-    output is the hydrated form of ``deps.nas_password_present``.
-
-    rclone.conf NAS-sync migration: this no longer feeds the §4.9 setup
-    gate (which now keys on ``deps.nas_remote_available``); it is retained
-    for the not-yet-migrated Settings credential badge / section gating.
-    """
-    if keyring_store is None or config is None:
-        return set()
-    from exlab_wizard.config.models import transport_requires_keyring_password
-
-    out: set[str] = set()
-    for eq in getattr(config, "equipment", ()) or ():
-        if eq.sync_mode != SyncMode.NAS:
-            continue
-        if not transport_requires_keyring_password(eq.transport):
-            continue
-        if _nas_keyring_password(keyring_store, eq.id):
-            out.add(eq.id)
-    return out
 
 
 def _hydrate_nas_remotes(config: Any) -> tuple[str, ...]:

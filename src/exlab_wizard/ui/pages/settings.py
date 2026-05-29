@@ -36,18 +36,20 @@ SETTINGS_SECTIONS: tuple[str, ...] = (
     "application",
 )
 
-# Rclone-only NAS sync migration (2026-05-26). The NAS-credentials
-# section is *not* part of the canonical onboarding-order constant
-# (``SETTINGS_SECTIONS`` stays at the original eight); it is inserted
-# dynamically after ``equipment`` by :func:`settings_sections_for` only
-# when password-requiring nas-mode equipment exists.
-NAS_CREDENTIALS_SECTION = "nas_credentials"
+# rclone.conf NAS-sync migration. The NAS-remote section is *not* part
+# of the canonical onboarding-order constant (``SETTINGS_SECTIONS`` stays
+# at the original eight); it is inserted dynamically after ``equipment``
+# by :func:`settings_sections_for` only when nas-mode equipment exists.
+# It shows the single ``nas:`` remote (read-only) plus a Test-connection
+# control -- the operator configures the remote with ``rclone config``,
+# not by typing a password here.
+NAS_REMOTE_SECTION = "nas_remote"
 
 SECTION_TITLES: dict[str, str] = {
     "paths": "Paths",
     "lims": "LIMS",
     "equipment": "Equipment List",
-    NAS_CREDENTIALS_SECTION: "NAS Credentials",
+    NAS_REMOTE_SECTION: "NAS Remote",
     "nas_cleanup": "NAS Cleanup",
     "operators": "Operators",
     "validator": "Validator",
@@ -57,40 +59,36 @@ SECTION_TITLES: dict[str, str] = {
 }
 
 
-def _password_requiring_nas_equipment(config: Config | None) -> list[Any]:
-    """Return nas-mode equipment whose transport sources a keyring password.
+def _nas_mode_equipment(config: Config | None) -> list[Any]:
+    """Return the nas-mode equipment for ``config``.
 
-    Shared by :func:`settings_sections_for` (visibility) and the
-    NAS-credentials section renderer (one row per entry).
+    Drives the NAS-remote section's visibility: the section appears
+    whenever this device has at least one device syncing directly to the
+    NAS, so the operator can confirm the configured ``nas:`` remote is
+    reachable.
     """
     if config is None:
         return []
-    from exlab_wizard.config.models import transport_requires_keyring_password
     from exlab_wizard.constants import SyncMode
 
-    return [
-        eq
-        for eq in config.equipment
-        if eq.sync_mode == SyncMode.NAS and transport_requires_keyring_password(eq.transport)
-    ]
+    return [eq for eq in config.equipment if eq.sync_mode == SyncMode.NAS]
 
 
 def settings_sections_for(config: Config | None) -> tuple[str, ...]:
     """Return the visible section ids for ``config``.
 
-    The NAS-credentials section is inserted right after ``equipment``
-    only when at least one nas-mode equipment requires a keyring
-    password; otherwise the canonical :data:`SETTINGS_SECTIONS` order is
-    returned unchanged (so a stage-only / no-equipment install never
-    sees an empty credentials pane).
+    The NAS-remote section is inserted right after ``equipment`` only
+    when at least one nas-mode equipment exists; otherwise the canonical
+    :data:`SETTINGS_SECTIONS` order is returned unchanged (so a stage-only
+    / no-equipment install never sees an empty NAS-remote pane).
     """
-    if not _password_requiring_nas_equipment(config):
+    if not _nas_mode_equipment(config):
         return SETTINGS_SECTIONS
     out: list[str] = []
     for section in SETTINGS_SECTIONS:
         out.append(section)
         if section == "equipment":
-            out.append(NAS_CREDENTIALS_SECTION)
+            out.append(NAS_REMOTE_SECTION)
     return tuple(out)
 
 
@@ -107,18 +105,17 @@ class SettingsState:
 def first_incomplete_section(incomplete: tuple[str, ...]) -> str | None:
     """Return the first section ID in canonical order that's incomplete.
 
-    The dynamic NAS-credentials section is not part of the static
+    The dynamic NAS-remote section is not part of the static
     :data:`SETTINGS_SECTIONS` tuple, so it is folded into the canonical
     order here (right after ``equipment``) -- otherwise an
-    ``INCOMPLETE_NO_NAS_CREDENTIAL`` install would auto-select nothing
-    and land the operator on the default section (rclone-only migration,
-    2026-05-26).
+    ``INCOMPLETE_NO_NAS_REMOTE`` install would auto-select nothing
+    and land the operator on the default section (rclone.conf migration).
     """
     order: list[str] = []
     for section in SETTINGS_SECTIONS:
         order.append(section)
         if section == "equipment":
-            order.append(NAS_CREDENTIALS_SECTION)
+            order.append(NAS_REMOTE_SECTION)
     for section in order:
         if section in incomplete:
             return section
@@ -199,10 +196,8 @@ def render_settings_page(
     on_save_lims_password: Callable[[str], None] | None = None,
     on_clear_lims_password: Callable[[], None] | None = None,
     lims_password_present: bool = False,
-    nas_password_present_for: Callable[[str], bool] | None = None,
-    nas_credential_handlers: Callable[[str], tuple[Callable[[str], None], Callable[[], None]]]
-    | None = None,
-    on_test_equipment: Callable[[str], Any] | None = None,
+    nas_remote_available: Callable[[str], bool] | None = None,
+    on_test_connection: Callable[[], Any] | None = None,
     autostart_registered: bool = False,
     on_set_autostart: Callable[[bool], bool | None] | None = None,
     on_quit: Callable[[], None] | None = None,
@@ -227,14 +222,14 @@ def render_settings_page(
     than to the draft. ``lims_password_present`` seeds the credential
     row's resting state from whether the keyring already holds one.
 
-    The NAS-credentials hooks (rclone-only migration, 2026-05-26) mirror
-    that contract per equipment: ``nas_password_present_for(id)`` seeds
-    each row's resting state, ``nas_credential_handlers(id)`` returns the
-    ``(on_save, on_clear)`` pair the row writes through, and
-    ``on_test_equipment(id)`` runs the rclone probe and returns a
+    The NAS-remote section (rclone.conf migration) is read-only: the
+    operator no longer types a NAS password. ``nas_remote_available(name)``
+    answers whether the configured ``nas.remote`` is present in the
+    operator's ``rclone.conf`` (driving a found / not-found badge), and
+    ``on_test_connection()`` runs the rclone remote probe, returning a
     :class:`TestConnectionResult` (or an awaitable of one) for the inline
-    panel. All three are optional so unit tests can render the section
-    without a wired keyring.
+    panel. Both are optional so unit tests can render the section without
+    a wired rclone driver.
     """
 
     s = state or SettingsState()
@@ -346,9 +341,8 @@ def render_settings_page(
                             on_save_lims_password=on_save_lims_password,
                             on_clear_lims_password=on_clear_lims_password,
                             lims_password_present=lims_password_present,
-                            nas_password_present_for=nas_password_present_for,
-                            nas_credential_handlers=nas_credential_handlers,
-                            on_test_equipment=on_test_equipment,
+                            nas_remote_available=nas_remote_available,
+                            on_test_connection=on_test_connection,
                             autostart_registered=autostart_registered,
                             on_set_autostart=on_set_autostart,
                             on_quit=on_quit,
@@ -480,10 +474,8 @@ def _render_section_body(
     on_save_lims_password: Callable[[str], None] | None = None,
     on_clear_lims_password: Callable[[], None] | None = None,
     lims_password_present: bool = False,
-    nas_password_present_for: Callable[[str], bool] | None = None,
-    nas_credential_handlers: Callable[[str], tuple[Callable[[str], None], Callable[[], None]]]
-    | None = None,
-    on_test_equipment: Callable[[str], Any] | None = None,
+    nas_remote_available: Callable[[str], bool] | None = None,
+    on_test_connection: Callable[[], Any] | None = None,
     autostart_registered: bool = False,
     on_set_autostart: Callable[[bool], bool | None] | None = None,
     on_quit: Callable[[], None] | None = None,
@@ -552,12 +544,12 @@ def _render_section_body(
             test_connection_panel.test_connection_panel(None)
         elif section == "equipment":
             _render_equipment_section(draft)
-        elif section == NAS_CREDENTIALS_SECTION:
-            _render_nas_credentials_section(
-                draft,
-                nas_password_present_for=nas_password_present_for or (lambda _id: False),
-                nas_credential_handlers=nas_credential_handlers,
-                on_test_equipment=on_test_equipment,
+        elif section == NAS_REMOTE_SECTION:
+            _render_nas_remote_section(
+                ui.column().classes("w-full"),
+                nas=draft.nas,
+                nas_remote_available=nas_remote_available or (lambda _name: False),
+                on_test_connection=on_test_connection,
             )
         elif section == "nas_cleanup":
             ui.checkbox("Cleanup enabled", value=draft.nas_cleanup.enabled).bind_value(
@@ -716,11 +708,11 @@ def _render_equipment_section(draft: Config) -> None:
     ``draft.equipment`` and reflects it in the visible list; the whole
     draft is re-validated and persisted when the operator clicks Save.
 
-    The sub-form covers the full §9 equipment surface: a transport
-    radio (``rclone_sftp`` / ``rclone_smb``) that swaps the transport
-    fieldset. Both options are password-based and route through rclone;
-    the per-equipment password lives in the OS keyring and is entered in
-    the NAS-credentials section below this one.
+    rclone.conf NAS-sync migration: nas-mode equipment no longer carry a
+    per-equipment SFTP/SMB transport -- the connection is defined once by
+    the ``nas:`` remote (see the NAS Remote section). The sub-form
+    therefore collects only identity + paths and builds a nas-mode entry
+    with ``transport=None``.
     """
     from nicegui import ui
 
@@ -731,10 +723,8 @@ def _render_equipment_section(draft: Config) -> None:
         with rows:
             if draft.equipment:
                 for entry in draft.equipment:
-                    transport_summary = (
-                        entry.transport.type if entry.transport is not None else "stage"
-                    )
-                    ui.label(f"{entry.id} -- {entry.label} [{transport_summary}]").props(
+                    mode = getattr(entry.sync_mode, "value", str(entry.sync_mode))
+                    ui.label(f"{entry.id} -- {entry.label} [{mode}]").props(
                         'data-testid="settings-equipment-row"'
                     )
             else:
@@ -751,58 +741,6 @@ def _render_equipment_section(draft: Config) -> None:
     eq_local = ui.input(label="Local root").props('data-testid="settings-equipment-local-root"')
     eq_nas = ui.input(label="NAS root").props('data-testid="settings-equipment-nas-root"')
 
-    # Widget refs the swap-panels and ``_add`` share.
-    fields: dict[str, Any] = {}
-
-    # Transport: a radio that swaps the transport fieldset. Both options
-    # use rclone under the hood; the password lives in the keyring and is
-    # set in the NAS-credentials section after the row is saved.
-    transport_radio = ui.radio(["rclone_sftp", "rclone_smb"], value="rclone_sftp").props(
-        'data-testid="settings-equipment-transport"'
-    )
-
-    @ui.refreshable
-    def _transport_fields() -> None:
-        if transport_radio.value == "rclone_smb":
-            fields["smb_host"] = ui.input(label="SMB host").props(
-                'data-testid="settings-equipment-smb-host"'
-            )
-            fields["smb_share"] = ui.input(label="SMB share").props(
-                'data-testid="settings-equipment-smb-share"'
-            )
-            fields["smb_user"] = ui.input(label="SMB user").props(
-                'data-testid="settings-equipment-smb-user"'
-            )
-            fields["smb_domain"] = ui.input(label="SMB domain (optional)").props(
-                'data-testid="settings-equipment-smb-domain"'
-            )
-            fields["smb_remote_path"] = ui.input(label="Remote subpath (optional)").props(
-                'data-testid="settings-equipment-smb-remote-path"'
-            )
-            for stale in ("sftp_host", "sftp_port", "sftp_user", "sftp_remote_path"):
-                fields.pop(stale, None)
-        else:
-            fields["sftp_host"] = ui.input(label="SFTP host").props(
-                'data-testid="settings-equipment-sftp-host"'
-            )
-            fields["sftp_port"] = ui.number(label="SFTP port", value=22).props(
-                'data-testid="settings-equipment-sftp-port"'
-            )
-            fields["sftp_user"] = ui.input(label="SFTP user").props(
-                'data-testid="settings-equipment-sftp-user"'
-            )
-            fields["sftp_remote_path"] = ui.input(label="Remote path").props(
-                'data-testid="settings-equipment-sftp-remote-path"'
-            )
-            for stale in ("smb_host", "smb_share", "smb_user", "smb_domain", "smb_remote_path"):
-                fields.pop(stale, None)
-
-    _transport_fields()
-    transport_radio.on_value_change(lambda _e: _transport_fields.refresh())
-
-    def _field(name: str) -> str:
-        return (fields[name].value or "") if name in fields else ""
-
     def _add(_evt: Any = None) -> None:
         try:
             entry = build_equipment_config(
@@ -810,16 +748,7 @@ def _render_equipment_section(draft: Config) -> None:
                 label=eq_label.value or "",
                 local_root=eq_local.value or "",
                 nas_root=eq_nas.value or "",
-                transport_type=transport_radio.value or "rclone_sftp",
-                sftp_host=_field("sftp_host"),
-                sftp_port=int(fields["sftp_port"].value or 22) if "sftp_port" in fields else 22,
-                sftp_user=_field("sftp_user"),
-                sftp_remote_path=_field("sftp_remote_path"),
-                smb_host=_field("smb_host"),
-                smb_share=_field("smb_share"),
-                smb_user=_field("smb_user"),
-                smb_domain=_field("smb_domain"),
-                smb_remote_path=_field("smb_remote_path"),
+                sync_mode="nas",
             )
         except Exception as exc:
             notifications.notify_error(f"Equipment invalid: {exc}")
@@ -836,77 +765,72 @@ def _render_equipment_section(draft: Config) -> None:
     ui.button("Add equipment", on_click=_add).props('data-testid="settings-equipment-add"')
 
 
-def _render_nas_credentials_section(
-    draft: Config,
+def _render_nas_remote_section(
+    container: Any,
     *,
-    nas_password_present_for: Callable[[str], bool],
-    nas_credential_handlers: Callable[[str], tuple[Callable[[str], None], Callable[[], None]]]
-    | None,
-    on_test_equipment: Callable[[str], Any] | None,
+    nas: Any,
+    nas_remote_available: Callable[[str], bool],
+    on_test_connection: Callable[[], Any] | None,
 ) -> None:
-    """Render one keyring-credential row + Test-connection panel per equipment.
+    """Render the read-only NAS-remote status + a Test-connection panel.
 
-    Rclone-only NAS sync migration (2026-05-26). Each nas-mode
-    equipment whose transport requires a password gets its own row:
-    a :func:`credential_field` writing straight to the keyring (via the
-    per-equipment ``(on_save, on_clear)`` pair from
-    ``nas_credential_handlers``) plus a "Test connection" button that
-    runs the rclone probe and renders the result inline.
-
-    The handler closures are built per equipment id so a Save in one
-    row never writes another equipment's keyring slot.
+    rclone.conf NAS-sync migration. The operator no longer types a NAS
+    password; the app references a single ``nas:`` remote defined in their
+    ``rclone.conf`` (created out-of-band with ``rclone config``). This
+    section shows that remote + its base root read-only, a found /
+    not-found badge derived from ``nas_remote_available(nas.remote)``, and
+    a single "Test connection" button wired to ``on_test_connection`` (the
+    rclone remote probe) that renders its result inline.
     """
     import inspect
 
     from nicegui import ui
 
-    equipment = _password_requiring_nas_equipment(draft)
-    if not equipment:
-        ui.label("No NAS-mode equipment requires a password.").props(
-            'data-testid="settings-nas-credentials-empty"'
+    remote = getattr(nas, "remote", "") or ""
+    base_root = getattr(nas, "base_root", "") or ""
+    available = bool(remote) and nas_remote_available(remote)
+
+    with container:
+        ui.label(
+            "NAS sync references a single rclone remote configured in your "
+            "rclone.conf (run `rclone config` to create it). No password is "
+            "stored here."
+        ).style("font-size: var(--text-sm); color: var(--color-muted);")
+
+        with ui.row().classes("items-center w-full").style("gap: 0.5rem;"):
+            ui.label("Remote").style("color: var(--color-body); min-width: 6rem;")
+            ui.label(remote or "(not configured)").props(
+                'data-testid="settings-nas-remote-name"'
+            ).style("font-family: var(--font-mono);")
+
+        with ui.row().classes("items-center w-full").style("gap: 0.5rem;"):
+            ui.label("Base root").style("color: var(--color-body); min-width: 6rem;")
+            ui.label(base_root or "(not configured)").props(
+                'data-testid="settings-nas-remote-base-root"'
+            ).style("font-family: var(--font-mono);")
+
+        if available:
+            badge_text = "Found in rclone.conf"
+            badge_color = "var(--color-success)"
+        else:
+            badge_text = "Not found — run `rclone config`"
+            badge_color = "var(--color-warning)"
+        ui.label(badge_text).props('data-testid="settings-nas-remote-status"').style(
+            f"color: {badge_color}; font-size: var(--text-sm); font-weight: 600;"
         )
-        return
 
-    ui.label(
-        "Each NAS-mode equipment authenticates with a password stored in the OS keyring. "
-        "Set it here, then use Test connection to confirm the NAS is reachable."
-    ).style("font-size: var(--text-sm); color: var(--color-muted);")
+        panel = ui.column().classes("w-full")
 
-    for eq in equipment:
-        with (
-            ui.column()
-            .classes("w-full")
-            .props(f'data-testid="settings-nas-credential-row-{eq.id}"')
-            .style("gap: 0.25rem; padding-bottom: 0.75rem;")
-        ):
-            if nas_credential_handlers is not None:
-                on_save, on_clear = nas_credential_handlers(eq.id)
-            else:
-                on_save, on_clear = (lambda _value: None), (lambda: None)
-            credential_field.credential_field(
-                label=f"NAS password — {eq.id}",
-                on_save=on_save,
-                on_clear=on_clear,
-                initial_state=lims_credential_initial_state(
-                    present=nas_password_present_for(eq.id)
-                ),
-                data_testid=f"settings-nas-password-{eq.id}",
-            )
-            panel = ui.column().classes("w-full")
+        async def _test() -> None:
+            panel.clear()
+            if on_test_connection is None:
+                return
+            result = on_test_connection()
+            if inspect.isawaitable(result):
+                result = await result
+            with panel:
+                test_connection_panel.test_connection_panel(result)
 
-            def _make_test(equipment_id: str, container: Any) -> Callable[[], Any]:
-                async def _test() -> None:
-                    container.clear()
-                    if on_test_equipment is None:
-                        return
-                    result = on_test_equipment(equipment_id)
-                    if inspect.isawaitable(result):
-                        result = await result
-                    with container:
-                        test_connection_panel.test_connection_panel(result)
-
-                return _test
-
-            ui.button("Test connection", on_click=_make_test(eq.id, panel)).props(
-                f'flat data-testid="settings-nas-test-{eq.id}"'
-            )
+        ui.button("Test connection", on_click=_test).props(
+            'flat data-testid="settings-nas-test-connection"'
+        )

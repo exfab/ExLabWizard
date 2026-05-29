@@ -320,7 +320,7 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
 
     @ui.page("/settings")
     def _settings(active: str = "") -> Any:
-        from exlab_wizard.api._dependencies import lims_password_present, nas_password_present
+        from exlab_wizard.api._dependencies import lims_password_present, nas_remote_available
 
         deps = _deps()
         incomplete = _missing_setup_sections(deps)
@@ -371,13 +371,8 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
 
                 threading.Thread(target=_do, name="exlab-quit", daemon=True).start()
 
-        def _nas_handlers(
-            equipment_id: str,
-        ) -> tuple[Callable[[str], None], Callable[[], None]]:
-            return _nas_credential_handlers(deps, ui, equipment_id)
-
-        async def _on_test_equipment(equipment_id: str) -> Any:
-            return await _nas_test_connection(deps, equipment_id)
+        async def _on_test_connection() -> Any:
+            return await _nas_test_connection(deps)
 
         # ``on_select_section`` is left unset: the settings dialog swaps
         # sections client-side, so a navigation hook would only reload
@@ -390,9 +385,8 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             on_save_lims_password=on_save_lims_password,
             on_clear_lims_password=on_clear_lims_password,
             lims_password_present=lims_password_present(deps),
-            nas_password_present_for=lambda equipment_id: nas_password_present(deps, equipment_id),
-            nas_credential_handlers=_nas_handlers,
-            on_test_equipment=_on_test_equipment,
+            nas_remote_available=lambda remote: nas_remote_available(deps, remote),
+            on_test_connection=_on_test_connection,
             autostart_registered=bool(getattr(deps, "autostart_is_registered", False)),
             on_set_autostart=_on_set_autostart,
             on_quit=on_quit,
@@ -483,87 +477,36 @@ def _lims_credential_handlers(
     return _on_save, _on_clear
 
 
-def _nas_credential_handlers(
-    deps: Any, ui: Any, equipment_id: str
-) -> tuple[Callable[[str], None], Callable[[], None]]:
-    """Build the NAS-password Save / Clear handlers for one equipment.
+async def _nas_test_connection(deps: Any) -> Any:
+    """Run the rclone NAS-remote probe and adapt it for the inline panel.
 
-    Rclone-only NAS sync migration (2026-05-26). Mirrors
-    :func:`_lims_credential_handlers` but keys the keyring entry by
-    ``keyring_nas_username(equipment_id)`` and maintains the
-    per-equipment ``deps.nas_password_present`` set (which the §4.9 setup
-    gate and the credential row's badge both read). The handlers are
-    built per equipment id so each row writes only its own keyring slot.
-    """
-    from exlab_wizard.constants.keyring import keyring_nas_username
-
-    keyring_store = getattr(deps, "keyring_store", None) if deps is not None else None
-    username = keyring_nas_username(equipment_id)
-
-    def _on_save(value: str) -> None:
-        if keyring_store is None:
-            _show_toast(
-                ui, "Cannot save the password: the OS keyring is unavailable", positive=False
-            )
-            return
-        try:
-            keyring_store.set_password(username=username, password=value)
-        except Exception as exc:
-            _log.exception("NAS keyring set_password failed")
-            _show_toast(ui, f"Could not save the NAS password: {exc}", positive=False)
-            return
-        # The §4.9 gate reads ``deps.nas_password_present`` (hydrated once
-        # at tray boot), so add the id here -- otherwise a freshly saved
-        # password would still read as absent until the next tray launch.
-        present = getattr(deps, "nas_password_present", None) if deps is not None else None
-        if isinstance(present, set):
-            present.add(equipment_id)
-        _show_toast(ui, f"NAS password for {equipment_id} saved", positive=True)
-
-    def _on_clear() -> None:
-        if keyring_store is None:
-            _show_toast(
-                ui, "Cannot clear the password: the OS keyring is unavailable", positive=False
-            )
-            return
-        try:
-            keyring_store.delete_password(username=username)
-        except Exception as exc:
-            _log.exception("NAS keyring delete_password failed")
-            _show_toast(ui, f"Could not clear the NAS password: {exc}", positive=False)
-            return
-        present = getattr(deps, "nas_password_present", None) if deps is not None else None
-        if isinstance(present, set):
-            present.discard(equipment_id)
-        _show_toast(ui, f"NAS password for {equipment_id} removed", positive=True)
-
-    return _on_save, _on_clear
-
-
-async def _nas_test_connection(deps: Any, equipment_id: str) -> Any:
-    """Run the rclone equipment probe for ``equipment_id`` and adapt it.
-
-    Resolves the equipment by id, invokes ``deps.equipment_probe`` (the
-    same probe the ``POST /setup/test-equipment`` endpoint uses), and
-    maps the ``{ok, reason, latency_ms}`` dict to a
-    :class:`TestConnectionResult` for the inline panel.
+    rclone.conf NAS-sync migration. The Settings "NAS Remote" section's
+    Test-connection button probes the single configured ``nas:`` remote
+    (no per-equipment password). It reuses ``deps.equipment_probe`` -- the
+    same probe the ``POST /setup/test-equipment`` endpoint uses, which now
+    targets ``nas.remote`` and ignores the per-equipment fields -- passing
+    the first nas-mode equipment (or any equipment) as the probe argument.
+    The probe's ``{ok, reason, latency_ms}`` dict is mapped to a
+    :class:`TestConnectionResult`.
     """
     import json
 
+    from exlab_wizard.constants import SyncMode
     from exlab_wizard.ui.components.test_connection_panel import TestConnectionResult
 
     config = getattr(deps, "config", None) if deps is not None else None
     probe = getattr(deps, "equipment_probe", None) if deps is not None else None
-    equipment = None
-    if config is not None:
-        equipment = next((e for e in config.equipment if e.id == equipment_id), None)
-    if probe is None or equipment is None:
+    if probe is None or config is None:
         return TestConnectionResult(
             success=False,
             headline="Connection failed",
             detail="equipment probe is not available",
             raw="",
         )
+    equipment = next(
+        (e for e in config.equipment if e.sync_mode == SyncMode.NAS),
+        next(iter(config.equipment), None),
+    )
     try:
         result = probe(equipment)
         if asyncio.iscoroutine(result) or asyncio.isfuture(result):
@@ -665,25 +608,28 @@ def _apply_live_config(deps: Any, updated: Any) -> None:
         deps.config = updated
 
 
-def _nas_credential_missing(deps: Any, config: Any) -> bool:
-    """True when a password-requiring nas-mode equipment lacks its keyring entry.
+def _nas_remote_missing(deps: Any, config: Any) -> bool:
+    """True when nas-mode equipment exist but the ``nas:`` remote is unusable.
 
-    Rclone-only NAS sync migration (2026-05-26). Drives the Settings
-    page's NAS-credentials section visibility via
-    :func:`_missing_setup_sections`. Retained as Phase-6 plumbing while
-    the credentials UI is migrated; the §4.9 setup gate itself now keys
-    on rclone-remote availability (``INCOMPLETE_NO_NAS_REMOTE``).
+    rclone.conf NAS-sync migration. Drives the Settings page's NAS-remote
+    section visibility via :func:`_missing_setup_sections` so the
+    setup-incomplete banner auto-selects it. The remote is "missing" when
+    at least one device syncs directly to the NAS AND either no
+    ``nas.remote`` is configured or that remote is not present in the
+    operator's ``rclone.conf`` (the same gate the §4.9 setup evaluator,
+    ``INCOMPLETE_NO_NAS_REMOTE``, keys on).
     """
-    from exlab_wizard.api._dependencies import nas_password_present
-    from exlab_wizard.config.models import transport_requires_keyring_password
+    from exlab_wizard.api._dependencies import nas_remote_available
     from exlab_wizard.constants import SyncMode
 
-    return any(
-        eq.sync_mode == SyncMode.NAS
-        and transport_requires_keyring_password(eq.transport)
-        and not nas_password_present(deps, eq.id)
-        for eq in getattr(config, "equipment", ()) or ()
+    has_nas_equipment = any(
+        eq.sync_mode == SyncMode.NAS for eq in getattr(config, "equipment", ()) or ()
     )
+    if not has_nas_equipment:
+        return False
+    nas = getattr(config, "nas", None)
+    remote = getattr(nas, "remote", "") if nas is not None else ""
+    return not remote or not nas_remote_available(deps, remote)
 
 
 def _is_setup_ready(deps: Any) -> bool:
@@ -1586,13 +1532,12 @@ def _missing_setup_sections(deps: Any) -> tuple[str, ...]:
     missing: list[str] = []
     if not config.paths.local_root or not config.paths.templates_dir:
         missing.append("paths")
-    # Rclone-only NAS sync migration (2026-05-26): surface the
-    # NAS-credentials section when any password-requiring nas-mode
-    # equipment lacks its keyring entry, so the setup-incomplete banner
-    # auto-selects it (Phase-6 Settings plumbing; the setup gate proper
-    # now keys on rclone-remote availability, not the keyring password).
-    if _nas_credential_missing(deps, config):
-        missing.append("nas_credentials")
+    # rclone.conf NAS-sync migration: surface the NAS-remote section when
+    # nas-mode equipment exist but the configured ``nas.remote`` is absent
+    # from rclone.conf, so the setup-incomplete banner auto-selects it.
+    # This mirrors the §4.9 setup gate (``INCOMPLETE_NO_NAS_REMOTE``).
+    if _nas_remote_missing(deps, config):
+        missing.append("nas_remote")
     if not config.lims.endpoint or not config.lims.email:
         missing.append("lims")
     if not lims_password_present(deps) and "lims" not in missing:

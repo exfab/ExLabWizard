@@ -56,22 +56,11 @@ class EquipmentWizardState:
     # Step 2
     local_root: str = ""
     nas_root: str = ""
-    # Step 3 -- transport_type is one of "rclone_sftp" / "rclone_smb".
-    # Both are password-based; the password is entered in Settings after
-    # registration, not in this wizard.
+    # Step 3 -- sync_mode is "nas" or "stage". rclone.conf migration:
+    # nas-mode carries no per-equipment transport (the ``nas:`` remote
+    # defines the connection), so the only mode-specific fields are the
+    # stage-mode staging transport.
     sync_mode: str = "nas"
-    transport_type: str = "rclone_sftp"
-    # rclone_sftp fields
-    sftp_host: str = ""
-    sftp_port: int = 22
-    sftp_user: str = ""
-    sftp_remote_path: str = ""
-    # rclone_smb fields
-    smb_host: str = ""
-    smb_share: str = ""
-    smb_user: str = ""
-    smb_domain: str = ""
-    smb_remote_path: str = ""
     # Stage-mode fields
     staging_transport_type: str = "smb_mount"
     staging_mount_point: str = ""
@@ -98,17 +87,10 @@ def can_advance(state: EquipmentWizardState) -> bool:
             return bool(state.local_root.strip() and state.nas_root.strip())
         case "sync_mode":
             if state.sync_mode == "nas":
-                if state.transport_type == "rclone_smb":
-                    return bool(
-                        state.smb_host.strip()
-                        and state.smb_share.strip()
-                        and state.smb_user.strip()
-                    )
-                return bool(
-                    state.sftp_host.strip()
-                    and state.sftp_user.strip()
-                    and state.sftp_remote_path.strip()
-                )
+                # rclone.conf migration: nas-mode collects no per-equipment
+                # transport here (the ``nas:`` remote defines the
+                # connection), so picking the mode is enough to advance.
+                return True
             # stage
             return bool(state.staging_mount_point.strip() and state.staging_subpath.strip())
         case "review":
@@ -130,16 +112,6 @@ def assemble_equipment_config(
         local_root=state.local_root,
         nas_root=state.nas_root,
         sync_mode=state.sync_mode,
-        transport_type=state.transport_type,
-        sftp_host=state.sftp_host,
-        sftp_port=state.sftp_port,
-        sftp_user=state.sftp_user,
-        sftp_remote_path=state.sftp_remote_path,
-        smb_host=state.smb_host,
-        smb_share=state.smb_share,
-        smb_user=state.smb_user,
-        smb_domain=state.smb_domain,
-        smb_remote_path=state.smb_remote_path,
         staging_transport_type=state.staging_transport_type,
         staging_mount_point=state.staging_mount_point,
         staging_subpath=state.staging_subpath,
@@ -315,40 +287,17 @@ def _render_sync_mode_step(
             ["nas", "stage"], value=state.sync_mode, on_change=lambda _e: refresh_body()
         ).props('data-testid="wizard-equipment-sync-mode"').bind_value(state, "sync_mode")
     if state.sync_mode == "nas":
-        ui.radio(
-            ["rclone_sftp", "rclone_smb"],
-            value=state.transport_type,
-            on_change=lambda _e: refresh_body(),
-        ).props('data-testid="wizard-equipment-transport-type"').bind_value(state, "transport_type")
-        if state.transport_type == "rclone_smb":
-            ui.input(label="SMB host", on_change=lambda _e: sync_next()).props(
-                'data-testid="wizard-equipment-smb-host"'
-            ).bind_value(state, "smb_host")
-            ui.input(label="SMB share", on_change=lambda _e: sync_next()).props(
-                'data-testid="wizard-equipment-smb-share"'
-            ).bind_value(state, "smb_share")
-            ui.input(label="SMB user", on_change=lambda _e: sync_next()).props(
-                'data-testid="wizard-equipment-smb-user"'
-            ).bind_value(state, "smb_user")
-            ui.input(label="SMB domain (optional)", on_change=lambda _e: sync_next()).props(
-                'data-testid="wizard-equipment-smb-domain"'
-            ).bind_value(state, "smb_domain")
-            ui.input(label="Remote subpath (optional)", on_change=lambda _e: sync_next()).props(
-                'data-testid="wizard-equipment-smb-remote-path"'
-            ).bind_value(state, "smb_remote_path")
-        else:
-            ui.input(label="SFTP host", on_change=lambda _e: sync_next()).props(
-                'data-testid="wizard-equipment-sftp-host"'
-            ).bind_value(state, "sftp_host")
-            ui.number(label="SFTP port", value=22, on_change=lambda _e: sync_next()).props(
-                'data-testid="wizard-equipment-sftp-port"'
-            ).bind_value(state, "sftp_port")
-            ui.input(label="SFTP user", on_change=lambda _e: sync_next()).props(
-                'data-testid="wizard-equipment-sftp-user"'
-            ).bind_value(state, "sftp_user")
-            ui.input(label="Remote path", on_change=lambda _e: sync_next()).props(
-                'data-testid="wizard-equipment-sftp-remote-path"'
-            ).bind_value(state, "sftp_remote_path")
+        # rclone.conf migration: nas-mode no longer collects a per-equipment
+        # SFTP/SMB transport here. The connection is defined once by the
+        # single ``nas:`` remote in the operator's rclone.conf (confirmed
+        # via Settings -> NAS Remote -> Test connection).
+        ui.label(
+            "This device syncs directly to the NAS using the rclone remote "
+            "configured in Settings -> NAS Remote. No per-equipment connection "
+            "is needed here."
+        ).style("color: var(--color-muted); font-size: var(--text-sm);").props(
+            'data-testid="wizard-equipment-nas-note"'
+        )
     else:  # stage
         ui.radio(
             ["smb_mount", "file_transfer"],
@@ -382,15 +331,14 @@ def _render_review_step(
         ui.label(f"Local root: {state.local_root}")
         ui.label(f"NAS root: {state.nas_root}")
         ui.label(f"Sync mode: {state.sync_mode}")
-        if state.sync_mode == "nas":
-            ui.label(f"Transport: {state.transport_type}")
-        else:
+        if state.sync_mode == "stage":
             ui.label(f"Staging transport: {state.staging_transport_type}")
             ui.label(f"Mount point: {state.staging_mount_point}")
             ui.label(f"Staging subpath: {state.staging_subpath}")
     if state.sync_mode == "nas":
         ui.label(
-            "You'll set the NAS password in Settings → NAS credentials before the first sync runs."
+            "This device syncs directly to the NAS via the rclone remote "
+            "configured in Settings → NAS Remote."
         ).style(
             "color: var(--color-muted); margin-top: var(--sp-2); "
             "font-size: var(--text-xs); font-style: italic;"
