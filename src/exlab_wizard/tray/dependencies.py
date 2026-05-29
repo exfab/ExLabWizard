@@ -701,10 +701,11 @@ def _build_nas_sync(
     """Build the :class:`NASSyncClient` -- the public NAS-sync surface.
 
     The client wires the durable queue, the transport drivers, the
-    verifier, the Pre-Sync Gate, the ``sync_state.json`` writer used
-    for per-file verify reconciliation, and (rclone-only migration,
-    2026-05-26) the keyring store used to resolve per-equipment NAS
-    passwords at push time.
+    verifier, the Pre-Sync Gate, and the ``sync_state.json`` writer used
+    for per-file verify reconciliation. ``keyring_store`` is still passed
+    for constructor compatibility but is no longer used to resolve
+    credentials: the rclone.conf NAS-sync migration moved all NAS
+    credentials into the operator's ``rclone.conf`` named remote.
 
     The poller and the force-sync route call ``enqueue`` / ``status`` on
     this object; returning a bare ``SyncQueue`` (which has neither) would

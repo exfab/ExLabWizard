@@ -144,6 +144,17 @@ class RcloneDriver:
             flags.extend(["--config", self._config_path])
         return flags
 
+    def _checkers_flags(self) -> list[str]:
+        """``--checkers <n>`` when the parallelism dial is set, else empty.
+
+        Shared by ``push`` / ``check`` / ``lsjson`` -- every subcommand that
+        runs a checker pass -- so the dial is forwarded the same way in one
+        place.
+        """
+        if self._checkers is None:
+            return []
+        return ["--checkers", str(self._checkers)]
+
     async def push(
         self,
         local: Path,
@@ -169,8 +180,7 @@ class RcloneDriver:
         cmd.extend(self._global_flags())
         if self._transfers is not None:
             cmd.extend(["--transfers", str(self._transfers)])
-        if self._checkers is not None:
-            cmd.extend(["--checkers", str(self._checkers)])
+        cmd.extend(self._checkers_flags())
         if bwlimit_kibps is not None and bwlimit_kibps > 0:
             cmd.extend(["--bwlimit", f"{bwlimit_kibps}K"])
         if files_from is not None:
@@ -242,8 +252,7 @@ class RcloneDriver:
             remote,
         ]
         cmd[1:1] = self._global_flags()
-        if self._checkers is not None:
-            cmd.extend(["--checkers", str(self._checkers)])
+        cmd.extend(self._checkers_flags())
         _log.debug("rclone check cmd: %s", shlex.join(cmd))
 
         try:
@@ -325,8 +334,7 @@ class RcloneDriver:
         cmd: list[str] = [self._binary, "lsjson", *self._global_flags()]
         if recursive:
             cmd.append("-R")
-        if self._checkers is not None:
-            cmd.extend(["--checkers", str(self._checkers)])
+        cmd.extend(self._checkers_flags())
         cmd.append(remote)
         _log.debug("rclone lsjson cmd: %s", shlex.join(cmd))
         try:

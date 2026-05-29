@@ -536,21 +536,21 @@ def setup_state_missing(
     rclone.conf (the state itself is enough for the UI to deep-link to
     the setup docs).
     """
-    if state in (SetupState.READY, SetupState.INCOMPLETE_LIMS_UNREACHABLE):
-        return []
-    if state is SetupState.INCOMPLETE_NO_CONFIG:
-        return [{"field": "config.yaml", "reason": "missing"}]
-    if state is SetupState.INCOMPLETE_NO_EQUIPMENT:
-        return [{"field": "equipment", "reason": "empty"}]
-    if state is SetupState.INCOMPLETE_MISSING_PATHS:
-        return _missing_paths_fields(config)
-    if state is SetupState.INCOMPLETE_NO_ORCHESTRATOR:
-        return _missing_orchestrator_fields(config)
-    if state is SetupState.INCOMPLETE_NO_NAS_REMOTE:
-        return _missing_nas_fields(config)
-    if state is SetupState.INCOMPLETE_NO_LIMS:
-        return _missing_lims_fields(config)
-    return []
+    match state:
+        case SetupState.READY | SetupState.INCOMPLETE_LIMS_UNREACHABLE:
+            return []
+        case SetupState.INCOMPLETE_NO_CONFIG:
+            return [{"field": "config.yaml", "reason": "missing"}]
+        case SetupState.INCOMPLETE_NO_EQUIPMENT:
+            return [{"field": "equipment", "reason": "empty"}]
+        case SetupState.INCOMPLETE_MISSING_PATHS:
+            return _missing_paths_fields(config)
+        case SetupState.INCOMPLETE_NO_ORCHESTRATOR:
+            return _missing_orchestrator_fields(config)
+        case SetupState.INCOMPLETE_NO_NAS_REMOTE:
+            return _missing_nas_fields(config)
+        case SetupState.INCOMPLETE_NO_LIMS:
+            return _missing_lims_fields(config)
 
 
 def _missing_nas_fields(config: Config | None) -> list[dict[str, str]]:
