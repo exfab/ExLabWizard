@@ -826,12 +826,84 @@ async def test_cleanup_aborts_delete_on_hash_mismatch(tmp_path: Path) -> None:
         await client.close()
 
 
+async def test_cleanup_aborts_delete_when_remote_file_vanished_at_gate(tmp_path: Path) -> None:
+    """A tracked file present at reconcile but gone at the cleanup gate defers cleanup.
+
+    Exercises the cleanup-gate's lsjson existence-probe-fail branch (the
+    stage before the download-and-rehash): the run reconciles to VERIFIED
+    normally (the first lsjson listing reports every file present with a
+    matching size + modtime), but by the time cleanup runs its existence
+    probe the listing OMITS a tracked file -- so the run is deferred to
+    CLEANUP_ELIGIBLE and the local data is NOT deleted. A stateful factory
+    returns the full manifest on the first (reconcile) call and a
+    missing-one manifest on every subsequent (cleanup-probe) call.
+    """
+    from exlab_wizard.sync.manifest import RemoteManifest
+    from tests.unit.sync._helpers import _walk_local
+
+    cfg = _build_config(tmp_path, retain_cache=True, min_verify_passes=1, min_age_hours=0)
+    run_dir = await _populate_run(tmp_path)
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+
+    calls = {"n": 0}
+
+    def _stateful_lsjson_factory(_eq):
+        async def _lsjson(run: Path) -> RemoteManifest:
+            calls["n"] += 1
+            entries = _walk_local(run)
+            # First call is the routine reconcile -> a complete listing so
+            # the run promotes to VERIFIED. Every later call is the cleanup
+            # existence probe -> drop a tracked file so the probe fails.
+            if calls["n"] > 1:
+                entries.pop("data.bin", None)
+            return RemoteManifest(entries=entries)
+
+        return _lsjson
+
+    async def _push(_local: Path, *, bwlimit_kibps: int | None, files_from: object = None):
+        return TransportResult(ok=True, returncode=0)
+
+    # The hash-gate check must never decide the outcome here: the existence
+    # probe should short-circuit cleanup before it runs. Inject a check that
+    # would PASS so a CLEANUP_ELIGIBLE result can only come from the probe.
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        push_callable_factory=_factory(_push),
+        lsjson_callable_factory=_stateful_lsjson_factory,
+        check_callable_factory=local_check_factory(),
+        worker_poll_interval_s=0.005,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir)
+        for _ in range(400):
+            row = await client._queue.get_by_id(handle.job_id)
+            if row is not None and row.state is SyncJobState.CLEANUP_ELIGIBLE:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("expected CLEANUP_ELIGIBLE when the cleanup existence probe fails")
+        # The probe ran (a second lsjson call) and the local data survives.
+        await asyncio.sleep(0.05)
+        row = await client._queue.get_by_id(handle.job_id)
+        assert row is not None and row.state is SyncJobState.CLEANUP_ELIGIBLE
+        assert calls["n"] >= 2
+        assert (run_dir / "data.bin").exists()
+    finally:
+        await client.close()
+
+
 async def test_default_push_factory_uses_real_driver(tmp_path: Path) -> None:
-    """When no factory is injected, the client builds the per-equipment driver.
+    """When no factory is injected, the client builds the named-remote driver.
 
     We don't actually push (no rclone binary), but we check that the
-    public ``_build_push`` method dispatches to ``_build_transport_driver``
-    for a configured equipment.
+    public ``_build_push`` method falls through to its default closure --
+    which constructs the driver via ``_build_driver(self._config.nas)`` and
+    composes the target from the ``nas:`` block -- for a configured
+    equipment.
     """
     cfg = _build_config(tmp_path)
     writer = CreationWriter(lock_timeout_seconds=10.0)
