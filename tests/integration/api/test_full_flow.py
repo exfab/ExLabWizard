@@ -24,6 +24,7 @@ from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
     LIMSConfig,
+    NasConfig,
     OperatorsConfig,
     OrchestratorConfig,
     PathsConfig,
@@ -62,6 +63,7 @@ def ready_config(tmp_path: Path) -> Config:
                 nas_root="/srv/nas",
             )
         ],
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
         operators=OperatorsConfig(allowlist=["asmith"]),
         readme=READMEConfig(defaults=[]),
         lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),
