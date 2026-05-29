@@ -330,3 +330,35 @@ def test_push_argv_includes_config_and_perf(monkeypatch, tmp_path):
     assert "--config" in cmd and "/etc/rclone.conf" in cmd
     assert cmd[cmd.index("--transfers") + 1] == "2"
     assert cmd[cmd.index("--checkers") + 1] == "3"
+
+
+# ---------------------------------------------------------------------------
+# Task 2.2 — RcloneDriver.lsjson
+# ---------------------------------------------------------------------------
+
+
+def test_lsjson_argv_is_recursive_readonly(monkeypatch):
+    captured = {}
+
+    async def fake_run(cmd, *, env=None, stdin=None, mask_for_log=()):
+        captured["cmd"] = cmd
+        return 0, '[{"Path":"a.txt","Name":"a.txt","Size":3,"ModTime":"2026-05-28T00:00:00Z","IsDir":false}]', ""
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    out = asyncio.run(RcloneDriver().lsjson("nas01:/srv/lab/EQ/run"))
+    assert captured["cmd"][:2] == ["rclone", "lsjson"]
+    assert "-R" in captured["cmd"]
+    assert "nas01:/srv/lab/EQ/run" in captured["cmd"]
+    assert '"Path":"a.txt"' in out
+
+
+def test_lsjson_raises_transport_error_on_failure(monkeypatch):
+    import pytest
+    from exlab_wizard.sync.transports import TransportError
+
+    async def fake_run(cmd, *, env=None, stdin=None, mask_for_log=()):
+        return 1, "", "401 Unauthorized"
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    with pytest.raises(TransportError):
+        asyncio.run(RcloneDriver().lsjson("nas01:/x"))

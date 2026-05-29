@@ -417,6 +417,33 @@ class RcloneDriver:
         info = {key: int(value) for key, value in parsed.items() if isinstance(value, int | float)}
         return AboutResult(ok=True, info=info)
 
+    async def lsjson(self, remote: str, *, recursive: bool = True) -> str:
+        """Run ``rclone lsjson`` (read-only) and return the raw JSON array text.
+
+        Listing only — no transfer, no remote mutation. ``recursive`` adds
+        ``-R`` so a whole run subtree returns in one call. Raises
+        :class:`TransportError` with a classified ``error_kind`` on a
+        non-zero exit so callers route auth/network failures the same way
+        as push/check.
+        """
+        cmd: list[str] = [self._binary, "lsjson", *self._global_flags()]
+        if recursive:
+            cmd.append("-R")
+        if self._checkers is not None:
+            cmd.extend(["--checkers", str(self._checkers)])
+        cmd.append(remote)
+        _log.debug("rclone lsjson cmd: %s", shlex.join(cmd))
+        try:
+            rc, stdout, stderr = await run_subprocess(cmd)
+        except FileNotFoundError as exc:
+            msg = f"rclone binary not found: {self._binary!r}"
+            raise TransportError(msg) from exc
+        if rc != 0:
+            kind = _classify_failure(stderr, rc)
+            msg = f"rclone lsjson failed rc={rc} kind={kind.value}: {stderr.strip()}"
+            raise TransportError(msg, error_kind=kind)
+        return stdout
+
 
 # ---------------------------------------------------------------------------
 # Combined-output parser
