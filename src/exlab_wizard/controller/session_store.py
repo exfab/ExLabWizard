@@ -256,6 +256,17 @@ class SessionStore:
             )
 
 
+def on_operations_panel(session: Session) -> bool:
+    """Return ``True`` when ``session`` belongs on the Operations panel.
+
+    Frontend §9.5 membership rule, defined once: everything except the
+    terminal ``DONE`` / ``ABORTED`` (``FAILED`` stays so a recent failure
+    remains visible). Shared by the ``/operations`` route and the in-process
+    panel so the rule can't drift between the HTTP and GUI surfaces.
+    """
+    return session.state not in (SessionState.DONE, SessionState.ABORTED)
+
+
 def project_identifier(request: Any) -> str | None:
     """Pluck a project identifier off a project / run creation request.
 

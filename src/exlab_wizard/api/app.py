@@ -44,7 +44,7 @@ from exlab_wizard.api.routers.sessions import build_sessions_router
 from exlab_wizard.api.routers.staging import build_staging_router
 from exlab_wizard.api.setup import build_setup_router
 from exlab_wizard.config.models import Config
-from exlab_wizard.constants import AUDIT_REFRESH_SECONDS, AuditScopeKind
+from exlab_wizard.constants import AUDIT_REFRESH_SECONDS, AuditScopeKind, Tier
 from exlab_wizard.logging import get_logger
 from exlab_wizard.utils.time import utc_now_iso
 
@@ -359,8 +359,8 @@ async def _audit_loop(deps: AppDependencies, interval_seconds: float) -> None:
             # right-pane summary) reads them straight off deps -- a single
             # source, refreshed on the 30 s cadence -- without re-running a
             # full O(tree) audit on every page render (T6 / §B5).
-            deps.last_audit_hard = sum(1 for f in findings if getattr(f, "tier", "") == "hard")
-            deps.last_audit_soft = sum(1 for f in findings if getattr(f, "tier", "") == "soft")
+            deps.last_audit_hard = sum(1 for f in findings if getattr(f, "tier", "") == Tier.HARD.value)
+            deps.last_audit_soft = sum(1 for f in findings if getattr(f, "tier", "") == Tier.SOFT.value)
             added, removed, changed = _diff_findings(last, findings)
             if deps.audit_channel is not None:
                 if not last:

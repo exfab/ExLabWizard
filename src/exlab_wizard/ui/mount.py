@@ -769,34 +769,38 @@ def _build_main_state(
     )
 
 
-def _operation_counts(deps: Any) -> tuple[int, int, int]:
-    """Return ``(panel_count, input_required, active)`` operation counts.
+def _panel_sessions(deps: Any) -> list[tuple[str, Any]]:
+    """Return the (session_id, session) pairs the Operations panel shows.
 
-    ``panel_count`` is what the Operations panel shows: everything except
-    the terminal ``DONE`` / ``ABORTED`` (``FAILED`` stays so a recent
-    failure is visible). ``input_required`` counts suspended sessions
-    awaiting a plugin answer (Frontend §9.5 / §3.5.5). ``active`` counts
-    strictly non-terminal sessions and gates the §9.6 creation-button lock.
+    The §9.5 membership rule lives here only: everything except the
+    terminal ``DONE`` / ``ABORTED`` (``FAILED`` stays so a recent failure
+    is visible). Shared by :func:`_operation_counts` and
+    :func:`_build_operation_rows` so the rule can't drift.
     """
     controller = getattr(deps, "controller", None) if deps is not None else None
     store = getattr(controller, "session_store", None) if controller is not None else None
     if store is None:
-        return (0, 0, 0)
+        return []
+    from exlab_wizard.controller import on_operations_panel
+
+    return [(sid, session) for sid, session in store.iter_sorted() if on_operations_panel(session)]
+
+
+def _operation_counts(deps: Any) -> tuple[int, int, int]:
+    """Return ``(panel_count, input_required, active)`` operation counts.
+
+    ``panel_count`` is the §9.5 panel size (see :func:`_panel_sessions`).
+    ``input_required`` counts suspended sessions awaiting a plugin answer
+    (Frontend §9.5 / §3.5.5). ``active`` counts strictly non-terminal
+    sessions and gates the §9.6 creation-button lock (``FAILED`` is
+    terminal, so it sits in the panel but does not lock creation).
+    """
     from exlab_wizard.controller import SessionState
 
-    terminal = (SessionState.DONE, SessionState.FAILED, SessionState.ABORTED)
-    panel = 0
-    input_required = 0
-    active = 0
-    for _sid, session in store.iter_sorted():
-        state = session.state
-        if state not in (SessionState.DONE, SessionState.ABORTED):
-            panel += 1
-        if state is SessionState.INPUT_REQUIRED:
-            input_required += 1
-        if state not in terminal:
-            active += 1
-    return (panel, input_required, active)
+    panel_rows = _panel_sessions(deps)
+    input_required = sum(1 for _sid, s in panel_rows if s.state is SessionState.INPUT_REQUIRED)
+    active = sum(1 for _sid, s in panel_rows if not s.is_terminal())
+    return (len(panel_rows), input_required, active)
 
 
 def _setup_next_action(deps: Any) -> str | None:
@@ -1327,21 +1331,13 @@ def _open_in_os(path: str) -> bool:
 def _build_operation_rows(deps: Any) -> list[Any]:
     """Build the Operations-panel rows from the live session store (T3).
 
-    Mirrors the ``/operations`` route filter: terminal ``DONE`` / ``ABORTED``
-    sessions fall off; ``FAILED`` stays so a recent failure is visible.
+    Uses the shared §9.5 membership rule (:func:`_panel_sessions`): terminal
+    ``DONE`` / ``ABORTED`` sessions fall off; ``FAILED`` stays so a recent
+    failure is visible.
     """
-    from exlab_wizard.controller import SessionState
     from exlab_wizard.ui.components.operations_modal import OperationRow
 
-    controller = getattr(deps, "controller", None) if deps is not None else None
-    store = getattr(controller, "session_store", None) if controller is not None else None
-    if store is None:
-        return []
-    return [
-        OperationRow.from_session(sid, session)
-        for sid, session in store.iter_sorted()
-        if session.state not in (SessionState.DONE, SessionState.ABORTED)
-    ]
+    return [OperationRow.from_session(sid, session) for sid, session in _panel_sessions(deps)]
 
 
 def _open_operations_modal(deps: Any, ui: Any) -> None:

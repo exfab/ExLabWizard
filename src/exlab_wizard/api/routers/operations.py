@@ -26,7 +26,7 @@ from exlab_wizard.api.setup import setup_state_gate
 # to avoid a circular import: ``api.app`` pulls in this router while the
 # controller package's ``__init__`` is still initializing, so reading
 # attributes off the partially-built package would fail.
-from exlab_wizard.controller.session_store import project_identifier
+from exlab_wizard.controller.session_store import on_operations_panel, project_identifier
 from exlab_wizard.controller.state_machine import SessionState
 from exlab_wizard.utils.time import dt_to_iso
 
@@ -70,10 +70,10 @@ def build_operations_router() -> APIRouter:
         sessions = controller.session_store
         operations: list[OperationEntry] = []
         for sid, session in sessions.iter_sorted():
-            if session.state in (SessionState.DONE, SessionState.ABORTED):
-                # Terminal-success and explicit-cancel rows fall off
-                # the panel; FAILED rows stay so the operator can see
-                # the recent failure.
+            # Terminal-success and explicit-cancel rows fall off the panel;
+            # FAILED rows stay so the operator can see the recent failure
+            # (Frontend §9.5 -- the shared membership rule).
+            if not on_operations_panel(session):
                 continue
             operations.append(_session_to_entry(sid, session))
         return OperationsResponse(operations=operations)

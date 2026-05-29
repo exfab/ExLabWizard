@@ -191,6 +191,14 @@ def apply_frame(state: SessionProgressState, frame: dict[str, Any]) -> bool:
     terminal ``done``; ``failed`` and ``input_required`` are left to the
     caller (the wizard surfaces those out-of-band).
     """
+    def _complete_through(upto: int) -> None:
+        # Mark the first ``upto`` phases complete (idempotent) -- buffered
+        # frames may have been coalesced, so a phase becoming active (or the
+        # session finishing) implies its predecessors finished.
+        for phase in PHASES[:upto]:
+            if phase not in state.completed:
+                state.completed.append(phase)
+
     kind = frame.get("kind")
     if kind == "phase":
         phase = frame.get("phase")
@@ -198,12 +206,7 @@ def apply_frame(state: SessionProgressState, frame: dict[str, Any]) -> bool:
             # ``input_required`` / ``done`` arrive as their own ``kind``;
             # any unknown phase string is ignored rather than mis-rendered.
             return False
-        # Mark every earlier phase complete -- buffered frames may have
-        # been coalesced, and a phase becoming active implies its
-        # predecessors finished.
-        for earlier in PHASES[: PHASES.index(phase)]:
-            if earlier not in state.completed:
-                state.completed.append(earlier)
+        _complete_through(PHASES.index(phase))
         state.active_phase = phase
         if phase != "running_plugins":
             state.plugin_current = state.plugin_total = state.plugin_name = None
@@ -215,9 +218,7 @@ def apply_frame(state: SessionProgressState, frame: dict[str, Any]) -> bool:
         state.plugin_name = frame.get("plugin") or frame.get("name")
         return True
     if kind == "done":
-        for phase in PHASES:
-            if phase not in state.completed:
-                state.completed.append(phase)
+        _complete_through(len(PHASES))
         state.active_phase = None
         return True
     return False

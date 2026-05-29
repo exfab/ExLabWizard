@@ -638,17 +638,18 @@ def _render_section_body(
             # reflects the actual post-op ``is_registered()`` and reverts on
             # failure. Disabled when no toggle is wired (headless/tests).
             _guard = {"busy": False}
-            box_holder: dict[str, Any] = {}
+            autostart_box: Any = None
 
             def _on_autostart(event: Any) -> None:
                 if _guard["busy"] or on_set_autostart is None:
                     return
                 actual = on_set_autostart(bool(event.value))
-                box = box_holder.get("box")
-                if actual is not None and box is not None and bool(actual) != bool(event.value):
+                if actual is not None and bool(actual) != bool(event.value):
+                    # Programmatic revert re-fires on_change synchronously;
+                    # the guard makes that re-entrant call a no-op.
                     _guard["busy"] = True
                     try:
-                        box.value = bool(actual)
+                        autostart_box.value = bool(actual)
                     finally:
                         _guard["busy"] = False
 
@@ -657,7 +658,6 @@ def _render_section_body(
                 value=autostart_registered,
                 on_change=_on_autostart,
             ).props('data-testid="settings-autostart"')
-            box_holder["box"] = autostart_box
             if on_set_autostart is None:
                 autostart_box.props("disable")
 
