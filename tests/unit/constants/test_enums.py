@@ -221,14 +221,6 @@ def test_creation_level_values() -> None:
     assert enums.CreationLevel.RUN.value == "run"
 
 
-def test_orchestrator_transport_type_values() -> None:
-    # Backend Spec §13.3 -- ingest.json transport field.
-    # Full set coverage is in test_enum_literal_alignment.py.
-    assert issubclass(enums.OrchestratorTransportType, StrEnum)
-    assert enums.OrchestratorTransportType.SMB_MOUNT.value == "smb_mount"
-    assert enums.OrchestratorTransportType.FILE_TRANSFER.value == "file_transfer"
-
-
 def test_field_type_values() -> None:
     # Backend Spec §10 -- README field declarations.
     # Full set coverage is in test_enum_literal_alignment.py.
@@ -339,7 +331,6 @@ def test_enums_re_exported_from_package() -> None:
     assert constants.StagingCleanupMode is enums.StagingCleanupMode
     assert constants.PluginStatus is enums.PluginStatus
     assert constants.CreationLevel is enums.CreationLevel
-    assert constants.OrchestratorTransportType is enums.OrchestratorTransportType
     assert constants.FieldType is enums.FieldType
     assert constants.BandwidthDay is enums.BandwidthDay
     assert constants.SessionKind is enums.SessionKind

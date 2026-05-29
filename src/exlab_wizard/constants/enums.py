@@ -162,8 +162,8 @@ class SyncMode(StrEnum):
     Replaces the device-level orchestrator-mode toggle. Stored under
     ``sync_mode`` on each ``EquipmentConfig`` entry. An equipment is never
     both: ``nas`` syncs runs directly to the NAS remote defined in the
-    ``nas:`` block; ``stage`` requires ``orchestrator_staging_transport``
-    and pushes to a connected staging PC instead.
+    ``nas:`` block; ``stage`` pushes to the staging-PC remote defined by
+    ``orchestrator.staging_remote`` / ``staging_base_root`` instead.
     """
 
     NAS = "nas"
@@ -195,16 +195,6 @@ class CreationLevel(StrEnum):
 
     PROJECT = "project"
     RUN = "run"
-
-
-class OrchestratorTransportType(StrEnum):
-    """How the orchestrator delivered run data to the staging area.
-
-    Stored under ``transport`` in ingest.json. Backend Spec §13.3.
-    """
-
-    SMB_MOUNT = "smb_mount"
-    FILE_TRANSFER = "file_transfer"
 
 
 class FieldType(StrEnum):

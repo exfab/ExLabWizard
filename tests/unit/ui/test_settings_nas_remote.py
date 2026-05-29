@@ -17,10 +17,9 @@ from exlab_wizard.config.models import (
     EquipmentConfig,
     NasConfig,
     OrchestratorConfig,
-    OrchestratorStagingTransport,
     PathsConfig,
 )
-from exlab_wizard.constants import OrchestratorTransportType, SyncMode
+from exlab_wizard.constants import SyncMode
 from exlab_wizard.ui.pages import settings
 
 
@@ -36,17 +35,14 @@ def _nas_equipment(equipment_id: str) -> EquipmentConfig:
 
 
 def _stage_equipment(equipment_id: str) -> EquipmentConfig:
+    # rclone.conf migration (Phase 8): stage-mode carries no per-equipment
+    # transport; the staging hop is the ``orchestrator.staging_remote``.
     return EquipmentConfig(
         id=equipment_id,
         label=f"Stage {equipment_id}",
         local_root="/data",
         nas_root="/srv/nas",
         sync_mode=SyncMode.STAGE,
-        orchestrator_staging_transport=OrchestratorStagingTransport(
-            type=OrchestratorTransportType.FILE_TRANSFER,
-            mount_point="/mnt/stage",
-            staging_subpath="incoming",
-        ),
     )
 
 
@@ -54,7 +50,12 @@ def _config_with(*equipment: EquipmentConfig, remote: str = "nas01") -> Config:
     return Config(
         paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
         equipment=list(equipment),
-        orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
+        orchestrator=OrchestratorConfig(
+            label="LAB",
+            staging_root="/staging",
+            staging_remote="stagepc",
+            staging_base_root="/staging-area",
+        ),
         nas=NasConfig(remote=remote, base_root="/srv/nas"),
     )
 

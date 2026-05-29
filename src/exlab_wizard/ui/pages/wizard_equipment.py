@@ -6,8 +6,10 @@ Four-step wizard launched from the main-window toolbar:
    label.
 2. Paths — local_root (where this device acquires runs).
 3. Sync mode — pick ``nas`` (acquire + sync directly to NAS) or
-   ``stage`` (acquire + push to a connected PC's staging area). The
-   step then shows the matching transport sub-form.
+   ``stage`` (acquire + push to a connected PC's staging area). Neither
+   mode collects a per-equipment transport: the NAS connection is the
+   single ``nas:`` remote and the staging hop is
+   ``orchestrator.staging_remote`` (both configured in Settings).
 4. Review & confirm — assembles a validated EquipmentConfig via the
    shared ``build_equipment_config()`` and posts it through
    ``POST /config/equipment``.
@@ -56,15 +58,12 @@ class EquipmentWizardState:
     # Step 2
     local_root: str = ""
     nas_root: str = ""
-    # Step 3 -- sync_mode is "nas" or "stage". rclone.conf migration:
-    # nas-mode carries no per-equipment transport (the ``nas:`` remote
-    # defines the connection), so the only mode-specific fields are the
-    # stage-mode staging transport.
+    # Step 3 -- sync_mode is "nas" or "stage". rclone.conf migration
+    # (Phase 8): neither mode carries a per-equipment transport. The
+    # ``nas:`` remote defines the NAS connection and
+    # ``orchestrator.staging_remote`` defines the staging hop, so picking
+    # the mode is the only per-equipment choice.
     sync_mode: str = "nas"
-    # Stage-mode fields
-    staging_transport_type: str = "smb_mount"
-    staging_mount_point: str = ""
-    staging_subpath: str = ""
     # Step 4
     last_error: str | None = None
     confirmed: bool = False
@@ -86,13 +85,11 @@ def can_advance(state: EquipmentWizardState) -> bool:
         case "paths":
             return bool(state.local_root.strip() and state.nas_root.strip())
         case "sync_mode":
-            if state.sync_mode == "nas":
-                # rclone.conf migration: nas-mode collects no per-equipment
-                # transport here (the ``nas:`` remote defines the
-                # connection), so picking the mode is enough to advance.
-                return True
-            # stage
-            return bool(state.staging_mount_point.strip() and state.staging_subpath.strip())
+            # rclone.conf migration (Phase 8): neither mode collects a
+            # per-equipment transport here -- the ``nas:`` remote defines the
+            # NAS connection and ``orchestrator.staging_remote`` defines the
+            # staging hop -- so picking the mode is enough to advance.
+            return True
         case "review":
             return True
     return False
@@ -112,9 +109,6 @@ def assemble_equipment_config(
         local_root=state.local_root,
         nas_root=state.nas_root,
         sync_mode=state.sync_mode,
-        staging_transport_type=state.staging_transport_type,
-        staging_mount_point=state.staging_mount_point,
-        staging_subpath=state.staging_subpath,
     )
 
 
@@ -282,6 +276,7 @@ def _render_sync_mode_step(
         from nicegui import ui
     except Exception:
         return
+    del sync_next  # the sync-mode step has only the radio (no text inputs)
     with ui.row().classes("items-center"):
         ui.radio(
             ["nas", "stage"], value=state.sync_mode, on_change=lambda _e: refresh_body()
@@ -299,19 +294,17 @@ def _render_sync_mode_step(
             'data-testid="wizard-equipment-nas-note"'
         )
     else:  # stage
-        ui.radio(
-            ["smb_mount", "file_transfer"],
-            value=state.staging_transport_type,
-            on_change=lambda _e: refresh_body(),
-        ).props('data-testid="wizard-equipment-staging-transport-type"').bind_value(
-            state, "staging_transport_type"
+        # rclone.conf migration (Phase 8): stage-mode no longer collects a
+        # per-equipment mount/subpath here. The staging hop is defined once
+        # by ``orchestrator.staging_remote`` / ``staging_base_root`` (a
+        # second rclone remote configured in Settings).
+        ui.label(
+            "This device pushes runs to the staging-PC rclone remote "
+            "configured under orchestrator.staging_remote. No per-equipment "
+            "connection is needed here."
+        ).style("color: var(--color-muted); font-size: var(--text-sm);").props(
+            'data-testid="wizard-equipment-stage-note"'
         )
-        ui.input(label="Mount point", on_change=lambda _e: sync_next()).props(
-            'data-testid="wizard-equipment-staging-mount-point"'
-        ).bind_value(state, "staging_mount_point")
-        ui.input(label="Staging subpath", on_change=lambda _e: sync_next()).props(
-            'data-testid="wizard-equipment-staging-subpath"'
-        ).bind_value(state, "staging_subpath")
 
 
 def _render_review_step(
@@ -331,10 +324,6 @@ def _render_review_step(
         ui.label(f"Local root: {state.local_root}")
         ui.label(f"NAS root: {state.nas_root}")
         ui.label(f"Sync mode: {state.sync_mode}")
-        if state.sync_mode == "stage":
-            ui.label(f"Staging transport: {state.staging_transport_type}")
-            ui.label(f"Mount point: {state.staging_mount_point}")
-            ui.label(f"Staging subpath: {state.staging_subpath}")
     if state.sync_mode == "nas":
         ui.label(
             "This device syncs directly to the NAS via the rclone remote "

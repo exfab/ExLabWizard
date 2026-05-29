@@ -25,10 +25,6 @@ from exlab_wizard.constants import enums
         # New enums introduced for closed-set cleanup.
         (enums.CreationLevel, frozenset({"project", "run"})),
         (
-            enums.OrchestratorTransportType,
-            frozenset({"smb_mount", "file_transfer"}),
-        ),
-        (
             enums.FieldType,
             frozenset({"string", "text", "choice", "date", "boolean"}),
         ),

@@ -61,12 +61,12 @@ def test_can_advance_sync_mode_nas_needs_no_transport_fields() -> None:
     assert can_advance(s) is True
 
 
-def test_can_advance_sync_mode_stage_requires_staging_fields() -> None:
+def test_can_advance_sync_mode_stage_needs_no_per_equipment_fields() -> None:
+    # rclone.conf migration (Phase 8): stage-mode collects no per-equipment
+    # transport in the wizard either -- the staging hop is the
+    # ``orchestrator.staging_remote`` -- so picking the mode is enough.
     s = _state_filled_for("sync_mode")
     s.sync_mode = "stage"
-    assert can_advance(s) is False
-    s.staging_mount_point = "/mnt/staging"
-    s.staging_subpath = "in/FLOW_99"
     assert can_advance(s) is True
 
 
@@ -82,12 +82,12 @@ def test_assemble_round_trips_to_valid_equipment_config_nas() -> None:
 def test_assemble_round_trips_to_valid_equipment_config_stage() -> None:
     s = _state_filled_for("review")
     s.sync_mode = "stage"
-    s.staging_mount_point = "/mnt/staging"
-    s.staging_subpath = "in/FLOW_99"
     eq = assemble_equipment_config(s)
     assert eq.sync_mode.value == "stage"
+    # rclone.conf migration (Phase 8): stage-mode carries no per-equipment
+    # transport -- the staging hop is the ``orchestrator.staging_remote``.
     assert not hasattr(eq, "transport")
-    assert eq.orchestrator_staging_transport is not None
+    assert not hasattr(eq, "orchestrator_staging_transport")
 
 
 def test_assemble_rejects_invalid_input() -> None:

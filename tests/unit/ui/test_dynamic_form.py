@@ -136,19 +136,15 @@ def test_build_equipment_nas_has_no_transport() -> None:
     assert not hasattr(entry, "transport")
 
 
-def test_build_equipment_stage_has_staging_transport() -> None:
+def test_build_equipment_stage_has_no_per_equipment_transport() -> None:
+    # rclone.conf migration (Phase 8): stage-mode carries no per-equipment
+    # transport; the staging hop is the ``orchestrator.staging_remote``.
     entry = build_equipment_config(
-        **_equipment_kwargs(  # type: ignore[arg-type]
-            sync_mode="stage",
-            staging_transport_type="smb_mount",
-            staging_mount_point="/mnt/staging",
-            staging_subpath="in/microscope1",
-        )
+        **_equipment_kwargs(sync_mode="stage")  # type: ignore[arg-type]
     )
     assert entry.sync_mode.value == "stage"
     assert not hasattr(entry, "transport")
-    assert entry.orchestrator_staging_transport is not None
-    assert entry.orchestrator_staging_transport.mount_point == "/mnt/staging"
+    assert not hasattr(entry, "orchestrator_staging_transport")
 
 
 def test_build_equipment_rejects_bad_id() -> None:

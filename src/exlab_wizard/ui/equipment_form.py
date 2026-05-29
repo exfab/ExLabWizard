@@ -12,14 +12,8 @@ dependency through Settings.
 
 from __future__ import annotations
 
-from exlab_wizard.config.models import (
-    EquipmentConfig,
-    OrchestratorStagingTransport,
-)
-from exlab_wizard.constants import (
-    OrchestratorTransportType,
-    SyncMode,
-)
+from exlab_wizard.config.models import EquipmentConfig
+from exlab_wizard.constants import SyncMode
 
 __all__ = ["build_equipment_config"]
 
@@ -31,36 +25,20 @@ def build_equipment_config(
     local_root: str,
     nas_root: str,
     sync_mode: str = "nas",
-    # Stage transport fields (when sync_mode == "stage").
-    staging_transport_type: str = "smb_mount",
-    staging_mount_point: str = "",
-    staging_subpath: str = "",
 ) -> EquipmentConfig:
     """Assemble a validated :class:`EquipmentConfig` from raw form fields.
 
     Redesign §3.2: ``sync_mode`` ("nas" or "stage") dictates the device's
-    role. rclone.conf NAS-sync migration: nas-mode carries no per-equipment
-    connection block -- the connection is defined once by the ``nas:``
-    remote. ``stage`` still requires the ``orchestrator_staging_transport``
-    block (smb_mount or file_transfer); Pydantic validation enforces the
-    per-mode rules.
+    role. rclone.conf NAS-sync migration (Phase 8): neither mode carries a
+    per-equipment connection block. The NAS connection is defined once by the
+    ``nas:`` remote; the staging hop is defined once by
+    ``orchestrator.staging_remote`` / ``staging_base_root``. The push target
+    is selected by ``sync_mode`` at sync time.
     """
-    mode = SyncMode(sync_mode)
-
-    orch_staging: OrchestratorStagingTransport | None = None
-
-    if mode is SyncMode.STAGE:
-        orch_staging = OrchestratorStagingTransport(
-            type=OrchestratorTransportType(staging_transport_type),
-            mount_point=staging_mount_point.strip(),
-            staging_subpath=staging_subpath.strip(),
-        )
-
     return EquipmentConfig(
         id=equipment_id.strip(),
         label=label.strip(),
         local_root=local_root.strip(),
         nas_root=nas_root.strip(),
-        sync_mode=mode,
-        orchestrator_staging_transport=orch_staging,
+        sync_mode=SyncMode(sync_mode),
     )

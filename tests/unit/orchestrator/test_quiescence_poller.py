@@ -24,7 +24,6 @@ from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
     OrchestratorConfig,
-    OrchestratorStagingTransport,
     PathsConfig,
     SyncConfig,
 )
@@ -240,11 +239,6 @@ async def test_co_rooted_stage_mode_equipment_run_is_not_enqueued(tmp_path: Path
                 local_root=str(shared_root),
                 nas_root="/nas",
                 sync_mode=SyncMode.STAGE,
-                orchestrator_staging_transport=OrchestratorStagingTransport(
-                    type="smb_mount",
-                    mount_point="/mnt/orch",
-                    staging_subpath="staging",
-                ),
             ),
         ],
         orchestrator=OrchestratorConfig(label="ORCH", staging_root=""),

@@ -27,7 +27,6 @@ from exlab_wizard.config.models import (
     OperatorsConfig,
     OrchestratorConfig,
     OrchestratorStagingCleanup,
-    OrchestratorStagingTransport,
     PathsConfig,
     PluginsConfig,
     RclonePerf,
@@ -89,7 +88,6 @@ def _full_config_dict() -> dict:
                 "local_root": "/data/lab",
                 "nas_root": "//nas01/lab",
                 "sync_mode": "nas",
-                "orchestrator_staging_transport": None,
             },
             {
                 "id": "FLOW_01",
@@ -97,7 +95,6 @@ def _full_config_dict() -> dict:
                 "local_root": "/data/lab",
                 "nas_root": "/mnt/nas/lab",
                 "sync_mode": "nas",
-                "orchestrator_staging_transport": None,
             },
         ],
         "nas_cleanup": {
@@ -142,6 +139,9 @@ def _full_config_dict() -> dict:
         "orchestrator": {
             "label": "Lab Acquisition Station 01",
             "staging_root": "/staging",
+            "staging_remote": "stagepc",
+            "staging_base_root": "/staging-area",
+            "staging_perf": {"transfers": 4, "checkers": 8},
             "staging_cleanup": {"mode": "manual", "retain_hours": 24},
         },
         "nas": {
@@ -345,34 +345,6 @@ def test_bandwidth_config_accepts_positive_upload_mbps() -> None:
 
 
 # ---------------------------------------------------------------------------
-# OrchestratorStagingTransport
-# ---------------------------------------------------------------------------
-
-
-def test_orchestrator_staging_transport_smb_mount() -> None:
-    t = OrchestratorStagingTransport(
-        type="smb_mount", mount_point="/mnt/staging", staging_subpath="CONFOCAL_01"
-    )
-    assert t.type == "smb_mount"
-
-
-def test_orchestrator_staging_transport_file_transfer() -> None:
-    t = OrchestratorStagingTransport(
-        type="file_transfer", mount_point="/staging", staging_subpath="FLOW_01"
-    )
-    assert t.type == "file_transfer"
-
-
-def test_orchestrator_staging_transport_rejects_unknown_type() -> None:
-    with pytest.raises(ValidationError):
-        OrchestratorStagingTransport(
-            type="rclone",  # type: ignore[arg-type]
-            mount_point="/mnt",
-            staging_subpath="X",
-        )
-
-
-# ---------------------------------------------------------------------------
 # EquipmentConfig
 # ---------------------------------------------------------------------------
 
@@ -441,22 +413,23 @@ def test_equipment_nas_root_must_be_non_empty() -> None:
         EquipmentConfig.model_validate(bad)
 
 
-def test_equipment_orchestrator_staging_transport_optional() -> None:
-    eq = EquipmentConfig.model_validate(_equipment_dict())
-    assert eq.orchestrator_staging_transport is None
+def test_equipment_rejects_removed_orchestrator_staging_transport() -> None:
+    """rclone.conf migration (Phase 8): the per-equipment staging-transport
+    block is gone; ``extra='forbid'`` now rejects a stray key."""
+    bad = _equipment_dict()
+    bad["orchestrator_staging_transport"] = {
+        "type": "smb_mount",
+        "mount_point": "/mnt/staging",
+        "staging_subpath": "incoming/EQ1",
+    }
+    with pytest.raises(ValidationError) as info:
+        EquipmentConfig.model_validate(bad)
+    assert "orchestrator_staging_transport" in str(info.value)
 
 
 # ---------------------------------------------------------------------------
 # Per-equipment sync_mode (Redesign §3.2)
 # ---------------------------------------------------------------------------
-
-
-def _orch_staging_transport_dict() -> dict:
-    return {
-        "type": "smb_mount",
-        "mount_point": "/mnt/orch-staging",
-        "staging_subpath": "incoming/EQ1",
-    }
 
 
 def test_sync_mode_defaults_to_nas_when_absent() -> None:
@@ -495,41 +468,24 @@ def test_nas_mode_equipment_rejects_stray_transport_block() -> None:
     assert "transport" in str(info.value)
 
 
-def test_sync_mode_nas_forbids_orchestrator_staging_transport() -> None:
-    bad = _equipment_dict()
-    bad["sync_mode"] = "nas"
-    bad["orchestrator_staging_transport"] = _orch_staging_transport_dict()
-    with pytest.raises(ValidationError) as info:
-        EquipmentConfig.model_validate(bad)
-    assert "orchestrator_staging_transport" in str(info.value)
-
-
-def test_sync_mode_stage_requires_orchestrator_staging_transport() -> None:
-    bad = _equipment_dict()
-    bad["sync_mode"] = "stage"
-    with pytest.raises(ValidationError) as info:
-        EquipmentConfig.model_validate(bad)
-    assert "orchestrator_staging_transport" in str(info.value)
+def test_sync_mode_stage_needs_no_per_equipment_block() -> None:
+    """rclone.conf migration (Phase 8): stage-mode no longer requires (or
+    accepts) a per-equipment staging-transport block; the staging hop is
+    defined once by ``orchestrator.staging_remote``."""
+    spec = _equipment_dict()
+    spec["sync_mode"] = "stage"
+    eq = EquipmentConfig.model_validate(spec)
+    assert eq.sync_mode.value == "stage"
 
 
 def test_sync_mode_stage_rejects_stray_transport_block() -> None:
     bad = _equipment_dict()
     bad["sync_mode"] = "stage"
-    bad["orchestrator_staging_transport"] = _orch_staging_transport_dict()
     bad["transport"] = {"type": "rclone_sftp", "host": "x", "user": "y", "remote_path": "/z"}
     # ``transport`` is no longer a model field; extra='forbid' rejects it.
     with pytest.raises(ValidationError) as info:
         EquipmentConfig.model_validate(bad)
     assert "transport" in str(info.value)
-
-
-def test_sync_mode_stage_with_only_orchestrator_transport_is_valid() -> None:
-    spec = _equipment_dict()
-    spec["sync_mode"] = "stage"
-    spec["orchestrator_staging_transport"] = _orch_staging_transport_dict()
-    eq = EquipmentConfig.model_validate(spec)
-    assert eq.sync_mode.value == "stage"
-    assert eq.orchestrator_staging_transport is not None
 
 
 def test_sync_mode_serializes_to_string() -> None:
@@ -551,13 +507,11 @@ def test_sync_mode_stage_round_trip_via_dict() -> None:
     """Build a stage-mode EquipmentConfig from a dict, dump it, compare."""
     spec = _equipment_dict()
     spec["sync_mode"] = "stage"
-    spec["orchestrator_staging_transport"] = _orch_staging_transport_dict()
     eq = EquipmentConfig.model_validate(spec)
     dumped = eq.model_dump(mode="python")
     assert dumped["sync_mode"] == "stage"
     assert "transport" not in dumped
-    assert dumped["orchestrator_staging_transport"]["type"] == "smb_mount"
-    assert dumped["orchestrator_staging_transport"]["mount_point"] == "/mnt/orch-staging"
+    assert "orchestrator_staging_transport" not in dumped
 
 
 # ---------------------------------------------------------------------------
@@ -771,7 +725,33 @@ def test_orchestrator_config_defaults() -> None:
     cfg = OrchestratorConfig()
     assert cfg.label == ""
     assert cfg.staging_root == ""
+    assert cfg.staging_remote == ""
+    assert cfg.staging_base_root == ""
     assert cfg.staging_cleanup.mode == "manual"
+
+
+def test_orchestrator_config_staging_remote_validates_with_perf_defaults() -> None:
+    """rclone.conf migration (Phase 8): the orchestrator stage hop is a
+    named rclone remote. ``staging_perf`` defaults to transfers=4/checkers=8,
+    matching the NAS leg's :class:`RclonePerf` default."""
+    cfg = OrchestratorConfig(staging_remote="stagepc", staging_base_root="/staging")
+    assert cfg.staging_remote == "stagepc"
+    assert cfg.staging_base_root == "/staging"
+    assert cfg.staging_perf.transfers == 4
+    assert cfg.staging_perf.checkers == 8
+
+
+def test_stage_mode_equipment_validates_without_staging_block() -> None:
+    """rclone.conf migration (Phase 8): a stage-mode equipment validates with
+    only its id / roots / sync_mode -- no per-equipment staging-transport."""
+    eq = EquipmentConfig(
+        id="STAGE_01",
+        label="Stage 1",
+        local_root="/data",
+        nas_root="//nas/x",
+        sync_mode="stage",
+    )
+    assert eq.sync_mode.value == "stage"
 
 
 # ---------------------------------------------------------------------------

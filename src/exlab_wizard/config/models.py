@@ -35,7 +35,6 @@ from exlab_wizard.constants import (
     TEMPLATE_QUESTION_ID_PATTERN,
     BandwidthDay,
     FieldType,
-    OrchestratorTransportType,
     StagingCleanupMode,
     SyncMode,
 )
@@ -53,7 +52,6 @@ __all__ = [
     "OperatorsConfig",
     "OrchestratorConfig",
     "OrchestratorStagingCleanup",
-    "OrchestratorStagingTransport",
     "PathsConfig",
     "PluginsConfig",
     "READMEConfig",
@@ -260,25 +258,6 @@ class NasConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# transports
-# ---------------------------------------------------------------------------
-
-
-class OrchestratorStagingTransport(BaseModel):
-    """``orchestrator_staging_transport:`` -- staging hop only. Backend Spec §13."""
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    type: OrchestratorTransportType
-    mount_point: str = Field(min_length=1)
-    staging_subpath: str = Field(min_length=1)
-
-    @field_serializer("type")
-    def _serialize_type(self, value: OrchestratorTransportType) -> str:
-        return value.value
-
-
-# ---------------------------------------------------------------------------
 # equipment
 # ---------------------------------------------------------------------------
 
@@ -289,13 +268,14 @@ class EquipmentConfig(BaseModel):
     ``sync_mode`` (Redesign Spec §3.2) is the per-equipment role this device
     plays for the equipment: ``nas`` means this device acquires runs and syncs
     them directly to the NAS; ``stage`` means this device acquires runs and
-    pushes them to a connected PC's staging area (requires
-    ``orchestrator_staging_transport``).
+    pushes them to a connected staging PC's staging area instead.
 
-    rclone.conf NAS-sync migration: nas-mode carries no per-equipment
-    connection block -- the NAS connection is defined once by the ``nas:``
-    block (a single rclone remote). stage-mode still requires
-    ``orchestrator_staging_transport``.
+    rclone.conf NAS-sync migration: neither mode carries a per-equipment
+    connection block. The NAS connection is defined once by the ``nas:`` block
+    (a single rclone remote); the staging hop is defined once by
+    ``orchestrator.staging_remote`` / ``orchestrator.staging_base_root`` (a
+    second rclone remote in the same ``rclone.conf``). The push target is
+    selected by ``sync_mode`` at sync time, not by a per-equipment block.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -305,7 +285,6 @@ class EquipmentConfig(BaseModel):
     local_root: str = Field(min_length=1)
     nas_root: str = Field(min_length=1)
     sync_mode: SyncMode = SyncMode.NAS
-    orchestrator_staging_transport: OrchestratorStagingTransport | None = None
 
     @field_serializer("sync_mode")
     def _serialize_sync_mode(self, value: SyncMode) -> str:
@@ -322,29 +301,6 @@ class EquipmentConfig(BaseModel):
             return canonicalize_equipment_id(value)
         except ConfigError as exc:
             raise ValueError(str(exc)) from exc
-
-    @model_validator(mode="after")
-    def _sync_mode_dictates_staging(self) -> EquipmentConfig:
-        match self.sync_mode:
-            case SyncMode.NAS:
-                # rclone.conf NAS-sync migration: nas-mode carries no
-                # per-equipment connection block -- the ``nas:`` block carries
-                # the connection. ``orchestrator_staging_transport`` remains
-                # nas-incompatible.
-                if self.orchestrator_staging_transport is not None:
-                    msg = (
-                        "equipment.sync_mode == 'nas' must not declare "
-                        "'orchestrator_staging_transport'"
-                    )
-                    raise ValueError(msg)
-            case SyncMode.STAGE:
-                if self.orchestrator_staging_transport is None:
-                    msg = (
-                        "equipment.sync_mode == 'stage' requires an "
-                        "'orchestrator_staging_transport' block"
-                    )
-                    raise ValueError(msg)
-        return self
 
 
 # ---------------------------------------------------------------------------
@@ -515,12 +471,23 @@ class OrchestratorConfig(BaseModel):
     ``creation.json``. ``staging_root`` is **opt-in**: a blank value means
     this device is not a staging PC, so it does not gate setup and no staging
     directory is created until the operator saves a non-empty path.
+
+    rclone.conf NAS-sync migration (Phase 8): ``staging_remote`` /
+    ``staging_base_root`` define the orchestrator's stage-mode hop as a named
+    rclone remote (a second remote in the same ``rclone.conf`` as the
+    ``nas:`` remote). stage-mode equipment push run folders to
+    ``<staging_remote>:<staging_base_root>/<equipment_id>/<run-leaf>`` using
+    the same :class:`RcloneDriver` ops as the NAS leg. ``staging_perf`` is the
+    parallelism dial for that hop.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     label: str = ""
     staging_root: str = ""
+    staging_remote: str = ""
+    staging_base_root: str = ""
+    staging_perf: RclonePerf = Field(default_factory=RclonePerf)
     staging_cleanup: OrchestratorStagingCleanup = Field(
         default_factory=OrchestratorStagingCleanup,
     )
