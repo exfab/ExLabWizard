@@ -711,7 +711,7 @@ def _build_main_state(
     # surface always renders, so MainPageState.orchestrator_enabled keeps
     # its True default. Folder-feed path mirrors the selected node so the
     # centre pane shows the right folder.
-    ops_count, ops_input_required = _operation_counts(deps)
+    ops_count, ops_input_required, ops_active = _operation_counts(deps)
     return main_page.MainPageState(
         setup_incomplete=not _is_setup_ready(deps),
         setup_next_action=_setup_next_action(deps),
@@ -722,32 +722,38 @@ def _build_main_state(
         folder_feed_path=selected_node,
         operations_count=ops_count,
         operations_input_required=ops_input_required,
+        creation_in_flight=ops_active > 0,
     )
 
 
-def _operation_counts(deps: Any) -> tuple[int, int]:
-    """Return ``(in_flight, input_required)`` operation counts for the toolbar.
+def _operation_counts(deps: Any) -> tuple[int, int, int]:
+    """Return ``(panel_count, input_required, active)`` operation counts.
 
-    "In flight" excludes the terminal ``DONE`` / ``ABORTED`` states (matching
-    the ``/operations`` panel rows; ``FAILED`` stays so the operator sees a
-    recent failure). ``input_required`` counts suspended sessions awaiting a
-    plugin answer (Frontend §9.5 / §3.5.5).
+    ``panel_count`` is what the Operations panel shows: everything except
+    the terminal ``DONE`` / ``ABORTED`` (``FAILED`` stays so a recent
+    failure is visible). ``input_required`` counts suspended sessions
+    awaiting a plugin answer (Frontend §9.5 / §3.5.5). ``active`` counts
+    strictly non-terminal sessions and gates the §9.6 creation-button lock.
     """
     controller = getattr(deps, "controller", None) if deps is not None else None
     store = getattr(controller, "session_store", None) if controller is not None else None
     if store is None:
-        return (0, 0)
+        return (0, 0, 0)
     from exlab_wizard.controller import SessionState
 
-    in_flight = 0
+    terminal = (SessionState.DONE, SessionState.FAILED, SessionState.ABORTED)
+    panel = 0
     input_required = 0
+    active = 0
     for _sid, session in store.iter_sorted():
-        if session.state in (SessionState.DONE, SessionState.ABORTED):
-            continue
-        in_flight += 1
-        if session.state is SessionState.INPUT_REQUIRED:
+        state = session.state
+        if state not in (SessionState.DONE, SessionState.ABORTED):
+            panel += 1
+        if state is SessionState.INPUT_REQUIRED:
             input_required += 1
-    return (in_flight, input_required)
+        if state not in terminal:
+            active += 1
+    return (panel, input_required, active)
 
 
 def _setup_next_action(deps: Any) -> str | None:
@@ -1354,20 +1360,49 @@ def _open_operation_details(deps: Any, session_id: str, ui: Any) -> None:
 
 
 def _cancel_operation(deps: Any, session_id: str, ui: Any) -> None:
-    """Cancel an in-flight session (T3 baseline; T4 adds the §9.4 dialog)."""
+    """Cancel an in-flight session via the §9.4 Discard / Keep dialog (T4).
+
+    The operator chooses whether to discard the partially-created files
+    (``discard_files=True`` -> ``shutil.rmtree`` of the partial dir) or
+    keep them in place as an orphan. ``controller.cancel`` is a no-op on an
+    already-terminal session; any error is surfaced as a toast.
+    """
     controller = getattr(deps, "controller", None) if deps is not None else None
     if controller is None:
         _show_toast(ui, "Cancel unavailable: controller not initialized", positive=False)
         return
 
-    async def _run() -> None:
-        try:
-            await controller.cancel(session_id, discard_files=False)
-            _show_toast(ui, "Operation cancelled", positive=True)
-        except Exception as exc:
-            _show_toast(ui, f"Cancel failed: {exc}", positive=False)
+    dialog = ui.dialog()
 
-    _spawn_background(_run())
+    def _choose(discard_files: bool) -> None:
+        dialog.close()
+
+        async def _run() -> None:
+            try:
+                await controller.cancel(session_id, discard_files=discard_files)
+                _show_toast(ui, "Operation cancelled", positive=True)
+            except Exception as exc:
+                _show_toast(ui, f"Cancel failed: {exc}", positive=False)
+
+        _spawn_background(_run())
+
+    with (
+        dialog,
+        ui.card().props('data-testid="cancel-confirm-dialog"').style("min-width: 420px;"),
+    ):
+        ui.label("Cancel this operation?").style("font-weight: 600;")
+        ui.label(
+            "Discard the partially-created files, or keep them in place as an orphan?"
+        ).style("color: var(--color-muted);")
+        with ui.row().classes("justify-end w-full").style("gap: 0.5rem;"):
+            ui.button("Back", on_click=lambda _e: dialog.close()).props("flat")
+            ui.button("Keep files", on_click=lambda _e: _choose(False)).props(
+                'flat data-testid="cancel-keep"'
+            )
+            ui.button("Discard files", on_click=lambda _e: _choose(True)).props(
+                'flat color=negative data-testid="cancel-discard"'
+            )
+    dialog.open()
 
 
 def _resume_operation(deps: Any, session_id: str, ui: Any) -> None:

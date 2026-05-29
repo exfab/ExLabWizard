@@ -92,15 +92,22 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   `SessionState`/`project_identifier` from submodules in `operations.py`. Resume/cancel row actions
   are placeholders here (cancel does a keep-files cancel) — fully wired in T4/T5. Suite green.
 
-### - [ ] T4 — Wire Resume / Cancel (+ §9.4 confirm, §9.6 disable rule)
+### - [x] T4 — Wire Resume / Cancel (+ §9.4 confirm, §9.6 disable rule)
 - **Spec:** [§B2](./REMAINING_WORK.md#b2--no-gui-path-to-resume-or-cancel-a-session) · **Category:** B · **Effort:** M · **Priority:** High
 - **Key files:** `controller/creation.py:327,337-341,351,377-381,1151-1153` · `ui/mount.py:1036` (dispatch pattern) · `ui/pages/main.py:54,198-200`
 - **Acceptance:** modal Resume/Cancel call `controller.resume`/`cancel` in-process; Cancel
   routes through a §9.4 Discard/Keep dialog mapped to `discard_files`; creation buttons
   disabled while a session is non-terminal (single-equipment); 409/`ValueError` surfaced.
 - **Depends on:** T3.
-- **Status:** ⬜ Not started
-- **Impl note:** _(pending)_
+- **Status:** ✅ Done
+- **Impl note:** `_cancel_operation` now opens a §9.4 Discard / Keep dialog mapped to
+  `controller.cancel(id, discard_files=…)` (Discard → `shutil.rmtree` of the partial dir), with
+  errors surfaced as a toast (`cancel` is a no-op on an already-terminal session, so no 409 to
+  raise). §9.6 single-equipment lock: `_operation_counts` now also returns an `active`
+  (strictly non-terminal) count; `_build_main_state` sets `MainPageState.creation_in_flight`, and
+  `main.py` disables New Project / Run / Test Run (with a tooltip) while a creation is in flight.
+  Added `_operation_counts` tests (panel vs active vs input_required). Resume still routes through
+  T5's input dialog. Suite green (UI 463 passed).
 
 ### - [ ] T5 — Plugin `INPUT_REQUIRED` escalation dialog (new component)
 - **Spec:** [§B3](./REMAINING_WORK.md#b3--plugin-input_required-cannot-be-answered-from-the-gui) · **Category:** B · **Effort:** M · **Priority:** High
@@ -202,4 +209,4 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   between `api/routers/operations.py` and the in-process modal.
 
 ## Progress
-3 / 13 complete.
+4 / 13 complete.

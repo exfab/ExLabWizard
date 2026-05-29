@@ -266,6 +266,36 @@ def test_build_main_state_always_on_orchestrator() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _operation_counts (T3/T4)
+# ---------------------------------------------------------------------------
+
+
+def test_operation_counts_distinguishes_panel_active_and_input_required() -> None:
+    from exlab_wizard.controller.session_store import SessionStore
+
+    store = SessionStore()
+    running = store.open("project", {})
+    suspended = store.open("run", {})
+    failed = store.open("project", {})
+    done = store.open("run", {})
+    store.get(running.session_id).state = SessionState.RENDERING
+    store.get(suspended.session_id).state = SessionState.INPUT_REQUIRED
+    store.get(failed.session_id).state = SessionState.FAILED
+    store.get(done.session_id).state = SessionState.DONE
+
+    deps = SimpleNamespace(controller=SimpleNamespace(session_store=store))
+    panel, input_required, active = mount._operation_counts(deps)
+    # panel: all but DONE/ABORTED -> running + suspended + failed
+    assert panel == 3
+    assert input_required == 1  # only the suspended session
+    assert active == 2  # strictly non-terminal -> running + suspended (FAILED excluded)
+
+
+def test_operation_counts_zero_without_controller() -> None:
+    assert mount._operation_counts(SimpleNamespace()) == (0, 0, 0)
+
+
+# ---------------------------------------------------------------------------
 # _missing_setup_sections
 # ---------------------------------------------------------------------------
 

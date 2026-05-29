@@ -54,6 +54,9 @@ class MainPageState:
     # drives the footer Sync segment's "N need input" warning.
     operations_count: int = 0
     operations_input_required: int = 0
+    # §9.6 single-equipment concurrency: the three creation buttons are
+    # disabled while any session is mid-flight (non-terminal).
+    creation_in_flight: bool = False
     # Legacy field — the orchestrator pipeline is always active under
     # Redesign §3.1, so this always renders True in production.
     orchestrator_enabled: bool = True
@@ -201,9 +204,13 @@ def render_file_explorer_page(
         ntr_btn = ui.button("New Test Run", on_click=lambda _evt: on_open_new_test_run()).props(
             'color=warning data-testid="toolbar-new-test-run"'
         )
-        if s.selected_node_is_received:
+        # Creation is disabled on received-equipment nodes (decision 1) and
+        # while any session is mid-flight (single-equipment concurrency, §9.6).
+        if s.selected_node_is_received or s.creation_in_flight:
             for btn in (np_btn, nr_btn, ntr_btn):
                 btn.props("disable")
+            if s.creation_in_flight and not s.selected_node_is_received:
+                np_btn.tooltip("A creation is already in progress")
         ui.button("Add Equipment", on_click=lambda _evt: on_open_add_equipment()).props(
             'color=primary data-testid="toolbar-add-equipment"'
         )
