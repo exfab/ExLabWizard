@@ -653,8 +653,11 @@ def _check_nas_passwords_present(keyring_store: Any, config: Any) -> set[str]:
     Rclone-only NAS sync migration (2026-05-26). Iterates the
     nas-mode equipment whose transport requires a keyring-stored
     password, returning the subset whose entry is populated. The
-    output is the hydrated form of ``deps.nas_password_present`` and
-    feeds straight into :func:`paths.evaluate_setup_state`.
+    output is the hydrated form of ``deps.nas_password_present``.
+
+    rclone.conf NAS-sync migration: this no longer feeds the §4.9 setup
+    gate (which now keys on ``deps.nas_remote_available``); it is retained
+    for the not-yet-migrated Settings credential badge / section gating.
     """
     if keyring_store is None or config is None:
         return set()
