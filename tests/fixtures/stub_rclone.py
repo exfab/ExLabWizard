@@ -2,8 +2,8 @@
 """Stub ``rclone`` binary for tests.
 
 Acts like the rclone CLI under the test harness's PATH override. Verbs
-covered: ``copy``, ``obscure``, ``about``, ``check``. Deterministic
-outcomes are selected via ``STUB_RCLONE_BEHAVIOR``:
+covered: ``copy``, ``obscure``, ``about``, ``check``, ``lsjson``.
+Deterministic outcomes are selected via ``STUB_RCLONE_BEHAVIOR``:
 
 Push (``rclone copy ... <local> <remote>:<path>``):
 - ``success`` (default) — copies ``local`` to ``<dest_root>/<path>``.
@@ -26,6 +26,14 @@ Check (``rclone check --download --combined <out> --files-from <list>
   ``--files-from`` to ``--combined``; exits 0.
 - ``check_differ`` — writes ``* <path>`` for every file; exits 1.
 - ``check_missing`` — writes ``- <path>`` for every file; exits 1.
+
+Lsjson (``rclone lsjson -R <remote>:<path>``) -- rclone-named-remote
+migration: emits a JSON array of every file under
+``<dest_root>/<path>`` with its real ``Path`` / ``Size`` / ``ModTime``
+so the routine reconcile credits files whose size + modtime match local.
+- ``lsjson_empty`` — emits ``[]`` (a remote with nothing) so the
+  reconcile finds no matches.
+- any other behavior — lists the real dest_root subtree.
 
 Optional env probes (any verb):
 - ``STUB_RCLONE_RECORD_PATH`` — append one JSON-array line of
@@ -68,6 +76,8 @@ def _is_flag_value(arg: str, argv: list[str]) -> bool:
     flags_with_value = {
         "--bwlimit",
         "--transfers",
+        "--checkers",
+        "--config",
         "--files-from",
         "--combined",
         "--differ",
@@ -236,6 +246,46 @@ def main() -> int:
             return _emit_combined(sys.argv, "-")
         # default / "success" / "check_success" -> all equal
         return _emit_combined(sys.argv, "=")
+
+    # ---- lsjson -----------------------------------------------------------
+    if verb == "lsjson":
+        if behavior == "auth_error":
+            sys.stderr.write("401 Unauthorized\n")
+            return 1
+        if behavior == "network_error":
+            sys.stderr.write("network timeout\n")
+            return 1
+        # The remote spec is the positional arg containing a colon; skip
+        # flags and their values (e.g. ``--checkers 8``).
+        remote_arg = next((a for a in sys.argv[2:] if ":" in a and not a.startswith("-")), "")
+        if not remote_arg:
+            sys.stderr.write("stub_rclone lsjson: no remote spec in argv\n")
+            return 2
+        if behavior == "lsjson_empty" or not dest_root:
+            sys.stdout.write("[]")
+            return 0
+        _, remote_path = remote_arg.split(":", 1)
+        listing_root = Path(dest_root) / remote_path.lstrip("/")
+        rows: list[dict[str, object]] = []
+        if listing_root.is_dir():
+            for path in sorted(listing_root.rglob("*")):
+                rel = path.relative_to(listing_root).as_posix()
+                if path.is_dir():
+                    rows.append({"Path": rel, "Size": -1, "ModTime": "", "IsDir": True})
+                else:
+                    st = path.stat()
+                    import datetime as _dt
+
+                    mod = (
+                        _dt.datetime.fromtimestamp(st.st_mtime, tz=_dt.UTC)
+                        .isoformat()
+                        .replace("+00:00", "Z")
+                    )
+                    rows.append(
+                        {"Path": rel, "Size": st.st_size, "ModTime": mod, "IsDir": False}
+                    )
+        sys.stdout.write(json.dumps(rows))
+        return 0
 
     # ---- copy (default verb) ---------------------------------------------
     if behavior == "network_error":

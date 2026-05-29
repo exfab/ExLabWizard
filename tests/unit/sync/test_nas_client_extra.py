@@ -31,21 +31,22 @@ from exlab_wizard.config.models import (
     NASCleanupConfig,
     PathsConfig,
     RcloneSftpTransport,
-    RcloneSmbTransport,
 )
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
     CREATION_JSON_NAME,
     CREATION_JSON_VERSION,
 )
-from exlab_wizard.sync.nas_client import (
-    NASSyncClient,
-    _build_transport_driver,
-)
+from exlab_wizard.sync.nas_client import NASSyncClient
 from exlab_wizard.sync.queue import SyncJobState
 from exlab_wizard.sync.transports import TransportErrorKind, TransportResult
 from exlab_wizard.validator.engine import Validator
-from tests.unit.sync._helpers import corrupt_one_check_factory, local_check_factory
+from tests.unit.sync._helpers import (
+    corrupt_one_check_factory,
+    local_check_factory,
+    local_lsjson_factory,
+    missing_one_lsjson_factory,
+)
 
 
 def _build_config(
@@ -117,62 +118,6 @@ def _factory(
 
 
 # ---------------------------------------------------------------------------
-# _build_transport_driver
-# ---------------------------------------------------------------------------
-
-
-class _StubKeyring:
-    """Minimal keyring stub returning a fixed password by username."""
-
-    def __init__(self, password: str = "topsecret") -> None:
-        self._password = password
-
-    def get_password(self, *, username: str) -> str:
-        del username
-        return self._password
-
-
-def test_build_transport_driver_sftp(tmp_path: Path) -> None:
-    eq = EquipmentConfig(
-        id="EQ1",
-        label="Eq 1",
-        local_root=str(tmp_path),
-        nas_root="/nas",
-        transport=RcloneSftpTransport(
-            type="rclone_sftp",
-            host="nas.lab.example",
-            user="testuser",
-            remote_path="/srv",
-            bandwidth=BandwidthConfig(),
-        ),
-    )
-    driver, push, _check = _build_transport_driver(eq, _StubKeyring())
-    assert driver is not None
-    assert callable(push)
-
-
-def test_build_transport_driver_smb(tmp_path: Path) -> None:
-    eq = EquipmentConfig(
-        id="EQ1",
-        label="Eq 1",
-        local_root=str(tmp_path),
-        nas_root="/nas",
-        transport=RcloneSmbTransport(
-            type="rclone_smb",
-            host="nas.lab.example",
-            share="lab",
-            user="testuser",
-            domain="LAB",
-            remote_path="EQ1",
-            bandwidth=BandwidthConfig(),
-        ),
-    )
-    driver, push, _check = _build_transport_driver(eq, _StubKeyring())
-    assert driver is not None
-    assert callable(push)
-
-
-# ---------------------------------------------------------------------------
 # Hash-mismatch retry semantics
 # ---------------------------------------------------------------------------
 
@@ -205,11 +150,10 @@ async def test_hash_mismatch_first_failure_retries(tmp_path: Path) -> None:
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
-        # Inject a synthetic remote-hash probe so the §7.1.4 step-2 walk
-        # finds matching digests. Removing this would surface as a
-        # spurious HASH_MISMATCH (the no-op stub push doesn't actually
-        # transfer files, so a real hashsum probe would see nothing on
-        # the "remote" side). See ``local_hashsum_factory`` docstring.
+        # Routine reconcile lists a perfect remote so the post-push pass
+        # credits every file; the cleanup hash-gate (default config runs
+        # cleanup) verifies via the check callable.
+        lsjson_callable_factory=local_lsjson_factory(),
         check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )
@@ -289,6 +233,7 @@ async def test_cleanup_full_delete_when_retain_cache_false(tmp_path: Path) -> No
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
+        lsjson_callable_factory=local_lsjson_factory(),
         check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )
@@ -325,6 +270,7 @@ async def test_cleanup_retain_cache_keeps_metadata(tmp_path: Path) -> None:
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
+        lsjson_callable_factory=local_lsjson_factory(),
         check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )
@@ -363,6 +309,7 @@ async def test_cleanup_disabled_keeps_files(tmp_path: Path) -> None:
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
+        lsjson_callable_factory=local_lsjson_factory(),
         check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )
@@ -401,6 +348,7 @@ async def test_cleanup_eligible_when_min_verify_passes_unmet(tmp_path: Path) -> 
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
+        lsjson_callable_factory=local_lsjson_factory(),
         check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )
@@ -437,6 +385,7 @@ async def test_cleanup_blocked_by_remote_stat(tmp_path: Path) -> None:
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
+        lsjson_callable_factory=local_lsjson_factory(),
         check_callable_factory=local_check_factory(),
         remote_stat_callable=lambda _row: False,
         worker_poll_interval_s=0.005,
@@ -610,6 +559,7 @@ async def test_cleanup_marks_cleared_in_sync_state(tmp_path: Path) -> None:
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
+        lsjson_callable_factory=local_lsjson_factory(),
         check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )
@@ -654,6 +604,7 @@ async def test_cleanup_keeps_keep_local_file(tmp_path: Path) -> None:
         cache_creation=writer,
         sync_state_writer=sync_writer,
         push_callable_factory=_factory(_push),
+        lsjson_callable_factory=local_lsjson_factory(),
         check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )
@@ -703,6 +654,7 @@ async def test_cleanup_deferred_when_run_only_partially_synced(tmp_path: Path) -
         cache_creation=writer,
         sync_state_writer=sync_writer,
         push_callable_factory=_factory(_push),
+        lsjson_callable_factory=local_lsjson_factory(),
         check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )
@@ -777,28 +729,34 @@ async def test_worker_marks_failed_when_local_run_vanished(tmp_path: Path) -> No
 # ---------------------------------------------------------------------------
 
 
-async def test_verifier_mismatch_first_failure_then_pass(tmp_path: Path) -> None:
-    """A rclone-check mismatch retries once, then passes."""
-    from exlab_wizard.sync.transports.rclone import CheckResult
+# ---------------------------------------------------------------------------
+# Cleanup integrity gate (rclone-named-remote migration): the expensive
+# rclone check --download runs once, right before local deletion.
+# ---------------------------------------------------------------------------
 
-    cfg = _build_config(tmp_path)
+
+async def test_cleanup_runs_hash_gate_before_delete(tmp_path: Path) -> None:
+    """The cleanup pass runs the hash-gate, and on success deletes locally.
+
+    The injected ``check`` callable (the download-and-rehash gate) is
+    invoked exactly once on the cleanup path; it returns a perfect result
+    so the files are deleted and the job reaches CLEANED.
+    """
+    cfg = _build_config(tmp_path, retain_cache=True, min_verify_passes=1, min_age_hours=0)
     run_dir = await _populate_run(tmp_path)
     writer = CreationWriter(lock_timeout_seconds=10.0)
 
-    call_count = {"n": 0}
+    from exlab_wizard.sync.transports.rclone import CheckResult
+    from tests.unit.sync._helpers import _read_files_from
 
-    async def _check(local: Path, *, files_from: Path) -> CheckResult:
+    gate_calls = {"n": 0}
+
+    async def _check(local: Path, *, files_from: Path):
         del local
-        text = files_from.read_text(encoding="utf-8")
-        files = tuple(line.strip() for line in text.splitlines() if line.strip())
-        call_count["n"] += 1
-        if call_count["n"] == 1:
-            return CheckResult(differ=("data.bin",), equal=())
-        return CheckResult(equal=files)
+        gate_calls["n"] += 1
+        return CheckResult(equal=_read_files_from(files_from))
 
-    async def _push(
-        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
-    ) -> TransportResult:
+    async def _push(_local: Path, *, bwlimit_kibps: int | None, files_from: object = None):
         return TransportResult(ok=True, returncode=0)
 
     client = NASSyncClient(
@@ -807,6 +765,7 @@ async def test_verifier_mismatch_first_failure_then_pass(tmp_path: Path) -> None
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
+        lsjson_callable_factory=local_lsjson_factory(),
         check_callable_factory=lambda _eq: _check,
         worker_poll_interval_s=0.005,
     )
@@ -815,34 +774,25 @@ async def test_verifier_mismatch_first_failure_then_pass(tmp_path: Path) -> None
         handle = await client.enqueue(run_dir)
         for _ in range(400):
             row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state in {
-                SyncJobState.VERIFIED,
-                SyncJobState.CLEANUP_ELIGIBLE,
-                SyncJobState.CLEANED,
-            }:
+            if row is not None and row.state is SyncJobState.CLEANED:
                 break
             await asyncio.sleep(0.01)
         else:
-            pytest.fail("expected eventual VERIFIED after verify retry")
+            pytest.fail("expected CLEANED after a passing hash-gate")
+        # The hash-gate ran before the irreversible delete; data is gone.
+        assert gate_calls["n"] >= 1
+        assert not (run_dir / "data.bin").exists()
     finally:
         await client.close()
 
 
-async def test_verifier_mismatch_second_failure_terminal(tmp_path: Path) -> None:
-    """Two consecutive verifier mismatches terminate FAILED."""
-    from exlab_wizard.sync.transports.rclone import CheckResult
-
-    cfg = _build_config(tmp_path)
+async def test_cleanup_aborts_delete_on_hash_mismatch(tmp_path: Path) -> None:
+    """A hash-gate mismatch defers cleanup (CLEANUP_ELIGIBLE), files survive."""
+    cfg = _build_config(tmp_path, retain_cache=True, min_verify_passes=1, min_age_hours=0)
     run_dir = await _populate_run(tmp_path)
     writer = CreationWriter(lock_timeout_seconds=10.0)
 
-    async def _always_differ(local: Path, *, files_from: Path) -> CheckResult:
-        del local, files_from
-        return CheckResult(differ=("x",))
-
-    async def _push(
-        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
-    ) -> TransportResult:
+    async def _push(_local: Path, *, bwlimit_kibps: int | None, files_from: object = None):
         return TransportResult(ok=True, returncode=0)
 
     client = NASSyncClient(
@@ -851,7 +801,10 @@ async def test_verifier_mismatch_second_failure_terminal(tmp_path: Path) -> None
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_factory(_push),
-        check_callable_factory=lambda _eq: _always_differ,
+        lsjson_callable_factory=local_lsjson_factory(),
+        # The hash-gate flags a tracked file as differing -> VerifyResult.ok
+        # is False -> cleanup is aborted.
+        check_callable_factory=corrupt_one_check_factory("data.bin"),
         worker_poll_interval_s=0.005,
     )
     await client.init()
@@ -859,11 +812,16 @@ async def test_verifier_mismatch_second_failure_terminal(tmp_path: Path) -> None
         handle = await client.enqueue(run_dir)
         for _ in range(400):
             row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.FAILED:
+            if row is not None and row.state is SyncJobState.CLEANUP_ELIGIBLE:
                 break
             await asyncio.sleep(0.01)
         else:
-            pytest.fail("expected FAILED after two verifier mismatches")
+            pytest.fail("expected CLEANUP_ELIGIBLE on a failing hash-gate")
+        # The local data survives because the integrity gate did not pass.
+        await asyncio.sleep(0.05)
+        row = await client._queue.get_by_id(handle.job_id)
+        assert row is not None and row.state is SyncJobState.CLEANUP_ELIGIBLE
+        assert (run_dir / "data.bin").exists()
     finally:
         await client.close()
 
@@ -942,24 +900,6 @@ def test_compute_nas_path_returns_none_when_empty() -> None:
     assert NASSyncClient._compute_nas_path(creation) is None
 
 
-async def test_build_transport_driver_rejects_unknown_type(tmp_path: Path) -> None:
-    """An unknown transport type raises ValueError from the helper."""
-
-    class _BogusTransport:
-        type = "bogus"
-        bandwidth = BandwidthConfig()
-
-    eq = EquipmentConfig.model_construct(
-        id="EQ1",
-        label="Eq",
-        local_root=str(tmp_path),
-        nas_root="/nas",
-        transport=_BogusTransport(),  # type: ignore[arg-type]
-    )
-    with pytest.raises(ValueError, match="unsupported transport"):
-        _build_transport_driver(eq, _StubKeyring())
-
-
 async def test_mark_synced_no_op_when_creation_missing(tmp_path: Path) -> None:
     """``_mark_synced`` is a no-op when ``creation.json`` doesn't exist."""
     cfg = _build_config(tmp_path)
@@ -1023,10 +963,16 @@ def test_infer_equipment_id_falls_back_to_first(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_partial_batch_credits_verified_files_in_sync_state(tmp_path: Path) -> None:
-    """A batch where one file fails verification still credits the others
-    in ``sync_state.json`` -- operator-free per-file NAS sync 'Failure
-    handling': a single bad file must not block the good ones."""
+async def test_partial_batch_credits_reconciled_files_in_sync_state(tmp_path: Path) -> None:
+    """A batch where one file is absent remotely still credits the others.
+
+    Routine reconcile (rclone-named-remote migration): a file that
+    reconciles against the lsjson listing is recorded in
+    ``sync_state.json`` even when a sibling in the same batch is still
+    missing remotely -- a single laggard must not block the good ones.
+    The batch re-queues (``remote_reconcile_incomplete``) rather than
+    promoting to VERIFIED.
+    """
 
     from exlab_wizard.cache.sync_state_writer import SyncStateWriter
 
@@ -1045,37 +991,45 @@ async def test_partial_batch_credits_verified_files_in_sync_state(tmp_path: Path
         cache_creation=writer,
         sync_state_writer=sync_state,
         push_callable_factory=_factory(_push),
-        check_callable_factory=corrupt_one_check_factory("subdir/child.txt"),
+        # child.txt never appears in the remote listing -> reconcile
+        # incomplete; data.bin reconciles and is credited.
+        lsjson_callable_factory=missing_one_lsjson_factory("subdir/child.txt"),
         worker_poll_interval_s=0.005,
     )
     await client.init()
     try:
         handle = await client.enqueue(run_dir, ["data.bin", "subdir/child.txt"])
-        # child.txt mismatches on every probe -> the hash-mismatch path
-        # retries once then terminates the whole batch job at FAILED.
+        # data.bin reconciles on every sweep; the batch re-queues because
+        # child.txt never reconciles. Wait until data.bin is credited.
         for _ in range(600):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.FAILED:
+            state = await sync_state.read(run_dir)
+            if "data.bin" in state.files and state.files["data.bin"].verified_at:
                 break
             await asyncio.sleep(0.01)
         else:
-            pytest.fail("expected the batch job to terminate FAILED")
+            pytest.fail("expected data.bin to be credited from the partial listing")
 
-        # Even though the batch job is terminal FAILED, per-file
-        # reconciliation must still have credited data.bin: it verified,
-        # so it carries a synced_signature + verified_at. child.txt did
-        # NOT verify -> uncredited.
-        state = await sync_state.read(run_dir)
-        assert "data.bin" in state.files
+        # data.bin reconciled: it carries a synced_signature + verified_at.
         assert state.files["data.bin"].synced_signature is not None
-        assert state.files["data.bin"].verified_at is not None
-        # Slot A: the verified file carries its local SHA-256 digest
-        # captured at sync time, so the audit trail survives the
-        # partial-failure batch.
+        # Slot A: the reconciled file carries its local SHA-256 digest
+        # captured at sync time, so the audit trail survives the partial
+        # batch.
         sha = state.files["data.bin"].verified_sha256
         assert sha is not None
         assert len(sha) == 64
+        # child.txt never reconciled -> uncredited; the job cycles
+        # QUEUED -> RUNNING -> AWAITING_VERIFY -> QUEUED and never reaches a
+        # terminal / VERIFIED state.
         assert "subdir/child.txt" not in state.files
+        await asyncio.sleep(0.05)
+        row = await client._queue.get_by_id(handle.job_id)
+        assert row is not None
+        assert row.state not in {
+            SyncJobState.VERIFIED,
+            SyncJobState.CLEANUP_ELIGIBLE,
+            SyncJobState.CLEANED,
+            SyncJobState.FAILED,
+        }
     finally:
         await client.close()
 
@@ -1099,6 +1053,7 @@ async def test_full_batch_credits_every_file_in_sync_state(tmp_path: Path) -> No
         cache_creation=writer,
         sync_state_writer=sync_state,
         push_callable_factory=_factory(_push),
+        lsjson_callable_factory=local_lsjson_factory(),
         check_callable_factory=local_check_factory(),
         worker_poll_interval_s=0.005,
     )

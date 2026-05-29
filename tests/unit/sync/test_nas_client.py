@@ -45,7 +45,10 @@ from exlab_wizard.sync.nas_client import NASSyncClient
 from exlab_wizard.sync.queue import SyncJobState
 from exlab_wizard.sync.transports import TransportErrorKind, TransportResult
 from exlab_wizard.validator.engine import Validator
-from tests.unit.sync._helpers import local_check_factory
+from tests.unit.sync._helpers import (
+    local_lsjson_factory,
+    missing_one_lsjson_factory,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -344,12 +347,13 @@ async def test_worker_drives_to_verified_and_marks_synced(
         validator=Validator(),
         cache_creation=writer,
         push_callable_factory=_make_push_factory(ok=True),
-        # Spec §7.1.4 step 2: the remote SHA-256 walk is mandatory. We
-        # inject a hashsum factory that recomputes from the local subtree
-        # so the verify pass succeeds without a real rclone binary.
-        check_callable_factory=local_check_factory(),
-        # Optimistic remote_stat default + low min_age_hours so cleanup
-        # interlocks won't accidentally trigger for default config.
+        # Routine reconcile (rclone-named-remote migration): the post-push
+        # verify path now lists the remote via lsjson and credits files
+        # whose size + modtime match local. Inject a perfect listing so
+        # the reconcile succeeds without a real rclone binary.
+        lsjson_callable_factory=local_lsjson_factory(),
+        # Optimistic remote_stat default + high min_age_hours/passes so
+        # cleanup interlocks won't trigger for the default config.
         worker_poll_interval_s=0.01,
     )
     await client.init()
@@ -369,6 +373,125 @@ async def test_worker_drives_to_verified_and_marks_synced(
         creation_path = run_dir / CACHE_DIR_NAME / CREATION_JSON_NAME
         decoded = msgspec_json.decode(creation_path.read_bytes(), type=CreationJson)
         assert decoded.sync_status == "synced"
+    finally:
+        await client.close()
+
+
+async def test_routine_reconcile_marks_synced_from_lsjson(
+    tmp_path: Path, writer: CreationWriter
+) -> None:
+    """The routine post-push path credits files via lsjson, NOT check --download.
+
+    A run reconciled from a perfect lsjson listing reaches VERIFIED and
+    credits every file in ``sync_state.json``; the injected hash-verify
+    ``check`` callable (reserved for the cleanup integrity gate) must NOT
+    be touched on this routine path.
+    """
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+
+    cfg = _build_config(tmp_path)
+    run_dir = await _populate_run(tmp_path)
+    sync_state = SyncStateWriter()
+
+    check_calls = {"n": 0}
+
+    async def _check_should_not_run(local: Path, *, files_from: Path):
+        check_calls["n"] += 1
+        from exlab_wizard.sync.transports.rclone import CheckResult
+
+        return CheckResult()
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        sync_state_writer=sync_state,
+        push_callable_factory=_make_push_factory(ok=True),
+        lsjson_callable_factory=local_lsjson_factory(),
+        check_callable_factory=lambda _eq: _check_should_not_run,
+        worker_poll_interval_s=0.01,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir, ["data.bin"])
+        for _ in range(400):
+            row = await client._queue.get_by_id(handle.job_id)
+            if row is not None and row.state in {
+                SyncJobState.VERIFIED,
+                SyncJobState.CLEANUP_ELIGIBLE,
+                SyncJobState.CLEANED,
+            }:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("worker did not reconcile to VERIFIED via lsjson")
+
+        # The data file is credited in sync_state.json from the lsjson match.
+        state = await sync_state.read(run_dir)
+        assert "data.bin" in state.files
+        assert state.files["data.bin"].synced_signature is not None
+        assert state.files["data.bin"].verified_at is not None
+        # The hash-verify check callable was never invoked on the routine
+        # path (default cleanup interlocks defer the gate).
+        assert check_calls["n"] == 0
+    finally:
+        await client.close()
+
+
+async def test_routine_reconcile_requeues_when_remote_file_missing(
+    tmp_path: Path, writer: CreationWriter
+) -> None:
+    """A file absent from the lsjson listing leaves the job re-queued.
+
+    The present file is credited; the job re-queues with
+    ``remote_reconcile_incomplete`` rather than promoting to VERIFIED.
+    """
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+
+    cfg = _build_config(tmp_path)
+    run_dir = await _populate_run(tmp_path)
+    # Add a second file so the subset has a laggard.
+    (run_dir / "other.bin").write_bytes(b"more")
+    sync_state = SyncStateWriter()
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        sync_state_writer=sync_state,
+        push_callable_factory=_make_push_factory(ok=True),
+        # "other.bin" never appears remotely -> reconcile incomplete.
+        lsjson_callable_factory=missing_one_lsjson_factory("other.bin"),
+        worker_poll_interval_s=0.01,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir, ["data.bin", "other.bin"])
+        # The credited file lands in sync_state; the job never reaches VERIFIED.
+        for _ in range(200):
+            state = await sync_state.read(run_dir)
+            if "data.bin" in state.files and state.files["data.bin"].verified_at:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("data.bin was never credited from the partial listing")
+
+        # The job keeps cycling QUEUED -> RUNNING -> AWAITING_VERIFY ->
+        # QUEUED because "other.bin" never reconciles; it must never reach a
+        # terminal/VERIFIED state.
+        await asyncio.sleep(0.05)
+        row = await client._queue.get_by_id(handle.job_id)
+        assert row is not None
+        assert row.state not in {
+            SyncJobState.VERIFIED,
+            SyncJobState.CLEANUP_ELIGIBLE,
+            SyncJobState.CLEANED,
+            SyncJobState.FAILED,
+        }
+        state = await sync_state.read(run_dir)
+        assert "other.bin" not in state.files
     finally:
         await client.close()
 

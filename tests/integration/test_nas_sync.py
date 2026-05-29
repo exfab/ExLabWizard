@@ -36,6 +36,7 @@ from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
     NASCleanupConfig,
+    NasConfig,
     PathsConfig,
     RcloneSftpTransport,
 )
@@ -53,10 +54,12 @@ from exlab_wizard.validator.engine import Validator
 class _StubKeyring:
     """Minimal keyring stub returning a fixed password for every username.
 
-    The new env-injection factory in nas_client looks up the per-equipment
-    NAS password before each push / hashsum. The integration stub returns
-    a non-empty string so the factory clears the AUTH-on-missing-password
-    gate; stub_rclone consumes the resulting env without authenticating.
+    Retained for additive compatibility: the rclone-named-remote
+    migration moved credentials into the operator's rclone.conf, so
+    ``NASSyncClient`` no longer resolves passwords from the keyring. The
+    ``keyring_store`` constructor arg still exists (it is accepted and
+    ignored); these tests keep passing this stub so the call sites match
+    the not-yet-migrated tray surface.
     """
 
     def __init__(self, password: str = "testpw") -> None:
@@ -99,6 +102,11 @@ def _build_config(local_root: Path) -> Config:
                 ),
             )
         ],
+        # rclone-named-remote migration: the sync target is composed from
+        # the ``nas:`` block (named remote + base root). ``mtime_tolerance_s``
+        # is generous so the size+modtime reconcile credits stub-copied
+        # files (the stub preserves modtime, but filesystems round).
+        nas=NasConfig(remote="nas01", base_root="/srv/nas", mtime_tolerance_s=5),
         nas_cleanup=NASCleanupConfig(
             enabled=True,
             min_verify_passes=1,  # one pass is enough so cleanup runs in test
@@ -185,10 +193,10 @@ async def test_full_happy_path_via_stub_rclone(
     nas_root = tmp_path / "nas"
     monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
     monkeypatch.setenv("STUB_RCLONE_DEST_ROOT", str(nas_root))
-    # Prove the production push/check path injects the full inline SFTP
-    # backend env (rclone-only migration). If any of these are missing the
-    # stub exits 3 and the job never reaches VERIFIED, failing the test.
-    monkeypatch.setenv("STUB_RCLONE_REQUIRE_ENV", "TYPE,HOST,USER,PASS")
+    # rclone-named-remote migration: credentials live in the operator's
+    # rclone.conf named remote, so the production push/lsjson path injects
+    # NO inline backend env -- the previous STUB_RCLONE_REQUIRE_ENV
+    # assertion no longer applies.
 
     cfg = _build_config(local_root)
     run_dir = await _populate_run(local_root)
@@ -342,24 +350,23 @@ async def test_force_verify_returns_ok_after_compute(
 
 
 # ---------------------------------------------------------------------------
-# Remote-hash mismatch policy (§7.1.4 integrity-in-transit gap)
+# Routine reconcile + cleanup integrity gate (rclone-named-remote migration)
 # ---------------------------------------------------------------------------
 
 
-async def test_remote_hash_mismatch_triggers_retry(
+async def test_routine_reconcile_retries_until_remote_listing_settles(
     stub_binaries_on_path: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A first ``rclone check`` mismatch retries the transport phase once.
+    """A reconcile that initially finds nothing remotely re-queues, then verifies.
 
-    The injected ``check_callable_factory`` returns a closure backed by
-    a counter: first invocation declares every file in the files-from
-    payload as ``differ``; second invocation declares them all
-    ``equal``. The job reaches VERIFIED and the queue row records
-    exactly one HASH_MISMATCH.
+    The injected ``lsjson_callable_factory`` returns an empty manifest on
+    the first pass (nothing on the remote yet) so the routine reconcile is
+    incomplete and the job re-queues; the second pass returns a perfect
+    manifest and the job reaches VERIFIED.
     """
-    from exlab_wizard.sync.transports.rclone import CheckResult
+    from exlab_wizard.sync.manifest import RemoteEntry, RemoteManifest
 
     local_root = tmp_path / "local"
     local_root.mkdir()
@@ -374,16 +381,23 @@ async def test_remote_hash_mismatch_triggers_retry(
     counter = [0]
 
     def _factory(_equipment):
-        async def _check(local: Path, *, files_from: Path) -> CheckResult:
-            del local
+        async def _lsjson(run: Path) -> RemoteManifest:
             counter[0] += 1
-            text = files_from.read_text(encoding="utf-8")
-            files = tuple(line.strip() for line in text.splitlines() if line.strip())
             if counter[0] == 1:
-                return CheckResult(differ=files)
-            return CheckResult(equal=files)
+                return RemoteManifest(entries={})
+            st = (run / "data.bin").stat()
+            import datetime as _dt
 
-        return _check
+            mod = (
+                _dt.datetime.fromtimestamp(st.st_mtime, tz=_dt.UTC)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+            return RemoteManifest(
+                entries={"data.bin": RemoteEntry(size=st.st_size, mod_time=mod, is_dir=False)}
+            )
+
+        return _lsjson
 
     client = NASSyncClient(
         config=cfg,
@@ -392,13 +406,15 @@ async def test_remote_hash_mismatch_triggers_retry(
         cache_creation=writer,
         keyring_store=_StubKeyring(),
         worker_poll_interval_s=0.01,
-        check_callable_factory=_factory,
+        lsjson_callable_factory=_factory,
+        # min_verify_passes default (1) + min_age (0) would run cleanup; the
+        # cleanup hash-gate uses the real stub check, which succeeds. Either
+        # VERIFIED or a cleanup state is an acceptable terminal-of-success.
     )
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
         assert handle.state == HandleState.QUEUED
-
         row = await _wait_for_state(
             client._queue.get_by_id,
             handle.job_id,
@@ -409,112 +425,48 @@ async def test_remote_hash_mismatch_triggers_retry(
             SyncJobState.CLEANUP_ELIGIBLE,
             SyncJobState.CLEANED,
         }
-        # The mismatch from the first pass was recorded; the success on
-        # the second pass leaves last_error in place because transition()
-        # only patches columns the caller passes.
-        assert row.last_error == "hash_mismatch"
-        # Counter ran exactly twice: once mismatched, once correct.
-        assert counter[0] == 2
+        # The reconcile ran at least twice: the empty listing forced a
+        # re-queue before the settled listing credited the file.
+        assert counter[0] >= 2
     finally:
         await client.close()
 
 
-async def test_remote_hashsum_probe_failure_does_not_skip_verify(
+async def test_cleanup_hash_gate_defers_on_remote_mismatch(
     stub_binaries_on_path: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A ``rclone check`` TransportError must NOT promote the job to VERIFIED.
+    """The pre-deletion hash-gate defers cleanup when the stub check differs.
 
-    The remote-side walk (now ``rclone check --download``) is mandatory.
-    If it fails with a transport error -- network outage, binary
-    missing, auth -- the job must route through the §7.1.5 retry policy
-    rather than promoting to VERIFIED on the strength of the push alone.
+    The routine reconcile uses the real stub ``lsjson`` (a perfect
+    listing) so the job promotes to VERIFIED, but the cleanup integrity
+    gate runs a ``check`` callable that reports every file as differing --
+    so cleanup is deferred (CLEANUP_ELIGIBLE) and the local data survives
+    rather than being deleted. (Push + lsjson use the real stub at
+    ``success``; only the hash-gate check is overridden, because the stub
+    uses one behavior var across all verbs.)
     """
-    from exlab_wizard.sync.transports import TransportError, TransportErrorKind
-
-    local_root = tmp_path / "local"
-    local_root.mkdir()
-    nas_root = tmp_path / "nas"
-    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
-    monkeypatch.setenv("STUB_RCLONE_DEST_ROOT", str(nas_root))
-
-    cfg = _build_config(local_root)
-    run_dir = await _populate_run(local_root)
-    writer = CreationWriter(lock_timeout_seconds=10.0)
-
-    def _factory(_equipment):
-        async def _check(local: Path, *, files_from: Path) -> object:
-            del local, files_from
-            msg = "rclone binary not found: 'rclone'"
-            raise TransportError(msg, error_kind=TransportErrorKind.UNKNOWN)
-
-        return _check
-
-    client = NASSyncClient(
-        config=cfg,
-        queue_db=tmp_path / "q.db",
-        validator=Validator(),
-        cache_creation=writer,
-        keyring_store=_StubKeyring(),
-        worker_poll_interval_s=0.01,
-        check_callable_factory=_factory,
-    )
-    await client.init()
-    try:
-        handle = await client.enqueue(run_dir)
-        # The rclone check raises an UNKNOWN-class TransportError on
-        # every attempt -- which the queue worker treats as a retryable
-        # network-class failure (per §7.1.5). Poll for any of:
-        #   - VERIFIED / CLEANED (spec violation, should never happen)
-        #   - QUEUED with non-empty next_attempt_at (backoff scheduled,
-        #     spec-aligned)
-        # We declare success if VERIFIED never appears within the window.
-        for _ in range(60):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state in {
-                SyncJobState.VERIFIED,
-                SyncJobState.CLEANED,
-            }:
-                pytest.fail(
-                    "remote check raised TransportError but the job reached "
-                    f"{row.state.value} on the strength of the local-only pass; "
-                    "this bypasses the §7.1.4 contract that mandates a remote walk."
-                )
-            await asyncio.sleep(0.05)
-    finally:
-        await client.close()
-
-
-async def test_remote_hash_mismatch_terminal(
-    stub_binaries_on_path: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A second remote-hash mismatch terminates the job at FAILED."""
-    local_root = tmp_path / "local"
-    local_root.mkdir()
-    nas_root = tmp_path / "nas"
-    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
-    monkeypatch.setenv("STUB_RCLONE_DEST_ROOT", str(nas_root))
-
-    cfg = _build_config(local_root)
-    run_dir = await _populate_run(local_root)
-    writer = CreationWriter(lock_timeout_seconds=10.0)
-
     from exlab_wizard.sync.transports.rclone import CheckResult
 
-    counter = [0]
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    nas_root = tmp_path / "nas"
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
+    monkeypatch.setenv("STUB_RCLONE_DEST_ROOT", str(nas_root))
 
-    def _factory(_equipment):
+    cfg = _build_config(local_root)
+    run_dir = await _populate_run(local_root)
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+
+    def _check_factory(_equipment):
         async def _check(local: Path, *, files_from: Path) -> CheckResult:
             del local
-            counter[0] += 1
-            text = files_from.read_text(encoding="utf-8")
-            files = tuple(line.strip() for line in text.splitlines() if line.strip())
-            # Always flag every file as differ so the verifier sees a
-            # mismatch on every pass -- the single retry exhausts and
-            # the second mismatch promotes to terminal FAILED.
+            files = tuple(
+                line.strip()
+                for line in files_from.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            )
             return CheckResult(differ=files)
 
         return _check
@@ -526,7 +478,7 @@ async def test_remote_hash_mismatch_terminal(
         cache_creation=writer,
         keyring_store=_StubKeyring(),
         worker_poll_interval_s=0.01,
-        check_callable_factory=_factory,
+        check_callable_factory=_check_factory,
     )
     await client.init()
     try:
@@ -534,12 +486,11 @@ async def test_remote_hash_mismatch_terminal(
         row = await _wait_for_state(
             client._queue.get_by_id,
             handle.job_id,
-            {SyncJobState.FAILED},
+            {SyncJobState.CLEANUP_ELIGIBLE},
         )
-        assert row.state is SyncJobState.FAILED
-        assert row.last_error == "hash_mismatch"
-        # The factory was invoked twice (the single retry exhausts there).
-        assert counter[0] == 2
+        assert row.state is SyncJobState.CLEANUP_ELIGIBLE
+        # The integrity gate failed -> local data must survive.
+        assert (run_dir / "data.bin").exists()
     finally:
         await client.close()
 
