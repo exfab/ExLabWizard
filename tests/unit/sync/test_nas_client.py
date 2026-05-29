@@ -26,6 +26,7 @@ from exlab_wizard.api.schemas import (
 )
 from exlab_wizard.cache.creation_writer import CreationWriter
 from exlab_wizard.config.models import (
+    BandwidthConfig,
     Config,
     EquipmentConfig,
     NASCleanupConfig,
@@ -34,6 +35,7 @@ from exlab_wizard.config.models import (
     PathsConfig,
     RclonePerf,
 )
+from exlab_wizard.sync.bandwidth import effective_bandwidth_limit_kibps
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
     CREATION_JSON_NAME,
@@ -891,3 +893,113 @@ def test_driver_for_stage_mode_uses_staging_perf(tmp_path: Path) -> None:
     assert (stage_driver._transfers, stage_driver._checkers) == (7, 9)
     assert (nas_driver._transfers, nas_driver._checkers) == (2, 3)
     assert stage_driver._config_path == nas_driver._config_path == "/etc/rclone.conf"
+
+
+# ---------------------------------------------------------------------------
+# Bandwidth-source regression (Phase 7 follow-up)
+# ---------------------------------------------------------------------------
+
+
+def _make_recording_push_factory() -> (
+    tuple[
+        Callable[[EquipmentConfig], Callable[..., Any]],
+        list[int | None],
+    ]
+):
+    """Return ``(factory, recorded_bwlimits)`` where the factory's push
+    callable appends the received ``bwlimit_kibps`` value to the list on
+    every invocation.
+    """
+    recorded: list[int | None] = []
+
+    async def _push(
+        local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
+        recorded.append(bwlimit_kibps)
+        return TransportResult(ok=True, error_kind=None, returncode=0)
+
+    def factory(_eq: EquipmentConfig) -> Callable[..., Any]:
+        return _push
+
+    return factory, recorded
+
+
+async def test_drive_job_bandwidth_comes_from_nas_block(
+    tmp_path: Path, writer: CreationWriter
+) -> None:
+    """``_drive_job`` must derive its bandwidth cap from ``config.nas.bandwidth``.
+
+    Phase 7 follow-up (rclone.conf NAS-sync migration): the bandwidth
+    policy lives once on the ``nas:`` block, not per-equipment. This test
+    constructs a client whose ``config.nas.bandwidth`` has a non-None
+    ``upload_mbps``, drives a job through the worker, and asserts the
+    recorded ``bwlimit_kibps`` equals the value computed by
+    :func:`effective_bandwidth_limit_kibps` from that block.
+
+    The test uses a schedule-free ``BandwidthConfig(upload_mbps=8.0)`` so
+    the cap applies unconditionally and deterministically regardless of
+    when the test runs.  8 Mbps → 1 024 KiB/s per §7.1.7.
+    """
+    from datetime import datetime
+
+    upload_mbps = 8.0
+    expected_kibps = effective_bandwidth_limit_kibps(
+        BandwidthConfig(upload_mbps=upload_mbps),
+        now_local=datetime.now(),
+    )
+    assert expected_kibps is not None, "precondition: schedule-free cap must always apply"
+
+    cfg = Config(
+        paths=PathsConfig(
+            templates_dir="/tpl",
+            plugin_dir="/plg",
+            local_root=str(tmp_path),
+        ),
+        equipment=[
+            EquipmentConfig(
+                id="EQ1",
+                label="Eq 1",
+                local_root=str(tmp_path),
+                nas_root="/nas",
+                sync_mode=SyncMode.NAS,
+            )
+        ],
+        nas=NasConfig(
+            remote="nas01",
+            base_root="/srv/nas",
+            bandwidth=BandwidthConfig(upload_mbps=upload_mbps),
+        ),
+    )
+
+    push_factory, recorded = _make_recording_push_factory()
+
+    run_dir = await _populate_run(tmp_path)
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        push_callable_factory=push_factory,
+        lsjson_callable_factory=local_lsjson_factory(),
+        worker_poll_interval_s=0.01,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir)
+        # Wait for the worker to complete at least the push step (recorded
+        # bwlimit is set before the push call in _drive_job).
+        for _ in range(200):
+            if recorded:
+                break
+            await asyncio.sleep(0.02)
+        else:
+            pytest.fail("worker did not invoke the push callable in time")
+    finally:
+        await client.close()
+
+    assert len(recorded) >= 1, "push was never called"
+    assert recorded[0] == expected_kibps, (
+        f"bandwidth cap {recorded[0]!r} KiB/s does not match "
+        f"nas.bandwidth-derived cap {expected_kibps!r} KiB/s"
+    )
