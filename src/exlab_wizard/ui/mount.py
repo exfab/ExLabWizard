@@ -1671,6 +1671,9 @@ def _lims_catalogue_projects(deps: Any) -> list[dict[str, Any]]:
         from exlab_wizard.lims.catalogue import read_catalogue
 
         catalogue = read_catalogue(Path(catalogue_path), expected_endpoint=config.lims.endpoint)
+        if catalogue is None:
+            # schema_version mismatch -> treated as absent (§7.2.9.3).
+            return []
         return [
             {
                 "short_id": project.short_id,

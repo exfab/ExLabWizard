@@ -64,7 +64,9 @@ def test_read_non_object_raises(tmp_path) -> None:
         read_catalogue(path, expected_endpoint="http://x")
 
 
-def test_schema_version_mismatch_raises(tmp_path) -> None:
+def test_schema_version_mismatch_treated_as_absent(tmp_path, caplog) -> None:
+    # §7.2.9.3: a schema_version mismatch is "catalogue absent" -> read
+    # returns None + WARN (the consumer falls through), not a hard error.
     path = tmp_path / "cat.json"
     payload = {
         "schema_version": "9.9",
@@ -74,8 +76,10 @@ def test_schema_version_mismatch_raises(tmp_path) -> None:
         "projects": [],
     }
     path.write_bytes(msgspec.json.encode(payload))
-    with pytest.raises(ConfigError, match="schema_version"):
-        read_catalogue(path, expected_endpoint="http://lims.test/api/v1")
+    with caplog.at_level("WARNING"):
+        result = read_catalogue(path, expected_endpoint="http://lims.test/api/v1")
+    assert result is None
+    assert any("schema_version" in r.message for r in caplog.records)
 
 
 def test_endpoint_mismatch_raises(tmp_path) -> None:

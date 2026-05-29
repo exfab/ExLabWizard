@@ -232,21 +232,31 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
 
 ## Phase 4 — Cleanups (anytime)
 
-### - [ ] T12 — Resolve the offline-catalogue version-policy TODO
+### - [x] T12 — Resolve the offline-catalogue version-policy TODO
 - **Spec:** [§D1](./REMAINING_WORK.md#d1--offline-catalogue-schema-version-gate-is-stricter-than-the-cache-file-policy-open-spec-question) · **Category:** D · **Effort:** S · **Priority:** Low
 - **Key files:** `lims/catalogue.py:93-103`
 - **Acceptance:** policy decided (exact vs §11.9.2 major-only) and the spec updated; check
   aligned; `TODO(spec)` removed.
-- **Status:** ⬜ Not started
-- **Impl note:** _(pending)_
+- **Status:** ✅ Done
+- **Impl note:** Policy = **treat as absent / WARN** (user-confirmed; §7.2.9.3). `read_catalogue`
+  now returns `OfflineCatalogue | None` — a `schema_version` mismatch logs a WARN and returns
+  `None` (consumer falls through) instead of raising `ConfigError`; the endpoint mismatch and
+  missing/parse-error cases stay hard errors. The decision is recorded in the function docstring;
+  `TODO(spec)` removed. Caller (`mount._lims_projects_from_catalogue`) treats `None` as `[]`. Test
+  flipped to assert `None` + WARN.
 
-### - [ ] T13 — Delete the stale plugin-registry comment
+### - [x] T13 — Delete the stale plugin-registry comment
 - **Spec:** [§D2](./REMAINING_WORK.md#d2--stale-pluginsregistrypy-not-yet-committed-comment-documentation-only) · **Category:** D · **Effort:** XS · **Priority:** Trivial
 - **Key files:** `plugins/host.py:73-81,115-123,896-905`
 - **Acceptance:** comments rewritten to state `registry.py` is committed + wired and
   `_ListBackedRegistry` is test-only.
-- **Status:** ⬜ Not started
-- **Impl note:** _(pending)_
+- **Status:** ✅ Done
+- **Impl note:** Rewrote the three "owned by Agent A / not yet committed" comment blocks in
+  `plugins/host.py` (the registry-surface header, the `PluginRegistryProtocol` docstring, and the
+  `_ListBackedRegistry`/`build_test_registry` block) to state that
+  `plugins.registry.PluginRegistry` is the committed, wired production registry (built in
+  `tray.dependencies._build_plugin_host`) and that `_ListBackedRegistry` is test-only. Also fixed a
+  stray "before Agent A's msgspec.Struct lands" comment. Pure cleanup; no behavior change.
 
 ---
 
@@ -257,4 +267,4 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   between `api/routers/operations.py` and the in-process modal.
 
 ## Progress
-11 / 13 complete.
+13 / 13 complete.
