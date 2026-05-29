@@ -140,10 +140,10 @@ class SetupState(StrEnum):
     Backend Spec §4.9.1. Values are the same strings as the member names
     (lower case) by convention.
 
-    ``INCOMPLETE_NO_ORCHESTRATOR`` is the GUI/Orchestrator Redesign §3.1
-    addition: ``orchestrator.label`` + ``orchestrator.staging_root`` are
-    always required (no longer gated on a removed ``enabled`` toggle) so
-    they join the setup-incomplete gate.
+    ``INCOMPLETE_NO_ORCHESTRATOR`` (GUI/Orchestrator Redesign §3.1) trips on a
+    missing ``orchestrator.label`` -- the required workstation identity.
+    ``orchestrator.staging_root`` is opt-in and does not gate setup (a blank
+    value just means this device is not a staging PC).
     """
 
     INCOMPLETE_NO_CONFIG = "incomplete_no_config"

@@ -368,3 +368,36 @@ async def test_start_then_stop_is_idempotent(tmp_path: Path) -> None:
     await poller.start()  # idempotent
     await poller.stop()
     await poller.stop()  # idempotent
+
+
+# ---------------------------------------------------------------------------
+# apply_config: live reload (no tray relaunch)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_config_swaps_config_reference(tmp_path: Path) -> None:
+    nas_sync = _StubNasSync()
+    poller = _poller(_make_config(staging_root=tmp_path, quiescence_minutes=2), nas_sync)
+    new = _make_config(staging_root=tmp_path, quiescence_minutes=5)
+    poller.apply_config(new)
+    assert poller._config is new
+
+
+async def test_apply_config_quiescence_change_is_live(tmp_path: Path) -> None:
+    """A live quiescence-window change takes effect on the next sweep.
+
+    poll_once re-reads ``quiescence_minutes`` from ``self._config`` each
+    sweep, so shortening the window via ``apply_config`` lets an
+    already-observed run quiesce sooner -- no tray relaunch.
+    """
+    nas_sync = _StubNasSync()
+    poller = _poller(_make_config(staging_root=tmp_path, quiescence_minutes=2), nas_sync)  # 120s
+    run_dir = _make_run(tmp_path, "EQ1")
+
+    # Observe at t=0; at t=60 the run is still inside the 120s window.
+    await poller.poll_once(now_monotonic=0.0)
+    assert await poller.poll_once(now_monotonic=60.0) == []
+
+    # Shorten the window to 60s live; the same run is now quiesced at t=60.
+    poller.apply_config(_make_config(staging_root=tmp_path, quiescence_minutes=1))
+    assert await poller.poll_once(now_monotonic=60.0) == [run_dir]

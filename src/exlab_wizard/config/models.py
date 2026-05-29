@@ -530,10 +530,11 @@ class OrchestratorConfig(BaseModel):
     """``orchestrator:`` block. Backend Spec §9, §13.
 
     GUI/Orchestrator Redesign §3.1 collapsed the single-equipment /
-    orchestrator distinction: the staging pipeline is always active, so
-    ``label`` and ``staging_root`` become required at the top-level
-    ``Config`` cross-field validator (no longer gated on a removed
-    ``enabled`` toggle).
+    orchestrator distinction (no ``enabled`` toggle). ``label`` is required
+    by the setup-state gate -- it identifies this workstation in every run's
+    ``creation.json``. ``staging_root`` is **opt-in**: a blank value means
+    this device is not a staging PC, so it does not gate setup and no staging
+    directory is created until the operator saves a non-empty path.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -578,13 +579,13 @@ class Config(BaseModel):
                 raise ValueError(msg)
             seen.add(entry.id)
 
-        # 2. The staging pipeline is always active (Redesign §3.1), so
-        #    label and staging_root are always required (or empty for the
-        #    setup-incomplete gate to trip — see paths.setup_state).
-        # The non-empty check has moved to the setup-incomplete evaluator
-        # so that an in-flight first-launch config is loadable but flagged
-        # for completion. Pydantic validation only ensures the fields are
-        # present (which they always are due to the empty-string defaults).
+        # 2. Orchestrator identity: ``label`` is required and ``staging_root``
+        #    is opt-in (a blank value just means this device is not a staging
+        #    PC). The non-empty ``label`` check lives in the setup-incomplete
+        #    evaluator (see paths.setup_state) so an in-flight first-launch
+        #    config is loadable but flagged for completion. Pydantic only
+        #    ensures the fields are present (always true via empty-string
+        #    defaults).
         return self
 
 

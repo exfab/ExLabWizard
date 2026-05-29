@@ -447,7 +447,7 @@ def test_staging_state_returns_empty_rows_on_query_failure(
 
 
 # ---------------------------------------------------------------------------
-# _restart_gate
+# _persist_config / _apply_live_config
 # ---------------------------------------------------------------------------
 
 
@@ -459,108 +459,160 @@ class _NavSpy:
         self.navigate = SimpleNamespace(to=self.navigated.append)
 
 
-def test_restart_gate_false_when_deps_none() -> None:
-    nav = _NavSpy()
-    assert mount._restart_gate(None, nav) is False
-    assert nav.navigated == []
+def test_persist_config_writes_and_applies_live(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A successful save persists, then hot-reloads the live components.
 
-
-def test_restart_gate_false_when_flag_unset() -> None:
-    nav = _NavSpy()
-    assert mount._restart_gate(_deps(restart_required=False), nav) is False
-    assert nav.navigated == []
-
-
-def test_restart_gate_redirects_when_flag_set() -> None:
-    nav = _NavSpy()
-    assert mount._restart_gate(_deps(restart_required=True), nav) is True
-    assert nav.navigated == ["/restart-required"]
-
-
-# ---------------------------------------------------------------------------
-# _persist_config
-# ---------------------------------------------------------------------------
-
-
-def test_persist_config_writes_and_arms_restart_gate() -> None:
+    The old behaviour armed ``deps.restart_required`` and routed to a
+    relaunch screen; now the new config is pushed in-process via
+    ``_apply_live_config`` and no restart flag is set.
+    """
     nav = _NavSpy()
     saved: list[Any] = []
-    deps = _deps(save_config=saved.append, restart_required=False)
+    applied: list[tuple[Any, Any]] = []
+    monkeypatch.setattr(mount, "_apply_live_config", lambda d, c: applied.append((d, c)))
+    deps = _deps(save_config=saved.append)
     sentinel_config = object()
 
     ok = mount._persist_config(deps, sentinel_config, nav)
 
     assert ok is True
     assert saved == [sentinel_config]
-    assert deps.config is sentinel_config
-    assert deps.restart_required is True
+    assert applied == [(deps, sentinel_config)]
+    # The restart gate is gone -- no flag is armed.
+    assert not hasattr(deps, "restart_required")
 
 
-def test_persist_config_returns_false_when_no_saver() -> None:
+def test_persist_config_returns_false_when_no_saver(monkeypatch: pytest.MonkeyPatch) -> None:
     nav = _NavSpy()
-    deps = _deps(save_config=None, restart_required=False)
+    applied: list[Any] = []
+    monkeypatch.setattr(mount, "_apply_live_config", lambda d, c: applied.append(c))
+    deps = _deps(save_config=None)
 
     ok = mount._persist_config(deps, object(), nav)
 
     assert ok is False
-    assert deps.restart_required is False
+    assert applied == []  # never reached the live-apply step
 
 
-def test_persist_config_returns_false_when_saver_raises() -> None:
+def test_persist_config_returns_false_when_saver_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     nav = _NavSpy()
+    applied: list[Any] = []
+    monkeypatch.setattr(mount, "_apply_live_config", lambda d, c: applied.append(c))
 
     def _boom(_config: Any) -> None:
         msg = "disk full"
         raise OSError(msg)
 
-    deps = _deps(save_config=_boom, restart_required=False)
+    deps = _deps(save_config=_boom)
 
     ok = mount._persist_config(deps, object(), nav)
 
     assert ok is False
-    assert deps.restart_required is False
+    assert applied == []  # write failed before the live-apply step
 
 
 def test_persist_config_warns_when_saver_returns_awaitable(
+    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     nav = _NavSpy()
+    applied: list[Any] = []
+    monkeypatch.setattr(mount, "_apply_live_config", lambda d, c: applied.append(c))
 
     class _Awaitable:
         def __await__(self) -> Any:
             yield
 
-    deps = _deps(save_config=lambda _cfg: _Awaitable(), restart_required=False)
+    deps = _deps(save_config=lambda _cfg: _Awaitable())
     sentinel = object()
 
     with caplog.at_level("WARNING"):
         ok = mount._persist_config(deps, sentinel, nav)
 
     assert ok is True
-    assert deps.config is sentinel
-    assert deps.restart_required is True
+    assert applied == [sentinel]
     assert any("awaitable" in r.message for r in caplog.records)
 
 
-# ---------------------------------------------------------------------------
-# _render_restart_required / _render_unavailable
-# ---------------------------------------------------------------------------
+def test_persist_config_creates_staging_root_when_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Opt-in: a saved non-empty staging_root is created on save."""
+    monkeypatch.setattr(mount, "_apply_live_config", lambda _d, _c: None)
+    staging = tmp_path / "staging"
+    updated = _config(orchestrator_staging_root=str(staging))
+    deps = _deps(save_config=lambda _cfg: None)
+
+    ok = mount._persist_config(deps, updated, _NavSpy())
+
+    assert ok is True
+    assert staging.is_dir()
 
 
-def test_render_restart_required_builds_card() -> None:
-    ui = _FakeUI()
-    result = mount._render_restart_required(ui)
-    assert result is not None
-    assert ui.cards == 1
-    assert any("Restart required" in label for label in ui.labels)
+def test_persist_config_does_not_create_staging_root_when_blank(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Blank staging_root creates nothing -- the device is not a staging PC."""
+    monkeypatch.setattr(mount, "_apply_live_config", lambda _d, _c: None)
+    updated = _config(orchestrator_staging_root="")
+    deps = _deps(save_config=lambda _cfg: None)
+
+    ok = mount._persist_config(deps, updated, _NavSpy())
+
+    assert ok is True
+    assert list(tmp_path.iterdir()) == []  # nothing created
 
 
-def test_render_restart_required_swallows_failure(
+def test_persist_config_staging_dir_failure_is_non_fatal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An ensure_dir failure warns but keeps the persisted config."""
+    monkeypatch.setattr(mount, "_apply_live_config", lambda _d, _c: None)
+    toasts: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        mount, "_show_toast", lambda _ui, msg, *, positive: toasts.append((msg, positive))
+    )
+
+    def _boom(_path: Any) -> Any:
+        msg = "permission denied"
+        raise OSError(msg)
+
+    monkeypatch.setattr("exlab_wizard.paths.ensure_dir", _boom)
+    saved: list[Any] = []
+    updated = _config(orchestrator_staging_root=str(tmp_path / "staging"))
+    deps = _deps(save_config=saved.append)
+
+    ok = mount._persist_config(deps, updated, _NavSpy())
+
+    assert ok is True  # non-fatal: config is already persisted
+    assert saved == [updated]
+    assert toasts and toasts[-1][1] is False  # a negative toast was surfaced
+
+
+def test_apply_live_config_falls_back_to_setting_config(
+    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    with caplog.at_level("WARNING"):
-        assert mount._render_restart_required(_BoomUI()) is None
-    assert any("render_restart_required" in r.message for r in caplog.records)
+    """If the coordinator raises wholesale, the live config is still kept."""
+
+    def _boom(_deps: Any, _cfg: Any) -> None:
+        msg = "coordinator exploded"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr("exlab_wizard.tray.dependencies.apply_live_config", _boom)
+    deps = _deps()
+    sentinel = object()
+
+    with caplog.at_level("ERROR"):
+        mount._apply_live_config(deps, sentinel)
+
+    assert deps.config is sentinel
+    assert any("live config reload failed" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# _render_unavailable
+# ---------------------------------------------------------------------------
 
 
 def test_render_unavailable_renders_headline_and_subline() -> None:

@@ -128,6 +128,17 @@ class QuiescenceSyncPoller:
         # across sweeps so the settle window can be measured.
         self._snapshots: dict[Path, FileSnapshot] = {}
 
+    def apply_config(self, config: Config) -> None:
+        """Swap the cached config in place so a live settings save applies.
+
+        ``poll_once`` re-reads ``quiescence_minutes``, the equipment list,
+        the staging root, and the ignore globs from ``self._config`` every
+        sweep, and :meth:`_loop` re-reads ``poll_interval_seconds`` each
+        iteration -- so reassigning the config here makes every sync
+        setting take effect on the next sweep without a tray relaunch.
+        """
+        self._config = config
+
     # ------------------------------------------------------------------ lifecycle
 
     async def start(self) -> None:
@@ -160,9 +171,12 @@ class QuiescenceSyncPoller:
     # ------------------------------------------------------------------ poll loop
 
     async def _loop(self) -> None:
-        interval = float(self._config.sync.poll_interval_seconds)
         try:
             while not self._stopping:
+                # Re-read each iteration so a live ``apply_config`` swap of
+                # ``poll_interval_seconds`` takes effect on the next sweep
+                # without a tray relaunch.
+                interval = float(self._config.sync.poll_interval_seconds)
                 try:
                     await self.poll_once()
                 except asyncio.CancelledError:

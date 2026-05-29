@@ -6,7 +6,7 @@ and drives, end to end, every create flow the wizard exposes:
 
     fresh install
       -> welcome -> settings (paths + LIMS + add equipment) -> Save
-      -> RESTART (config.yaml now drives the controller)
+      -> config applied live in-process (no restart needed)
       -> create a project template
       -> create a run template (experimental)
       -> create a run template (test scope)
@@ -261,10 +261,13 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
             "document.querySelectorAll('[data-testid=\"settings-equipment-row\"]').length === 2"
         )
 
-        # ---- Phase 5: save -> restart-required gate --------------------
+        # ---- Phase 5: save -> config applied live (no restart) ---------
+        # The "Settings saved" toast is emitted only after the handler has
+        # persisted config.yaml and pushed it into the running components,
+        # so waiting for it is the deterministic completion signal.
         page.get_by_test_id("settings-save").click()
-        page.wait_for_load_state("networkidle")
-        page.get_by_test_id("restart-required").wait_for(state="visible", timeout=10_000)
+        page.get_by_text("Settings saved").wait_for(state="visible", timeout=10_000)
+        assert "/restart-required" not in page.url
         assert config_path.exists(), "Save must persist config.yaml"
         config_text = config_path.read_text(encoding="utf-8")
         assert "MICROSCOPE1" in config_text
@@ -272,14 +275,7 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         assert "rclone_smb" in config_text
         assert str(data_root) in config_text
 
-        # ---- Phase 6: restart so the controller picks up the config ----
-        assert server.restart(), "production app failed to come back up after restart"
-        # The old page holds a websocket to the now-dead server; a fresh
-        # page avoids the stale NiceGUI client racing the new boot.
-        page.close()
-        page = context.new_page()
-
-        # ---- Phase 6b: set NAS passwords ------------------------------
+        # ---- Phase 6: set NAS passwords (config is already live) ------
         # The two nas-mode equipment registered above leave the install in
         # the INCOMPLETE_NO_NAS_CREDENTIAL state (rclone-only migration,
         # 2026-05-26) which gates every creation flow. The NAS-credentials

@@ -54,7 +54,6 @@ __all__ = [
     "compose_project_path",
     "compose_run_path",
     "creation_json_path",
-    "default_orchestrator_staging_root",
     "ensure_central_log_dir",
     "ensure_dir",
     "ensure_state_dir",
@@ -70,6 +69,7 @@ __all__ = [
     "run_dir_stem",
     "setup_state_missing",
     "setup_state_next_action",
+    "suggested_staging_root",
     "validate_project_short_id",
 ]
 
@@ -185,11 +185,31 @@ def os_central_log_path() -> Path:
             )
 
 
-def default_orchestrator_staging_root() -> Path:
-    """OS-conditional default for ``orchestrator.staging_root``. Backend Spec §9, §13."""
-    if _platform() is Platform.WINDOWS:
-        return _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / _app_name() / "staging"
-    return Path("/staging")
+def suggested_staging_root() -> Path:
+    """Suggested (not default) ``orchestrator.staging_root``. Backend Spec §9, §13.
+
+    ``staging_root`` is opt-in: blank means this device is not a staging PC
+    and nothing is created. This helper only supplies the greyed *placeholder*
+    shown in Settings to guide an operator who chooses to opt in -- it is pure
+    and side-effect-free, never written and never ``mkdir``'d. A directory is
+    created only when the operator saves a non-empty path (see
+    ``ui.mount._persist_config``).
+
+    Staged runs are bulk experiment data relayed through this device on their
+    way to the NAS, so the suggestion lives under an ``exlab-wizard/`` app
+    folder on every platform -- mirroring config / state / cache -- rather than
+    a bare ``/staging`` mount. On Linux it follows ``XDG_DATA_HOME`` (bulk user
+    data, not transient cache) so an un-synced run is never treated as
+    discardable.
+    """
+    name = _app_name()
+    match _platform():
+        case Platform.MACOS:
+            return _home() / "Library" / "Application Support" / name / "staging"
+        case Platform.WINDOWS:
+            return _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / name / "staging"
+        case Platform.LINUX:
+            return _env_path("XDG_DATA_HOME", _home() / ".local" / "share") / name / "staging"
 
 
 # ---------------------------------------------------------------------------
@@ -511,12 +531,14 @@ def evaluate_setup_state(
 
 
 def _orchestrator_identity_complete(config: Config) -> bool:
-    """Return True when this device has an orchestrator label + staging root.
+    """Return True when this device has an orchestrator label.
 
-    Redesign §3.1: the staging pipeline is always active so both fields
-    are always required (no longer gated on a removed ``enabled`` flag).
+    Only ``label`` is required -- it is stamped into every run's
+    ``creation.json`` as the workstation identity, independent of staging.
+    ``staging_root`` is opt-in (a blank value just means this device is not a
+    staging PC), so it no longer gates setup.
     """
-    return bool(config.orchestrator.label and config.orchestrator.staging_root)
+    return bool(config.orchestrator.label)
 
 
 def setup_state_missing(
@@ -577,17 +599,12 @@ def _missing_nas_fields(
 
 
 def _missing_orchestrator_fields(config: Config | None) -> list[dict[str, str]]:
-    """Redesign §3.1: ``label`` + ``staging_root`` are required."""
+    """Only ``label`` is required; ``staging_root`` is opt-in (see gate)."""
     if config is None:
-        return [
-            {"field": "orchestrator.label", "reason": "missing"},
-            {"field": "orchestrator.staging_root", "reason": "missing"},
-        ]
+        return [{"field": "orchestrator.label", "reason": "missing"}]
     out: list[dict[str, str]] = []
     if not config.orchestrator.label:
         out.append({"field": "orchestrator.label", "reason": "missing"})
-    if not config.orchestrator.staging_root:
-        out.append({"field": "orchestrator.staging_root", "reason": "missing"})
     return out
 
 

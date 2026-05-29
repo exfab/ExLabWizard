@@ -28,6 +28,7 @@ import contextlib
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Final
 
 from fastapi import APIRouter, FastAPI
@@ -187,13 +188,12 @@ class AppDependencies:
     nas_password_present: set[str] = field(default_factory=set)
     lims_reason: str | None = None
 
-    # Restart-required gate ---------------------------------------------
-    # Set True after the wizard writes config.yaml: the config-dependent
-    # components (controller / lims_client / nas_sync) are built once at
-    # tray boot, so the operator must relaunch the tray for a freshly
-    # written config to take effect. The NiceGUI mount helper reads this
-    # to route every page to the restart-required screen.
-    restart_required: bool = False
+    # State directory the tray was launched with. Stored so the live
+    # config-reload coordinator (``tray.dependencies.apply_live_config``)
+    # can build the durable NAS-sync queue under the same root when a
+    # fresh-install first save brings the config-dependent components to
+    # life without a tray relaunch.
+    state_dir: Path | None = None
 
     # Components --------------------------------------------------------
     controller: Any = None

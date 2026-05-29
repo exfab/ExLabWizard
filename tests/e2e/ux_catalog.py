@@ -251,14 +251,15 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
         action="Click 'Add equipment'",
         outcome="Validates and appends an EquipmentConfig to the draft; row appears.",
     ),
-    # -- Settings: save / restart gate --------------------------------------
+    # -- Settings: save (applied live, no restart) --------------------------
     UXInteraction(
         flow="Settings",
         route="/settings",
         testid="settings-save",
         element="button",
         action="Click 'Save all'",
-        outcome="Persists config.yaml and routes to the restart-required gate.",
+        outcome="Persists config.yaml, applies it to the running components "
+        "in-process, and shows a 'Settings saved' toast (no relaunch).",
     ),
     UXInteraction(
         flow="Settings",
@@ -267,14 +268,6 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
         element="button",
         action="Click 'Discard all'",
         outcome="Drops the in-memory draft edits.",
-    ),
-    UXInteraction(
-        flow="First-launch setup",
-        route="/restart-required",
-        testid="restart-required",
-        element="screen",
-        action="Observe the restart-required gate",
-        outcome="Terminal screen instructing the operator to relaunch the tray.",
     ),
     # -- Template manager ---------------------------------------------------
     UXInteraction(

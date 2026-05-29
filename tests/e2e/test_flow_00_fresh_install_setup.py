@@ -13,8 +13,9 @@ never get past the no-config state. This test walks:
 
     /  -> /welcome  -> (Get started)  -> /settings
     -> fill paths + LIMS scalar fields -> Save
-    -> /restart-required gate
+    -> config applied live (no restart screen); operator stays on /settings
     -> config.yaml written under the tmp HOME with the entered values
+    -> /main is reachable in the same session (the old restart gate is gone)
 
 The project / run / test-run / template creation flows are NOT covered
 here: their wizard submit handlers in ``exlab_wizard/ui/mount.py`` are
@@ -103,7 +104,7 @@ def fresh_prod_server(tmp_path: Path):
             proc.wait(timeout=5)
 
 
-def test_fresh_install_setup_writes_config_and_gates_on_restart(
+def test_fresh_install_setup_writes_config_and_applies_live(
     browser,
     fresh_prod_server,
     tmp_path: Path,
@@ -146,12 +147,14 @@ def test_fresh_install_setup_writes_config_and_gates_on_restart(
         page.get_by_test_id("settings-lims-endpoint").fill("https://lims.example.test")
         page.get_by_test_id("settings-lims-email").fill("operator@example.test")
 
-        # 5. Save -> the wizard persists config.yaml and routes to the
-        #    restart-required gate.
+        # 5. Save -> the wizard persists config.yaml and applies it live
+        #    in-process. The "Settings saved" toast is the last step of the
+        #    handler, so waiting for it guarantees the write + live reload
+        #    completed. There is no restart screen.
         page.get_by_test_id("settings-save").click()
-        page.wait_for_load_state("networkidle")
-        page.get_by_test_id("restart-required").wait_for(state="visible", timeout=10_000)
-        assert "/restart-required" in page.url
+        page.get_by_text("Settings saved").wait_for(state="visible", timeout=10_000)
+        assert "/settings" in page.url
+        assert "/restart-required" not in page.url
 
         # 6. config.yaml now exists under the tmp HOME with the values
         #    the operator entered.
@@ -161,11 +164,13 @@ def test_fresh_install_setup_writes_config_and_gates_on_restart(
         assert "https://lims.example.test" in text
         assert "operator@example.test" in text
 
-        # 7. The restart gate is sticky: navigating elsewhere bounces
-        #    back to /restart-required until the tray is relaunched.
+        # 7. The old restart gate is gone: /main renders in the same
+        #    session, proving the saved config took effect without a
+        #    relaunch. (Setup is still LIMS-password-incomplete, so the
+        #    page shows its setup banner but is not blocked.)
         page.goto(f"{base_url}/main")
         page.wait_for_load_state("networkidle")
-        page.get_by_test_id("restart-required").wait_for(state="visible", timeout=10_000)
-        assert "/restart-required" in page.url
+        page.get_by_test_id("toolbar-new-project").wait_for(state="visible", timeout=10_000)
+        assert "/restart-required" not in page.url
     finally:
         context.close()

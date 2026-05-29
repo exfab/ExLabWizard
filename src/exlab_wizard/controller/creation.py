@@ -289,6 +289,19 @@ class CreationController:
         """Expose the in-memory session store for the API surface."""
         return self._sessions
 
+    def apply_config(self, config: Config, *, plugin_host: PluginHost | None = None) -> None:
+        """Swap the controller's config (and optionally plugin host) in place.
+
+        Every config read happens at create-time, so reassigning
+        ``self._config`` makes a live settings save take effect on the
+        next ``create_*`` call without a tray relaunch. ``plugin_host`` is
+        re-injected only when the coordinator rebuilt it (a
+        ``paths.plugin_dir`` change); otherwise the existing host is kept.
+        """
+        self._config = config
+        if plugin_host is not None:
+            self._plugin_host = plugin_host
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------

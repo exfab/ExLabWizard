@@ -272,6 +272,32 @@ class Validator:
         """
         return self._config
 
+    def reconfigure(
+        self,
+        validator_config: ValidatorConfig | None = None,
+        *,
+        equipment_roots: Mapping[str, Path] | None = None,
+        staging_root: Path | None = None,
+    ) -> None:
+        """Re-seed the config + audit-mode roots in place (no tray relaunch).
+
+        Mirrors :meth:`__init__` so a live ``config.yaml`` save refreshes
+        the content-scan limits, the equipment-roots map, and the staging
+        root without rebuilding the engine -- callers holding a reference
+        (the controller, the audit loop) keep using the same instance.
+        Derived state is built into locals and assigned in one step so a
+        concurrent reader never observes a half-updated engine.
+        """
+        config = validator_config or ValidatorConfig()
+        roots: dict[str, Path] = dict(equipment_roots) if equipment_roots else {}
+        self._config = config
+        self._equipment_roots = roots
+        self._staging_root = staging_root
+        self._content_scan_max_bytes = config.content_scan_max_mib * 1024 * 1024
+        self._content_scan_extensions = frozenset(
+            ext.lower() for ext in config.content_scan_extensions
+        )
+
     # ---------------------------------------------------------------- API
 
     def validate_creation(self, params: CreationValidationInput) -> list[Finding]:

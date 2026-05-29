@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from exlab_wizard.config.models import Config
 from exlab_wizard.logging import get_logger
+from exlab_wizard.paths import suggested_staging_root
 from exlab_wizard.ui import notifications
 from exlab_wizard.ui.components import credential_field, test_connection_panel
 
@@ -492,17 +493,20 @@ def _render_section_body(
                 label="Rotated log copies kept", value=draft.logging.central_log_keep
             ).bind_value(draft.logging, "central_log_keep")
         elif section == "orchestrator":
-            # Redesign §3.1: orchestrator pipeline is always active; the
-            # enabled toggle is removed. label + staging_root are now
-            # always required (they join the setup-incomplete gate). The
-            # full Settings refactor that folds these into an early
-            # section lands in Phase 6.
+            # ``label`` is required (it identifies this workstation in every
+            # run's creation.json). ``staging_root`` is opt-in: blank means
+            # this device is not a staging PC. The placeholder shows an
+            # OS-appropriate suggestion without prefilling the value -- the
+            # directory is created only when a non-empty path is saved (see
+            # ui.mount._persist_config).
             ui.input(label="Workstation label", value=draft.orchestrator.label).bind_value(
                 draft.orchestrator, "label"
             )
-            ui.input(label="Staging root", value=draft.orchestrator.staging_root).bind_value(
-                draft.orchestrator, "staging_root"
-            )
+            ui.input(
+                label="Staging root (optional)",
+                value=draft.orchestrator.staging_root,
+                placeholder=str(suggested_staging_root()),
+            ).bind_value(draft.orchestrator, "staging_root")
         elif section == "application":
             # "Start at login" is the autostart toggle, not a config.yaml
             # field -- it is set from the welcome card. Shown here for

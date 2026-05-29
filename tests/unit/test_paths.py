@@ -29,7 +29,6 @@ from exlab_wizard.paths import (
     canonicalize_equipment_id,
     compose_project_path,
     compose_run_path,
-    default_orchestrator_staging_root,
     ensure_central_log_dir,
     ensure_dir,
     ensure_state_dir,
@@ -41,6 +40,7 @@ from exlab_wizard.paths import (
     project_name_violations,
     setup_state_missing,
     setup_state_next_action,
+    suggested_staging_root,
     validate_project_name,
 )
 
@@ -108,7 +108,14 @@ def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home.mkdir(parents=True)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     # Strip any inherited XDG / APPDATA so each test asserts its own state.
-    for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "APPDATA", "LOCALAPPDATA"):
+    for var in (
+        "XDG_CONFIG_HOME",
+        "XDG_STATE_HOME",
+        "XDG_CACHE_HOME",
+        "XDG_DATA_HOME",
+        "APPDATA",
+        "LOCALAPPDATA",
+    ):
         monkeypatch.delenv(var, raising=False)
     return home
 
@@ -250,32 +257,47 @@ def test_os_central_log_path_linux_without_xdg(
 
 
 # ---------------------------------------------------------------------------
-# default_orchestrator_staging_root
+# suggested_staging_root
 # ---------------------------------------------------------------------------
+#
+# staging_root is opt-in; this helper only supplies the Settings placeholder.
+# It must never return a bare ``/staging`` -- on every platform it nests under
+# an ``exlab-wizard/`` app folder, mirroring config / state / cache.
 
 
-def test_default_orchestrator_staging_root_posix(
+def test_suggested_staging_root_linux_fallback(
     monkeypatch: pytest.MonkeyPatch, fake_home: Path
 ) -> None:
     monkeypatch.setattr("sys.platform", "linux")
-    assert default_orchestrator_staging_root() == Path("/staging")
+    expected = fake_home / ".local" / "share" / "exlab-wizard" / "staging"
+    assert suggested_staging_root() == expected
 
 
-def test_default_orchestrator_staging_root_macos(
+def test_suggested_staging_root_linux_honors_xdg_data_home(
+    monkeypatch: pytest.MonkeyPatch, fake_home: Path
+) -> None:
+    monkeypatch.setattr("sys.platform", "linux")
+    xdg = fake_home / "xdg-data"
+    monkeypatch.setenv("XDG_DATA_HOME", str(xdg))
+    assert suggested_staging_root() == xdg / "exlab-wizard" / "staging"
+
+
+def test_suggested_staging_root_macos(
     monkeypatch: pytest.MonkeyPatch, fake_home: Path
 ) -> None:
     monkeypatch.setattr("sys.platform", "darwin")
-    assert default_orchestrator_staging_root() == Path("/staging")
+    expected = fake_home / "Library" / "Application Support" / "exlab-wizard" / "staging"
+    assert suggested_staging_root() == expected
 
 
-def test_default_orchestrator_staging_root_windows(
+def test_suggested_staging_root_windows(
     monkeypatch: pytest.MonkeyPatch, fake_home: Path
 ) -> None:
     monkeypatch.setattr("sys.platform", "win32")
     local = fake_home / "AppData" / "Local"
     monkeypatch.setenv("LOCALAPPDATA", str(local))
     expected = local / "exlab-wizard" / "staging"
-    assert default_orchestrator_staging_root() == expected
+    assert suggested_staging_root() == expected
 
 
 # ---------------------------------------------------------------------------
@@ -323,15 +345,15 @@ def test_test_mode_suffixes_os_central_log_path(
     assert os_central_log_path() == expected
 
 
-def test_test_mode_suffixes_orchestrator_default_windows(
+def test_test_mode_suffixes_suggested_staging_root(
     monkeypatch: pytest.MonkeyPatch, fake_home: Path
 ) -> None:
-    """POSIX returns the fixed ``/staging``; only Windows weaves APP_NAME in."""
-    monkeypatch.setattr("sys.platform", "win32")
+    """The suggestion now nests under APP_NAME on every platform, so the
+    test-mode suffix applies on POSIX too (not just Windows)."""
+    monkeypatch.setattr("sys.platform", "darwin")
     monkeypatch.setenv("EXLAB_WIZARD_TEST_MODE", "1")
-    local = fake_home / "AppData" / "Local"
-    monkeypatch.setenv("LOCALAPPDATA", str(local))
-    assert default_orchestrator_staging_root() == local / "exlab-wizard-test" / "staging"
+    expected = fake_home / "Library" / "Application Support" / "exlab-wizard-test" / "staging"
+    assert suggested_staging_root() == expected
 
 
 def test_test_mode_off_does_not_suffix(monkeypatch: pytest.MonkeyPatch, fake_home: Path) -> None:
@@ -735,7 +757,7 @@ def test_evaluate_setup_state_no_equipment() -> None:
 
 
 def test_evaluate_setup_state_no_orchestrator() -> None:
-    """Redesign §3.1: orchestrator.label + staging_root are required."""
+    """Only ``label`` gates orchestrator identity; a blank label trips it."""
     config = Config(
         paths=PathsConfig(
             templates_dir="/srv/templates",
@@ -745,6 +767,56 @@ def test_evaluate_setup_state_no_orchestrator() -> None:
         equipment=[_make_equipment()],
     )
     assert evaluate_setup_state(config) is SetupState.INCOMPLETE_NO_ORCHESTRATOR
+
+
+def test_evaluate_setup_state_no_orchestrator_when_only_staging_set() -> None:
+    """A staging root without a label still trips -- staging never substitutes."""
+    from exlab_wizard.config.models import OrchestratorConfig
+
+    config = Config(
+        paths=PathsConfig(
+            templates_dir="/srv/templates",
+            plugin_dir="/srv/plugins",
+            local_root="/data/lab",
+        ),
+        equipment=[_make_equipment()],
+        orchestrator=OrchestratorConfig(label="", staging_root="/srv/staging"),
+    )
+    assert evaluate_setup_state(config) is SetupState.INCOMPLETE_NO_ORCHESTRATOR
+
+
+def test_evaluate_setup_state_blank_staging_root_is_allowed() -> None:
+    """staging_root is opt-in: a blank value does not block READY."""
+    from exlab_wizard.config.models import OrchestratorConfig
+
+    config = Config(
+        paths=PathsConfig(
+            templates_dir="/srv/templates",
+            plugin_dir="/srv/plugins",
+            local_root="/data/lab",
+        ),
+        lims=LIMSConfig(endpoint="https://lims.example/api/v1", email="op@lab.example"),
+        equipment=[_make_equipment()],
+        orchestrator=OrchestratorConfig(label="Lab Acquisition Station 01", staging_root=""),
+    )
+    assert evaluate_setup_state(config) is SetupState.READY
+
+
+def test_setup_state_missing_for_no_orchestrator_lists_only_label() -> None:
+    """The orchestrator missing-field rollup no longer mentions staging_root."""
+    from exlab_wizard.config.models import OrchestratorConfig
+
+    config = Config(
+        paths=PathsConfig(
+            templates_dir="/srv/templates",
+            plugin_dir="/srv/plugins",
+            local_root="/data/lab",
+        ),
+        equipment=[_make_equipment()],
+        orchestrator=OrchestratorConfig(label="", staging_root=""),
+    )
+    missing = setup_state_missing(SetupState.INCOMPLETE_NO_ORCHESTRATOR, config)
+    assert missing == [{"field": "orchestrator.label", "reason": "missing"}]
 
 
 def test_evaluate_setup_state_no_lims() -> None:

@@ -94,7 +94,10 @@ def build_config_router() -> APIRouter:
         saver = getattr(deps, "save_config", None)
         if saver is not None:
             await _await_or_call(saver, body)
-        deps.config = body
+        # Push the new config into the running components (logging, sync,
+        # equipment, validator, LIMS, plugins) so the change takes effect
+        # in-process -- no tray relaunch. Sets ``deps.config`` itself.
+        _apply_live_config(deps, body)
         # Re-evaluate setup state with the new config.
         nas_lookup = lambda equipment_id: nas_password_present(deps, equipment_id)  # noqa: E731
         state = evaluate_setup_state(
@@ -131,7 +134,9 @@ def build_config_router() -> APIRouter:
         saver = getattr(deps, "save_config", None)
         if saver is not None:
             await _await_or_call(saver, new_config)
-        deps.config = new_config
+        # Push into the running components so the new equipment is live
+        # without a tray relaunch. Sets ``deps.config`` itself.
+        _apply_live_config(deps, new_config)
         nas_lookup = lambda equipment_id: nas_password_present(deps, equipment_id)  # noqa: E731
         state = evaluate_setup_state(
             deps.config,
@@ -161,3 +166,20 @@ async def _await_or_call(callable_: Any, *args: Any) -> Any:
     if inspect.isawaitable(result):
         return await result
     return result
+
+
+def _apply_live_config(deps: Any, cfg: Any) -> None:
+    """Push ``cfg`` into the running components, then keep it as the live config.
+
+    Imported lazily to avoid the ``tray.dependencies -> api.app ->
+    api.routers.config`` import cycle. ``apply_live_config`` is best-effort
+    per component and assigns ``deps.config`` itself; the fallback covers
+    the unexpected case where the import or coordinator raises wholesale.
+    """
+    try:
+        from exlab_wizard.tray.dependencies import apply_live_config
+
+        apply_live_config(deps, cfg)
+    except Exception:
+        _log.exception("live config reload failed")
+        deps.config = cfg

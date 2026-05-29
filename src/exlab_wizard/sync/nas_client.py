@@ -310,6 +310,19 @@ class NASSyncClient:
         # to wire a real network probe.
         self._remote_stat_callable = remote_stat_callable or (lambda _row: True)
 
+    def apply_config(self, config: Config) -> None:
+        """Swap the cached config + equipment map in place (no relaunch).
+
+        The ``equipment_id -> EquipmentConfig`` lookup is rebuilt into a
+        local before assignment so the worker loop -- which runs in the
+        same event loop -- never observes a half-built map. In-flight
+        queued jobs carry their own captured paths; a removed equipment id
+        simply errors that one job exactly as it would after a relaunch.
+        """
+        equipment_by_id = {e.id: e for e in config.equipment}
+        self._config = config
+        self._equipment_by_id = equipment_by_id
+
     # ------------------------------------------------------------------ async API
 
     async def init(self) -> None:

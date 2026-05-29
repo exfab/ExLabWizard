@@ -1,0 +1,31 @@
+<mxfile host="Electron">
+  <diagram name="Page-1" id="FQyxkwasobSwPDRkcozV">
+    <mxGraphModel dx="1004" dy="462" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="L5V9LqSUHG5lmnX5EFXe-7" edge="1" parent="1" source="L5V9LqSUHG5lmnX5EFXe-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;endFill=0;" target="L5V9LqSUHG5lmnX5EFXe-6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="L5V9LqSUHG5lmnX5EFXe-1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Local&lt;div&gt;(Offline)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="160" x="-20" y="350" as="geometry" />
+        </mxCell>
+        <mxCell id="L5V9LqSUHG5lmnX5EFXe-9" edge="1" parent="1" source="L5V9LqSUHG5lmnX5EFXe-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" target="L5V9LqSUHG5lmnX5EFXe-4" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="L5V9LqSUHG5lmnX5EFXe-2" parent="1" style="shape=cylinder;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;" value="NAS" vertex="1">
+          <mxGeometry height="120" width="120" x="430" y="335" as="geometry" />
+        </mxCell>
+        <mxCell id="L5V9LqSUHG5lmnX5EFXe-4" parent="1" style="shape=process;whiteSpace=wrap;html=1;backgroundOutline=1;" value="&lt;div&gt;Build Remote File Manifest&lt;/div&gt;`rclone lsjson -R --files-only" vertex="1">
+          <mxGeometry height="60" width="220" x="205" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="L5V9LqSUHG5lmnX5EFXe-8" edge="1" parent="1" source="L5V9LqSUHG5lmnX5EFXe-4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="L5V9LqSUHG5lmnX5EFXe-6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="L5V9LqSUHG5lmnX5EFXe-6" parent="1" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;" value="remote&lt;div&gt;manifest&lt;/div&gt;&lt;div&gt;CSV&lt;/div&gt;" vertex="1">
+          <mxGeometry height="100" width="80" x="20" y="220" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

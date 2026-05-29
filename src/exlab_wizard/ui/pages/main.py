@@ -252,36 +252,97 @@ def render_file_explorer_page(
                 ),
                 expand_all=tree_expand_all,
             )
-        with outer_split.after:
-            if s.right_pane_collapsed:
-                # File list only.
+        # Flex row: the centre file list grows to fill, a tall vertical
+        # toggle tab sits on the metadata pane's left edge, then the
+        # metadata pane itself. The tab lives *between* the two panes, so
+        # it travels horizontally with the pane -- open, it hugs the pane's
+        # left border; collapsed (pane unrendered) the growing file list
+        # pushes it to the right screen edge.
+        #
+        # The tab is TOP-aligned (align-self:flex-start), not centred. The
+        # splitter panel's top is identical in both states, but its height
+        # differs (the metadata pane adds height when open), so a centred
+        # tab landed at a different Y per state -- that vertical shift was
+        # the up/down "jump". Pinning to the top ties the tab's Y to the
+        # constant panel top, so it holds its line on toggle.
+        with outer_split.after, ui.element("div").classes("w-full h-full").style(
+            "display: flex; flex-direction: row; flex-wrap: nowrap; align-items: stretch;"
+        ):
+            with ui.element("div").style(
+                "flex: 1 1 auto; min-width: 0; height: 100%; overflow: auto;"
+            ):
                 _render_centre_file_list(
                     s,
                     file_list_entries=file_list_entries,
                     on_file_context_action=on_file_context_action,
                 )
-            else:
-                with ui.splitter(value=60).classes("w-full h-full") as centre_split:
-                    with centre_split.before:
-                        _render_centre_file_list(
-                            s,
-                            file_list_entries=file_list_entries,
-                            on_file_context_action=on_file_context_action,
-                        )
-                    with centre_split.after:
-                        _render_right_pane(
-                            s,
-                            metadata_payload=metadata_payload,
-                            on_run_staging_action=on_run_staging_action,
-                        )
-            # Right-pane toggle button is rendered after the splitter so
-            # it remains accessible whether the right pane is open or
-            # collapsed. Its callback is wired by the mount layer.
+            # Vertical collapse/expand tab: a chevron stacked above a rotated
+            # text label, inside one tall box with a raised-surface background
+            # so it reads as a distinct tab. The glyph points the way the pane
+            # will move -- right-chevron collapses it away, left-chevron pulls
+            # it back; the label names the action. Callback wired by the mount
+            # layer.
             if on_toggle_right_pane is not None:
-                ui.button(
-                    "Toggle right pane",
-                    on_click=lambda _evt: on_toggle_right_pane(),
-                ).props('flat data-testid="toggle-right-pane"')
+                collapsed = s.right_pane_collapsed
+                chevron = "◀" if collapsed else "▶"
+                tab_label = "Expand metadata" if collapsed else "Collapse metadata"
+                # The button stays `flat` (Quasar forces its own background to
+                # transparent !important on flat buttons, so the tab fill must
+                # live on an inner element, not the button). The button is just
+                # the sized, padding-free click target; the inner column paints
+                # the raised-surface tab.
+                #
+                # Every theme var carries a literal fallback: register_theme()
+                # is not injected on every route, so a bare var(--color-surface)
+                # resolves to empty and the whole declaration is dropped (no
+                # fill). The fallbacks make the tab render regardless.
+                toggle = (
+                    ui.button(on_click=lambda _evt: on_toggle_right_pane())
+                    .props(
+                        'flat dense no-caps data-testid="toggle-right-pane" '
+                        'aria-label="Toggle metadata pane" title="Toggle metadata pane"'
+                    )
+                    .style(
+                        "align-self: flex-start; flex: 0 0 auto; margin: 8px 2px 0 2px; "
+                        "min-width: 0; width: 40px; height: 190px; padding: 0; "
+                        "color: var(--color-muted, #8892a4);"
+                    )
+                )
+                with toggle, ui.column().style(
+                    "align-items: center; gap: 6px; flex-wrap: nowrap; "
+                    "height: 100%; width: 100%; padding: 8px 2px; "
+                    # Surface fill + border + soft shadow so the chevron and
+                    # label read as a distinct raised tab against the page.
+                    "background: var(--color-surface, #ffffff); "
+                    "border: 1px solid var(--color-border, #dde3ed); border-radius: 6px; "
+                    "box-shadow: 0 1px 3px rgba(0, 54, 96, 0.12);"
+                ):
+                    ui.label(chevron).style(
+                        "flex: 0 0 auto; font-size: 12px; line-height: 1; "
+                        "color: var(--color-muted, #8892a4);"
+                    )
+                    # The label is rotated 270deg (reads bottom-to-top). A
+                    # transform keeps the element's layout box horizontal, so
+                    # this flex-grow wrapper supplies the vertical room and
+                    # centres the rotated text within it.
+                    with ui.element("div").style(
+                        "flex: 1 1 auto; width: 100%; display: flex; "
+                        "align-items: center; justify-content: center; overflow: hidden;"
+                    ):
+                        ui.label(tab_label).style(
+                            "transform: rotate(270deg); white-space: nowrap; "
+                            "font-size: 11px; letter-spacing: 0.05em; text-transform: none; "
+                            "color: var(--color-muted, #8892a4);"
+                        )
+            if not s.right_pane_collapsed:
+                with ui.element("div").style(
+                    "flex: 0 0 40%; min-width: 0; height: 100%; overflow: auto;"
+                ):
+                    _render_right_pane(
+                        s,
+                        metadata_payload=metadata_payload,
+                        on_run_staging_action=on_run_staging_action,
+                    )
 
     if not s.setup_incomplete:
         with (

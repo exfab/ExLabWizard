@@ -626,3 +626,44 @@ async def test_enqueue_noops_active_job_with_new_files(
         assert row.files == ("data.bin",)
     finally:
         await client.close()
+
+
+# ---------------------------------------------------------------------------
+# apply_config: live reload (no tray relaunch)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_config_swaps_equipment_map(tmp_path: Path) -> None:
+    """A live config swap rebuilds the equipment lookup in place."""
+    client = NASSyncClient(
+        config=_build_config(tmp_path),
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=CreationWriter(),
+        push_callable_factory=_make_push_factory(),
+    )
+    assert set(client._equipment_by_id) == {"EQ1"}
+
+    cfg2 = Config(
+        paths=PathsConfig(local_root=str(tmp_path)),
+        equipment=[
+            EquipmentConfig(
+                id="EQ2",
+                label="Eq 2",
+                local_root=str(tmp_path),
+                nas_root="/nas",
+                transport=RcloneSftpTransport(
+                    type="rclone_sftp",
+                    host="nas.lab.example",
+                    user="testuser",
+                    remote_path="/srv/nas",
+                    bandwidth=BandwidthConfig(),
+                ),
+            )
+        ],
+    )
+    client.apply_config(cfg2)
+
+    assert client._config is cfg2
+    # EQ1 dropped, EQ2 resolvable -- exactly what a relaunch would have produced.
+    assert set(client._equipment_by_id) == {"EQ2"}
