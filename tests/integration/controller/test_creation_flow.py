@@ -733,10 +733,11 @@ async def test_real_readme_generator_writes_frontmatter_and_cache(tmp_path: Path
     assert front_matter["core_fields"]["label"] == "Cortex Q3 calibration"
     assert front_matter["config_fields"]["irb_protocol"] == "IRB-2026-0042"
     assert {"label": "Collaborator", "value": "Dr. J. Lee"} in front_matter["custom_fields"]
-    # §10.6 system block: created_by is the OS user (non-empty), project is
-    # the folder name, and run is null for a project-level README.
+    # §10.6 system block: created_by is the OS user (non-empty); project is
+    # the machine-safe LIMS short id (§3.1), NOT the folder name; and run is
+    # null for a project-level README.
     assert front_matter["system_fields"]["created_by"]
-    assert front_matter["system_fields"]["project"] == "Cortex Q3 Pilot"
+    assert front_matter["system_fields"]["project"] == "PROJ-0042"
     assert front_matter["system_fields"]["run"] is None
 
     cache = project_dir / CACHE_DIR_NAME / README_FIELDS_JSON_NAME

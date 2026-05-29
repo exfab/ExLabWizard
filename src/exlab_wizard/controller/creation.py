@@ -942,7 +942,10 @@ class CreationController:
             created_by=_os_username(),
             equipment={"id": req.equipment_id, "label": equipment.label if equipment else ""},
             template={"name": resolved.name, "version": resolved.exlab_version},
-            project=self._project_name_for(req),
+            # §10.6: ``project`` is the machine-safe LIMS short id recorded in
+            # README metadata (§3.1) -- distinct from the human-readable
+            # ``<project>/`` folder segment. ``run`` is the run directory name.
+            project=self._short_id_for(req),
             run=dst.name if is_run else None,
             run_kind=self._run_kind_value_for(req) if is_run else "",
         )
