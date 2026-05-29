@@ -530,6 +530,7 @@ def _build_controller(
         msg = "controller requires config + validator + template_engine + cache_creation"
         raise RuntimeError(msg)
     from exlab_wizard.controller.creation import CreationController
+    from exlab_wizard.readme import ReadmeGenerator
 
     return CreationController(
         config=config,
@@ -539,6 +540,7 @@ def _build_controller(
         cache_creation=cache_creation,
         cache_equipment=cache_equipment,
         session_store=session_store,
+        readme_generator=ReadmeGenerator(),
     )
 
 

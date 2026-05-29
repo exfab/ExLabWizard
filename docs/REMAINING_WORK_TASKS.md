@@ -17,7 +17,7 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
 
 ## Phase 1 — Release-blocking correctness
 
-### - [ ] T1 — Inject the real `ReadmeGenerator` (+ reconcile `ReadmeContext` / return type)
+### - [x] T1 — Inject the real `ReadmeGenerator` (+ reconcile `ReadmeContext` / return type)
 - **Spec:** [§C1](./REMAINING_WORK.md#c1--production-runs-on-the-stub-readme-generator--real-defect) · **Category:** C · **Effort:** M · **Priority:** Highest (release-blocking)
 - **Why:** Production builds the controller without `readme_generator=`, so it runs on
   `NoOpReadmeGenerator` — GUI-created runs ship a stub README with no YAML front matter and
@@ -29,8 +29,18 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   against a real template.
 - **Risk watch:** the real generator raises on missing/typed-wrong fields — confirm
   `_validate_inputs` gates align so previously-passing creations don't start failing.
-- **Status:** ⬜ Not started
-- **Impl note:** _(pending)_
+- **Status:** ✅ Done
+- **Impl note:** Injected `ReadmeGenerator()` in `tray.dependencies._build_controller` (the sole
+  production constructor, covering both the lifespan build and `apply_live_config`). Replaced the
+  controller's flat placeholder `ReadmeContext` with the canonical layered type from
+  `exlab_wizard.readme`; the controller's `ReadmeGeneratorProtocol` + `NoOpReadmeGenerator` now use
+  the `tuple[Path, Path]` contract. Added `CreationController._build_readme_context` (partitions
+  `readme_extra` across template/config/custom layers by id, maps decls, fills the §10.6 system
+  block: `created_by` = OS user, `project` = folder name, `run` = run dir / null). Presence is
+  already gated by `_validate_inputs` and the GUI submits no typed extra fields yet, so the
+  generator's strict validation adds no new failures for current creations (it stays the backstop).
+  New end-to-end test `test_real_readme_generator_writes_frontmatter_and_cache` asserts the
+  four-layer front matter + `readme_fields.json`. Full unit+integration suite green (2201 passed).
 
 ---
 
@@ -170,4 +180,4 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   between `api/routers/operations.py` and the in-process modal.
 
 ## Progress
-0 / 13 complete.
+1 / 13 complete.
