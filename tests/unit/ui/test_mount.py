@@ -252,6 +252,14 @@ def test_build_main_state_marks_incomplete_without_config() -> None:
     assert state.orchestrator_enabled is True
 
 
+def test_build_main_state_sources_problems_counts_from_audit() -> None:
+    # Counts come straight off deps (the 30 s background audit), not a
+    # per-render re-audit (T6 / §B5).
+    state = mount._build_main_state(_deps(last_audit_hard=3, last_audit_soft=12))
+    assert state.problems_count_hard == 3
+    assert state.problems_count_soft == 12
+
+
 def test_build_main_state_always_on_orchestrator() -> None:
     """Redesign §3.1: the orchestrator pipeline is unconditional."""
     deps = _deps(
@@ -263,6 +271,36 @@ def test_build_main_state_always_on_orchestrator() -> None:
     )
     state = mount._build_main_state(deps)
     assert state.orchestrator_enabled is True
+
+
+# ---------------------------------------------------------------------------
+# _operation_counts (T3/T4)
+# ---------------------------------------------------------------------------
+
+
+def test_operation_counts_distinguishes_panel_active_and_input_required() -> None:
+    from exlab_wizard.controller.session_store import SessionStore
+
+    store = SessionStore()
+    running = store.open("project", {})
+    suspended = store.open("run", {})
+    failed = store.open("project", {})
+    done = store.open("run", {})
+    store.get(running.session_id).state = SessionState.RENDERING
+    store.get(suspended.session_id).state = SessionState.INPUT_REQUIRED
+    store.get(failed.session_id).state = SessionState.FAILED
+    store.get(done.session_id).state = SessionState.DONE
+
+    deps = SimpleNamespace(controller=SimpleNamespace(session_store=store))
+    panel, input_required, active = mount._operation_counts(deps)
+    # panel: all but DONE/ABORTED -> running + suspended + failed
+    assert panel == 3
+    assert input_required == 1  # only the suspended session
+    assert active == 2  # strictly non-terminal -> running + suspended (FAILED excluded)
+
+
+def test_operation_counts_zero_without_controller() -> None:
+    assert mount._operation_counts(SimpleNamespace()) == (0, 0, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -791,6 +829,15 @@ def test_apply_autostart_invokes_toggle() -> None:
     deps = _deps(autostart_toggle=calls.append)
     mount._apply_autostart(deps, True)
     assert calls == [True]
+
+
+def test_apply_autostart_returns_real_registration_state() -> None:
+    # The toggle returns is_registered(); _apply_autostart relays it so
+    # Settings can reflect / revert the checkbox (T8).
+    assert mount._apply_autostart(_deps(autostart_toggle=lambda _e: True), True) is True
+    assert mount._apply_autostart(_deps(autostart_toggle=lambda _e: False), False) is False
+    assert mount._apply_autostart(None, True) is None
+    assert mount._apply_autostart(_deps(autostart_toggle=None), True) is None
 
 
 def test_apply_autostart_swallows_toggle_failure(

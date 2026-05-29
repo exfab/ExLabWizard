@@ -252,16 +252,15 @@ def test_wizard_run_readme_blocks_until_core_fields() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_settings_eight_sections() -> None:
-    """Settings has eight sections (Frontend §7.2).
+def test_settings_nine_sections_includes_operators() -> None:
+    """Settings has nine sections (Frontend §7.2 + §7.9 operators).
 
-    The ``operators`` section was removed from the UI pending the chip
-    editor; OperatorsConfig stays in the backend model so the future
-    re-add is a one-line tuple change.
+    The ``operators`` chip editor (T7) backs ``OperatorsConfig.allowlist``;
+    it sits between ``nas_cleanup`` and ``validator`` and is non-gating.
     """
 
-    assert len(settings.SETTINGS_SECTIONS) == 8
-    assert "operators" not in settings.SETTINGS_SECTIONS
+    assert len(settings.SETTINGS_SECTIONS) == 9
+    assert "operators" in settings.SETTINGS_SECTIONS
     assert settings.SETTINGS_SECTIONS[0] == "paths"
     assert settings.SETTINGS_SECTIONS[-1] == "application"
 

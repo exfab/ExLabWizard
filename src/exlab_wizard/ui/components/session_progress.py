@@ -11,7 +11,7 @@ When the active phase is ``running_plugins`` and the event carries
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from exlab_wizard.logging import get_logger
@@ -19,15 +19,17 @@ from exlab_wizard.logging import get_logger
 _log = get_logger(__name__)
 
 
-# Phase identifiers from Backend §4.7. The ordered tuple is the canonical
-# render order for the progress bar.
+# Phase identifiers from Backend §4.7 -- these are the verbatim ``phase``
+# wire-format strings the controller emits (``state_machine.Phase``), so a
+# live ``phase`` frame maps onto a row without translation. The ordered
+# tuple is the canonical render order for the progress bar.
 PHASES: tuple[str, ...] = (
     "validating_inputs",
     "rendering_template",
     "running_plugins",
     "writing_cache",
-    "post_validation",
-    "queueing_sync",
+    "validating_post_creation",
+    "queueing_nas_sync",
 )
 
 PHASE_LABELS: dict[str, str] = {
@@ -35,8 +37,8 @@ PHASE_LABELS: dict[str, str] = {
     "rendering_template": "Rendering template",
     "running_plugins": "Running plugins",
     "writing_cache": "Writing cache",
-    "post_validation": "Validating post-creation",
-    "queueing_sync": "Queueing NAS sync",
+    "validating_post_creation": "Validating post-creation",
+    "queueing_nas_sync": "Queueing NAS sync",
 }
 
 
@@ -158,3 +160,66 @@ def session_progress(
                     "color=info"
                 ).style("flex-grow: 1;")
     return column
+
+
+# ---------------------------------------------------------------------------
+# Live state (Backend §4.6.2 WS frames -> render args)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SessionProgressState:
+    """Mutable phase/sub-progress state folded from controller WS frames.
+
+    The wizard's Confirm & Create step renders :func:`session_progress`
+    from this object inside a ``@ui.refreshable`` and re-renders it as the
+    creation pipeline publishes frames over :meth:`CreationController.subscribe`.
+    """
+
+    active_phase: str | None = None
+    completed: list[str] = field(default_factory=list)
+    plugin_current: int | None = None
+    plugin_total: int | None = None
+    plugin_name: str | None = None
+
+
+def apply_frame(state: SessionProgressState, frame: dict[str, Any]) -> bool:
+    """Fold one controller WS ``frame`` into ``state`` in place.
+
+    Returns ``True`` when the visible progress changed (the caller should
+    re-render). Recognises ``phase`` and ``progress`` frames plus the
+    terminal ``done``; ``failed`` and ``input_required`` are left to the
+    caller (the wizard surfaces those out-of-band).
+    """
+
+    def _complete_through(upto: int) -> None:
+        # Mark the first ``upto`` phases complete (idempotent) -- buffered
+        # frames may have been coalesced, so a phase becoming active (or the
+        # session finishing) implies its predecessors finished.
+        for phase in PHASES[:upto]:
+            if phase not in state.completed:
+                state.completed.append(phase)
+
+    kind = frame.get("kind")
+    if kind == "phase":
+        phase = frame.get("phase")
+        if phase not in PHASES:
+            # ``input_required`` / ``done`` arrive as their own ``kind``;
+            # any unknown phase string is ignored rather than mis-rendered.
+            return False
+        _complete_through(PHASES.index(phase))
+        state.active_phase = phase
+        if phase != "running_plugins":
+            state.plugin_current = state.plugin_total = state.plugin_name = None
+        return True
+    if kind == "progress":
+        state.active_phase = "running_plugins"
+        state.plugin_current = frame.get("current")
+        state.plugin_total = frame.get("total")
+        state.plugin_name = frame.get("plugin") or frame.get("name")
+        return True
+    if kind == "done":
+        _complete_through(len(PHASES))
+        state.active_phase = None
+        return True
+    return False

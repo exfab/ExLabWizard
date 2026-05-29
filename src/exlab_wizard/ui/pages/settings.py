@@ -1,7 +1,6 @@
 """Settings dialog (Frontend Spec §7).
 
-Two-pane modal with a left vertical-nav and a right content area. Eight
-sections (``operators`` is deferred pending the chip editor);
+Two-pane modal with a left vertical-nav and a right content area;
 setup-incomplete mode auto-selects the first incomplete one.
 """
 
@@ -27,9 +26,10 @@ SETTINGS_SECTIONS: tuple[str, ...] = (
     "lims",
     "equipment",
     "nas_cleanup",
-    # "operators" is deferred -- backend OperatorsConfig + the
-    # controller/creation.py allowlist gate stay wired and are no-ops while
-    # the allowlist defaults to []. The chip editor lands in a future update.
+    # "operators" backs OperatorsConfig.allowlist (Frontend §7.9). It is a
+    # chip editor and is non-gating: the allowlist defaults to [] (any
+    # operator allowed) and it is never added to ``_missing_setup_sections``.
+    "operators",
     "validator",
     "logging",
     "orchestrator",
@@ -49,6 +49,7 @@ SECTION_TITLES: dict[str, str] = {
     "equipment": "Equipment List",
     NAS_CREDENTIALS_SECTION: "NAS Credentials",
     "nas_cleanup": "NAS Cleanup",
+    "operators": "Operators",
     "validator": "Validator",
     "logging": "Logging",
     "orchestrator": "Orchestrator Mode",
@@ -202,6 +203,10 @@ def render_settings_page(
     nas_credential_handlers: Callable[[str], tuple[Callable[[str], None], Callable[[], None]]]
     | None = None,
     on_test_equipment: Callable[[str], Any] | None = None,
+    autostart_registered: bool = False,
+    on_set_autostart: Callable[[bool], bool | None] | None = None,
+    on_quit: Callable[[], None] | None = None,
+    tray_available: bool = False,
 ) -> Any:
     """Render the settings dialog.
 
@@ -344,6 +349,10 @@ def render_settings_page(
                             nas_password_present_for=nas_password_present_for,
                             nas_credential_handlers=nas_credential_handlers,
                             on_test_equipment=on_test_equipment,
+                            autostart_registered=autostart_registered,
+                            on_set_autostart=on_set_autostart,
+                            on_quit=on_quit,
+                            tray_available=tray_available,
                         )
                     section_bodies[section] = body
 
@@ -379,6 +388,91 @@ def render_settings_page(
     return card
 
 
+def _render_chip_editor(
+    values: list[str],
+    *,
+    add_label: str,
+    testid: str,
+    validate: Callable[[str], str | None] | None = None,
+    on_reset: Callable[[], None] | None = None,
+    reset_label: str = "Reset to defaults",
+    empty_text: str = "(none)",
+) -> None:
+    """Reusable chip / list editor bound to a draft string list (T7 / T10).
+
+    Mutates ``values`` in place -- ``[+ Add]`` appends (rejecting blanks,
+    duplicates, and ``validate`` failures), each chip carries a delete, and
+    an optional ``[Reset]`` replaces the contents -- so persistence rides
+    the existing draft -> ``finalize_settings_draft`` -> Save path with no
+    new plumbing. Entries are stored verbatim (case-sensitive, no
+    lowercasing); whitespace is trimmed on add.
+    """
+    from nicegui import ui
+
+    chips = ui.row().classes("items-center w-full").style("gap: 0.35rem; flex-wrap: wrap;")
+
+    def _render_chips() -> None:
+        chips.clear()
+        with chips:
+            if not values:
+                ui.label(empty_text).props(f'data-testid="{testid}-empty"').style(
+                    "color: var(--color-muted);"
+                )
+            for idx, value in enumerate(values):
+                with (
+                    ui.row()
+                    .classes("items-center")
+                    .props(f'data-testid="{testid}-chip"')
+                    .style(
+                        "gap: 0.15rem; background: var(--color-rule); "
+                        "border-radius: var(--radius-sm); padding: 0.05rem 0.1rem 0.05rem 0.5rem;"
+                    )
+                ):
+                    ui.label(value).style(
+                        "font-family: var(--font-mono); font-size: var(--text-xs);"
+                    )
+                    ui.button(icon="close", on_click=lambda _e, i=idx: _remove(i)).props(
+                        "flat dense round size=sm"
+                    )
+
+    def _remove(idx: int) -> None:
+        if 0 <= idx < len(values):
+            del values[idx]
+            _render_chips()
+
+    _render_chips()
+
+    new_input = ui.input(label=add_label).props(f'data-testid="{testid}-input"')
+
+    def _add() -> None:
+        raw = (new_input.value or "").strip()
+        if not raw:
+            return
+        if validate is not None:
+            error = validate(raw)
+            if error is not None:
+                notifications.notify_error(error)
+                return
+        if raw in values:
+            notifications.notify_error(f"{raw!r} is already in the list")
+            return
+        values.append(raw)
+        _render_chips()
+        new_input.value = ""
+
+    with ui.row().classes("items-center").style("gap: 0.5rem;"):
+        ui.button("+ Add", on_click=lambda _e: _add()).props(f'flat data-testid="{testid}-add"')
+        if on_reset is not None:
+
+            def _reset() -> None:
+                on_reset()
+                _render_chips()
+
+            ui.button(reset_label, on_click=lambda _e: _reset()).props(
+                f'flat data-testid="{testid}-reset"'
+            )
+
+
 def _render_section_body(
     section: str,
     draft: Config,
@@ -390,6 +484,10 @@ def _render_section_body(
     nas_credential_handlers: Callable[[str], tuple[Callable[[str], None], Callable[[], None]]]
     | None = None,
     on_test_equipment: Callable[[str], Any] | None = None,
+    autostart_registered: bool = False,
+    on_set_autostart: Callable[[bool], bool | None] | None = None,
+    on_quit: Callable[[], None] | None = None,
+    tray_available: bool = False,
 ) -> None:
     """Render the content for a single section, bound to ``draft``.
 
@@ -474,13 +572,39 @@ def _render_section_body(
             ui.checkbox(
                 "Retain .exlab-wizard/ metadata", value=draft.nas_cleanup.retain_cache
             ).bind_value(draft.nas_cleanup, "retain_cache")
+        elif section == "operators":
+            # Frontend §7.9: empty allowlist = any operator; non-empty = the
+            # wizard renders a dropdown of these names and rejects free-text.
+            # Case-sensitive (OperatorsConfig is str_strip_whitespace, not
+            # lowercased) and non-gating.
+            ui.label(
+                "If empty, the operator field accepts any value. If non-empty, the wizard "
+                "shows a dropdown of these names and rejects free-text."
+            ).style("color: var(--color-muted); font-size: var(--text-sm);")
+            _render_chip_editor(
+                draft.operators.allowlist,
+                add_label="Add operator username",
+                testid="settings-operators",
+                empty_text="Any operator allowed (allowlist empty)",
+            )
         elif section == "validator":
             ui.number(
                 label="Max content-scan size (MiB)",
                 value=draft.validator.content_scan_max_mib,
             ).bind_value(draft.validator, "content_scan_max_mib")
-            ui.label(
-                "Scanned file extensions: " + ", ".join(draft.validator.content_scan_extensions)
+            ui.label("Scanned file extensions").style("color: var(--color-body);")
+
+            def _reset_extensions() -> None:
+                from exlab_wizard.config.models import _default_content_scan_extensions
+
+                draft.validator.content_scan_extensions[:] = _default_content_scan_extensions()
+
+            _render_chip_editor(
+                draft.validator.content_scan_extensions,
+                add_label="Add extension (e.g. .txt)",
+                testid="settings-scan-ext",
+                validate=lambda v: None if v.startswith(".") else "Extensions must start with '.'",
+                on_reset=_reset_extensions,
             )
         elif section == "logging":
             ui.radio(["DEBUG", "INFO", "WARN", "ERROR"], value=draft.logging.level).bind_value(
@@ -508,12 +632,74 @@ def _render_section_body(
                 placeholder=str(suggested_staging_root()),
             ).bind_value(draft.orchestrator, "staging_root")
         elif section == "application":
-            # "Start at login" is the autostart toggle, not a config.yaml
-            # field -- it is set from the welcome card. Shown here for
-            # discoverability; wiring it is a follow-up.
-            ui.checkbox("Start ExLab-Wizard at login")
-            ui.label("Show in system tray: available")
-            ui.button("Quit ExLab-Wizard now").props("flat")
+            # "Start at login" (T8): applied immediately (NOT draft-bound,
+            # §7.13). Seeded from the real registration state; on toggle it
+            # reflects the actual post-op ``is_registered()`` and reverts on
+            # failure. Disabled when no toggle is wired (headless/tests).
+            _guard = {"busy": False}
+            autostart_box: Any = None
+
+            def _on_autostart(event: Any) -> None:
+                if _guard["busy"] or on_set_autostart is None:
+                    return
+                actual = on_set_autostart(bool(event.value))
+                if actual is not None and bool(actual) != bool(event.value):
+                    # Programmatic revert re-fires on_change synchronously;
+                    # the guard makes that re-entrant call a no-op.
+                    _guard["busy"] = True
+                    try:
+                        autostart_box.value = bool(actual)
+                    finally:
+                        _guard["busy"] = False
+
+            autostart_box = ui.checkbox(
+                "Start ExLab-Wizard at login",
+                value=autostart_registered,
+                on_change=_on_autostart,
+            ).props('data-testid="settings-autostart"')
+            if on_set_autostart is None:
+                autostart_box.props("disable")
+
+            # Real tray availability + window-on-close behavior (T11, §7.13).
+            tray_text = "available" if tray_available else "unavailable (window-only)"
+            ui.label(f"Show in system tray: {tray_text}").props(
+                'data-testid="settings-tray-status"'
+            )
+            ui.label(
+                "Closing the window keeps ExLab-Wizard running in the tray; "
+                "use Quit to exit completely."
+            ).style("color: var(--color-muted); font-size: var(--text-sm);")
+
+            # "Quit ExLab-Wizard now" (T9): graceful shutdown behind a confirm,
+            # scheduled non-blocking by the host. Disabled when no hook wired.
+            quit_btn = ui.button("Quit ExLab-Wizard now").props('flat data-testid="settings-quit"')
+            if on_quit is None:
+                quit_btn.props("disable")
+            else:
+
+                def _confirm_quit() -> None:
+                    confirm = ui.dialog()
+                    with (
+                        confirm,
+                        ui.card().props('data-testid="settings-quit-dialog"'),
+                    ):
+                        ui.label("Quit ExLab-Wizard?").style("font-weight: 600;")
+                        ui.label("In-flight operations are allowed to finish first.").style(
+                            "color: var(--color-muted);"
+                        )
+
+                        def _do_quit() -> None:
+                            confirm.close()
+                            on_quit()
+
+                        with ui.row().classes("justify-end w-full").style("gap: 0.5rem;"):
+                            ui.button("Cancel", on_click=lambda _e: confirm.close()).props("flat")
+                            ui.button("Quit", on_click=lambda _e: _do_quit()).props(
+                                'color=negative data-testid="settings-quit-confirm"'
+                            )
+                    confirm.open()
+
+                quit_btn.on("click", lambda _e: _confirm_quit())
 
 
 # Redesign §6: the canonical equipment-config assembler now lives in

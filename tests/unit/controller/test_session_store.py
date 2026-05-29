@@ -21,7 +21,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from exlab_wizard.controller.session_store import Session, SessionStore
+from exlab_wizard.controller.session_store import (
+    Session,
+    SessionStore,
+    project_identifier,
+)
 from exlab_wizard.controller.state_machine import Phase, SessionState
 
 # ---------------------------------------------------------------------------
@@ -78,6 +82,50 @@ def test_get_returns_session_after_open() -> None:
     session = store.open("project", {})
     fetched = store.get(session.session_id)
     assert fetched is session
+
+
+def test_iter_sorted_returns_pairs_oldest_created_first() -> None:
+    store = SessionStore()
+    first = store.open("project", {})
+    second = store.open("run", {})
+    # Force a deterministic created_at ordering.
+    store.get(first.session_id).created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    store.get(second.session_id).created_at = datetime(2026, 1, 2, tzinfo=UTC)
+    ordered = store.iter_sorted()
+    assert [sid for sid, _ in ordered] == [first.session_id, second.session_id]
+
+
+def test_gc_publishes_terminal_frame_to_live_subscriber() -> None:
+    """An abandoned-session GC pass must wake a live ``subscribe()`` consumer.
+
+    The GC closes the session directly on the store (bypassing the
+    controller's ``_publish``), so it must itself push a terminal frame or
+    the in-process wizard progress loop parks forever on ``queue.get()``.
+    """
+    store = SessionStore()
+    session = store.open("project", {})
+    live = store.get(session.session_id)
+    live.state = SessionState.INPUT_REQUIRED
+    live.last_heartbeat = datetime(2000, 1, 1, tzinfo=UTC)  # long abandoned
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    live.event_queue = queue
+
+    store._gc_once(timedelta(seconds=1))
+
+    frame = queue.get_nowait()
+    assert frame["kind"] == "failed"
+    assert frame["error"]["code"] == "session_abandoned"
+
+
+def test_project_identifier_prefers_short_id_then_falls_back_to_project_name() -> None:
+    from types import SimpleNamespace
+
+    proj = SimpleNamespace(project_short_id=None, lims_project={"short_id": "PROJ-0042"})
+    assert project_identifier(proj) == "PROJ-0042"
+    run = SimpleNamespace(project_short_id=None, lims_project={}, project_name="Cortex Q3 Pilot")
+    assert project_identifier(run) == "Cortex Q3 Pilot"
+    empty = SimpleNamespace(project_short_id=None, lims_project={})
+    assert project_identifier(empty) is None
 
 
 # ---------------------------------------------------------------------------

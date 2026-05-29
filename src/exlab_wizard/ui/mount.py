@@ -196,6 +196,7 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             on_open_settings=lambda: ui.navigate.to("/settings"),
             on_refresh=_refresh,
             on_select_node=_on_select_node,
+            on_open_operations=lambda: _open_operations_modal(deps, ui),
             on_navigate_breadcrumb=_on_select_node,
             on_toggle_right_pane=_on_toggle_right_pane,
             on_run_staging_action=_on_run_staging_action,
@@ -344,6 +345,32 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
 
         on_save_lims_password, on_clear_lims_password = _lims_credential_handlers(deps, ui)
 
+        def _on_set_autostart(enabled: bool) -> bool | None:
+            return _apply_autostart(deps, enabled)
+
+        # Quit hook (T9): run the graceful-shutdown hook on a separate thread,
+        # NOT via ui.timer. The timer callback runs on the server's *running*
+        # event loop, where ``request_quit``'s ``asyncio.run(...)`` raises
+        # "loop already running" (and the fallback re-raises) -- the app would
+        # never shut down. A fresh thread has no running loop so ``asyncio.run``
+        # works; the click handler returns immediately so the HTTP response
+        # still flushes. Absent in headless/test fixtures.
+        _quit_hook = getattr(deps, "request_quit", None) if deps is not None else None
+        on_quit: Callable[[], None] | None = None
+        if _quit_hook is not None:
+            quit_hook = _quit_hook
+
+            def on_quit() -> None:
+                import threading
+
+                def _do() -> None:
+                    try:
+                        quit_hook()
+                    except Exception as exc:
+                        _log.warning("quit hook raised: %s", exc)
+
+                threading.Thread(target=_do, name="exlab-quit", daemon=True).start()
+
         def _nas_handlers(
             equipment_id: str,
         ) -> tuple[Callable[[str], None], Callable[[], None]]:
@@ -366,13 +393,20 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             nas_password_present_for=lambda equipment_id: nas_password_present(deps, equipment_id),
             nas_credential_handlers=_nas_handlers,
             on_test_equipment=_on_test_equipment,
+            autostart_registered=bool(getattr(deps, "autostart_is_registered", False)),
+            on_set_autostart=_on_set_autostart,
+            on_quit=on_quit,
+            tray_available=bool(getattr(deps, "tray_available", False)),
         )
 
     @ui.page("/problems")
     def _problems() -> Any:
         deps = _deps()
         findings = _safe_audit(deps)
-        return problems_page.render_problems_page(findings=findings)
+        return problems_page.render_problems_page(
+            findings=findings,
+            last_audit_at=getattr(deps, "last_audit_at", None),
+        )
 
     @ui.page("/staging")
     def _staging() -> Any:
@@ -684,16 +718,23 @@ def _is_setup_ready(deps: Any) -> bool:
         return False
 
 
-def _apply_autostart(deps: Any, enabled: bool) -> None:
+def _apply_autostart(deps: Any, enabled: bool) -> bool | None:
+    """Register / unregister platform autostart; return the real post-op state.
+
+    Returns ``deps.autostart_toggle``'s ``is_registered()`` result so callers
+    (Settings -> Application) can reflect / revert the checkbox to reality;
+    ``None`` when no toggle is wired or the op raised.
+    """
     if deps is None:
-        return
+        return None
     toggle: Callable[[bool], Any] | None = getattr(deps, "autostart_toggle", None)
     if toggle is None:
-        return
+        return None
     try:
-        toggle(enabled)
+        return bool(toggle(enabled))
     except Exception as exc:
-        _log.warning("autostart toggle failed in welcome: %s", exc)
+        _log.warning("autostart toggle failed: %s", exc)
+        return None
 
 
 def _build_main_state(
@@ -710,6 +751,7 @@ def _build_main_state(
     # surface always renders, so MainPageState.orchestrator_enabled keeps
     # its True default. Folder-feed path mirrors the selected node so the
     # centre pane shows the right folder.
+    ops_count, ops_input_required, ops_active = _operation_counts(deps)
     return main_page.MainPageState(
         setup_incomplete=not _is_setup_ready(deps),
         setup_next_action=_setup_next_action(deps),
@@ -718,7 +760,47 @@ def _build_main_state(
         selected_node_is_received=is_received,
         right_pane_collapsed=right_pane_collapsed,
         folder_feed_path=selected_node,
+        operations_count=ops_count,
+        operations_input_required=ops_input_required,
+        creation_in_flight=ops_active > 0,
+        # Real Problems counts from the 30 s background audit (T6 / §B5).
+        problems_count_hard=int(getattr(deps, "last_audit_hard", 0) or 0),
+        problems_count_soft=int(getattr(deps, "last_audit_soft", 0) or 0),
     )
+
+
+def _panel_sessions(deps: Any) -> list[tuple[str, Any]]:
+    """Return the (session_id, session) pairs the Operations panel shows.
+
+    The §9.5 membership rule lives here only: everything except the
+    terminal ``DONE`` / ``ABORTED`` (``FAILED`` stays so a recent failure
+    is visible). Shared by :func:`_operation_counts` and
+    :func:`_build_operation_rows` so the rule can't drift.
+    """
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    store = getattr(controller, "session_store", None) if controller is not None else None
+    if store is None:
+        return []
+    from exlab_wizard.controller import on_operations_panel
+
+    return [(sid, session) for sid, session in store.iter_sorted() if on_operations_panel(session)]
+
+
+def _operation_counts(deps: Any) -> tuple[int, int, int]:
+    """Return ``(panel_count, input_required, active)`` operation counts.
+
+    ``panel_count`` is the §9.5 panel size (see :func:`_panel_sessions`).
+    ``input_required`` counts suspended sessions awaiting a plugin answer
+    (Frontend §9.5 / §3.5.5). ``active`` counts strictly non-terminal
+    sessions and gates the §9.6 creation-button lock (``FAILED`` is
+    terminal, so it sits in the panel but does not lock creation).
+    """
+    from exlab_wizard.controller import SessionState
+
+    panel_rows = _panel_sessions(deps)
+    input_required = sum(1 for _sid, s in panel_rows if s.state is SessionState.INPUT_REQUIRED)
+    active = sum(1 for _sid, s in panel_rows if not s.is_terminal())
+    return (len(panel_rows), input_required, active)
 
 
 def _setup_next_action(deps: Any) -> str | None:
@@ -1246,6 +1328,196 @@ def _open_in_os(path: str) -> bool:
     return False
 
 
+def _build_operation_rows(deps: Any) -> list[Any]:
+    """Build the Operations-panel rows from the live session store (T3).
+
+    Uses the shared §9.5 membership rule (:func:`_panel_sessions`): terminal
+    ``DONE`` / ``ABORTED`` sessions fall off; ``FAILED`` stays so a recent
+    failure is visible.
+    """
+    from exlab_wizard.ui.components.operations_modal import OperationRow
+
+    return [OperationRow.from_session(sid, session) for sid, session in _panel_sessions(deps)]
+
+
+def _open_operations_modal(deps: Any, ui: Any) -> None:
+    """Open the in-flight Operations panel (Frontend §9.5).
+
+    Builds a fresh snapshot on each open (true auto-refresh is the wizard's
+    live stream, T2). Row actions dispatch to resume / cancel / details.
+    """
+    from exlab_wizard.ui.components.operations_modal import operations_modal
+
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    if controller is None:
+        _show_toast(ui, "Operations unavailable: controller not initialized", positive=False)
+        return
+    rows = _build_operation_rows(deps)
+    dialog = operations_modal(
+        rows,
+        on_resume=lambda oid: _resume_operation(deps, oid, ui),
+        on_cancel=lambda oid: _cancel_operation(deps, oid, ui),
+        on_view_log=lambda oid: _open_operation_details(deps, oid, ui),
+    )
+    opener = getattr(dialog, "open", None)
+    if callable(opener):
+        opener()
+
+
+def _open_operation_details(deps: Any, session_id: str, ui: Any) -> None:
+    """Show a lightweight details/"log" dialog for one in-flight operation.
+
+    The §9.5 "View log" action: surfaces the session's current state plus
+    any suspend reason or error. (The NAS-sync run log is a separate,
+    post-creation concern handled by :func:`_open_log_dialog`.)
+    """
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    store = getattr(controller, "session_store", None) if controller is not None else None
+    session = store.get(session_id) if store is not None else None
+    if session is None:
+        _show_toast(ui, "Operation not found", positive=False)
+        return
+    state_val = getattr(session.state, "value", str(session.state))
+    dialog = ui.dialog()
+    with (
+        dialog,
+        ui.card().props('data-testid="operation-log-dialog"').style("min-width: 480px;"),
+    ):
+        ui.label(f"Operation {session_id}").style("font-weight: 600;")
+        ui.label(f"State: {state_val}").style("color: var(--color-muted);")
+        pending = getattr(session, "pending_input", None)
+        if pending:
+            ui.label(f"Awaiting input: {pending.get('reason', '')}").style(
+                "font-family: var(--font-mono); font-size: 0.85em;"
+            )
+        error = getattr(session, "error", None)
+        if error:
+            ui.label(f"Error: {error.get('message', error.get('code', ''))}").style(
+                "color: var(--color-danger); font-family: var(--font-mono); font-size: 0.85em;"
+            )
+    dialog.open()
+
+
+def _resume_operation(deps: Any, session_id: str, ui: Any) -> None:
+    """Resume a suspended session by re-opening its §9.1 input dialog (T5).
+
+    Reads the parked ``pending_input`` (plugin / reason / fields) off the
+    session and re-presents the escalation dialog; Submit resumes the
+    pipeline with the answers.
+    """
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    store = getattr(controller, "session_store", None) if controller is not None else None
+    session = store.get(session_id) if store is not None else None
+    pending = getattr(session, "pending_input", None) if session is not None else None
+    if controller is None or not pending:
+        _show_toast(ui, "Nothing to resume: the operation is not awaiting input", positive=False)
+        return
+    _open_input_required_dialog(
+        controller,
+        session_id,
+        ui,
+        plugin=pending.get("plugin", ""),
+        reason=pending.get("reason", ""),
+        fields=pending.get("fields") or [],
+    )
+
+
+def _open_input_required_dialog(
+    controller: Any,
+    session_id: str,
+    ui: Any,
+    *,
+    plugin: str,
+    reason: str,
+    fields: list[Any],
+) -> Any:
+    """Open the §9.1 escalation dialog; Submit resumes, Cancel confirms (T5).
+
+    Submit calls ``controller.resume(session_id, values)`` -- the suspended
+    pipeline wakes with the answers. ``resume`` raises on an unknown session
+    or a stale (non-``INPUT_REQUIRED``) state; a plugin re-rejecting the
+    values simply re-emits ``input_required`` (the consumer re-opens this
+    dialog). Both are surfaced to the operator. Cancel routes through the
+    §9.4 cancel dialog.
+    Returns the dialog so the caller can force-close it on a terminal frame.
+    """
+    from exlab_wizard.ui.components.input_required_dialog import input_required_dialog
+
+    def _on_submit(values: dict[str, Any]) -> None:
+        async def _run() -> None:
+            try:
+                await controller.resume(session_id, values)
+            except Exception as exc:
+                _show_toast(ui, f"Could not submit input: {exc}", positive=False)
+
+        _spawn_background(_run())
+
+    def _on_cancel() -> None:
+        _cancel_session(controller, session_id, ui)
+
+    dialog = input_required_dialog(
+        plugin=plugin,
+        reason=reason,
+        fields=fields,
+        on_submit=_on_submit,
+        on_cancel=_on_cancel,
+    )
+    opener = getattr(dialog, "open", None)
+    if callable(opener):
+        opener()
+    return dialog
+
+
+def _cancel_operation(deps: Any, session_id: str, ui: Any) -> None:
+    """Resolve the controller off ``deps`` and open the §9.4 cancel dialog."""
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    if controller is None:
+        _show_toast(ui, "Cancel unavailable: controller not initialized", positive=False)
+        return
+    _cancel_session(controller, session_id, ui)
+
+
+def _cancel_session(controller: Any, session_id: str, ui: Any) -> None:
+    """Cancel an in-flight session via the §9.4 Discard / Keep dialog (T4).
+
+    The operator chooses whether to discard the partially-created files
+    (``discard_files=True`` -> ``shutil.rmtree`` of the partial dir) or
+    keep them in place as an orphan. ``controller.cancel`` is a no-op on an
+    already-terminal session; any error is surfaced as a toast.
+    """
+    dialog = ui.dialog()
+
+    def _choose(discard_files: bool) -> None:
+        dialog.close()
+
+        async def _run() -> None:
+            try:
+                await controller.cancel(session_id, discard_files=discard_files)
+                _show_toast(ui, "Operation cancelled", positive=True)
+            except Exception as exc:
+                _show_toast(ui, f"Cancel failed: {exc}", positive=False)
+
+        _spawn_background(_run())
+
+    with (
+        dialog,
+        ui.card().props('data-testid="cancel-confirm-dialog"').style("min-width: 420px;"),
+    ):
+        ui.label("Cancel this operation?").style("font-weight: 600;")
+        ui.label("Discard the partially-created files, or keep them in place as an orphan?").style(
+            "color: var(--color-muted);"
+        )
+        with ui.row().classes("justify-end w-full").style("gap: 0.5rem;"):
+            ui.button("Back", on_click=lambda _e: dialog.close()).props("flat")
+            ui.button("Keep files", on_click=lambda _e: _choose(False)).props(
+                'flat data-testid="cancel-keep"'
+            )
+            ui.button("Discard files", on_click=lambda _e: _choose(True)).props(
+                'flat color=negative data-testid="cancel-discard"'
+            )
+    dialog.open()
+
+
 def _open_log_dialog(deps: Any, run_path: Path, ui: Any) -> None:
     """Open a NiceGUI dialog showing the run's sync-queue job state.
 
@@ -1402,6 +1674,9 @@ def _lims_catalogue_projects(deps: Any) -> list[dict[str, Any]]:
         from exlab_wizard.lims.catalogue import read_catalogue
 
         catalogue = read_catalogue(Path(catalogue_path), expected_endpoint=config.lims.endpoint)
+        if catalogue is None:
+            # schema_version mismatch -> treated as absent (§7.2.9.3).
+            return []
         return [
             {
                 "short_id": project.short_id,
@@ -1471,6 +1746,59 @@ async def _await_session(controller: Any, handle: Any) -> Any:
     return await controller.status(handle.session_id)
 
 
+async def _consume_session_progress(
+    controller: Any, session_id: str, wizard_state: Any, ui: Any
+) -> None:
+    """Fold the controller's WS frames into the wizard's live phase bar (T2)
+    and surface a plugin ``INPUT_REQUIRED`` escalation dialog (T5).
+
+    Runs inside the wizard's submit coroutine (already bound to the page's
+    client context), so re-rendering the ``@ui.refreshable`` progress view
+    and opening dialogs are safe. Subscribing right after ``create_*``
+    returns is race-free: ``_launch`` creates the session's event queue
+    before the pipeline starts, so buffered early phases replay in order.
+    On an ``input_required`` frame the §9.1 dialog opens; the loop keeps
+    awaiting frames (the pipeline only resumes once the operator submits).
+    A terminal ``done`` / ``failed`` frame force-closes any open dialog
+    (e.g. the plugin timed out while suspended) and ends the loop.
+    """
+    from exlab_wizard.ui.components import session_progress
+
+    progress = getattr(wizard_state, "progress", None)
+    refresh = getattr(wizard_state, "progress_refresh", None)
+    if progress is None:
+        return
+    open_dialog: Any = None
+    try:
+        async for frame in controller.subscribe(session_id):
+            kind = frame.get("kind")
+            if session_progress.apply_frame(progress, frame) and refresh is not None:
+                with contextlib.suppress(Exception):
+                    refresh()
+            if kind == "input_required":
+                open_dialog = _open_input_required_dialog(
+                    controller,
+                    session_id,
+                    ui,
+                    plugin=frame.get("plugin", ""),
+                    reason=frame.get("reason", ""),
+                    fields=frame.get("fields") or [],
+                )
+            if kind in ("done", "failed"):
+                _close_dialog(open_dialog)
+                break
+    except Exception:
+        _log.exception("progress consumer failed for session %s", session_id)
+
+
+def _close_dialog(dialog: Any) -> None:
+    """Best-effort close of a NiceGUI dialog (no-op when ``None`` / test mode)."""
+    closer = getattr(dialog, "close", None)
+    if callable(closer):
+        with contextlib.suppress(Exception):
+            closer()
+
+
 async def _submit_project(deps: Any, state: Any, ui: Any) -> None:
     """Build a ProjectCreateRequest from the wizard state and run it."""
     controller = getattr(deps, "controller", None) if deps is not None else None
@@ -1499,7 +1827,9 @@ async def _submit_project(deps: Any, state: Any, ui: Any) -> None:
         operator=readme.get("operator", ""),
         objective=readme.get("objective", ""),
     )
-    await _run_creation(controller, controller.create_project, request, ui, label="Project")
+    await _run_creation(
+        controller, controller.create_project, request, ui, label="Project", wizard_state=state
+    )
 
 
 async def _submit_run(deps: Any, state: Any, run_kind: RunKind, ui: Any) -> None:
@@ -1530,7 +1860,9 @@ async def _submit_run(deps: Any, state: Any, run_kind: RunKind, ui: Any) -> None
         objective=readme.get("objective", ""),
     )
     kind_label = "Test run" if run_kind is RunKind.TEST else "Run"
-    await _run_creation(controller, controller.create_run, request, ui, label=kind_label)
+    await _run_creation(
+        controller, controller.create_run, request, ui, label=kind_label, wizard_state=state
+    )
 
 
 async def _run_creation(
@@ -1540,12 +1872,20 @@ async def _run_creation(
     ui: Any,
     *,
     label: str,
+    wizard_state: Any = None,
 ) -> None:
-    """Drive a create_* call to completion and toast the outcome."""
+    """Drive a create_* call to completion and toast the outcome.
+
+    When ``wizard_state`` is supplied, the controller's phase stream is
+    consumed live so the Confirm & Create step's progress bar advances as
+    the pipeline runs (T2); otherwise the call just awaits the final state.
+    """
     from exlab_wizard.controller import SessionState
 
     try:
         handle = await create_fn(request)
+        if wizard_state is not None:
+            await _consume_session_progress(controller, handle.session_id, wizard_state, ui)
         final = await _await_session(controller, handle)
     except Exception as exc:
         _log.exception("%s creation raised", label)

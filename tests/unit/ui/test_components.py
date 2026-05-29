@@ -184,14 +184,48 @@ def test_session_progress_phase_order_is_canonical() -> None:
     """The phase enum order matches Frontend §10.1."""
 
     rows = session_progress.compute_phase_rows(active_phase=None)
+    # Verbatim controller wire-format phase strings (state_machine.Phase),
+    # so a live ``phase`` frame maps onto a row without translation.
     assert [r.phase for r in rows] == [
         "validating_inputs",
         "rendering_template",
         "running_plugins",
         "writing_cache",
-        "post_validation",
-        "queueing_sync",
+        "validating_post_creation",
+        "queueing_nas_sync",
     ]
+
+
+def test_apply_frame_advances_phase_and_marks_predecessors_done() -> None:
+    state = session_progress.SessionProgressState()
+    assert session_progress.apply_frame(state, {"kind": "phase", "phase": "running_plugins"})
+    assert state.active_phase == "running_plugins"
+    assert "validating_inputs" in state.completed
+    assert "rendering_template" in state.completed
+
+
+def test_apply_frame_progress_sets_plugin_sub_row() -> None:
+    state = session_progress.SessionProgressState()
+    changed = session_progress.apply_frame(
+        state, {"kind": "progress", "current": 1, "total": 3, "plugin": "demo"}
+    )
+    assert changed
+    assert state.active_phase == "running_plugins"
+    assert (state.plugin_current, state.plugin_total, state.plugin_name) == (1, 3, "demo")
+
+
+def test_apply_frame_done_completes_all_phases() -> None:
+    state = session_progress.SessionProgressState(active_phase="writing_cache")
+    assert session_progress.apply_frame(state, {"kind": "done", "result": {}})
+    assert set(state.completed) == set(session_progress.PHASES)
+    assert state.active_phase is None
+
+
+def test_apply_frame_ignores_unknown_kinds_and_phases() -> None:
+    state = session_progress.SessionProgressState()
+    assert not session_progress.apply_frame(state, {"kind": "input_required"})
+    assert not session_progress.apply_frame(state, {"kind": "phase", "phase": "bogus"})
+    assert state.active_phase is None
 
 
 def test_session_progress_active_phase_marked() -> None:
@@ -502,6 +536,89 @@ def test_operations_modal_state_glyph_known_states() -> None:
     assert operations_modal.state_glyph("running") == "play_arrow"
     assert operations_modal.state_glyph("suspended") == "pause"
     assert operations_modal.state_glyph("completed") == "check"
+
+
+def test_operation_row_from_session_maps_state_buckets_and_fields() -> None:
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from exlab_wizard.controller import SessionState
+
+    request = SimpleNamespace(
+        equipment_id="EQ1",
+        label="My Run",
+        lims_project={"short_id": "PROJ-0042"},
+        project_short_id=None,
+    )
+    suspended = SimpleNamespace(
+        state=SessionState.INPUT_REQUIRED,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        request=request,
+        pending_input={"plugin": "demo", "reason": "need value"},
+    )
+    row = operations_modal.OperationRow.from_session("s1", suspended)
+    assert row.state == operations_modal.STATE_SUSPENDED
+    assert (row.operation_id, row.equipment, row.project, row.run) == ("s1", "EQ1", "PROJ-0042", "My Run")
+    assert row.plugin == "demo"
+
+    running = SimpleNamespace(
+        state=SessionState.RENDERING, created_at=None, request=request, pending_input=None
+    )
+    r2 = operations_modal.OperationRow.from_session("s2", running)
+    assert r2.state == operations_modal.STATE_RUNNING
+    assert r2.started_at == ""  # created_at None -> empty
+    assert r2.plugin is None
+
+    done = SimpleNamespace(
+        state=SessionState.DONE, created_at=None, request=request, pending_input=None
+    )
+    assert operations_modal.OperationRow.from_session("s3", done).state == (
+        operations_modal.STATE_COMPLETED
+    )
+
+    failed = SimpleNamespace(
+        state=SessionState.FAILED, created_at=None, request=request, pending_input=None
+    )
+    # A failed op stays in the panel but is labelled distinctly (not "running").
+    assert operations_modal.OperationRow.from_session("s4", failed).state == (
+        operations_modal.STATE_FAILED
+    )
+
+
+# ---------------------------------------------------------------------------
+# input_required_dialog (T5)
+# ---------------------------------------------------------------------------
+
+
+def test_collect_default_values_seeds_from_declared_defaults() -> None:
+    from exlab_wizard.ui.components.input_required_dialog import collect_default_values
+
+    fields = [
+        {"id": "sample", "type": "string", "default": "tissue"},
+        {"id": "qc_passed", "type": "boolean"},
+        {"id": "notes", "type": "text"},
+        {"key": "legacy", "type": "string"},  # id falls back to key
+        {"type": "string"},  # no id/key -> skipped
+    ]
+    values = collect_default_values(fields)
+    assert values == {"sample": "tissue", "qc_passed": False, "notes": "", "legacy": ""}
+
+
+def test_input_required_dialog_builds_without_raising() -> None:
+    from exlab_wizard.ui.components.input_required_dialog import input_required_dialog
+
+    out = input_required_dialog(
+        plugin="demo",
+        reason="need a value",
+        fields=[
+            {"id": "x", "type": "string", "default": "d"},
+            {"id": "mode", "type": "choice", "options": ["a", "b"]},
+            {"id": "ok", "type": "boolean"},
+        ],
+        on_submit=lambda _v: None,
+        on_cancel=lambda: None,
+    )
+    assert out is not None
 
 
 # ---------------------------------------------------------------------------

@@ -157,6 +157,7 @@ def _build_controller(
     *,
     plugin_host: PluginHost | None = None,
     nas_sync: Any = None,
+    readme_generator: Any = None,
 ) -> CreationController:
     return CreationController(
         config=config,
@@ -165,7 +166,9 @@ def _build_controller(
         plugin_host=plugin_host,
         cache_creation=CreationWriter(),
         cache_equipment=EquipmentCacheWriter(),
-        readme_generator=NoOpReadmeGenerator(),
+        readme_generator=readme_generator
+        if readme_generator is not None
+        else NoOpReadmeGenerator(),
         nas_sync=nas_sync if nas_sync is not None else NoOpNASSync(),
         session_store=SessionStore(),
     )
@@ -657,30 +660,90 @@ async def test_cancel_unknown_session_is_noop(tmp_path: Path) -> None:
 
 
 async def test_noop_readme_generator_writes_minimal_readme(tmp_path: Path) -> None:
-    gen = NoOpReadmeGenerator()
-    from exlab_wizard.template.copier_driver import ResolvedTemplate
+    from datetime import UTC, datetime
 
-    resolved = ResolvedTemplate(
-        name="dummy",
-        path=tmp_path,
-        exlab_type="project",
-        exlab_version="1.0",
-    )
+    from exlab_wizard.constants import CreationLevel
+    from exlab_wizard.readme import CoreFields, SystemFields
+
+    gen = NoOpReadmeGenerator()
     ctx = ReadmeContext(
-        label="My Project",
-        operator="asmith",
-        objective="purpose",
-        equipment_id="EQ1",
-        project_short_id="PROJ-0001",
-        run_kind="project",
-        variables={},
-        template=resolved,
+        level=CreationLevel.PROJECT,
+        core=CoreFields(label="My Project", operator="asmith", objective="purpose"),
+        template_fields={},
+        config_fields={},
+        custom_fields=[],
+        system=SystemFields(
+            created=datetime(2026, 1, 1, tzinfo=UTC),
+            created_by="osuser",
+            equipment={"id": "EQ1", "label": "Eq One"},
+            template={"name": "dummy", "version": "1.0"},
+            project="My Project",
+            run=None,
+            run_kind="",
+        ),
     )
-    out = await gen.generate(tmp_path, ctx)
-    assert out.is_file()
-    content = out.read_text(encoding="utf-8")
+    readme, cache = await gen.generate(tmp_path, ctx)
+    assert readme.is_file()
+    content = readme.read_text(encoding="utf-8")
     assert "# My Project" in content
     assert "purpose" in content
+    # NoOp reports the cache path but does not write the §10 cache file.
+    assert cache.name == "readme_fields.json"
+
+
+async def test_real_readme_generator_writes_frontmatter_and_cache(tmp_path: Path) -> None:
+    """T1 (§C1): the production ``ReadmeGenerator`` -- injected by
+    ``tray.dependencies`` -- produces a §10-compliant ``README.md`` (YAML
+    front matter spanning all four field layers) plus the
+    ``readme_fields.json`` cache, instead of the NoOp stub."""
+    import yaml
+
+    from exlab_wizard.api.schemas import ReadmeFieldsJson
+    from exlab_wizard.config.models import READMEDefaultField
+    from exlab_wizard.constants import (
+        README_FIELDS_JSON_NAME,
+        README_FILE_NAME,
+        FieldType,
+    )
+    from exlab_wizard.readme import ReadmeGenerator
+
+    local_root = tmp_path / "data"
+    local_root.mkdir()
+    config = _build_config(local_root)
+    # A lab-policy (config-layer) field layered on top of the core set.
+    config.readme.defaults.append(
+        READMEDefaultField(id="irb_protocol", label="IRB protocol", type=FieldType.STRING)
+    )
+    controller = _build_controller(config, readme_generator=ReadmeGenerator())
+
+    # readme_extra carries a config-layer value and a user-added custom field.
+    request = _project_request(
+        readme_extra={"irb_protocol": "IRB-2026-0042", "Collaborator": "Dr. J. Lee"}
+    )
+    handle = await controller.create_project(request)
+    final = await _drain_to_done(controller, handle.session_id)
+    assert final["state"] is SessionState.DONE
+
+    project_dir = local_root / "EQ1" / "Cortex Q3 Pilot"
+    readme = project_dir / README_FILE_NAME
+    assert readme.is_file()
+    text = readme.read_text(encoding="utf-8")
+    assert text.startswith("---\n")
+    front_matter = yaml.safe_load(text.split("---\n")[1])
+    assert front_matter["core_fields"]["label"] == "Cortex Q3 calibration"
+    assert front_matter["config_fields"]["irb_protocol"] == "IRB-2026-0042"
+    assert {"label": "Collaborator", "value": "Dr. J. Lee"} in front_matter["custom_fields"]
+    # §10.6 system block: created_by is the OS user (non-empty); project is
+    # the machine-safe LIMS short id (§3.1), NOT the folder name; and run is
+    # null for a project-level README.
+    assert front_matter["system_fields"]["created_by"]
+    assert front_matter["system_fields"]["project"] == "PROJ-0042"
+    assert front_matter["system_fields"]["run"] is None
+
+    cache = project_dir / CACHE_DIR_NAME / README_FIELDS_JSON_NAME
+    assert cache.is_file()
+    decoded = msgspec.json.decode(cache.read_bytes(), type=ReadmeFieldsJson)
+    assert decoded.config_fields["irb_protocol"] == "IRB-2026-0042"
 
 
 async def test_noop_nas_sync_returns_none(tmp_path: Path) -> None:

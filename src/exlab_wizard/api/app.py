@@ -44,7 +44,7 @@ from exlab_wizard.api.routers.sessions import build_sessions_router
 from exlab_wizard.api.routers.staging import build_staging_router
 from exlab_wizard.api.setup import build_setup_router
 from exlab_wizard.config.models import Config
-from exlab_wizard.constants import AUDIT_REFRESH_SECONDS, AuditScopeKind
+from exlab_wizard.constants import AUDIT_REFRESH_SECONDS, AuditScopeKind, Tier
 from exlab_wizard.logging import get_logger
 from exlab_wizard.utils.time import utc_now_iso
 
@@ -218,6 +218,10 @@ class AppDependencies:
     # Audit / pub-sub ---------------------------------------------------
     audit_channel: AuditChannel | None = None
     last_audit_at: str | None = None
+    # Tier counts from the latest background audit pass, read by the GUI
+    # Problems tab badge + right-pane summary (T6 / §B5).
+    last_audit_hard: int = 0
+    last_audit_soft: int = 0
 
     # Health snapshot probes -------------------------------------------
     nas_sync_snapshot: Callable[[], dict[str, Any]] | None = None
@@ -229,6 +233,14 @@ class AppDependencies:
     lims_probe: Callable[..., Any] | None = None
     equipment_probe: Callable[..., Any] | None = None
     autostart_toggle: Callable[[bool], Any] | None = None
+    # Real platform autostart-registration state, seeded at tray build so
+    # Settings -> Application can reflect it (T8).
+    autostart_is_registered: bool = False
+    # Graceful-shutdown hook + tray-availability flag, attached by the tray
+    # builder so the in-window Settings -> Application section can quit (T9)
+    # and show real tray status (T11). Absent in headless / server-only runs.
+    request_quit: Callable[[], None] | None = None
+    tray_available: bool = False
 
     # Background tasks --------------------------------------------------
     audit_task: asyncio.Task[None] | None = field(default=None, repr=False)
@@ -343,6 +355,16 @@ async def _audit_loop(deps: AppDependencies, interval_seconds: float) -> None:
                 continue
             audit_at = utc_now_iso()
             deps.last_audit_at = audit_at
+            # Cache tier counts so the in-process GUI (Problems tab badge +
+            # right-pane summary) reads them straight off deps -- a single
+            # source, refreshed on the 30 s cadence -- without re-running a
+            # full O(tree) audit on every page render (T6 / §B5).
+            deps.last_audit_hard = sum(
+                1 for f in findings if getattr(f, "tier", "") == Tier.HARD.value
+            )
+            deps.last_audit_soft = sum(
+                1 for f in findings if getattr(f, "tier", "") == Tier.SOFT.value
+            )
             added, removed, changed = _diff_findings(last, findings)
             if deps.audit_channel is not None:
                 if not last:

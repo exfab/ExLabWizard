@@ -49,6 +49,14 @@ class MainPageState:
     active_tab: str = "details"  # "details" | "problems"
     problems_count_hard: int = 0
     problems_count_soft: int = 0
+    # In-flight controller operations (Frontend §9.5). ``operations_count``
+    # gates the toolbar [Operations…] button; ``operations_input_required``
+    # drives the footer Sync segment's "N need input" warning.
+    operations_count: int = 0
+    operations_input_required: int = 0
+    # §9.6 single-equipment concurrency: the three creation buttons are
+    # disabled while any session is mid-flight (non-terminal).
+    creation_in_flight: bool = False
     # Legacy field — the orchestrator pipeline is always active under
     # Redesign §3.1, so this always renders True in production.
     orchestrator_enabled: bool = True
@@ -133,6 +141,7 @@ def render_file_explorer_page(
     on_open_settings: Callable[[], None],
     on_refresh: Callable[[], None],
     on_select_node: Callable[[str], None],
+    on_open_operations: Callable[[], None] | None = None,
     on_navigate_breadcrumb: Callable[[str], None] | None = None,
     on_toggle_right_pane: Callable[[], None] | None = None,
     on_run_staging_action: Callable[[str, str], None] | None = None,
@@ -195,12 +204,25 @@ def render_file_explorer_page(
         ntr_btn = ui.button("New Test Run", on_click=lambda _evt: on_open_new_test_run()).props(
             'color=warning data-testid="toolbar-new-test-run"'
         )
-        if s.selected_node_is_received:
+        # Creation is disabled on received-equipment nodes (decision 1) and
+        # while any session is mid-flight (single-equipment concurrency, §9.6).
+        if s.selected_node_is_received or s.creation_in_flight:
             for btn in (np_btn, nr_btn, ntr_btn):
                 btn.props("disable")
+            if s.creation_in_flight and not s.selected_node_is_received:
+                np_btn.tooltip("A creation is already in progress")
         ui.button("Add Equipment", on_click=lambda _evt: on_open_add_equipment()).props(
             'color=primary data-testid="toolbar-add-equipment"'
         )
+        # [Operations…] surfaces only while ≥1 operation is in flight
+        # (Frontend §9.5). Label carries the count; a warning color flags
+        # any suspended (INPUT_REQUIRED) session needing an answer.
+        if on_open_operations is not None and s.operations_count > 0:
+            ops_color = "warning" if s.operations_input_required > 0 else "primary"
+            ui.button(
+                f"Operations ({s.operations_count})",
+                on_click=lambda _evt: on_open_operations(),
+            ).props(f'flat color={ops_color} data-testid="toolbar-operations"')
         ui.button("Refresh", on_click=lambda _evt: on_refresh()).props(
             'flat data-testid="toolbar-refresh"'
         )
@@ -265,8 +287,11 @@ def render_file_explorer_page(
         # tab landed at a different Y per state -- that vertical shift was
         # the up/down "jump". Pinning to the top ties the tab's Y to the
         # constant panel top, so it holds its line on toggle.
-        with outer_split.after, ui.element("div").classes("w-full h-full").style(
-            "display: flex; flex-direction: row; flex-wrap: nowrap; align-items: stretch;"
+        with (
+            outer_split.after,
+            ui.element("div")
+            .classes("w-full h-full")
+            .style("display: flex; flex-direction: row; flex-wrap: nowrap; align-items: stretch;"),
         ):
             with ui.element("div").style(
                 "flex: 1 1 auto; min-width: 0; height: 100%; overflow: auto;"
@@ -308,14 +333,17 @@ def render_file_explorer_page(
                         "color: var(--color-muted, #8892a4);"
                     )
                 )
-                with toggle, ui.column().style(
-                    "align-items: center; gap: 6px; flex-wrap: nowrap; "
-                    "height: 100%; width: 100%; padding: 8px 2px; "
-                    # Surface fill + border + soft shadow so the chevron and
-                    # label read as a distinct raised tab against the page.
-                    "background: var(--color-surface, #ffffff); "
-                    "border: 1px solid var(--color-border, #dde3ed); border-radius: 6px; "
-                    "box-shadow: 0 1px 3px rgba(0, 54, 96, 0.12);"
+                with (
+                    toggle,
+                    ui.column().style(
+                        "align-items: center; gap: 6px; flex-wrap: nowrap; "
+                        "height: 100%; width: 100%; padding: 8px 2px; "
+                        # Surface fill + border + soft shadow so the chevron and
+                        # label read as a distinct raised tab against the page.
+                        "background: var(--color-surface, #ffffff); "
+                        "border: 1px solid var(--color-border, #dde3ed); border-radius: 6px; "
+                        "box-shadow: 0 1px 3px rgba(0, 54, 96, 0.12);"
+                    ),
                 ):
                     ui.label(chevron).style(
                         "flex: 0 0 auto; font-size: 12px; line-height: 1; "
@@ -353,10 +381,23 @@ def render_file_explorer_page(
             ),
             ui.row().classes("items-center w-full"),
         ):
-            status_bar_segment.status_bar_segment(
-                label="Sync",
-                state=status_bar_segment.SEGMENT_NORMAL,
-            )
+            # Sync segment doubles as the Operations entry point: when any
+            # session is suspended awaiting input it flips to a warning
+            # "N operations need input" and opens the same modal (§3.5.5).
+            if s.operations_input_required > 0:
+                status_bar_segment.status_bar_segment(
+                    label=f"{s.operations_input_required} operations need input",
+                    state=status_bar_segment.SEGMENT_WARNING,
+                    on_click=on_open_operations,
+                )
+            else:
+                # Only clickable when there is something to show, so a click
+                # never opens an empty Operations panel.
+                status_bar_segment.status_bar_segment(
+                    label="Sync",
+                    state=status_bar_segment.SEGMENT_NORMAL,
+                    on_click=on_open_operations if s.operations_count > 0 else None,
+                )
             status_bar_segment.status_bar_segment(
                 label="Validator",
                 state=status_bar_segment.SEGMENT_NORMAL,
@@ -443,8 +484,10 @@ def _render_right_pane(
                 on_run_staging_action=on_run_staging_action,
             )
         with ui.tab_panel("problems"):
+            total = state.problems_count_hard + state.problems_count_soft
             ui.label(
-                f"Showing 0 of {state.problems_count_hard + state.problems_count_soft} findings",
+                f"{total} findings ({state.problems_count_hard} hard, "
+                f"{state.problems_count_soft} soft)",
             ).props('data-testid="problems-summary"').style(
                 "font-family: var(--font-mono); color: var(--color-muted);"
             )

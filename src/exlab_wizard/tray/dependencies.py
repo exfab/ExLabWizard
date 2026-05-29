@@ -128,6 +128,12 @@ def build_production_dependencies(state_dir: Path) -> AppDependencies:
     )
 
     deps.autostart_toggle = _make_autostart_toggle()
+    # Seed the real registration state so Settings -> Application can show the
+    # "Start at login" checkbox checked/unchecked to match reality (T8).
+    try:
+        deps.autostart_is_registered = AutostartManager().is_registered()
+    except Exception:
+        deps.autostart_is_registered = False
 
     # Rclone-only NAS sync migration (2026-05-26). The per-equipment NAS
     # password-presence set drives the §4.9 setup gate and the Settings
@@ -530,6 +536,7 @@ def _build_controller(
         msg = "controller requires config + validator + template_engine + cache_creation"
         raise RuntimeError(msg)
     from exlab_wizard.controller.creation import CreationController
+    from exlab_wizard.readme import ReadmeGenerator
 
     return CreationController(
         config=config,
@@ -539,6 +546,7 @@ def _build_controller(
         cache_creation=cache_creation,
         cache_equipment=cache_equipment,
         session_store=session_store,
+        readme_generator=ReadmeGenerator(),
     )
 
 
