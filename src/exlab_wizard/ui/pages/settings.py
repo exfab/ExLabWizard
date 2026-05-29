@@ -27,9 +27,10 @@ SETTINGS_SECTIONS: tuple[str, ...] = (
     "lims",
     "equipment",
     "nas_cleanup",
-    # "operators" is deferred -- backend OperatorsConfig + the
-    # controller/creation.py allowlist gate stay wired and are no-ops while
-    # the allowlist defaults to []. The chip editor lands in a future update.
+    # "operators" backs OperatorsConfig.allowlist (Frontend §7.9). It is a
+    # chip editor and is non-gating: the allowlist defaults to [] (any
+    # operator allowed) and it is never added to ``_missing_setup_sections``.
+    "operators",
     "validator",
     "logging",
     "orchestrator",
@@ -49,6 +50,7 @@ SECTION_TITLES: dict[str, str] = {
     "equipment": "Equipment List",
     NAS_CREDENTIALS_SECTION: "NAS Credentials",
     "nas_cleanup": "NAS Cleanup",
+    "operators": "Operators",
     "validator": "Validator",
     "logging": "Logging",
     "orchestrator": "Orchestrator Mode",
@@ -379,6 +381,89 @@ def render_settings_page(
     return card
 
 
+def _render_chip_editor(
+    values: list[str],
+    *,
+    add_label: str,
+    testid: str,
+    validate: Callable[[str], str | None] | None = None,
+    on_reset: Callable[[], None] | None = None,
+    reset_label: str = "Reset to defaults",
+    empty_text: str = "(none)",
+) -> None:
+    """Reusable chip / list editor bound to a draft string list (T7 / T10).
+
+    Mutates ``values`` in place -- ``[+ Add]`` appends (rejecting blanks,
+    duplicates, and ``validate`` failures), each chip carries a delete, and
+    an optional ``[Reset]`` replaces the contents -- so persistence rides
+    the existing draft -> ``finalize_settings_draft`` -> Save path with no
+    new plumbing. Entries are stored verbatim (case-sensitive, no
+    lowercasing); whitespace is trimmed on add.
+    """
+    from nicegui import ui
+
+    chips = ui.row().classes("items-center w-full").style("gap: 0.35rem; flex-wrap: wrap;")
+
+    def _render_chips() -> None:
+        chips.clear()
+        with chips:
+            if not values:
+                ui.label(empty_text).props(f'data-testid="{testid}-empty"').style(
+                    "color: var(--color-muted);"
+                )
+            for idx, value in enumerate(values):
+                with (
+                    ui.row()
+                    .classes("items-center")
+                    .props(f'data-testid="{testid}-chip"')
+                    .style(
+                        "gap: 0.15rem; background: var(--color-rule); "
+                        "border-radius: var(--radius-sm); padding: 0.05rem 0.1rem 0.05rem 0.5rem;"
+                    )
+                ):
+                    ui.label(value).style(
+                        "font-family: var(--font-mono); font-size: var(--text-xs);"
+                    )
+                    ui.button(icon="close", on_click=lambda _e, i=idx: _remove(i)).props(
+                        "flat dense round size=sm"
+                    )
+
+    def _remove(idx: int) -> None:
+        if 0 <= idx < len(values):
+            del values[idx]
+            _render_chips()
+
+    _render_chips()
+
+    new_input = ui.input(label=add_label).props(f'data-testid="{testid}-input"')
+
+    def _add() -> None:
+        raw = (new_input.value or "").strip()
+        if not raw:
+            return
+        if validate is not None:
+            error = validate(raw)
+            if error is not None:
+                notifications.notify_error(error)
+                return
+        if raw not in values:
+            values.append(raw)
+            _render_chips()
+        new_input.value = ""
+
+    with ui.row().classes("items-center").style("gap: 0.5rem;"):
+        ui.button("+ Add", on_click=lambda _e: _add()).props(f'flat data-testid="{testid}-add"')
+        if on_reset is not None:
+
+            def _reset() -> None:
+                on_reset()
+                _render_chips()
+
+            ui.button(reset_label, on_click=lambda _e: _reset()).props(
+                f'flat data-testid="{testid}-reset"'
+            )
+
+
 def _render_section_body(
     section: str,
     draft: Config,
@@ -474,13 +559,39 @@ def _render_section_body(
             ui.checkbox(
                 "Retain .exlab-wizard/ metadata", value=draft.nas_cleanup.retain_cache
             ).bind_value(draft.nas_cleanup, "retain_cache")
+        elif section == "operators":
+            # Frontend §7.9: empty allowlist = any operator; non-empty = the
+            # wizard renders a dropdown of these names and rejects free-text.
+            # Case-sensitive (OperatorsConfig is str_strip_whitespace, not
+            # lowercased) and non-gating.
+            ui.label(
+                "If empty, the operator field accepts any value. If non-empty, the wizard "
+                "shows a dropdown of these names and rejects free-text."
+            ).style("color: var(--color-muted); font-size: var(--text-sm);")
+            _render_chip_editor(
+                draft.operators.allowlist,
+                add_label="Add operator username",
+                testid="settings-operators",
+                empty_text="Any operator allowed (allowlist empty)",
+            )
         elif section == "validator":
             ui.number(
                 label="Max content-scan size (MiB)",
                 value=draft.validator.content_scan_max_mib,
             ).bind_value(draft.validator, "content_scan_max_mib")
-            ui.label(
-                "Scanned file extensions: " + ", ".join(draft.validator.content_scan_extensions)
+            ui.label("Scanned file extensions").style("color: var(--color-body);")
+
+            def _reset_extensions() -> None:
+                from exlab_wizard.config.models import _default_content_scan_extensions
+
+                draft.validator.content_scan_extensions[:] = _default_content_scan_extensions()
+
+            _render_chip_editor(
+                draft.validator.content_scan_extensions,
+                add_label="Add extension (e.g. .txt)",
+                testid="settings-scan-ext",
+                validate=lambda v: None if v.startswith(".") else "Extensions must start with '.'",
+                on_reset=_reset_extensions,
             )
         elif section == "logging":
             ui.radio(["DEBUG", "INFO", "WARN", "ERROR"], value=draft.logging.level).bind_value(

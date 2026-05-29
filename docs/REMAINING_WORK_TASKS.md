@@ -145,15 +145,21 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
 - **Status:** ⬜ Not started
 - **Impl note:** _(pending)_
 
-### - [ ] T7 — Operators allowlist chip editor
+### - [x] T7 — Operators allowlist chip editor
 - **Spec:** [§A4](./REMAINING_WORK.md#a4--operators-allowlist-has-backend-enforcement-but-no-editor-ui) · **Category:** A · **Effort:** M · **Priority:** Med
 - **Key files:** `ui/pages/settings.py:25,30-32,46,464` · `config/models.py:422-427` · `controller/creation.py:540-547`
 - **Acceptance:** an Operators section with a chip editor bound to
   `draft.operators.allowlist`, persisting via the existing draft path; **case-sensitive**, no
   trimming/lowercasing; kept **non-gating** (not added to `_missing_setup_sections`).
 - **Builds:** the reusable chip/list widget (shared with T10).
-- **Status:** ⬜ Not started
-- **Impl note:** _(pending)_
+- **Status:** ✅ Done
+- **Impl note:** Built a reusable `_render_chip_editor(values, …)` in `settings.py` (modeled on the
+  equipment add-form: add/delete/optional-reset, mutates the draft list in place so persistence
+  rides the existing draft → finalize → Save path). Added `"operators"` to `SETTINGS_SECTIONS`
+  (between `nas_cleanup` and `validator`) + `SECTION_TITLES`, and an `elif section == "operators"`
+  branch with the §7.9 helper text + chip editor bound to `draft.operators.allowlist`. Stored
+  verbatim (case-sensitive; whitespace trimmed on add only). Non-gating (not in
+  `_missing_setup_sections`). Updated the section-count test (8→9). Suite green.
 
 ### - [ ] T8 — "Start at login" checkbox wiring
 - **Spec:** [§A2](./REMAINING_WORK.md#a2--start-at-login-autostart-checkbox-is-not-bound) · **Category:** A · **Effort:** S · **Priority:** Med
@@ -173,14 +179,18 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
 - **Status:** ⬜ Not started
 - **Impl note:** _(pending)_
 
-### - [ ] T10 — `content_scan_extensions` chip editor + reset-to-defaults
+### - [x] T10 — `content_scan_extensions` chip editor + reset-to-defaults
 - **Spec:** [§A5](./REMAINING_WORK.md#a5--content_scan_extensions-renders-read-only-partial) · **Category:** A · **Effort:** S · **Priority:** Low
 - **Key files:** `ui/pages/settings.py:482-484` · `config/models.py:435,464-471`
 - **Acceptance:** chip editor bound to `draft.validator.content_scan_extensions` with a
   `[Reset to defaults]` action; entries validated to start with `.` on add.
 - **Depends on:** T7 (reuse the chip widget).
-- **Status:** ⬜ Not started
-- **Impl note:** _(pending)_
+- **Status:** ✅ Done
+- **Impl note:** Replaced the read-only "Scanned file extensions" label with the shared
+  `_render_chip_editor` bound to `draft.validator.content_scan_extensions`, with a
+  `[Reset to defaults]` action (`draft.validator.content_scan_extensions[:] =
+  _default_content_scan_extensions()`) and an on-add validator rejecting entries that don't start
+  with `.` (the `ValidatorConfig` dot-prefix rule also re-checks at Save). Landed with T7.
 
 ### - [ ] T11 — Application-section status labels parity (§7.13)
 - **Spec:** [§A3](./REMAINING_WORK.md#a3--application-section-status-indicators-are-hardcoded--missing-713-parity) · **Category:** A · **Effort:** S · **Priority:** Low
@@ -219,4 +229,4 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   between `api/routers/operations.py` and the in-process modal.
 
 ## Progress
-5 / 13 complete.
+7 / 13 complete.
