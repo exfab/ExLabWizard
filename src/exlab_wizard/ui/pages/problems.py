@@ -301,7 +301,9 @@ def render_problems_page(
                 elapsed = (utc_now() - parse_utc_iso(last_audit_at)).total_seconds()
             except Exception:
                 return refresh_interval_seconds
-            return max(0, int(refresh_interval_seconds - (elapsed % refresh_interval_seconds)))
+            # Clamp at 0 once the interval has elapsed (an overdue / in-progress
+            # pass) rather than re-cycling, which would misreport the wait.
+            return max(0, int(refresh_interval_seconds - elapsed))
 
         footer = (
             ui.label("")

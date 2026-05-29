@@ -348,21 +348,28 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         def _on_set_autostart(enabled: bool) -> bool | None:
             return _apply_autostart(deps, enabled)
 
-        # Quit hook (T9): scheduled non-blocking so the HTTP response flushes
-        # before the server tears down (a synchronous quit would kill the
-        # server serving this page). Absent in headless/test fixtures.
+        # Quit hook (T9): run the graceful-shutdown hook on a separate thread,
+        # NOT via ui.timer. The timer callback runs on the server's *running*
+        # event loop, where ``request_quit``'s ``asyncio.run(...)`` raises
+        # "loop already running" (and the fallback re-raises) -- the app would
+        # never shut down. A fresh thread has no running loop so ``asyncio.run``
+        # works; the click handler returns immediately so the HTTP response
+        # still flushes. Absent in headless/test fixtures.
         _quit_hook = getattr(deps, "request_quit", None) if deps is not None else None
         on_quit: Callable[[], None] | None = None
         if _quit_hook is not None:
+            quit_hook = _quit_hook
 
             def on_quit() -> None:
+                import threading
+
                 def _do() -> None:
                     try:
-                        _quit_hook()
+                        quit_hook()
                     except Exception as exc:
                         _log.warning("quit hook raised: %s", exc)
 
-                ui.timer(0.1, _do, once=True)
+                threading.Thread(target=_do, name="exlab-quit", daemon=True).start()
 
         def _nas_handlers(
             equipment_id: str,

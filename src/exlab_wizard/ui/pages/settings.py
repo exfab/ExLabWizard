@@ -454,9 +454,11 @@ def _render_chip_editor(
             if error is not None:
                 notifications.notify_error(error)
                 return
-        if raw not in values:
-            values.append(raw)
-            _render_chips()
+        if raw in values:
+            notifications.notify_error(f"{raw!r} is already in the list")
+            return
+        values.append(raw)
+        _render_chips()
         new_input.value = ""
 
     with ui.row().classes("items-center").style("gap: 0.5rem;"):
