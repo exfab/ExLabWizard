@@ -108,17 +108,6 @@ class SyncJobHandle:
 # ---------------------------------------------------------------------------
 
 
-def _remote_name_for(equipment: EquipmentConfig) -> str:
-    """Return the inline rclone remote name used for ``equipment``.
-
-    The remote name lives only in env (``RCLONE_CONFIG_<REMOTE>_*``);
-    its identity has no effect outside the subprocess. Deriving it from
-    the equipment id keeps every concurrent push self-named and avoids
-    colliding with anything in a user's ``rclone.conf``.
-    """
-    return f"exlab_{equipment.id.lower()}"
-
-
 def _build_target_for_run(*, remote: str, base_root: str, equipment_id: str, run: Path) -> str:
     """Compose ``<remote>:/<base_root>/<equipment_id>/<run-leaf>``.
 

@@ -25,7 +25,6 @@ from exlab_wizard.sync.transports.rclone import (
     CheckResult,
     RcloneDriver,
     _parse_combined,
-    obscure,
 )
 
 
@@ -120,38 +119,6 @@ async def test_rclone_push_missing_binary_raises(tmp_path: Path) -> None:
         await driver.push(tmp_path, "remote:path")
 
 
-async def test_rclone_push_forwards_env(
-    stub_dir: Path,
-    record_argv: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``env`` arrives in the subprocess; ``mask_for_log`` redacts the password.
-
-    The stub doesn't itself assert on env; it logs argv only. We piggyback on
-    a separate env-tap file (set by the stub when STUB_RCLONE_ENV_DUMP is set)
-    to capture what the child actually saw.
-    """
-    src = tmp_path / "src"
-    src.mkdir()
-    dump = tmp_path / "env.dump"
-    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
-    monkeypatch.setenv("STUB_RCLONE_ENV_DUMP", str(dump))
-    driver = RcloneDriver()
-    env = {"RCLONE_CONFIG_R_TYPE": "sftp", "RCLONE_CONFIG_R_PASS": "obscured-secret"}
-    await driver.push(
-        src,
-        "r:/path",
-        env=env,
-        mask_for_log=("RCLONE_CONFIG_R_PASS",),
-    )
-    if dump.exists():
-        # Stub captured the env -- assert the password key is set and matches.
-        text = dump.read_text()
-        assert "RCLONE_CONFIG_R_TYPE=sftp" in text
-        assert "RCLONE_CONFIG_R_PASS=obscured-secret" in text
-
-
 # ---------------------------------------------------------------------------
 # argv shape
 # ---------------------------------------------------------------------------
@@ -240,27 +207,6 @@ async def test_rclone_argv_omits_files_from_when_none(
 
 
 # ---------------------------------------------------------------------------
-# obscure
-# ---------------------------------------------------------------------------
-
-
-async def test_obscure_returns_stdout_stripped(
-    stub_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "obscure_success")
-    monkeypatch.setenv("STUB_RCLONE_OBSCURE_OUT", "OBS_DEADBEEF")
-    out = await obscure("mypassword")
-    assert out == "OBS_DEADBEEF"
-
-
-async def test_obscure_missing_binary_raises_auth(tmp_path: Path) -> None:
-    with pytest.raises(TransportError) as excinfo:
-        await obscure("p", binary="rclone-not-installed-12345")
-    assert excinfo.value.error_kind is TransportErrorKind.AUTH
-
-
-# ---------------------------------------------------------------------------
 # about
 # ---------------------------------------------------------------------------
 
@@ -318,7 +264,7 @@ def test_parse_combined_tolerates_blank_lines_and_unknown_prefix() -> None:
 async def test_push_argv_includes_config_and_perf(monkeypatch, tmp_path):
     captured = {}
 
-    async def fake_run(cmd, *, env=None, stdin=None, mask_for_log=()):
+    async def fake_run(cmd):
         captured["cmd"] = cmd
         return 0, "", ""
 
@@ -340,7 +286,7 @@ async def test_push_argv_includes_config_and_perf(monkeypatch, tmp_path):
 async def test_lsjson_argv_is_recursive_readonly(monkeypatch):
     captured = {}
 
-    async def fake_run(cmd, *, env=None, stdin=None, mask_for_log=()):
+    async def fake_run(cmd):
         captured["cmd"] = cmd
         return 0, '[{"Path":"a.txt","Name":"a.txt","Size":3,"ModTime":"2026-05-28T00:00:00Z","IsDir":false}]', ""
 
@@ -354,7 +300,7 @@ async def test_lsjson_argv_is_recursive_readonly(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_lsjson_raises_transport_error_on_failure(monkeypatch):
-    async def fake_run(cmd, *, env=None, stdin=None, mask_for_log=()):
+    async def fake_run(cmd):
         return 1, "", "401 Unauthorized"
 
     monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
@@ -369,7 +315,7 @@ async def test_lsjson_raises_transport_error_on_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_listremotes_parses_lines(monkeypatch):
-    async def fake_run(cmd, *, env=None, stdin=None, mask_for_log=()):
+    async def fake_run(cmd):
         assert cmd[:2] == ["rclone", "listremotes"]
         return 0, "nas01:\nstagepc:\n", ""
 
@@ -380,7 +326,7 @@ async def test_listremotes_parses_lines(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_listremotes_empty_on_failure(monkeypatch):
-    async def fake_run(cmd, *, env=None, stdin=None, mask_for_log=()):
+    async def fake_run(cmd):
         return 1, "", "config not found"
 
     monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)

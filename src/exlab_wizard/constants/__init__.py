@@ -67,8 +67,6 @@ from exlab_wizard.constants.filenames import (
 from exlab_wizard.constants.keyring import (
     KEYRING_SERVICE,
     KEYRING_USERNAME_LIMS,
-    KEYRING_USERNAME_NAS_TEMPLATE,
-    keyring_nas_username,
 )
 
 # ---- Limits (Backend §4, §6, §8.1.1, §15; Frontend §4.6) -------------------
@@ -172,7 +170,6 @@ __all__ = [
     # Keyring
     "KEYRING_SERVICE",
     "KEYRING_USERNAME_LIMS",
-    "KEYRING_USERNAME_NAS_TEMPLATE",
     "LABEL_MAX_LENGTH",
     "LIMS_CACHE_DB_NAME",
     "LOG_FILE_TEMPLATE",
@@ -264,5 +261,4 @@ __all__ = [
     "TemplateType",
     "Tier",
     "TreeProjectStatus",
-    "keyring_nas_username",
 ]

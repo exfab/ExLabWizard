@@ -7,19 +7,15 @@ SHA-256 locally (the only way to integrity-check SFTP and SMB backends,
 which expose no server-side hashing).
 
 The driver is intentionally thin: it builds an argv, hands it to
-:func:`exlab_wizard.sync.transports._run.run_subprocess` along with an
-``env`` dict carrying ``RCLONE_CONFIG_<remote>_*`` credentials, and
+:func:`exlab_wizard.sync.transports._run.run_subprocess`, and
 translates the exit-code + stderr-substring into one of the
-``TransportErrorKind`` retry classes. The :class:`RcloneSftpTransport`
-and :class:`RcloneSmbTransport` config models provide the per-backend
-connection params; :func:`build_rclone_env` assembles them into the env
-dict consumed by ``run_subprocess``.
+``TransportErrorKind`` retry classes.
 
-Passwords cross the wire via env-var injection only. ``rclone`` refuses
-raw passwords in ``RCLONE_CONFIG_<remote>_PASS``; the value must be the
-output of ``rclone obscure``. :func:`obscure` shells out once per push
-to produce the obscured form; the cleartext password lives only in the
-OS keyring and never touches disk.
+rclone.conf NAS-sync migration: the connection (host, credentials,
+backend type) is defined entirely by a named remote in the operator's
+``rclone.conf``. The driver injects no credentials and never sees a
+password -- it only passes ``--config <path>`` when the ``nas:`` block
+pins one.
 """
 
 from __future__ import annotations
@@ -27,7 +23,6 @@ from __future__ import annotations
 import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from exlab_wizard.logging import get_logger
 from exlab_wizard.sync.transports import (
@@ -37,16 +32,10 @@ from exlab_wizard.sync.transports import (
 )
 from exlab_wizard.sync.transports._run import run_subprocess
 
-if TYPE_CHECKING:
-    from exlab_wizard.config.models import EquipmentTransport
-
 __all__ = [
     "AboutResult",
     "CheckResult",
     "RcloneDriver",
-    "build_rclone_env",
-    "obscure",
-    "pass_env_keys_for",
 ]
 
 _log = get_logger(__name__)
@@ -128,91 +117,6 @@ class AboutResult:
 
 
 # ---------------------------------------------------------------------------
-# Env builder
-# ---------------------------------------------------------------------------
-
-
-def build_rclone_env(
-    *,
-    transport: EquipmentTransport,
-    password_obscured: str,
-    remote_name: str,
-) -> dict[str, str]:
-    """Build the ``RCLONE_CONFIG_<remote>_*`` env dict for an inline backend.
-
-    The output dict is suitable for passing as ``env`` to
-    :func:`run_subprocess`. ``password_obscured`` is the output of
-    :func:`obscure` -- rclone refuses raw passwords in ``_PASS``.
-
-    The dict overrides any pre-existing rclone.conf entry with the same
-    ``remote_name`` for the duration of the subprocess.
-    """
-    from exlab_wizard.config.models import RcloneSftpTransport, RcloneSmbTransport
-
-    prefix = f"RCLONE_CONFIG_{remote_name.upper()}_"
-    env: dict[str, str] = {}
-    if isinstance(transport, RcloneSftpTransport):
-        env[f"{prefix}TYPE"] = "sftp"
-        env[f"{prefix}HOST"] = transport.host
-        env[f"{prefix}PORT"] = str(transport.port)
-        env[f"{prefix}USER"] = transport.user
-        env[f"{prefix}PASS"] = password_obscured
-        return env
-    if isinstance(transport, RcloneSmbTransport):
-        env[f"{prefix}TYPE"] = "smb"
-        env[f"{prefix}HOST"] = transport.host
-        env[f"{prefix}USER"] = transport.user
-        env[f"{prefix}PASS"] = password_obscured
-        if transport.domain:
-            env[f"{prefix}DOMAIN"] = transport.domain
-        return env
-    msg = f"unsupported transport type for env build: {type(transport).__name__}"
-    raise ValueError(msg)
-
-
-def pass_env_keys_for(remote_name: str) -> tuple[str, ...]:
-    """Return the env-key tuple that must be redacted from subprocess logs.
-
-    The only secret in :func:`build_rclone_env`'s output is the obscured
-    password; this helper names it so callers can pass it as
-    ``mask_for_log`` without rebuilding the env-key string manually.
-    """
-    return (f"RCLONE_CONFIG_{remote_name.upper()}_PASS",)
-
-
-# ---------------------------------------------------------------------------
-# obscure helper
-# ---------------------------------------------------------------------------
-
-
-async def obscure(password: str, *, binary: str = "rclone") -> str:
-    """Return the rclone-obscured form of ``password``.
-
-    rclone refuses raw passwords in ``RCLONE_CONFIG_<remote>_PASS``; the
-    value must be the output of ``rclone obscure``. This helper shells
-    out to ``rclone obscure -`` (cleartext on stdin) so the password
-    never appears in argv or env.
-
-    A failed shell-out (binary missing, non-zero exit) raises
-    :class:`TransportError` with :attr:`TransportErrorKind.AUTH` so the
-    queue treats a broken rclone install as a terminal failure rather
-    than retrying forever.
-    """
-    cmd: list[str] = [binary, "obscure", "-"]
-    try:
-        rc, stdout, stderr = await run_subprocess(cmd, stdin=password.encode("utf-8"))
-    except FileNotFoundError as exc:
-        msg = f"rclone binary not found: {binary!r}"
-        raise TransportError(msg, error_kind=TransportErrorKind.AUTH) from exc
-
-    if rc != 0:
-        msg = f"rclone obscure failed rc={rc}: {stderr.strip()}"
-        _log.warning("rclone obscure failed rc=%d", rc)
-        raise TransportError(msg, error_kind=TransportErrorKind.AUTH)
-    return stdout.strip()
-
-
-# ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
 
@@ -247,18 +151,15 @@ class RcloneDriver:
         *,
         bwlimit_kibps: int | None = None,
         files_from: Path | None = None,
-        env: dict[str, str] | None = None,
-        mask_for_log: tuple[str, ...] = (),
     ) -> TransportResult:
         """Run ``rclone copy --checksum`` from ``local`` to ``remote``.
 
-        ``remote`` is the full ``<remote_name>:<path>`` string. ``env``
-        carries the ``RCLONE_CONFIG_<remote>_*`` connection map produced
-        by :func:`build_rclone_env`; ``mask_for_log`` lists env keys to
-        redact in the debug log (use :func:`pass_env_keys_for`).
-        ``bwlimit_kibps`` is forwarded as ``--bwlimit <K>K`` when set;
-        ``files_from`` is forwarded as ``--files-from <path>`` so only a
-        subset of the local tree transfers.
+        ``remote`` is the full ``<remote_name>:<path>`` string; the named
+        remote (and its credentials) lives in the operator's
+        ``rclone.conf``. ``bwlimit_kibps`` is forwarded as
+        ``--bwlimit <K>K`` when set; ``files_from`` is forwarded as
+        ``--files-from <path>`` so only a subset of the local tree
+        transfers.
 
         Returns a :class:`TransportResult`. A spawn failure raises
         :class:`TransportError` so the queue terminates rather than
@@ -278,7 +179,7 @@ class RcloneDriver:
         _log.debug("rclone cmd: %s", shlex.join(cmd))
 
         try:
-            rc, stdout, stderr = await run_subprocess(cmd, env=env, mask_for_log=mask_for_log)
+            rc, stdout, stderr = await run_subprocess(cmd)
         except FileNotFoundError as exc:
             msg = f"rclone binary not found: {self._binary!r}"
             raise TransportError(msg) from exc
@@ -302,8 +203,6 @@ class RcloneDriver:
         remote: str,
         *,
         files_from: Path,
-        env: dict[str, str] | None = None,
-        mask_for_log: tuple[str, ...] = (),
     ) -> CheckResult:
         """Run ``rclone check --download --files-from --combined`` over ``files_from``.
 
@@ -349,7 +248,7 @@ class RcloneDriver:
 
         try:
             try:
-                rc, _stdout, stderr = await run_subprocess(cmd, env=env, mask_for_log=mask_for_log)
+                rc, _stdout, stderr = await run_subprocess(cmd)
             except FileNotFoundError as exc:
                 msg = f"rclone binary not found: {self._binary!r}"
                 raise TransportError(msg) from exc
@@ -383,9 +282,6 @@ class RcloneDriver:
     async def about(
         self,
         remote: str,
-        *,
-        env: dict[str, str] | None = None,
-        mask_for_log: tuple[str, ...] = (),
     ) -> AboutResult:
         """Run ``rclone about <remote> --json`` -- the equipment probe.
 
@@ -402,7 +298,7 @@ class RcloneDriver:
         _log.debug("rclone about cmd: %s", shlex.join(cmd))
 
         try:
-            rc, stdout, stderr = await run_subprocess(cmd, env=env, mask_for_log=mask_for_log)
+            rc, stdout, stderr = await run_subprocess(cmd)
         except FileNotFoundError:
             return AboutResult(ok=False, reason="rclone binary not found")
 

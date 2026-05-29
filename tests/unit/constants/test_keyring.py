@@ -20,27 +20,12 @@ def test_keyring_username_lims_literal() -> None:
     assert keyring.KEYRING_USERNAME_LIMS == "lims"
 
 
-def test_keyring_username_nas_template_literal() -> None:
-    # Backend Spec §7.4.1.
-    assert keyring.KEYRING_USERNAME_NAS_TEMPLATE == "nas:{equipment_id}"
-
-
-def test_keyring_nas_username_formats_template() -> None:
-    # Spec example: ``CONFOCAL_01`` -> ``nas:CONFOCAL_01``.
-    assert keyring.keyring_nas_username("CONFOCAL_01") == "nas:CONFOCAL_01"
-
-
-def test_keyring_nas_username_handles_various_ids() -> None:
-    # The helper does not validate the equipment ID -- the field validator
-    # already enforces ``EQUIPMENT_ID_PATTERN``. Just check the formatter.
-    samples = {
-        "MICROSCOPE": "nas:MICROSCOPE",
-        "XRD_LAB_2": "nas:XRD_LAB_2",
-        "A": "nas:A",
-        "Z9_FOO": "nas:Z9_FOO",
-    }
-    for equipment_id, expected in samples.items():
-        assert keyring.keyring_nas_username(equipment_id) == expected
+def test_nas_keyring_username_removed() -> None:
+    # rclone.conf NAS-sync migration (Phase 7): NAS credentials live in
+    # the operator's rclone.conf, so the per-equipment NAS keyring
+    # username/template were removed.
+    assert not hasattr(keyring, "keyring_nas_username")
+    assert not hasattr(keyring, "KEYRING_USERNAME_NAS_TEMPLATE")
 
 
 def test_keyring_re_exported_from_package() -> None:
@@ -48,5 +33,5 @@ def test_keyring_re_exported_from_package() -> None:
 
     assert constants.KEYRING_SERVICE == "exlab-wizard"
     assert constants.KEYRING_USERNAME_LIMS == "lims"
-    assert constants.KEYRING_USERNAME_NAS_TEMPLATE == "nas:{equipment_id}"
-    assert constants.keyring_nas_username("CONFOCAL_01") == "nas:CONFOCAL_01"
+    assert not hasattr(constants, "keyring_nas_username")
+    assert not hasattr(constants, "KEYRING_USERNAME_NAS_TEMPLATE")
