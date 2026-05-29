@@ -27,11 +27,12 @@ from exlab_wizard.cache.sync_state_writer import SyncStateWriter
 from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
-    NasConfig,
+    RclonePerf,
 )
 from exlab_wizard.constants import (
     RunSyncState,
     SyncHandleState,
+    SyncMode,
     SyncStatus,
 )
 from exlab_wizard.logging import get_logger
@@ -120,18 +121,24 @@ def _build_target_for_run(*, remote: str, base_root: str, equipment_id: str, run
     return f"{remote}:/{path}"
 
 
-def _build_driver(nas: NasConfig) -> RcloneDriver:
-    """Construct the shared :class:`RcloneDriver` from the ``nas:`` block.
+def _build_driver(config_path: str, perf: RclonePerf) -> RcloneDriver:
+    """Construct a :class:`RcloneDriver` for a named remote.
 
     The named remote lives in the operator's ``rclone.conf`` (set up with
     ``rclone config``); the driver only needs the optional ``--config``
     path override plus the parallelism dials. No keyring / env threading —
     credentials are entirely the named remote's concern.
+
+    Both the NAS leg and the orchestrator stage hop share the same
+    ``rclone.conf`` (their remotes live side by side), so the config path
+    is always ``nas.rclone_config_path``; only the perf dial differs by
+    ``sync_mode`` (the ``nas:`` block's ``perf`` vs
+    ``orchestrator.staging_perf``).
     """
     return RcloneDriver(
-        config_path=nas.rclone_config_path or None,
-        transfers=nas.perf.transfers,
-        checkers=nas.perf.checkers,
+        config_path=config_path or None,
+        transfers=perf.transfers,
+        checkers=perf.checkers,
     )
 
 
@@ -629,10 +636,21 @@ class NASSyncClient:
     def _target_for_equipment(self, equipment: EquipmentConfig, run: Path) -> str:
         """Resolve the rclone target string for ``equipment``'s ``run``.
 
-        Single source of target resolution. Branches by ``sync_mode`` in
-        a later phase; for now both nas-mode and the fallback compose the
-        target from the ``nas:`` block (named remote + base root).
+        Single source of target resolution, branched by ``sync_mode``
+        (rclone.conf NAS-sync migration, Phase 8): stage-mode equipment
+        push to the orchestrator's staging remote
+        (``orchestrator.staging_remote`` + ``staging_base_root``); every
+        other equipment composes the target from the ``nas:`` block (named
+        remote + base root). Both legs reuse :func:`_build_target_for_run`.
         """
+        if equipment.sync_mode == SyncMode.STAGE:
+            orch = self._config.orchestrator
+            return _build_target_for_run(
+                remote=orch.staging_remote,
+                base_root=orch.staging_base_root,
+                equipment_id=equipment.id,
+                run=run,
+            )
         nas = self._config.nas
         return _build_target_for_run(
             remote=nas.remote,
@@ -641,17 +659,44 @@ class NASSyncClient:
             run=run,
         )
 
+    def _base_root_for_equipment(self, equipment: EquipmentConfig) -> str:
+        """Return the remote base root for ``equipment``, branched by mode.
+
+        Mirrors :meth:`_target_for_equipment`'s mode branch so the lsjson
+        ``strip_prefix`` is computed against the correct base root (the
+        staging base root for stage-mode, the ``nas:`` base root otherwise).
+        """
+        if equipment.sync_mode == SyncMode.STAGE:
+            return self._config.orchestrator.staging_base_root
+        return self._config.nas.base_root
+
+    def _driver_for_equipment(self, equipment: EquipmentConfig) -> RcloneDriver:
+        """Build the :class:`RcloneDriver` for ``equipment``, branched by mode.
+
+        stage-mode uses ``orchestrator.staging_perf``; every other equipment
+        uses the ``nas:`` block's ``perf``. Both share ``nas.rclone_config_path``
+        as the ``--config`` override -- the staging and NAS remotes live in
+        the same ``rclone.conf``.
+        """
+        nas = self._config.nas
+        if equipment.sync_mode == SyncMode.STAGE:
+            perf = self._config.orchestrator.staging_perf
+        else:
+            perf = nas.perf
+        return _build_driver(nas.rclone_config_path, perf)
+
     def _build_push(self, equipment: EquipmentConfig) -> Callable[..., Any]:
         """Resolve the push callable for ``equipment``.
 
         Tests can inject a custom factory via the constructor's
         ``push_callable_factory`` argument so they don't need a real
-        rclone binary on PATH. The default closure builds the target from
-        the ``nas:`` block and calls the named-remote driver.
+        rclone binary on PATH. The default closure builds the per-equipment
+        target + driver (nas remote, or the orchestrator staging remote for
+        stage-mode) and calls the named-remote driver.
         """
         if self._push_callable_factory is not None:
             return self._push_callable_factory(equipment)
-        driver = _build_driver(self._config.nas)
+        driver = self._driver_for_equipment(equipment)
 
         async def _push(
             local: Path,
@@ -671,13 +716,13 @@ class NASSyncClient:
 
         Tests can inject a custom factory via the constructor's
         ``check_callable_factory`` argument. The default closure builds
-        the target from the ``nas:`` block and calls the named-remote
+        the per-equipment target + driver and calls the named-remote
         driver — the expensive hash-verify is now reserved for the
         pre-deletion integrity gate in :meth:`_maybe_cleanup`.
         """
         if self._check_callable_factory is not None:
             return self._check_callable_factory(equipment)
-        driver = _build_driver(self._config.nas)
+        driver = self._driver_for_equipment(equipment)
 
         async def _check(local: Path, *, files_from: Path) -> Any:
             target = self._target_for_equipment(equipment, local)
@@ -694,17 +739,19 @@ class NASSyncClient:
         lists the remote run subtree and parses it into a run-relative
         manifest (the routine post-push reconcile and the cleanup
         existence probe both consume the manifest, never the raw JSON).
+        The ``strip_prefix`` uses the per-equipment base root (the staging
+        base root for stage-mode).
         """
         if self._lsjson_callable_factory is not None:
             return self._lsjson_callable_factory(equipment)
-        driver = _build_driver(self._config.nas)
-        nas = self._config.nas
+        driver = self._driver_for_equipment(equipment)
+        base_root = self._base_root_for_equipment(equipment)
 
         async def _lsjson(run: Path) -> RemoteManifest:
             target = self._target_for_equipment(equipment, run)
             raw = await driver.lsjson(target)
             prefix = "/".join(
-                p for p in [nas.base_root.strip("/"), equipment.id, run.name] if p
+                p for p in [base_root.strip("/"), equipment.id, run.name] if p
             )
             return parse_lsjson(raw, strip_prefix=prefix)
 

@@ -29,12 +29,16 @@ from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
     NASCleanupConfig,
+    NasConfig,
+    OrchestratorConfig,
     PathsConfig,
+    RclonePerf,
 )
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
     CREATION_JSON_NAME,
     CREATION_JSON_VERSION,
+    SyncMode,
 )
 from exlab_wizard.constants import (
     SyncHandleState as HandleState,
@@ -774,3 +778,116 @@ def test_apply_config_swaps_equipment_map(tmp_path: Path) -> None:
     assert client._config is cfg2
     # EQ1 dropped, EQ2 resolvable -- exactly what a relaunch would have produced.
     assert set(client._equipment_by_id) == {"EQ2"}
+
+
+# ---------------------------------------------------------------------------
+# Target selection by sync_mode (rclone.conf NAS-sync migration, Phase 8)
+# ---------------------------------------------------------------------------
+
+
+def _client_for_target_test(config: Config, tmp_path: Path) -> NASSyncClient:
+    return NASSyncClient(
+        config=config,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=CreationWriter(),
+    )
+
+
+def test_target_for_stage_mode_uses_staging_remote(tmp_path: Path) -> None:
+    """stage-mode equipment push to the orchestrator's staging remote."""
+    stage_eq = EquipmentConfig(
+        id="STAGE_01",
+        label="Stage 1",
+        local_root=str(tmp_path),
+        nas_root="/nas",
+        sync_mode=SyncMode.STAGE,
+    )
+    config = Config(
+        paths=PathsConfig(local_root=str(tmp_path)),
+        equipment=[stage_eq],
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
+        orchestrator=OrchestratorConfig(
+            label="LAB",
+            staging_remote="stagepc",
+            staging_base_root="/staging",
+        ),
+    )
+    client = _client_for_target_test(config, tmp_path)
+    run = tmp_path / "STAGE_01" / "PROJ-0001" / "Runs" / "Run_2026-05-29"
+
+    target = client._target_for_equipment(stage_eq, run)
+
+    assert target == "stagepc:/staging/STAGE_01/Run_2026-05-29"
+
+
+def test_target_for_nas_mode_uses_nas_remote(tmp_path: Path) -> None:
+    """nas-mode target still composes from the ``nas:`` block (unchanged)."""
+    nas_eq = EquipmentConfig(
+        id="EQ1",
+        label="Eq 1",
+        local_root=str(tmp_path),
+        nas_root="/nas",
+        sync_mode=SyncMode.NAS,
+    )
+    config = Config(
+        paths=PathsConfig(local_root=str(tmp_path)),
+        equipment=[nas_eq],
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
+        orchestrator=OrchestratorConfig(
+            label="LAB",
+            staging_remote="stagepc",
+            staging_base_root="/staging",
+        ),
+    )
+    client = _client_for_target_test(config, tmp_path)
+    run = tmp_path / "EQ1" / "PROJ-0001" / "Runs" / "Run_2026-05-29"
+
+    target = client._target_for_equipment(nas_eq, run)
+
+    assert target == "nas01:/srv/nas/EQ1/Run_2026-05-29"
+
+
+def test_driver_for_stage_mode_uses_staging_perf(tmp_path: Path) -> None:
+    """stage-mode driver picks up ``orchestrator.staging_perf`` while
+    sharing ``nas.rclone_config_path`` as the ``--config`` override."""
+    stage_eq = EquipmentConfig(
+        id="STAGE_01",
+        label="Stage 1",
+        local_root=str(tmp_path),
+        nas_root="/nas",
+        sync_mode=SyncMode.STAGE,
+    )
+    config = Config(
+        paths=PathsConfig(local_root=str(tmp_path)),
+        equipment=[stage_eq],
+        nas=NasConfig(
+            remote="nas01",
+            base_root="/srv/nas",
+            rclone_config_path="/etc/rclone.conf",
+            perf=RclonePerf(transfers=2, checkers=3),
+        ),
+        orchestrator=OrchestratorConfig(
+            label="LAB",
+            staging_remote="stagepc",
+            staging_base_root="/staging",
+            staging_perf=RclonePerf(transfers=7, checkers=9),
+        ),
+    )
+    client = _client_for_target_test(config, tmp_path)
+
+    stage_driver = client._driver_for_equipment(stage_eq)
+    nas_driver = client._driver_for_equipment(
+        EquipmentConfig(
+            id="EQ1",
+            label="Eq 1",
+            local_root=str(tmp_path),
+            nas_root="/nas",
+            sync_mode=SyncMode.NAS,
+        )
+    )
+
+    # stage-mode picks staging_perf; both share the nas rclone.conf path.
+    assert (stage_driver._transfers, stage_driver._checkers) == (7, 9)
+    assert (nas_driver._transfers, nas_driver._checkers) == (2, 3)
+    assert stage_driver._config_path == nas_driver._config_path == "/etc/rclone.conf"
