@@ -578,6 +578,42 @@ def test_operation_row_from_session_maps_state_buckets_and_fields() -> None:
 
 
 # ---------------------------------------------------------------------------
+# input_required_dialog (T5)
+# ---------------------------------------------------------------------------
+
+
+def test_collect_default_values_seeds_from_declared_defaults() -> None:
+    from exlab_wizard.ui.components.input_required_dialog import collect_default_values
+
+    fields = [
+        {"id": "sample", "type": "string", "default": "tissue"},
+        {"id": "qc_passed", "type": "boolean"},
+        {"id": "notes", "type": "text"},
+        {"key": "legacy", "type": "string"},  # id falls back to key
+        {"type": "string"},  # no id/key -> skipped
+    ]
+    values = collect_default_values(fields)
+    assert values == {"sample": "tissue", "qc_passed": False, "notes": "", "legacy": ""}
+
+
+def test_input_required_dialog_builds_without_raising() -> None:
+    from exlab_wizard.ui.components.input_required_dialog import input_required_dialog
+
+    out = input_required_dialog(
+        plugin="demo",
+        reason="need a value",
+        fields=[
+            {"id": "x", "type": "string", "default": "d"},
+            {"id": "mode", "type": "choice", "options": ["a", "b"]},
+            {"id": "ok", "type": "boolean"},
+        ],
+        on_submit=lambda _v: None,
+        on_cancel=lambda: None,
+    )
+    assert out is not None
+
+
+# ---------------------------------------------------------------------------
 # bandwidth_schedule_editor
 # ---------------------------------------------------------------------------
 

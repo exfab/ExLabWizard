@@ -109,7 +109,7 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   Added `_operation_counts` tests (panel vs active vs input_required). Resume still routes through
   T5's input dialog. Suite green (UI 463 passed).
 
-### - [ ] T5 — Plugin `INPUT_REQUIRED` escalation dialog (new component)
+### - [x] T5 — Plugin `INPUT_REQUIRED` escalation dialog (new component)
 - **Spec:** [§B3](./REMAINING_WORK.md#b3--plugin-input_required-cannot-be-answered-from-the-gui) · **Category:** B · **Effort:** M · **Priority:** High
 - **Why:** When a plugin pauses, the wizard hangs indefinitely with no dialog; only the HTTP
   route can answer.
@@ -118,8 +118,18 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   reason/plugin header; Submit → `controller.resume(sid, values)`, Cancel → §9.4 confirm →
   `cancel`; escalations strictly sequential (§9.2); handles `failed`/timeout force-close.
 - **Depends on:** T2 (detect INPUT_REQUIRED) + T3 (surface).
-- **Status:** ⬜ Not started
-- **Impl note:** _(pending)_
+- **Status:** ✅ Done
+- **Impl note:** New component `ui/components/input_required_dialog.py`: §9.1 "Additional input
+  required" dialog with a plugin-identity pill, the reason line, and one widget per
+  `pending_input["fields"]` (string→input, text→textarea, choice→select, boolean→checkbox),
+  two-way bound to a values dict; `persistent` so the escalation must resolve before the next frame
+  (§9.2). `mount.py`: the T2 consumer now opens it on an `input_required` frame and force-closes it
+  on a terminal `done`/`failed` frame (plugin timeout); Submit → `controller.resume(sid, values)`
+  (errors — empty/invalid payload, stale state, or plugin re-rejection re-emitting `input_required`
+  — surfaced as a toast / re-opened dialog), Cancel → the §9.4 cancel dialog. `_cancel_operation`
+  was split into a controller-driven `_cancel_session` core (reused by the dialog) + a deps
+  resolver; the Operations modal's Resume (`_resume_operation`) reads the parked `pending_input` and
+  re-opens the same dialog. Tests for `collect_default_values` + dialog build. Suite green (2212).
 
 ---
 
@@ -209,4 +219,4 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   between `api/routers/operations.py` and the in-process modal.
 
 ## Progress
-4 / 13 complete.
+5 / 13 complete.

@@ -1359,7 +1359,85 @@ def _open_operation_details(deps: Any, session_id: str, ui: Any) -> None:
     dialog.open()
 
 
+def _resume_operation(deps: Any, session_id: str, ui: Any) -> None:
+    """Resume a suspended session by re-opening its §9.1 input dialog (T5).
+
+    Reads the parked ``pending_input`` (plugin / reason / fields) off the
+    session and re-presents the escalation dialog; Submit resumes the
+    pipeline with the answers.
+    """
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    store = getattr(controller, "session_store", None) if controller is not None else None
+    session = store.get(session_id) if store is not None else None
+    pending = getattr(session, "pending_input", None) if session is not None else None
+    if controller is None or not pending:
+        _show_toast(ui, "Nothing to resume: the operation is not awaiting input", positive=False)
+        return
+    _open_input_required_dialog(
+        controller,
+        session_id,
+        ui,
+        plugin=pending.get("plugin", ""),
+        reason=pending.get("reason", ""),
+        fields=pending.get("fields") or [],
+    )
+
+
+def _open_input_required_dialog(
+    controller: Any,
+    session_id: str,
+    ui: Any,
+    *,
+    plugin: str,
+    reason: str,
+    fields: list[Any],
+) -> Any:
+    """Open the §9.1 escalation dialog; Submit resumes, Cancel confirms (T5).
+
+    Submit calls ``controller.resume(session_id, values)`` -- the suspended
+    pipeline wakes with the answers. ``resume`` raises on an empty / invalid
+    payload or a stale state, and the plugin re-rejecting bad values simply
+    re-emits ``input_required`` (the consumer re-opens this dialog); both are
+    surfaced to the operator. Cancel routes through the §9.4 cancel dialog.
+    Returns the dialog so the caller can force-close it on a terminal frame.
+    """
+    from exlab_wizard.ui.components.input_required_dialog import input_required_dialog
+
+    def _on_submit(values: dict[str, Any]) -> None:
+        async def _run() -> None:
+            try:
+                await controller.resume(session_id, values)
+            except Exception as exc:
+                _show_toast(ui, f"Could not submit input: {exc}", positive=False)
+
+        _spawn_background(_run())
+
+    def _on_cancel() -> None:
+        _cancel_session(controller, session_id, ui)
+
+    dialog = input_required_dialog(
+        plugin=plugin,
+        reason=reason,
+        fields=fields,
+        on_submit=_on_submit,
+        on_cancel=_on_cancel,
+    )
+    opener = getattr(dialog, "open", None)
+    if callable(opener):
+        opener()
+    return dialog
+
+
 def _cancel_operation(deps: Any, session_id: str, ui: Any) -> None:
+    """Resolve the controller off ``deps`` and open the §9.4 cancel dialog."""
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    if controller is None:
+        _show_toast(ui, "Cancel unavailable: controller not initialized", positive=False)
+        return
+    _cancel_session(controller, session_id, ui)
+
+
+def _cancel_session(controller: Any, session_id: str, ui: Any) -> None:
     """Cancel an in-flight session via the §9.4 Discard / Keep dialog (T4).
 
     The operator chooses whether to discard the partially-created files
@@ -1367,11 +1445,6 @@ def _cancel_operation(deps: Any, session_id: str, ui: Any) -> None:
     keep them in place as an orphan. ``controller.cancel`` is a no-op on an
     already-terminal session; any error is surfaced as a toast.
     """
-    controller = getattr(deps, "controller", None) if deps is not None else None
-    if controller is None:
-        _show_toast(ui, "Cancel unavailable: controller not initialized", positive=False)
-        return
-
     dialog = ui.dialog()
 
     def _choose(discard_files: bool) -> None:
@@ -1403,12 +1476,6 @@ def _cancel_operation(deps: Any, session_id: str, ui: Any) -> None:
                 'flat color=negative data-testid="cancel-discard"'
             )
     dialog.open()
-
-
-def _resume_operation(deps: Any, session_id: str, ui: Any) -> None:
-    """Resume a suspended session (T5 replaces this with the input dialog)."""
-    del deps, session_id
-    _show_toast(ui, "Answer the plugin's input prompt to resume", positive=False)
 
 
 def _open_log_dialog(deps: Any, run_path: Path, ui: Any) -> None:
@@ -1636,17 +1703,21 @@ async def _await_session(controller: Any, handle: Any) -> Any:
     return await controller.status(handle.session_id)
 
 
-async def _consume_session_progress(controller: Any, session_id: str, wizard_state: Any) -> None:
-    """Fold the controller's WS frames into the wizard's live phase bar (T2).
+async def _consume_session_progress(
+    controller: Any, session_id: str, wizard_state: Any, ui: Any
+) -> None:
+    """Fold the controller's WS frames into the wizard's live phase bar (T2)
+    and surface a plugin ``INPUT_REQUIRED`` escalation dialog (T5).
 
     Runs inside the wizard's submit coroutine (already bound to the page's
-    client context), so calling ``progress_refresh`` re-renders the
-    ``@ui.refreshable`` progress view safely. Subscribing right after
-    ``create_*`` returns is race-free: ``_launch`` creates the session's
-    event queue before the pipeline starts, so the buffered early phases
-    are replayed in order. Terminates on the terminal ``done`` / ``failed``
-    frame (an ``input_required`` frame keeps the loop parked until resume --
-    the same suspension the wizard had before; T5 surfaces it).
+    client context), so re-rendering the ``@ui.refreshable`` progress view
+    and opening dialogs are safe. Subscribing right after ``create_*``
+    returns is race-free: ``_launch`` creates the session's event queue
+    before the pipeline starts, so buffered early phases replay in order.
+    On an ``input_required`` frame the §9.1 dialog opens; the loop keeps
+    awaiting frames (the pipeline only resumes once the operator submits).
+    A terminal ``done`` / ``failed`` frame force-closes any open dialog
+    (e.g. the plugin timed out while suspended) and ends the loop.
     """
     from exlab_wizard.ui.components import session_progress
 
@@ -1654,15 +1725,35 @@ async def _consume_session_progress(controller: Any, session_id: str, wizard_sta
     refresh = getattr(wizard_state, "progress_refresh", None)
     if progress is None:
         return
+    open_dialog: Any = None
     try:
         async for frame in controller.subscribe(session_id):
+            kind = frame.get("kind")
             if session_progress.apply_frame(progress, frame) and refresh is not None:
                 with contextlib.suppress(Exception):
                     refresh()
-            if frame.get("kind") in ("done", "failed"):
+            if kind == "input_required":
+                open_dialog = _open_input_required_dialog(
+                    controller,
+                    session_id,
+                    ui,
+                    plugin=frame.get("plugin", ""),
+                    reason=frame.get("reason", ""),
+                    fields=frame.get("fields") or [],
+                )
+            if kind in ("done", "failed"):
+                _close_dialog(open_dialog)
                 break
     except Exception:
         _log.exception("progress consumer failed for session %s", session_id)
+
+
+def _close_dialog(dialog: Any) -> None:
+    """Best-effort close of a NiceGUI dialog (no-op when ``None`` / test mode)."""
+    closer = getattr(dialog, "close", None)
+    if callable(closer):
+        with contextlib.suppress(Exception):
+            closer()
 
 
 async def _submit_project(deps: Any, state: Any, ui: Any) -> None:
@@ -1751,7 +1842,7 @@ async def _run_creation(
     try:
         handle = await create_fn(request)
         if wizard_state is not None:
-            await _consume_session_progress(controller, handle.session_id, wizard_state)
+            await _consume_session_progress(controller, handle.session_id, wizard_state, ui)
         final = await _await_session(controller, handle)
     except Exception as exc:
         _log.exception("%s creation raised", label)
