@@ -420,6 +420,27 @@ def test_apply_test_mode_prefix_helper_is_a_pure_function(
     assert [e.id for e in cfg.equipment] == ["EQ1", "EQ2"]
 
 
+def test_loader_round_trips_nas_block(tmp_path):
+    from exlab_wizard.config.loader import load_config, save_config
+
+    text = (
+        "paths:\n"
+        "  templates_dir: /t\n  plugin_dir: /p\n  local_root: /l\n"
+        "orchestrator:\n  label: ws-1\n"
+        "nas:\n"
+        "  remote: nas01\n"
+        "  base_root: /srv/lab\n"
+        "  perf:\n    transfers: 2\n    checkers: 3\n"
+    )
+    p = tmp_path / "config.yaml"
+    p.write_text(text, encoding="utf-8")
+    cfg = load_config(p)
+    assert cfg.nas.remote == "nas01"
+    assert cfg.nas.perf.transfers == 2
+    save_config(p, cfg, original_text=text)
+    assert "nas01" in p.read_text(encoding="utf-8")
+
+
 def test_load_config_uses_ruamel_round_trip(tmp_path: Path) -> None:
     # ruamel.yaml in round-trip mode preserves the original quoting style on
     # dump; PyYAML's safe_load + safe_dump path strips it. We assert the
