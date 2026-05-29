@@ -184,14 +184,48 @@ def test_session_progress_phase_order_is_canonical() -> None:
     """The phase enum order matches Frontend §10.1."""
 
     rows = session_progress.compute_phase_rows(active_phase=None)
+    # Verbatim controller wire-format phase strings (state_machine.Phase),
+    # so a live ``phase`` frame maps onto a row without translation.
     assert [r.phase for r in rows] == [
         "validating_inputs",
         "rendering_template",
         "running_plugins",
         "writing_cache",
-        "post_validation",
-        "queueing_sync",
+        "validating_post_creation",
+        "queueing_nas_sync",
     ]
+
+
+def test_apply_frame_advances_phase_and_marks_predecessors_done() -> None:
+    state = session_progress.SessionProgressState()
+    assert session_progress.apply_frame(state, {"kind": "phase", "phase": "running_plugins"})
+    assert state.active_phase == "running_plugins"
+    assert "validating_inputs" in state.completed
+    assert "rendering_template" in state.completed
+
+
+def test_apply_frame_progress_sets_plugin_sub_row() -> None:
+    state = session_progress.SessionProgressState()
+    changed = session_progress.apply_frame(
+        state, {"kind": "progress", "current": 1, "total": 3, "plugin": "demo"}
+    )
+    assert changed
+    assert state.active_phase == "running_plugins"
+    assert (state.plugin_current, state.plugin_total, state.plugin_name) == (1, 3, "demo")
+
+
+def test_apply_frame_done_completes_all_phases() -> None:
+    state = session_progress.SessionProgressState(active_phase="writing_cache")
+    assert session_progress.apply_frame(state, {"kind": "done", "result": {}})
+    assert set(state.completed) == set(session_progress.PHASES)
+    assert state.active_phase is None
+
+
+def test_apply_frame_ignores_unknown_kinds_and_phases() -> None:
+    state = session_progress.SessionProgressState()
+    assert not session_progress.apply_frame(state, {"kind": "input_required"})
+    assert not session_progress.apply_frame(state, {"kind": "phase", "phase": "bogus"})
+    assert state.active_phase is None
 
 
 def test_session_progress_active_phase_marked() -> None:

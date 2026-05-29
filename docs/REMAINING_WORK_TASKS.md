@@ -36,7 +36,7 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   `exlab_wizard.readme`; the controller's `ReadmeGeneratorProtocol` + `NoOpReadmeGenerator` now use
   the `tuple[Path, Path]` contract. Added `CreationController._build_readme_context` (partitions
   `readme_extra` across template/config/custom layers by id, maps decls, fills the §10.6 system
-  block: `created_by` = OS user, `project` = folder name, `run` = run dir / null). Presence is
+  block: `created_by` = OS user, `project` = LIMS short id (§3.1), `run` = run dir / null). Presence is
   already gated by `_validate_inputs` and the GUI submits no typed extra fields yet, so the
   generator's strict validation adds no new failures for current creations (it stays the backstop).
   New end-to-end test `test_real_readme_generator_writes_frontmatter_and_cache` asserts the
@@ -46,7 +46,7 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
 
 ## Phase 2 — Session-control epic (build in order; they compound)
 
-### - [ ] T2 — Event-subscription consumer in the creation flow (shared foundation)
+### - [x] T2 — Event-subscription consumer in the creation flow (shared foundation)
 - **Spec:** [§B4](./REMAINING_WORK.md#b4--live-per-session-phase-progress-is-static-the-gui-never-subscribes) · **Category:** B · **Effort:** S–M · **Priority:** High
 - **Why:** The create flow is fire-and-await-final-status; nothing consumes
   `controller.subscribe()`, so progress is static (`active_phase=None`). This consumer
@@ -55,8 +55,19 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
 - **Acceptance:** the Confirm & Create step advances through the live phases (and the §9.3
   per-plugin sub-row when the host emits `progress`); the consumer is cancelled/cleaned up on
   wizard close; emitted phase strings verified to match the component's `PHASES`.
-- **Status:** ⬜ Not started
-- **Impl note:** _(pending)_
+- **Status:** ✅ Done
+- **Impl note:** Fixed a confirmed bug: `session_progress.PHASES`/`PHASE_LABELS` used
+  `post_validation`/`queueing_sync`, but the controller emits the wire-format
+  `validating_post_creation`/`queueing_nas_sync` (`state_machine.Phase`) — two of six phases would
+  silently no-op. Corrected the component to the verbatim wire-format (single source of truth) and
+  updated the phase-order test. Added `SessionProgressState` + `apply_frame(state, frame)` to the
+  component (folds `phase`/`progress`/`done` frames; ignores `input_required`/unknown). Each wizard
+  renders the confirm-step bar via a `@ui.refreshable` reading `state.progress`, exposing
+  `state.progress_refresh`. `mount._run_creation` now consumes `controller.subscribe()` via
+  `_consume_session_progress` while the pipeline runs (race-free: `_launch` creates the event queue
+  before the pipeline starts and the asyncio.Queue buffers early phases). Note: the controller
+  emits no `progress` frame today, so the §9.3 per-plugin sub-row stays dormant until the plugin
+  host emits one (`apply_frame` handles it for when it lands). Suite green (2205 passed).
 
 ### - [ ] T3 — Render the Operations modal + toolbar/footer hooks
 - **Spec:** [§B1](./REMAINING_WORK.md#b1--operations-modal-is-built-exported-and-rendered-nowhere--highest-impact) · **Category:** B · **Effort:** M · **Priority:** High
@@ -180,4 +191,4 @@ Status legend: `⬜ Not started` · `🟡 In progress` · `✅ Done` · `⛔ Blo
   between `api/routers/operations.py` and the in-process modal.
 
 ## Progress
-1 / 13 complete.
+2 / 13 complete.

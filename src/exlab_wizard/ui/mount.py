@@ -1471,6 +1471,35 @@ async def _await_session(controller: Any, handle: Any) -> Any:
     return await controller.status(handle.session_id)
 
 
+async def _consume_session_progress(controller: Any, session_id: str, wizard_state: Any) -> None:
+    """Fold the controller's WS frames into the wizard's live phase bar (T2).
+
+    Runs inside the wizard's submit coroutine (already bound to the page's
+    client context), so calling ``progress_refresh`` re-renders the
+    ``@ui.refreshable`` progress view safely. Subscribing right after
+    ``create_*`` returns is race-free: ``_launch`` creates the session's
+    event queue before the pipeline starts, so the buffered early phases
+    are replayed in order. Terminates on the terminal ``done`` / ``failed``
+    frame (an ``input_required`` frame keeps the loop parked until resume --
+    the same suspension the wizard had before; T5 surfaces it).
+    """
+    from exlab_wizard.ui.components import session_progress
+
+    progress = getattr(wizard_state, "progress", None)
+    refresh = getattr(wizard_state, "progress_refresh", None)
+    if progress is None:
+        return
+    try:
+        async for frame in controller.subscribe(session_id):
+            if session_progress.apply_frame(progress, frame) and refresh is not None:
+                with contextlib.suppress(Exception):
+                    refresh()
+            if frame.get("kind") in ("done", "failed"):
+                break
+    except Exception:
+        _log.exception("progress consumer failed for session %s", session_id)
+
+
 async def _submit_project(deps: Any, state: Any, ui: Any) -> None:
     """Build a ProjectCreateRequest from the wizard state and run it."""
     controller = getattr(deps, "controller", None) if deps is not None else None
@@ -1499,7 +1528,9 @@ async def _submit_project(deps: Any, state: Any, ui: Any) -> None:
         operator=readme.get("operator", ""),
         objective=readme.get("objective", ""),
     )
-    await _run_creation(controller, controller.create_project, request, ui, label="Project")
+    await _run_creation(
+        controller, controller.create_project, request, ui, label="Project", wizard_state=state
+    )
 
 
 async def _submit_run(deps: Any, state: Any, run_kind: RunKind, ui: Any) -> None:
@@ -1530,7 +1561,9 @@ async def _submit_run(deps: Any, state: Any, run_kind: RunKind, ui: Any) -> None
         objective=readme.get("objective", ""),
     )
     kind_label = "Test run" if run_kind is RunKind.TEST else "Run"
-    await _run_creation(controller, controller.create_run, request, ui, label=kind_label)
+    await _run_creation(
+        controller, controller.create_run, request, ui, label=kind_label, wizard_state=state
+    )
 
 
 async def _run_creation(
@@ -1540,12 +1573,20 @@ async def _run_creation(
     ui: Any,
     *,
     label: str,
+    wizard_state: Any = None,
 ) -> None:
-    """Drive a create_* call to completion and toast the outcome."""
+    """Drive a create_* call to completion and toast the outcome.
+
+    When ``wizard_state`` is supplied, the controller's phase stream is
+    consumed live so the Confirm & Create step's progress bar advances as
+    the pipeline runs (T2); otherwise the call just awaits the final state.
+    """
     from exlab_wizard.controller import SessionState
 
     try:
         handle = await create_fn(request)
+        if wizard_state is not None:
+            await _consume_session_progress(controller, handle.session_id, wizard_state)
         final = await _await_session(controller, handle)
     except Exception as exc:
         _log.exception("%s creation raised", label)
