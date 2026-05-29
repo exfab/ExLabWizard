@@ -18,7 +18,6 @@ flow test.
 | `/welcome` | `welcome-get-started` | button | Click 'Get started' | Navigates to /settings to begin configuration. |
 | `/welcome` | `welcome-skip-for-now` | button | Click 'Skip for now' | Navigates straight to /main, bypassing guided setup. |
 | `/welcome` | `welcome-autostart-toggle` | toggle | Toggle 'start at login' | Sets the autostart preference applied on get-started / skip. |
-| `/restart-required` | `restart-required` | screen | Observe the restart-required gate | Terminal screen instructing the operator to relaunch the tray. |
 
 ## Settings
 
@@ -31,7 +30,7 @@ flow test.
 | `/settings` | `settings-nav-lims` | nav row | Click the 'LIMS' sidebar row | Shows the LIMS section. |
 | `/settings` | `settings-lims-endpoint` | input | Type the LIMS endpoint URL | Binds config.lims.endpoint on the draft. |
 | `/settings` | `settings-lims-email` | input | Type the operator email | Binds config.lims.email on the draft. |
-| `/settings` | `settings-save` | button | Click 'Save all' | Persists config.yaml and routes to the restart-required gate. |
+| `/settings` | `settings-save` | button | Click 'Save all' | Persists config.yaml, applies it to the running components in-process, and shows a 'Settings saved' toast (no relaunch). |
 | `/settings` | `settings-discard` | button | Click 'Discard all' | Drops the in-memory draft edits. |
 
 ## Equipment

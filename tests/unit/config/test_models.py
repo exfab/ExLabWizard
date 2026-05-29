@@ -629,13 +629,31 @@ def test_sync_mode_defaults_to_nas_when_absent() -> None:
     assert eq.sync_mode.value == "nas"
 
 
-def test_sync_mode_nas_requires_transport_block() -> None:
-    bad = _equipment_dict()
-    bad["sync_mode"] = "nas"
-    bad["transport"] = None
-    with pytest.raises(ValidationError) as info:
-        EquipmentConfig.model_validate(bad)
-    assert "transport" in str(info.value)
+def test_nas_mode_equipment_needs_no_transport_block() -> None:
+    """rclone.conf migration: nas-mode no longer requires a transport block.
+
+    The ``nas:`` block now carries the connection, so a nas-mode equipment
+    validates with no per-equipment ``transport``.
+    """
+    eq = EquipmentConfig(
+        id="EQ_01",
+        label="Eq",
+        local_root="/l",
+        nas_root="//n/x",
+        sync_mode="nas",
+    )
+    assert eq.sync_mode.value == "nas"
+    assert eq.transport is None
+
+
+def test_nas_mode_equipment_still_allows_transport_block() -> None:
+    """A still-declared transport on nas-mode is accepted (back-compat)."""
+    spec = _equipment_dict()
+    spec["sync_mode"] = "nas"
+    spec["transport"] = _sftp_transport_dict()
+    eq = EquipmentConfig.model_validate(spec)
+    assert eq.sync_mode.value == "nas"
+    assert isinstance(eq.transport, RcloneSftpTransport)
 
 
 def test_sync_mode_nas_forbids_orchestrator_staging_transport() -> None:

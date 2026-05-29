@@ -1,0 +1,23 @@
+[mcp_servers.context7]
+args = [
+    "-y",
+    "@upstash/context7-mcp",
+]
+command = "npx"
+
+[mcp_servers.playwright]
+args = [
+    "-y",
+    "@playwright/mcp@latest",
+    "--headless",
+]
+command = "npx"
+
+[mcp_servers.playwright.tools.browser_navigate]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_evaluate]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_click]
+approval_mode = "approve"

@@ -1,0 +1,2246 @@
+{
+  "/Users/alex/Projects/ExLabWizard/tests/__init__.py": {
+    "mtime": 1778192475.5635865,
+    "hash": "2e1fea8e18f315f096045d5b1fce5839"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/test_errors.py": {
+    "mtime": 1778192475.5757556,
+    "hash": "6bf2476e0e0fc6cd50444e7e1224a246"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/__init__.py": {
+    "mtime": 1778192475.5706296,
+    "hash": "9c1e4ef8d86e83de2b60b3c32f985793"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/test_paths.py": {
+    "mtime": 1780018031.130469,
+    "hash": "64084d3d5dbff4dcecc59712298f8c5f"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/test_main.py": {
+    "mtime": 1778192475.575807,
+    "hash": "c53677594631b67a1724a41fdb4b971d"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_wizard_run_page.py": {
+    "mtime": 1778871321.7912898,
+    "hash": "d3ac0f6c3b8fbffd4416a1dd8fbf268a"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_components.py": {
+    "mtime": 1780030225.4225574,
+    "hash": "efdaeae74617c8da67c3fd470e5f921f"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_pages.py": {
+    "mtime": 1780030225.4234173,
+    "hash": "b29a5dc9f35a3c1dc8d8a177d10aa80e"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_mount.py": {
+    "mtime": 1780030225.4229822,
+    "hash": "391030e231e67687d72bbc6392daf0d6"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_settings_page.py": {
+    "mtime": 1780018059.26053,
+    "hash": "c23bf876d1b6df34ae8ab2c673fdb310"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/__init__.py": {
+    "mtime": 1778192475.5767596,
+    "hash": "8ed5d6363fb291bfde80adec3f3eb6a3"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_wizard_equipment.py": {
+    "mtime": 1779853712.7689152,
+    "hash": "80bceb84248ded5236cb5e1d04e94aae"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_staging_page.py": {
+    "mtime": 1779440349.5867205,
+    "hash": "4e36f575cd6c285f748e6b828961e428"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_notifications.py": {
+    "mtime": 1778192475.577294,
+    "hash": "50a9a7ab9eed0e6d1f5e8a2b74e53335"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_templates_page.py": {
+    "mtime": 1778774823.3556333,
+    "hash": "6c65daa52af8c250b4889178927bbf5d"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_keyboard.py": {
+    "mtime": 1778192475.5770998,
+    "hash": "1c27498b62e21bf92df8e1d077de1f45"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_dynamic_form.py": {
+    "mtime": 1779853631.9608185,
+    "hash": "ee1eba5801a04a77446c6de851b32aea"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_file_list.py": {
+    "mtime": 1779442142.4078324,
+    "hash": "e451ae136cfd518d9cc0d65b2af2e723"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_theme.py": {
+    "mtime": 1778194634.0130706,
+    "hash": "7404e8f1168feec4bfacd26da8c0bbd3"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_breadcrumb.py": {
+    "mtime": 1778871321.7902071,
+    "hash": "29deda2201ddbd6822a39c87f3dcaeec"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_settings_nas_credentials.py": {
+    "mtime": 1779985084.0844846,
+    "hash": "4559b0048b0f96a91e215385c630c835"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_factories_smoke.py": {
+    "mtime": 1779227746.8524206,
+    "hash": "3e8f6696ad6a0027bb04ceb30266f420"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_design.py": {
+    "mtime": 1778192475.5769286,
+    "hash": "035e02fc76910163b3a606108cbb2f03"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_travelling_badge.py": {
+    "mtime": 1778871321.791043,
+    "hash": "9a6fa58a3a5ee361909fd7c4e5cfa801"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_wizard_project_page.py": {
+    "mtime": 1778774823.3558664,
+    "hash": "dfbc6c36bc501c3e7a1e6b160429f5f2"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/ui/test_folder_feed.py": {
+    "mtime": 1778871321.7903576,
+    "hash": "ac23e27c91f5371ec8573869291df875"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/lims/test_catalogue.py": {
+    "mtime": 1780030225.4219968,
+    "hash": "536457500f9edb90ec9afd45382163d3"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/lims/test_keyring_store.py": {
+    "mtime": 1778192475.5735445,
+    "hash": "b6e82a893edc7e02129d0b24cf7c1d82"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/lims/__init__.py": {
+    "mtime": 1778192475.5732067,
+    "hash": "57dca249230817c984bf528eab71418c"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/lims/test_client.py": {
+    "mtime": 1778719920.7554057,
+    "hash": "cc5f2f9cb3d31b173eb3d097bc402556"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/lims/test_cache.py": {
+    "mtime": 1778192475.5733159,
+    "hash": "0db6300665f267a82e9396aae4b0a485"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/validator/test_engine_creation.py": {
+    "mtime": 1778871321.7917542,
+    "hash": "add82d5e3c75fb4ddca7d30a97744a28"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/validator/test_engine_reconfigure.py": {
+    "mtime": 1780010389.1322768,
+    "hash": "f858d537133e604cb3edf71d61c7b7d0"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/validator/test_findings.py": {
+    "mtime": 1778192475.5778518,
+    "hash": "bc595223bd039c53a6bd463525b6d125"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/validator/__init__.py": {
+    "mtime": 1778192475.5775971,
+    "hash": "750b523986d53be990d581b782d08fb5"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/validator/test_rules.py": {
+    "mtime": 1778871321.7918732,
+    "hash": "fffb33ca71dda39278278cfd065b37fe"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/validator/test_engine_audit.py": {
+    "mtime": 1778871321.7914495,
+    "hash": "61cb608715f4d4cdccb21397c1349b92"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/cache/test_log_writer.py": {
+    "mtime": 1778192475.5720794,
+    "hash": "2b0aaddc0ae35fc3817fcfcada3c9f83"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/cache/test_creation_writer.py": {
+    "mtime": 1778194634.0123575,
+    "hash": "919407045a2bd44dbce82aef087c4681"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/cache/__init__.py": {
+    "mtime": 1778192475.571712,
+    "hash": "1a71221d0f7f93131bf07b82bee16bdf"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/cache/test_equipment.py": {
+    "mtime": 1778719920.7545931,
+    "hash": "a0145513fca4f1c135b9efba1babea62"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/cache/test_sync_state_writer.py": {
+    "mtime": 1779484405.1287787,
+    "hash": "519a403d2abab42c1dc1981b19ca7fb3"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/config/test_loader.py": {
+    "mtime": 1779853987.2461622,
+    "hash": "5c9791c01c6a915ef2d52e003980e9b7"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/config/__init__.py": {
+    "mtime": 1778192475.572184,
+    "hash": "08b871e14b89d3a9a0087f1a7633939f"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/config/test_models.py": {
+    "mtime": 1779853987.209839,
+    "hash": "b419a2e3ccfa8cfcf1aa6c6733cf7a9d"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/plugins/test_registry.py": {
+    "mtime": 1778231226.4459372,
+    "hash": "00b2ffdbbf64b79610b1f5fef75131e4"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/plugins/__init__.py": {
+    "mtime": 1778192475.5744371,
+    "hash": "4d86323c00be2e1ca35a9b9ab1680288"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/plugins/test_base.py": {
+    "mtime": 1778192475.574501,
+    "hash": "cc6de202e356b999edb7fe5bad6a2063"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/plugins/test_logger.py": {
+    "mtime": 1778231226.4458437,
+    "hash": "b238c936c945cdc2d90b2b2b5fdcbcab"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/constants/test_schema_versions.py": {
+    "mtime": 1779484275.181043,
+    "hash": "086194144f5c63b2084965761936e226"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/constants/test_patterns.py": {
+    "mtime": 1778871321.7886252,
+    "hash": "65ed0b7d0b7f40230e453e9ab90f3fc1"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/constants/__init__.py": {
+    "mtime": 1778192475.5724611,
+    "hash": "1ad9c0f22b6b87c22a1db6af089e2fe2"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/constants/test_enum_literal_alignment.py": {
+    "mtime": 1779983852.3888102,
+    "hash": "3d515c457e637c66b71e40dc88f7534a"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/constants/test_enums.py": {
+    "mtime": 1779983847.244174,
+    "hash": "6a5d60865ad05071dd250e3643f91ad3"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/constants/test_keyring.py": {
+    "mtime": 1778192475.5726705,
+    "hash": "69e40c322de126d3bc4d686cb4ef7df8"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/constants/test_limits.py": {
+    "mtime": 1778192475.572772,
+    "hash": "2507a56ed8297c11734b95b080066253"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/constants/test_filenames.py": {
+    "mtime": 1779855843.682109,
+    "hash": "62b2088f57700ba962e760f881359b68"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/io/test_yaml_files.py": {
+    "mtime": 1778719920.7551916,
+    "hash": "c8507f59f4f4ad3fb393beeca00fe3ed"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/io/test_atomic_write.py": {
+    "mtime": 1778719920.7550943,
+    "hash": "03df8418dea6fdfb1094260d40293a03"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/io/__init__.py": {
+    "mtime": 1778719920.7550333,
+    "hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/io/test_json_files.py": {
+    "mtime": 1778719920.7551455,
+    "hash": "9dc81574ea03e9f4ad9ed664b218cdaa"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/template/__init__.py": {
+    "mtime": 1778192475.5755742,
+    "hash": "2e5c44a751bce11325ee886f6f07a0e6"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/template/test_copier_driver.py": {
+    "mtime": 1778719920.7557387,
+    "hash": "9b583a95a3fbdde8b8887cf6825c29c8"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/utils/test_time.py": {
+    "mtime": 1778719920.7563303,
+    "hash": "32890aa0df13047e57fd33f74c23ff83"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/utils/__init__.py": {
+    "mtime": 1778719920.7561908,
+    "hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/utils/test_state.py": {
+    "mtime": 1778719920.7562723,
+    "hash": "8d666ec9ff140b80020d90b797f720e6"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/tray/test_storage_secret.py": {
+    "mtime": 1778774823.3550882,
+    "hash": "1cd78fadd17c3efd584fe9592cdc548c"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/tray/test_dependencies.py": {
+    "mtime": 1779990942.8581474,
+    "hash": "8d6c21685560361c5aeef9064fa22be8"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/tray/test_icon.py": {
+    "mtime": 1778192475.5761425,
+    "hash": "fa7c022ed699127b36e34370146defc0"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/tray/test_live_reload.py": {
+    "mtime": 1780011124.7817101,
+    "hash": "d82a93ae1fb9e70d325820cc159f25f9"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/tray/__init__.py": {
+    "mtime": 1778192475.5759902,
+    "hash": "e925f10812a2d4d962af2096c592028c"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/tray/test_status.py": {
+    "mtime": 1778192475.5765805,
+    "hash": "bb60b8a7b34b1c43c0b60c3f5a80443b"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/tray/test_server_runner.py": {
+    "mtime": 1778192475.576493,
+    "hash": "cf073dd0b8b351b6dea4dd91e22f01ee"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/tray/test_notifications.py": {
+    "mtime": 1778192475.5763035,
+    "hash": "6998d30a54dd93fe83035704a2e7b5ec"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/tray/test_quit_coordinator.py": {
+    "mtime": 1778192475.5763986,
+    "hash": "04ecbd24ed265f4b20f261a5798d21d5"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/tray/test_window_launcher.py": {
+    "mtime": 1778192475.57668,
+    "hash": "7ac2044b53e1b47bad5b672248e33cb1"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/tray/test_autostart.py": {
+    "mtime": 1778192475.5760503,
+    "hash": "bf11e3ef2f3c01998d5022cb95e8c1cb"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/tray/test_main.py": {
+    "mtime": 1779757041.95291,
+    "hash": "1a90f5d96089fec8e381faa6b7632bab"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/readme/test_generator.py": {
+    "mtime": 1778192475.5748081,
+    "hash": "71242bb16de7d6e18331a74de6f94522"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/readme/__init__.py": {
+    "mtime": 1778192475.5747452,
+    "hash": "7a73647defb3f8daef6bdedf1d21465e"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/controller/test_creation_apply_config.py": {
+    "mtime": 1780010403.039255,
+    "hash": "72e93e8894e4f58f9b577455bc7e8594"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/controller/test_state_machine.py": {
+    "mtime": 1778192475.5731256,
+    "hash": "359b73d71b41b9344a9d43b85e0f92df"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/controller/__init__.py": {
+    "mtime": 1778192475.5729923,
+    "hash": "a33a092ec45a0389b4b9d25e6125a6ea"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/controller/test_session_store.py": {
+    "mtime": 1780030225.4217477,
+    "hash": "b6761a00135296dbc813fc4804a3837e"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/window/test_pywebview_app.py": {
+    "mtime": 1778192475.5782878,
+    "hash": "44a51852304729dfe6566c103d4959d9"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/window/__init__.py": {
+    "mtime": 1778192475.5780127,
+    "hash": "b0ddc49241de7649636ae2ab864aacce"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/window/test_main.py": {
+    "mtime": 1778192475.5781047,
+    "hash": "d67c8f78e08c64a6db3b8dd11ded28a8"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/api/test_setup.py": {
+    "mtime": 1779984295.5361962,
+    "hash": "72f939119a49857d2a19b02669724272"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/api/test_errors.py": {
+    "mtime": 1778192475.5710654,
+    "hash": "81052c1115947cd793f32c3d86459dac"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/api/test_config_router.py": {
+    "mtime": 1779983937.9005346,
+    "hash": "b3c2dcfa2c269885c4c3c9044a704df4"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/api/test_operations.py": {
+    "mtime": 1779983937.9004555,
+    "hash": "46db56e09f71b480946f37e2ced3647d"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/api/test_sessions.py": {
+    "mtime": 1779983937.9002175,
+    "hash": "ad3bbd209c833279fe0e0efedfce6813"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/api/__init__.py": {
+    "mtime": 1778192475.570713,
+    "hash": "2145e18491ee0565977bfa7b9d07170b"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/api/test_browse.py": {
+    "mtime": 1779983937.9004729,
+    "hash": "effd6830237d90b7e31170675a21554b"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/api/test_schemas.py": {
+    "mtime": 1779440066.7145877,
+    "hash": "08f882b2af85f0155235951ab59efd0c"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/api/test_health.py": {
+    "mtime": 1779983937.9002137,
+    "hash": "4b73742c5e2eb6f4192cd3daec974aaa"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/api/test_staging_router.py": {
+    "mtime": 1779853328.616597,
+    "hash": "80fba55147b83464715a80fedff91fdc"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/api/test_events.py": {
+    "mtime": 1778231226.4450772,
+    "hash": "c0b0fd1a1b82f9ace5966f1e761a19ca"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/api/test_problems.py": {
+    "mtime": 1779983937.900394,
+    "hash": "5807e9a3aa5cb4f8768da1e78376f752"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/api/test_app.py": {
+    "mtime": 1778231226.4448552,
+    "hash": "2b76cc2c808dfde66db440c1555ad935"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/sync/test_nas_client_extra.py": {
+    "mtime": 1779857470.4203432,
+    "hash": "7d4943ee808fc725eeff2434355c7531"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/sync/test_transports.py": {
+    "mtime": 1779855803.6250112,
+    "hash": "ae1125b670418c3ce6859d70af33c715"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/sync/test_bandwidth.py": {
+    "mtime": 1778192475.5749414,
+    "hash": "468a6d0d85b55af27065b78ba0fcf5d5"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/sync/test_cleanup.py": {
+    "mtime": 1778192475.5750291,
+    "hash": "e6b602f1acf7bfd878afd2dd91662694"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/sync/__init__.py": {
+    "mtime": 1778192475.5748882,
+    "hash": "4133020cc8e2abfdccc2e65d7deb3ba2"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/sync/test_queue.py": {
+    "mtime": 1779440066.7161484,
+    "hash": "74b0e368f65c7fec4dacfa26c7fc702a"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/sync/test_nas_client.py": {
+    "mtime": 1780010361.4515994,
+    "hash": "5bc958c8093753f3ea07abe389d86ffb"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/sync/test_pre_sync_gate.py": {
+    "mtime": 1778871321.789819,
+    "hash": "a6fcee1bc3829913a84d60b214ceafd4"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/sync/_helpers.py": {
+    "mtime": 1779855973.7534215,
+    "hash": "57d44e54a6e62318097fa26bdb474425"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/sync/transports/test_rclone_env.py": {
+    "mtime": 1779855168.8805878,
+    "hash": "a7d6ef88ef1d929dc2b3d5acc452ffcb"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/sync/transports/test_run.py": {
+    "mtime": 1779855061.9211836,
+    "hash": "f1ec2630b004024b0374cd83fc6c0a1c"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/sync/transports/__init__.py": {
+    "mtime": 1779855071.352482,
+    "hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/logging/test_handlers.py": {
+    "mtime": 1778192475.5739412,
+    "hash": "842f19400a06c530e03e2451ffd45d56"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/logging/__init__.py": {
+    "mtime": 1778192475.5736039,
+    "hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/logging/test_context.py": {
+    "mtime": 1778192475.573767,
+    "hash": "7af3c2f0f391ec412b7d462ec220a5d0"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/logging/test_manager.py": {
+    "mtime": 1778192475.5740051,
+    "hash": "6974467cbdfadd5f6182ae5fc3dd9e7f"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/logging/test_format.py": {
+    "mtime": 1778192475.5738733,
+    "hash": "fb9a67cd181ac63f9b62f0f2baa1d045"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/orchestrator/__init__.py": {
+    "mtime": 1778192475.5740545,
+    "hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/orchestrator/test_scan.py": {
+    "mtime": 1779440066.7156014,
+    "hash": "57367db62d6d36e813d593208aca1331"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/orchestrator/test_staging_query.py": {
+    "mtime": 1779440612.1588957,
+    "hash": "d9649cab738c9eabc9306914f6eb8fd5"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/unit/orchestrator/test_quiescence_poller.py": {
+    "mtime": 1780010374.972735,
+    "hash": "9a2b02e32a90d14792848da142726a3d"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/integration/test_orchestrator_lifecycle.py": {
+    "mtime": 1779854248.2438107,
+    "hash": "4452edc4e05bd2e10629cb86100b6e67"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/integration/test_tray_window_smoke.py": {
+    "mtime": 1778774823.354797,
+    "hash": "f286160f3cb095b1cafc6070067afda2"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/integration/test_lims_integration.py": {
+    "mtime": 1778719920.7539012,
+    "hash": "3d2d0729a544854dd384895b2b57863a"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/integration/test_tray_lifecycle.py": {
+    "mtime": 1778192475.570474,
+    "hash": "0f4f55cb1ce70e3e71c0624153dbfa66"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/integration/test_nas_sync.py": {
+    "mtime": 1779986755.4297688,
+    "hash": "8732894a33aea0b265cdba5cba67cba9"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/integration/test_lims_contract.py": {
+    "mtime": 1778719920.7537932,
+    "hash": "5c97b9470b941888c7cb1feaaf2ad60e"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/integration/__init__.py": {
+    "mtime": 1778192475.5692468,
+    "hash": "5f322e3384aa5c03f10f876b970f8e7f"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/integration/test_schema_major_mismatch.py": {
+    "mtime": 1779440066.713749,
+    "hash": "21c848f8cf35aa68e8d7ce00c5dc912a"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/integration/test_creation_json_concurrent_writes.py": {
+    "mtime": 1778192475.5699215,
+    "hash": "27f4b0ee6b40aa2485590e4f1872ddf3"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/integration/test_validator_determinism.py": {
+    "mtime": 1778194634.0119998,
+    "hash": "fe1df55d91b4a897080f63184b0567a5"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/integration/test_pyinstaller_smoke.py": {
+    "mtime": 1778887316.7202282,
+    "hash": "0399c1a67f630fbf509780d61b9b17d9"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/integration/plugins/test_host_isolation.py": {
+    "mtime": 1778192475.5698142,
+    "hash": "6f0bb5bbe211e118e4c494857b07fff0"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/integration/plugins/__init__.py": {
+    "mtime": 1778192475.5697272,
+    "hash": "c283af3694b22f854e6c725bedd5fe9a"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/integration/controller/__init__.py": {
+    "mtime": 1778192475.5695207,
+    "hash": "5ef739e9d1f14f3535b763538b417f55"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/integration/controller/test_creation_flow.py": {
+    "mtime": 1780030225.421576,
+    "hash": "108ebae75c98303fb410bfa18a1303ff"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/integration/api/test_full_flow.py": {
+    "mtime": 1779983937.9002197,
+    "hash": "744fa2aa86cbe7fceceb8e4c59865584"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/integration/api/__init__.py": {
+    "mtime": 1778192475.5693328,
+    "hash": "d05c92d984d361191ffaa0b77232d234"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/__init__.py": {
+    "mtime": 1778192475.5656211,
+    "hash": "4244979ba71389330370f6cb4991f9cd"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/mock_lims.py": {
+    "mtime": 1778719920.7537136,
+    "hash": "c5bd253e8f3c32ade2e5fd5c36c20551"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/stub_rclone.py": {
+    "mtime": 1779990866.1642096,
+    "hash": "72ad5fe9187aa5469d31f3d58ab85432"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/lims/__init__.py": {
+    "mtime": 1778719920.7530754,
+    "hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/lims/exlab_v1/__init__.py": {
+    "mtime": 1778719920.7532084,
+    "hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/__init__.py": {
+    "mtime": 1778192475.5663285,
+    "hash": "0a6a2cc7c42b725606021c4beed2dfda"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/hello_plugin/__init__.py": {
+    "mtime": 1778192475.5676584,
+    "hash": "e408d782bcaef2052ebe46d3ff39f147"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/hello_plugin/plugin.py": {
+    "mtime": 1778192475.5678747,
+    "hash": "9c29e08febb3231891c51d5b182b6163"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/_failures/__init__.py": {
+    "mtime": 1778192475.5664346,
+    "hash": "25e3131ffe73775cfac307917cf9d0d4"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/_failures/error_plugin/__init__.py": {
+    "mtime": 1778192475.566797,
+    "hash": "7ac92f6dfbd986b224baa10bb9a3ec87"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/_failures/error_plugin/plugin.py": {
+    "mtime": 1778192475.5669167,
+    "hash": "bcf2f20524ccd9e90c291905c1483738"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/_failures/policy_violation_plugin/__init__.py": {
+    "mtime": 1778192475.5672479,
+    "hash": "709dec8f89563e6c3ed63b1210b6f2c1"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/_failures/policy_violation_plugin/plugin.py": {
+    "mtime": 1778192475.567383,
+    "hash": "4eb7f7fa5906b66c4d6199724f1ba8ce"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/_failures/input_required_plugin/__init__.py": {
+    "mtime": 1778192475.5670145,
+    "hash": "91a3ab238ff31668c4f4e8365bc500b8"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/_failures/input_required_plugin/plugin.py": {
+    "mtime": 1778192475.5671394,
+    "hash": "a5f00b48d4113d7f3ad1e29885caa49f"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/_failures/crash_plugin/__init__.py": {
+    "mtime": 1778192475.5665464,
+    "hash": "d6670423e24c7474f86b65d15a099a49"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/_failures/crash_plugin/plugin.py": {
+    "mtime": 1778192475.566699,
+    "hash": "3882a98b993a64d9bb6603e4eb179df3"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/_failures/timeout_plugin/__init__.py": {
+    "mtime": 1778192475.5674644,
+    "hash": "d880a50a0054bc020476e28f02347d53"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/_failures/timeout_plugin/plugin.py": {
+    "mtime": 1778192475.5675693,
+    "hash": "3ee3ae41699b273fb8ed1a16266f2377"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/configs/__init__.py": {
+    "mtime": 1778192475.5657845,
+    "hash": "ac94af8fff278bc86cf175b332766aee"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/templates/__init__.py": {
+    "mtime": 1778192475.5681312,
+    "hash": "8a7e67e129a688cb87e54beb6bda2b5b"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_18_relay_receive.py": {
+    "mtime": 1779756776.7318337,
+    "hash": "a095da9485d1d386ee28f7ece7f41221"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/conftest.py": {
+    "mtime": 1778192475.564071,
+    "hash": "c829372e25eef37256a59f2f2c4c655c"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_00_fresh_install_setup.py": {
+    "mtime": 1780011020.0550826,
+    "hash": "7a5d046bf277afa22b206d7175a59ff2"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_22_onboarding_redesign.py": {
+    "mtime": 1778871321.7852085,
+    "hash": "1650794b7cac77e1c2b6ad7a0b71fb17"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_24_context_menus.py": {
+    "mtime": 1779756804.5270338,
+    "hash": "c2c8e5086bd253a6bfe566a0e5757aea"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_08_settings.py": {
+    "mtime": 1779227746.8426805,
+    "hash": "d3f26ada5f06ba221b734ed4cb640c1f"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_11_crash_recovery.py": {
+    "mtime": 1778192475.565255,
+    "hash": "870818df990ac61e4e2d0d1b0e11ed65"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_03_experimental_run.py": {
+    "mtime": 1778192475.5647767,
+    "hash": "19775cc3226bc74e960e00f5b87b2cc4"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/_prod_server.py": {
+    "mtime": 1779986413.153844,
+    "hash": "43a505812390991df92b25a4b501aaa9"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_17_picker_step.py": {
+    "mtime": 1779756766.9308562,
+    "hash": "e23004f7506d280e0f9800e80e792b5c"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_20_file_explorer.py": {
+    "mtime": 1779756795.9519956,
+    "hash": "a8db4783f97e8094b40bf65b5ecf298c"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_05_browse_view_sync_icons.py": {
+    "mtime": 1779442176.9190416,
+    "hash": "6c093486780dfe0629d95d164e58d196"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_05_browse_view.py": {
+    "mtime": 1779756744.839734,
+    "hash": "2a99ad94592dfcad5296bd4431e10c18"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/__init__.py": {
+    "mtime": 1778192475.5637705,
+    "hash": "6480819940f21f3ae2328cf54c585bab"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_16_add_equipment.py": {
+    "mtime": 1779756757.3570318,
+    "hash": "edf4da81c38419db4f5a793aca3184f9"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_23_footer_staging.py": {
+    "mtime": 1778871321.7852678,
+    "hash": "bd483c4eb5d60cc1a643a0f8865b115f"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_smoke.py": {
+    "mtime": 1778192475.5655344,
+    "hash": "f5c156c854c1d404b7b7b925f9d4cff7"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_ux_documentation.py": {
+    "mtime": 1778887316.719904,
+    "hash": "d6fcd7fae19416124787bd557f01db23"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/_prod_app.py": {
+    "mtime": 1780010908.8504312,
+    "hash": "ae30687a0f5a8822f669210c546984bf"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_25_production_main_wiring.py": {
+    "mtime": 1779756858.55785,
+    "hash": "ed37996d2e2438ddc227bf47c4a99d81"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_00_full_lifecycle.py": {
+    "mtime": 1780011036.514418,
+    "hash": "8093ead629071514a605d27601e79c82"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_13_keyboard.py": {
+    "mtime": 1778192475.5653646,
+    "hash": "68630d2ccbfc8b7037a2b8fde15dee32"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/ux_catalog.py": {
+    "mtime": 1780010871.0112464,
+    "hash": "3965f9b94121b76d5e2f0d17aa4d1ffb"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_07_plugin_input_required.py": {
+    "mtime": 1778231226.4438095,
+    "hash": "4a98c5cce9d1b968845728d9d3e30549"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_26_equipment_wizard_persist.py": {
+    "mtime": 1779986270.2233727,
+    "hash": "9ec67cbf05827db3930f8e372f44c644"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_09_orchestrator.py": {
+    "mtime": 1779440066.7122064,
+    "hash": "c1b68a350a84a98ae13751d8bc4743ff"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_27_nas_credential_settings.py": {
+    "mtime": 1779985537.6276138,
+    "hash": "78f91c2bcb2d17bee9b472c1a05b623d"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_15_websocket_reconnect.py": {
+    "mtime": 1778192475.5654774,
+    "hash": "a1297d4b32da80ea55922d26035f7bc3"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_21_stage_ceiling.py": {
+    "mtime": 1778871321.7851264,
+    "hash": "c667d19a391ac83e3e13592f491dd631"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/_test_app.py": {
+    "mtime": 1779985631.2874255,
+    "hash": "b383e604ed23ad04973b20dd2d6b1545"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_01_onboarding.py": {
+    "mtime": 1779756734.0719478,
+    "hash": "cb7aa98e7ca787d2cb541ee5e24eb667"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_12_quit_coordinator.py": {
+    "mtime": 1778192475.5653136,
+    "hash": "b446a82d687ebce887db8a3be258200b"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_19_travelling_badge.py": {
+    "mtime": 1779756786.8896565,
+    "hash": "485bc403e0aca95447a408b89e86a9a3"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_04_test_run.py": {
+    "mtime": 1778192475.5648265,
+    "hash": "b4fb248f8b12e2eeb77ef27556ab5c42"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_06_problems.py": {
+    "mtime": 1778192475.5649517,
+    "hash": "7b4da7d0000d002e54016e6833e12ec9"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_14_notifications.py": {
+    "mtime": 1778192475.5654209,
+    "hash": "bd501d8b11d7fa71e552cfc361e91494"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_10_schema_mismatch.py": {
+    "mtime": 1778192475.5651963,
+    "hash": "2e7c0b52d322bb50051f6cf0ba917cd7"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/test_flow_02_project_wizard.py": {
+    "mtime": 1778871321.7846243,
+    "hash": "af10934e99f602fb806a0dd3e3f94230"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/page_objects/problems_page.py": {
+    "mtime": 1778192475.5642738,
+    "hash": "340f3a0f015ef463b704463c24bf4b7d"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/page_objects/settings_page.py": {
+    "mtime": 1778785084.8021023,
+    "hash": "6abd3fe64132fbc446b41fe5732eca28"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/page_objects/__init__.py": {
+    "mtime": 1778192475.5641525,
+    "hash": "845cef84d0a5f2d23b5df1f11f2411d2"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/page_objects/wizard_equipment_page.py": {
+    "mtime": 1779986246.0849621,
+    "hash": "9f6e4b32d841e96c50efe14467157ae0"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/page_objects/staging_page.py": {
+    "mtime": 1778192475.5644047,
+    "hash": "be6bfebbef149d0a74e35629d0b36df6"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/page_objects/wizard_run_page.py": {
+    "mtime": 1778871321.784328,
+    "hash": "4eabba0ace84005fde6ccafc22855987"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/page_objects/wizard_project_page.py": {
+    "mtime": 1778871321.7841794,
+    "hash": "0982d42d14eeeacf4f521b641cdc549e"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/page_objects/main_page.py": {
+    "mtime": 1779227746.8422146,
+    "hash": "0033dd569e269a0d8e18c20371b070ab"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/page_objects/welcome_page.py": {
+    "mtime": 1778192475.5644624,
+    "hash": "8390ae94de87adf4d08ab21fd427140b"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/conf.py": {
+    "mtime": 1778887316.7043667,
+    "hash": "c1ee403bd9b458fb126b88f81bc4e28f"
+  },
+  "/Users/alex/Projects/ExLabWizard/scripts/generate_screenshots.py": {
+    "mtime": 1779316926.8602834,
+    "hash": "b1d85eec1a1d9ea12555b5e86d1f6cba"
+  },
+  "/Users/alex/Projects/ExLabWizard/scripts/build_local.ps1": {
+    "mtime": 1778192475.563422,
+    "hash": "7b4912e2e5f6d9b05ae779cdaec666c6"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/paths.py": {
+    "mtime": 1780017807.896224,
+    "hash": "887fd8f4f550130ef47a09a03614c575"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/__init__.py": {
+    "mtime": 1778887316.706702,
+    "hash": "ee14fd0512d6d4c87eb91248d6ba2286"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/errors.py": {
+    "mtime": 1778887316.7091596,
+    "hash": "024c232b6f68fd679d44fcfeb3daf430"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/__main__.py": {
+    "mtime": 1778887316.7067456,
+    "hash": "31376a07c68496d020a4ec65c890a8a2"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/theme.py": {
+    "mtime": 1778887316.7186413,
+    "hash": "fac83fe2d818a1301e571564ee957dee"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/equipment_form.py": {
+    "mtime": 1779852301.2195299,
+    "hash": "3084c53c20a03557ada13cc4ba0dbbf9"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/design.py": {
+    "mtime": 1778887316.716037,
+    "hash": "c7c462d8c70c21a9929b60d8f7b9d8d7"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/__init__.py": {
+    "mtime": 1778887316.71415,
+    "hash": "237328595cab105835097b590a02cc3c"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/notifications.py": {
+    "mtime": 1778887316.71677,
+    "hash": "fa8ba085628e54b8d93beb8a08c51c21"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/mount.py": {
+    "mtime": 1780030225.4195428,
+    "hash": "fc907321ed84d3f8200e9a2aa34db79e"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/keyboard.py": {
+    "mtime": 1778887316.7165968,
+    "hash": "fbf7351a12e538ba507b9939608c2fd0"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/file_list.py": {
+    "mtime": 1779487121.9538305,
+    "hash": "abe8c3171839f5e1b45877c92310a7b5"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/test_connection_panel.py": {
+    "mtime": 1778887316.715521,
+    "hash": "fe0a46a0fab687964b684b79432c4fe0"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/override_badge.py": {
+    "mtime": 1778887316.7151566,
+    "hash": "152c8bf8986bac00526b6812ecc1d3ae"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/tree.py": {
+    "mtime": 1779441802.3543327,
+    "hash": "6cdffcfec36618a4f122f7235157e954"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/breadcrumb.py": {
+    "mtime": 1778887316.714585,
+    "hash": "fac67f69b3257249ef0c26ae95995f5e"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/test_run_badge.py": {
+    "mtime": 1778887316.7155788,
+    "hash": "1a8652318c6cdef6a633b66e6a279a15"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/metadata_pane.py": {
+    "mtime": 1779440066.7104285,
+    "hash": "b723335208690e56c4424f8234fc2676"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/travelling_badge.py": {
+    "mtime": 1778887316.7156353,
+    "hash": "fdd08383af37f45dea63308e814595f4"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/bandwidth_schedule_editor.py": {
+    "mtime": 1778887316.7144713,
+    "hash": "a3dca258873ced990e4fbcfa793df49d"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/input_required_dialog.py": {
+    "mtime": 1780030225.4185495,
+    "hash": "f7932b4cffad2ce648076047fc9eebbe"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/status_bar_segment.py": {
+    "mtime": 1778887316.7153776,
+    "hash": "665b502098247541d78470c96ea25d9c"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/sync_status_icon.py": {
+    "mtime": 1779441768.7771258,
+    "hash": "8b2a85d5f4fc8aa79a033b4005b56a72"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/tree_context_menu.py": {
+    "mtime": 1778887316.7158039,
+    "hash": "0b53e57b5cf5368220c333c14785ca5a"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/__init__.py": {
+    "mtime": 1780030225.4184768,
+    "hash": "7df53923728263eaa7b52d4d5460882c"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/operations_modal.py": {
+    "mtime": 1780030225.4187684,
+    "hash": "505cc97f8ff9f889540d9e62e2e5088d"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/credential_field.py": {
+    "mtime": 1778887316.7147007,
+    "hash": "bb5ea99d8cd87f9db6c3162fbbedd876"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/session_progress.py": {
+    "mtime": 1780030225.4189878,
+    "hash": "b35ec4323a6972fc7d27dffbb7472e83"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/validation_summary.py": {
+    "mtime": 1778887316.715866,
+    "hash": "3bfd38a1aab846180aea65cce1d82570"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/mode_badge.py": {
+    "mtime": 1778887316.7149277,
+    "hash": "4e9208c54d0628f38b49d1bf5da43154"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/filter_chips.py": {
+    "mtime": 1778887316.7148159,
+    "hash": "ccbc9d62e963b070e86da6d5b9225e44"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/components/banner_stack.py": {
+    "mtime": 1778887316.7145374,
+    "hash": "be7dc1fc2a61ad9c043807e0f75d4d4f"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/pages/wizard_run.py": {
+    "mtime": 1780030225.421143,
+    "hash": "94a1ba2fdc718b85f15cba0913461fa0"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/pages/__init__.py": {
+    "mtime": 1778887316.7168846,
+    "hash": "17ffd60d3165f04853352b4b07ffd544"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/pages/templates.py": {
+    "mtime": 1778887316.7173643,
+    "hash": "17428444f6305f0ded21f43ffad6510c"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/pages/problems.py": {
+    "mtime": 1780030225.420175,
+    "hash": "2ad9347f86161cc3ace90b2232559e29"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/pages/wizard_equipment.py": {
+    "mtime": 1779853987.2461195,
+    "hash": "9e1fab750e7459efd1387d3667762ce7"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/pages/settings.py": {
+    "mtime": 1780030225.4206786,
+    "hash": "00688975fa14edd557ca9a3ad64b3fb3"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/pages/welcome.py": {
+    "mtime": 1778887316.7175474,
+    "hash": "93443e3baaaad7b4083192196fdc7378"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/pages/main.py": {
+    "mtime": 1780030225.4199326,
+    "hash": "a2739a388a5c29468e166a8df8437c3e"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/pages/staging.py": {
+    "mtime": 1779440066.7111874,
+    "hash": "c2bfea5f8d1943226c4c67d8ceb5fe28"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/pages/wizard_project.py": {
+    "mtime": 1780030225.4209733,
+    "hash": "f73b9beb3f4e2979968d197ffa404f9a"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/client/refresh_coordinator.py": {
+    "mtime": 1778887316.7143393,
+    "hash": "4fbfbd6cbae75275befd767102bd00a1"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/client/__init__.py": {
+    "mtime": 1778887316.7142217,
+    "hash": "f568553436a1d22cdd39d6d594b04f39"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/ui/client/folder_feed.py": {
+    "mtime": 1778887316.7142797,
+    "hash": "659733c448a8598986bb606dc945c3b5"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/lims/keyring_store.py": {
+    "mtime": 1778887316.709644,
+    "hash": "9d9f1d02cdd0511ffc7884a2ae12ae23"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/lims/client.py": {
+    "mtime": 1778887316.7095952,
+    "hash": "fef4af994863ff83d2e2dc16ec2b6bcc"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/lims/cache.py": {
+    "mtime": 1778887316.709473,
+    "hash": "5eddee4015b0ee38f1d804635ea9efd4"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/lims/__init__.py": {
+    "mtime": 1778887316.7094054,
+    "hash": "f3a23b1274c82341d221ec5016a2bfd7"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/lims/schemas.py": {
+    "mtime": 1778887316.7097085,
+    "hash": "c97f40a1978d3bf5d19e2aaf042a1b2f"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/lims/catalogue.py": {
+    "mtime": 1780030225.415094,
+    "hash": "d0b38da7e90beb8a01d7eab36de27ab0"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/validator/findings.py": {
+    "mtime": 1778887316.7190373,
+    "hash": "4072ae44edda1d51b152de48669d37eb"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/validator/__init__.py": {
+    "mtime": 1778887316.7188685,
+    "hash": "5ce924106a0a7d79874631e1d49fa8ce"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/validator/rules.py": {
+    "mtime": 1778887316.7190897,
+    "hash": "a0e24719f7552e94f1622cb08c9fd75b"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/validator/engine.py": {
+    "mtime": 1780009028.044374,
+    "hash": "2fa0066d4c427ce753a51f256848d5fe"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/cache/equipment.py": {
+    "mtime": 1778887316.707977,
+    "hash": "2bb6f468eaf403b89916bed3e88f343a"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/cache/sync_state_schema.py": {
+    "mtime": 1779855272.3585145,
+    "hash": "5798c1a0dd899ecba4a45b0550ee9d4a"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/cache/sync_state_writer.py": {
+    "mtime": 1779857194.194154,
+    "hash": "6f7592a49354a0a1a09a34414007b358"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/cache/__init__.py": {
+    "mtime": 1778887316.707862,
+    "hash": "09a8e3a53c655e6abfe9d3f568b4c21e"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/cache/log_writer.py": {
+    "mtime": 1778887316.7080953,
+    "hash": "3b4220fe20e09ada04ed25e498263eb4"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/cache/creation_writer.py": {
+    "mtime": 1778887316.7079272,
+    "hash": "dfec2dabdda0ff69f6328ef460c1d931"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/config/models.py": {
+    "mtime": 1780017923.6846125,
+    "hash": "682ea4dc9d3b5ade0c7a9ce02ca2b90a"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/config/__init__.py": {
+    "mtime": 1778887316.7081482,
+    "hash": "9d4df1a87a4de0801371cb8295bf37a1"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/config/loader.py": {
+    "mtime": 1779756530.9651835,
+    "hash": "450450079de510c1a274d3689ae648cb"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/plugins/registry.py": {
+    "mtime": 1778887316.711591,
+    "hash": "29fced03bce3dd9ac45aa207e6cc7d1b"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/plugins/host.py": {
+    "mtime": 1780030225.4154303,
+    "hash": "b72dd5f6695b0cb6ed2a680c85d6eb8a"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/plugins/__init__.py": {
+    "mtime": 1778887316.7107298,
+    "hash": "e28b3d4c285f0f136db07313f3623156"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/plugins/logger.py": {
+    "mtime": 1778887316.711478,
+    "hash": "c553ba4423d011693315faccf8a75c8c"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/plugins/base.py": {
+    "mtime": 1778887316.711147,
+    "hash": "2b96fe68afb9aa81b8155df6c8ac7304"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/plugins/_worker.py": {
+    "mtime": 1778887316.7109003,
+    "hash": "e3180c2c9c7985c96fd7dac690cda358"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/constants/enums.py": {
+    "mtime": 1780017933.2804172,
+    "hash": "88a21ec68413658eea44c40b86b51249"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/constants/patterns.py": {
+    "mtime": 1778887316.7086759,
+    "hash": "044a13a6565b394a3fabb77ccabd7c59"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/constants/limits.py": {
+    "mtime": 1778887316.7085998,
+    "hash": "fa79e7b95ff3d79def246b2717f155a8"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/constants/filenames.py": {
+    "mtime": 1779855764.851056,
+    "hash": "8bc238887a4a9b69300b1acb614f0e6b"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/constants/__init__.py": {
+    "mtime": 1779855865.368706,
+    "hash": "a9a0a93368d314cf5e66671ec4399066"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/constants/keyring.py": {
+    "mtime": 1778887316.70854,
+    "hash": "7e6778116aa44f22d442bfd84b67040f"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/constants/app.py": {
+    "mtime": 1779756405.7655954,
+    "hash": "a6f71851fc16d5d6f1473da0ff153914"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/constants/schema_versions.py": {
+    "mtime": 1779484219.8213682,
+    "hash": "e0b4552628e679f871216fcaaa19268e"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/io/json_files.py": {
+    "mtime": 1778887316.709309,
+    "hash": "e34580f6c24688fee57e0d0511d07530"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/io/__init__.py": {
+    "mtime": 1778887316.7092104,
+    "hash": "5f7407af82d74e42673f081119d6a622"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/io/atomic_write.py": {
+    "mtime": 1778887316.7092597,
+    "hash": "4990e5aa1c7a6f56b422f5aa42efa6ea"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/io/yaml_files.py": {
+    "mtime": 1778887316.7093532,
+    "hash": "c73c6b0d170532cc7a47c066d1218d64"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/template/__init__.py": {
+    "mtime": 1778887316.7127964,
+    "hash": "ccecc1b6570c997a883d8827b2cbda57"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/template/copier_driver.py": {
+    "mtime": 1778887316.7128644,
+    "hash": "52470e4403aea33b60e1d9da42bb353d"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/utils/time.py": {
+    "mtime": 1778887316.7188072,
+    "hash": "cf573a2b994d06222921576de750d323"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/utils/__init__.py": {
+    "mtime": 1778887316.718706,
+    "hash": "5dc8037530c0fb850582a503357e1d85"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/utils/state.py": {
+    "mtime": 1778887316.7187524,
+    "hash": "9401023c81b07a7822934b60172c69aa"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/tray/icon.py": {
+    "mtime": 1778887316.7131217,
+    "hash": "15ca80641f218efcb81ea8d65d55e6a4"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/tray/server_runner.py": {
+    "mtime": 1778887316.7136395,
+    "hash": "780efe8165a9072ce4e857de7f6329dd"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/tray/__init__.py": {
+    "mtime": 1778887316.7129273,
+    "hash": "e068687bd75ea21c56f0a236e69fdecf"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/tray/autostart.py": {
+    "mtime": 1778887316.7129865,
+    "hash": "c6778db2148402d0d9182228d1c6db0d"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/tray/quit_coordinator.py": {
+    "mtime": 1778887316.713561,
+    "hash": "27eff69fe55a108201d53f7818d21088"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/tray/window_launcher.py": {
+    "mtime": 1778887316.714091,
+    "hash": "c12684bad36dafb08fcd72e1a17ff3e3"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/tray/notifications.py": {
+    "mtime": 1778887316.7134647,
+    "hash": "1d67ebe63250b16a79225ba593a58776"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/tray/main.py": {
+    "mtime": 1780030225.4182613,
+    "hash": "dbc60db2d1b3ec281a545b14a56ef2be"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/tray/dependencies.py": {
+    "mtime": 1780030225.4179416,
+    "hash": "3e02cf4389a95f6f39fe1f67f8bf1f65"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/tray/status.py": {
+    "mtime": 1778887316.7139156,
+    "hash": "b38d93493743a892e47c5177319f19db"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/tray/storage_secret.py": {
+    "mtime": 1778887316.7140105,
+    "hash": "88d3ce0577e1c042bdbbd5609cd8cd5b"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/readme/__init__.py": {
+    "mtime": 1778887316.7116766,
+    "hash": "5aa9de637c1ccf6c70ad9fa558f28673"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/readme/generator.py": {
+    "mtime": 1778887316.7117565,
+    "hash": "4c7138b81baba5821d4f161c75efe99e"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/controller/creation.py": {
+    "mtime": 1780030225.4144628,
+    "hash": "2b4a756d8614d0587ddeb146cfdbd55e"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/controller/__init__.py": {
+    "mtime": 1780030225.4140658,
+    "hash": "405e6cc064b0901197e29f80b99a7434"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/controller/state_machine.py": {
+    "mtime": 1778887316.7091095,
+    "hash": "0a4a2cc88367c1fd28ecbb2724124fab"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/controller/session_store.py": {
+    "mtime": 1780030225.414838,
+    "hash": "40cb1a6d39431075aa83ae997d8ee0b3"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/window/pywebview_app.py": {
+    "mtime": 1778887316.7195377,
+    "hash": "dc8a76edd7fa9db575086409f1c66ffe"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/window/__init__.py": {
+    "mtime": 1778887316.7191873,
+    "hash": "bb79941a5b5e7b49776ea35ea9944b42"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/window/main.py": {
+    "mtime": 1778887316.719356,
+    "hash": "9063ad0cc4f8c535ce7ea63789b48f88"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/api/health.py": {
+    "mtime": 1779484175.042146,
+    "hash": "18697ab159bd8fbce89712c1daddd8b5"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/api/_dependencies.py": {
+    "mtime": 1779858106.6817465,
+    "hash": "75d2d6bb3fe9456a3e1b5a451b5a8ff5"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/api/events.py": {
+    "mtime": 1778887316.707098,
+    "hash": "3f2e6689e6361fba70fbef5a92012ba2"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/api/__init__.py": {
+    "mtime": 1778887316.706802,
+    "hash": "48bed013bd51413dc7f9237be3b3e360"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/api/setup.py": {
+    "mtime": 1779858322.9540107,
+    "hash": "0e95f0d2e6db4551a44fa36eba835f71"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/api/schemas.py": {
+    "mtime": 1779484850.0430028,
+    "hash": "e38b57b85c80d01b2d76b71dc7b25020"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/api/app.py": {
+    "mtime": 1780030225.4135993,
+    "hash": "50601a008350a47f732b27b5a380a03f"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/api/errors.py": {
+    "mtime": 1779858522.1781368,
+    "hash": "b0a68a0b15fd2274bb30dc5fbfcf58fc"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/api/routers/browse.py": {
+    "mtime": 1779442977.6942852,
+    "hash": "209dd73510b163cbc533b0f372e24895"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/api/routers/sessions.py": {
+    "mtime": 1778887316.7076066,
+    "hash": "81f672a70b8d6f7dd7045feb0c09f5f4"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/api/routers/config.py": {
+    "mtime": 1780009525.3310099,
+    "hash": "8a073ca8b43e625cc1a435331207e815"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/api/routers/__init__.py": {
+    "mtime": 1778887316.7072046,
+    "hash": "6fd1880a00170fce23b10839fbd1cf42"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/api/routers/operations.py": {
+    "mtime": 1780030225.4138632,
+    "hash": "9ec4637d63ae1e7ec6726870513b252b"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/api/routers/problems.py": {
+    "mtime": 1778887316.7075026,
+    "hash": "b90d8ffd6425ecee253a30306deab6fe"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/api/routers/staging.py": {
+    "mtime": 1779442904.0151088,
+    "hash": "0a39d67b0cf64596742ac66f68a4b941"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/sync/queue.py": {
+    "mtime": 1779440066.7093844,
+    "hash": "85264151b44bd5a782eea72963d28370"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/sync/nas_client.py": {
+    "mtime": 1780009063.9116166,
+    "hash": "428771f29a147a0e47aa86d2d16d680a"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/sync/__init__.py": {
+    "mtime": 1778887316.7118518,
+    "hash": "d1eafd277122418f30324450bec92b2e"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/sync/cleanup.py": {
+    "mtime": 1778887316.7119753,
+    "hash": "1d7f88b453271c3405d7b1accab3fa57"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/sync/bandwidth.py": {
+    "mtime": 1778887316.7119112,
+    "hash": "04f10e23f8153d50309499e3b6912fb8"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/sync/pre_sync_gate.py": {
+    "mtime": 1778887316.7121267,
+    "hash": "955594315b5c9e19cd8af9ea405fa782"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/sync/verifier.py": {
+    "mtime": 1779989368.6924746,
+    "hash": "18178a378b37f01b849aa76ec061ab10"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/sync/run_delete.py": {
+    "mtime": 1779441094.115504,
+    "hash": "236e0a2cc47194ed090decb713c6f2bf"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/sync/transports/__init__.py": {
+    "mtime": 1778887316.71228,
+    "hash": "969f593c82e2f8d810fc14d18c7f8ce4"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/sync/transports/rclone.py": {
+    "mtime": 1779984242.4769497,
+    "hash": "0f333e9a85f3fd37d81d41c44ef36687"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/sync/transports/_run.py": {
+    "mtime": 1779852437.0490232,
+    "hash": "f0ed347746067f717ce0a5d1122ac577"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/logging/handlers.py": {
+    "mtime": 1778887316.7100515,
+    "hash": "22feeba9dac685ddb356cb75ee27f1ad"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/logging/__init__.py": {
+    "mtime": 1778887316.7097588,
+    "hash": "1fd90e19e509c79bcd147162f3d197a2"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/logging/format.py": {
+    "mtime": 1778887316.7099767,
+    "hash": "6fa366e7cfe14410898bfce7a5bcae6a"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/logging/context.py": {
+    "mtime": 1778887316.7099192,
+    "hash": "e35d4eb80e702645b06636ab10b3c610"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/logging/manager.py": {
+    "mtime": 1778887316.7101078,
+    "hash": "8f4df4fa7eaba0f8f4bf4638195efcd8"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/orchestrator/quiescence_poller.py": {
+    "mtime": 1780009097.5564256,
+    "hash": "33cb3372ec583b7e1516a689e25353a6"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/orchestrator/_scan.py": {
+    "mtime": 1779440066.7088668,
+    "hash": "edcf28b19e340b56c557675510e005a4"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/orchestrator/__init__.py": {
+    "mtime": 1779440066.7087142,
+    "hash": "b8d5aef1bbfbba441a5e2017f9d8387d"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/orchestrator/staging_clear.py": {
+    "mtime": 1779484898.324295,
+    "hash": "ba94a24ffd24b749767c45e5bab04ea6"
+  },
+  "/Users/alex/Projects/ExLabWizard/src/exlab_wizard/orchestrator/staging_query.py": {
+    "mtime": 1779484883.3951538,
+    "hash": "0005ca3ecf74d0bde4e7cc32c1e36a27"
+  },
+  "/Users/alex/Projects/ExLabWizard/README.md": {
+    "mtime": 1778887316.700905,
+    "hash": "16350ced21a7c22707203423dd2bb052"
+  },
+  "/Users/alex/Projects/ExLabWizard/DESIGN.md": {
+    "mtime": 1778038558.2527084,
+    "hash": "aaef2dfc0ac6ac42d81dcf2dcfe667a3"
+  },
+  "/Users/alex/Projects/ExLabWizard/_internal/README.md": {
+    "mtime": 1778192475.5510361,
+    "hash": "e403bbc18b842a6ec94007208db50db3"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/docker/README.md": {
+    "mtime": 1779987970.0527692,
+    "hash": "1ffa82142a31185b4b48cf91c251c637"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/docker/docker-compose.yml": {
+    "mtime": 1779988883.5184524,
+    "hash": "88d9d0f62421e257bc4ed93b52bf6a4f"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/docker/nas-data/Run_2026-05-28T10-00/notes.txt": {
+    "mtime": 1779993069.0,
+    "hash": "d98e76668be06a2eb4c0b5e155f260b0"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/lims/exlab_v1/README.md": {
+    "mtime": 1778719920.7531853,
+    "hash": "b422ad71cb47862231bc91f2123430d4"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/hello_plugin/manifest.yml": {
+    "mtime": 1778192475.5677142,
+    "hash": "2f1c9e54fde096d6f1f3079aed955c09"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/_failures/error_plugin/manifest.yml": {
+    "mtime": 1778192475.566858,
+    "hash": "25d56e1af85208547e4227503d651391"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/_failures/policy_violation_plugin/manifest.yml": {
+    "mtime": 1778192475.5673177,
+    "hash": "033d7b1c719b62a53e8ecc5bb2ea6de0"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/_failures/input_required_plugin/manifest.yml": {
+    "mtime": 1778192475.5670688,
+    "hash": "8f99570340b9faa68537b2757802106f"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/_failures/crash_plugin/manifest.yml": {
+    "mtime": 1778192475.5666316,
+    "hash": "e8083211f56fde438f988459e1176d4e"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/plugins/_failures/timeout_plugin/manifest.yml": {
+    "mtime": 1778192475.567512,
+    "hash": "0e45fac0a3f0c1878d8d9aa44f62922a"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/configs/incomplete_no_lims.yaml": {
+    "mtime": 1779853857.4614372,
+    "hash": "5858d4d420c8f35495636904561e0088"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/configs/incomplete_no_equipment.yaml": {
+    "mtime": 1778871321.7860131,
+    "hash": "776bf7dbec2586b7874dece188b85ef7"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/configs/incomplete_no_paths.yaml": {
+    "mtime": 1779853857.4568183,
+    "hash": "b220f91ee25fe8d09c4192a60e9adb0f"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/configs/README.md": {
+    "mtime": 1778192475.565712,
+    "hash": "ce11b965fa9d372fcfe59145bf54261b"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/configs/complete.yaml": {
+    "mtime": 1779853843.058958,
+    "hash": "62b0d9af991f5a84c47fa58ee21d4215"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/templates/run_basic_both/copier.yml": {
+    "mtime": 1778192475.5686162,
+    "hash": "f59a9238b2f9a463dd39aeb7394078a6"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/templates/run_basic_test/copier.yml": {
+    "mtime": 1778192475.5689287,
+    "hash": "a09d1a9668aa1260c540b768d6cb73fb"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/templates/redeclares_core/copier.yml": {
+    "mtime": 1778192475.568532,
+    "hash": "3ac92263bad5d1ec159b0307521c399e"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/templates/run_basic_experimental/copier.yml": {
+    "mtime": 1778192475.56877,
+    "hash": "147910b91fcbe17ca808834a5ef5dc91"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/templates/missing_version/copier.yml": {
+    "mtime": 1778192475.568235,
+    "hash": "e3757aa0691d359aa82fa6704e276448"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/templates/with_tasks/copier.yml": {
+    "mtime": 1778192475.5690942,
+    "hash": "307da16268db18e5a7e0579c477aab9e"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/fixtures/templates/project_basic/copier.yml": {
+    "mtime": 1778192475.568326,
+    "hash": "8defa0f62bfed8056ad7e6054b3b6fca"
+  },
+  "/Users/alex/Projects/ExLabWizard/tests/e2e/README.md": {
+    "mtime": 1778192475.5637197,
+    "hash": "7854ac689141fb183330629890161f5f"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/REMAINING_WORK_TASKS.md": {
+    "mtime": 1780030225.413053,
+    "hash": "9600e3c6f5cf47b1581d4b852a54c8cd"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/REMAINING_WORK.md": {
+    "mtime": 1780019735.8312056,
+    "hash": "a2e81051f3d87aeecdc3d3ecbd091587"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/UX_INTERACTIONS.md": {
+    "mtime": 1779986622.757152,
+    "hash": "ba553c65e26544e910cdc81a98a6c52c"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/index.md": {
+    "mtime": 1778887316.704442,
+    "hash": "172deffac073e63e214e8a3a2fdd409b"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/user_guide/02_browse.md": {
+    "mtime": 1779316926.8589227,
+    "hash": "07fb6a0451d8f0a2d4be4955462df15a"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/user_guide/03_create_project.md": {
+    "mtime": 1779316926.859022,
+    "hash": "07e8b315d837c961439b0a32b3f309d0"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/user_guide/08_problems.md": {
+    "mtime": 1778887316.705558,
+    "hash": "f7d16c0e08f8429529d3b3f108bf450e"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/user_guide/07_orchestrator.md": {
+    "mtime": 1778887316.7054944,
+    "hash": "7cf53076bf9f6eee3365cfcf6287db25"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/user_guide/01_settings.md": {
+    "mtime": 1779440066.7064464,
+    "hash": "09300bc443c9cc5e658b9b113b604673"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/user_guide/06_readme.md": {
+    "mtime": 1779316926.8592937,
+    "hash": "3bd07735e0c61797b344f16f8666f66a"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/user_guide/index.md": {
+    "mtime": 1779316926.8596318,
+    "hash": "0e423755a2b80d8879b44a417ccdf454"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/user_guide/00_getting_started.md": {
+    "mtime": 1779316926.8587399,
+    "hash": "74c3f0bcfd847f70906052016b03f617"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/user_guide/04_create_run.md": {
+    "mtime": 1779316926.859108,
+    "hash": "c0b6fe3eccdc75a1b3c6e8be4b0aecf5"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/user_guide/05_create_test_run.md": {
+    "mtime": 1779316926.8591979,
+    "hash": "17e5ca58364d374ab218a194b5d717eb"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/index.rst": {
+    "mtime": 1778887316.7042208,
+    "hash": "80bbd5a49516dfc36f19ab11bf828d84"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.plugins.logger.rst": {
+    "mtime": 1778743232.834483,
+    "hash": "35c8070e590b29b7affdb246e1150e63"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.controller.state_machine.rst": {
+    "mtime": 1778743232.7736025,
+    "hash": "4f1e71d6b1cda6b24bd9796ee6f77139"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.tray.window_launcher.rst": {
+    "mtime": 1778743232.892297,
+    "hash": "e2d82105943fce5c0914be4600aeeb19"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.tray.main.rst": {
+    "mtime": 1778743232.880523,
+    "hash": "1478450778ffae6b40f39ef14c0f54fb"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.window.pywebview_app.rst": {
+    "mtime": 1778743232.9327288,
+    "hash": "a373a655c493835346356c8df6a24af1"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.window.rst": {
+    "mtime": 1778743232.7146823,
+    "hash": "f90dc5e744e27dd7ec98aae173a4f6a9"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.api.errors.rst": {
+    "mtime": 1778743232.7262666,
+    "hash": "451ddea9a85a73d396cea47b75b1d530"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.tree.rst": {
+    "mtime": 1778743232.9867764,
+    "hash": "0390111b9d50be4c74690c49abf5518f"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.api.routers.browse.rst": {
+    "mtime": 1778877294.3585439,
+    "hash": "4a6744496b63710c713b8830aeb8e66e"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.client.rst": {
+    "mtime": 1778877294.959309,
+    "hash": "4cb344a877767d4459efbd220bf0db64"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.controller.creation.rst": {
+    "mtime": 1778743232.7688215,
+    "hash": "7b4c72d316dd3fbb2aad54ab53406390"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.tray.quit_coordinator.rst": {
+    "mtime": 1778743232.8855515,
+    "hash": "4b425f69c314c249fd367f3842529cd1"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.tray.icon.rst": {
+    "mtime": 1778743232.877409,
+    "hash": "e847d2507cfeadd3e4a1633a3192be37"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.api.health.rst": {
+    "mtime": 1778743232.730879,
+    "hash": "d51d414021c27f1f8e17e008674d7049"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.sync.rst": {
+    "mtime": 1778743232.6875668,
+    "hash": "3654ceb9652de1815002bcf7850e5c2e"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.pages.rst": {
+    "mtime": 1778877294.9826303,
+    "hash": "dbcb9d7b2671bcd3ab889a4f5fc79bde"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.logging.format.rst": {
+    "mtime": 1778743232.787626,
+    "hash": "2059b5f1950b15a2f6dfde9492f3009f"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.banner_stack.rst": {
+    "mtime": 1778743232.9674966,
+    "hash": "a4459420ddf3fda76019f2de23320af3"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.validation_summary.rst": {
+    "mtime": 1778743232.9886498,
+    "hash": "91da7bc120acd0a8188a21ead596baf9"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.tray.autostart.rst": {
+    "mtime": 1778743232.8707888,
+    "hash": "793d653606bc7abbf2304e202fa2b882"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.api.routers.operations.rst": {
+    "mtime": 1778743232.946071,
+    "hash": "1bdf88f040ac79aea13ea5799bced43d"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.config.models.rst": {
+    "mtime": 1778743232.75644,
+    "hash": "9f0b969229bdff4352fef2c469f418e2"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.orchestrator.staging_watcher.rst": {
+    "mtime": 1778743232.8214808,
+    "hash": "c7e6959dd20ff992c469c38e55dd1143"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.cache.ingest_writer.rst": {
+    "mtime": 1778743232.7457328,
+    "hash": "de1f2bab89ecc4b0864e3c1b058ee2dd"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.pages.main.rst": {
+    "mtime": 1778877294.9833417,
+    "hash": "f878c249c55c802644bafb923144bf0f"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.tray.server_runner.rst": {
+    "mtime": 1778743232.8876445,
+    "hash": "42d11c26b395e3f0c838da64f9e7f551"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.rst": {
+    "mtime": 1778877294.6967142,
+    "hash": "93c78023181e42539ab63edd29dbaa14"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.api.setup.rst": {
+    "mtime": 1778743232.738546,
+    "hash": "a4dcf3e470139b7dfbff1d9bb82f4601"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.credential_field.rst": {
+    "mtime": 1778877294.9632702,
+    "hash": "d46f9df066df1a823352d1e830322dd4"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.api.rst": {
+    "mtime": 1778743232.61944,
+    "hash": "c6559a4f578245f46ddb7879eba6cc56"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.api.app.rst": {
+    "mtime": 1778743232.7218957,
+    "hash": "77f7516d465d3ec33af52cdb1ddff422"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.logging.manager.rst": {
+    "mtime": 1778743232.792124,
+    "hash": "485abdf35ac8134036aeccc9d64a9a1d"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.plugins.base.rst": {
+    "mtime": 1778743232.8232431,
+    "hash": "8151a96e1ca5bbff9cff03a8c42aefc2"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.validator.findings.rst": {
+    "mtime": 1778743232.9237397,
+    "hash": "6df3d359e2c3598e8a863def77398417"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.config.loader.rst": {
+    "mtime": 1778743232.749462,
+    "hash": "e22abdcfd8176fda65f0fad997eac7ad"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.sync_status_icon.rst": {
+    "mtime": 1778743232.980488,
+    "hash": "eaffe381ed664fce170272f4c29d1517"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.sync.nas_client.rst": {
+    "mtime": 1778743232.8548243,
+    "hash": "174339a9efa9602c91ac27ca53d45549"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.pages.problems.rst": {
+    "mtime": 1778743232.9955218,
+    "hash": "1ddf9df6e192f180b302b78fbf661577"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.logging.context.rst": {
+    "mtime": 1778743232.7859945,
+    "hash": "2757aa7e2c4f94b7712209a86439ddd9"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.tray.notifications.rst": {
+    "mtime": 1778743232.8835397,
+    "hash": "34c48c2010bff0eafe341439f6954cf6"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.window.main.rst": {
+    "mtime": 1778743232.9313219,
+    "hash": "620df13f8096dec710c91a9930880d2a"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.bandwidth_schedule_editor.rst": {
+    "mtime": 1778743232.9656916,
+    "hash": "50087a3da609ab8f2cd66bc73ccda9f0"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.readme.rst": {
+    "mtime": 1778743232.686439,
+    "hash": "e815fe9c5c50638f1436604d091d4999"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.travelling_badge.rst": {
+    "mtime": 1778877294.9748416,
+    "hash": "219bd7533bb0522239a6652778241f64"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.client.folder_feed.rst": {
+    "mtime": 1778877295.0029233,
+    "hash": "3c98ca635ad9cc95335081ec181f3f84"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.api.routers.problems.rst": {
+    "mtime": 1778743232.951567,
+    "hash": "d337ec0da3b8555c25a6ac4afcd1a0f5"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.notifications.rst": {
+    "mtime": 1778743232.9105525,
+    "hash": "1863d720d5d7d518de8f415d5f8079aa"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.template.rst": {
+    "mtime": 1778743232.6879792,
+    "hash": "4497babcd98dd765e8dc2fc3a87a746a"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.lims.catalogue.rst": {
+    "mtime": 1778743232.777615,
+    "hash": "e6fab8124a32204407ba0e2a74e9250c"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.lims.client.rst": {
+    "mtime": 1778743232.78009,
+    "hash": "f55fa1537a737b709d6b7828d2fc81ce"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.client.refresh_coordinator.rst": {
+    "mtime": 1778877295.0052857,
+    "hash": "44dc99200a56b32e6802b329be763647"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.api.events.rst": {
+    "mtime": 1778743232.72819,
+    "hash": "8335c106c84a57773efc456c8ea18605"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.breadcrumb.rst": {
+    "mtime": 1778877294.9627192,
+    "hash": "adf1540392c85079c99e5a6bedcbcec8"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.tray.rst": {
+    "mtime": 1778743232.6937451,
+    "hash": "41458525b8e025d919f8c8841986ee7e"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.file_list.rst": {
+    "mtime": 1778877294.966338,
+    "hash": "ab1ae7dd91411d1e950d63c539575e63"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.rst": {
+    "mtime": 1778877294.9601269,
+    "hash": "6e29920ea544df7822ac5b742852d97e"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.sync.transports.rclone.rst": {
+    "mtime": 1778743232.9612744,
+    "hash": "dc9544d4dfe8ced7c0494b165cab5594"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.plugins.rst": {
+    "mtime": 1778743232.6841261,
+    "hash": "e0f5003419b96db99299458782709d45"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.controller.session_store.rst": {
+    "mtime": 1778743232.7714345,
+    "hash": "315eef07e287a8eacc8a8a392f03fd1a"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.pages.staging.rst": {
+    "mtime": 1778743233.0065405,
+    "hash": "9cfac0e82e62c40a6c3aad9ae9fe5835"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.keyboard.rst": {
+    "mtime": 1778743232.8991337,
+    "hash": "877b5c7d449b3db8ad196400c6a9b9ce"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.theme.rst": {
+    "mtime": 1778743232.913327,
+    "hash": "826c3bd59dd7bbded95de47d54f91478"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.sync.bandwidth.rst": {
+    "mtime": 1778743232.8460243,
+    "hash": "17bd92d55edbef4f8ba6514738fabbca"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.session_progress.rst": {
+    "mtime": 1778743232.977385,
+    "hash": "46988fd77488776678e03a9848879026"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.api.routers.config.rst": {
+    "mtime": 1778877294.3616476,
+    "hash": "0673ba1199482053d6b75509faba09cd"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.cache.equipment.rst": {
+    "mtime": 1778743232.743335,
+    "hash": "8cece4138fe5944d8d7524bb2e50c6e6"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.pages.settings.rst": {
+    "mtime": 1778877294.9845219,
+    "hash": "d807a065415e28b0513318440e6f4ded"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.operations_modal.rst": {
+    "mtime": 1778743232.9738376,
+    "hash": "7560ee3d6b376c474c154bf67b38646e"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.tray.dependencies.rst": {
+    "mtime": 1778743232.8757606,
+    "hash": "a89d054d6954043655e41e63ce632fde"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.test_connection_panel.rst": {
+    "mtime": 1778743232.9817991,
+    "hash": "37b0bcfb42b515e1ff0d0e7d4af2c6d5"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.template.copier_driver.rst": {
+    "mtime": 1778743232.8677325,
+    "hash": "2180fa1bd1093890b3c44c5c3fa26b20"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.sync.transports.rsync_ssh.rst": {
+    "mtime": 1778743232.9636145,
+    "hash": "65d941f6ff2d289312d373678f962fbe"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.api.routers.rst": {
+    "mtime": 1778743232.731456,
+    "hash": "49bb6a2a9f9e6047aec0dfdde41e2982"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.api.routers.sessions.rst": {
+    "mtime": 1778743232.9562986,
+    "hash": "2dce9df3c0deed63fd475820b7d5a6ea"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.errors.rst": {
+    "mtime": 1778743232.632246,
+    "hash": "bf9454d20be40c45acc02f8580c2553f"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.cache.creation_writer.rst": {
+    "mtime": 1778743232.7416325,
+    "hash": "eb8b76f8aca477ac6bd5185f405b4a8a"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.equipment_form.rst": {
+    "mtime": 1778877294.9797487,
+    "hash": "0195b14f51f3cb9c540a2bcb1d76fd5e"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.pages.wizard_equipment.rst": {
+    "mtime": 1778877294.9932783,
+    "hash": "e6b6a599b59831c17eb3513bde8d847b"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.tray.storage_secret.rst": {
+    "mtime": 1778743232.8906562,
+    "hash": "0f89fd127fa8a8b405abfe459726884b"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.sync.queue.rst": {
+    "mtime": 1778743232.8606384,
+    "hash": "98e50bcbc38d7b082e695d1b064148a8"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.pages.welcome.rst": {
+    "mtime": 1778743233.0134578,
+    "hash": "8dd8fd1b6114ca5285ba0b24ecda40e4"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.lims.keyring_store.rst": {
+    "mtime": 1778743232.783375,
+    "hash": "bc7cfdb40ec580e17dc39dd04cf41460"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.orchestrator.cleanup.rst": {
+    "mtime": 1778743232.793959,
+    "hash": "0a0080cb5389300b0a9599fb8e064bd8"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.pages.wizard_project.rst": {
+    "mtime": 1778743233.0183048,
+    "hash": "484743d343936ea28e2a40bbd0e9058c"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.orchestrator.rst": {
+    "mtime": 1778743232.681598,
+    "hash": "4c66a03943f32563f3249480b9daa69b"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.test_run_badge.rst": {
+    "mtime": 1778743232.9826221,
+    "hash": "12de1f85bfc3994e12c36c9e4d41432c"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.sync.pre_sync_gate.rst": {
+    "mtime": 1778743232.8561275,
+    "hash": "a4abab9fb3b41c84443793e53334d063"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.status_bar_segment.rst": {
+    "mtime": 1778743232.978618,
+    "hash": "4bfc4b686c3ad81f31f8f59606a1a04d"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.cache.log_writer.rst": {
+    "mtime": 1778743232.7477558,
+    "hash": "774f34a7bd3936b84555dfe204faa612"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.override_badge.rst": {
+    "mtime": 1778743232.9750776,
+    "hash": "8c2a1b893f87cc54a6adb205eb9cf8cd"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.logging.handlers.rst": {
+    "mtime": 1778743232.7896905,
+    "hash": "7fb2d83e7130dd3130b64db467f890e5"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.lims.rst": {
+    "mtime": 1778743232.680085,
+    "hash": "79ab0df8e7b7e28349d522acd83ad6fc"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.mode_badge.rst": {
+    "mtime": 1778743232.9717798,
+    "hash": "3ffc80c7dfc65f021c2d6e4468d5750a"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.plugins.registry.rst": {
+    "mtime": 1778743232.8389528,
+    "hash": "8ba5241b301b7a41fb96b37789c75f2d"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.controller.rst": {
+    "mtime": 1778743232.6310613,
+    "hash": "3b80d4828204a9f1a7866eb65767b8fc"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.plugins.host.rst": {
+    "mtime": 1778743232.8325953,
+    "hash": "7978228169590b5e2e4af4ece5495884"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.tray.status.rst": {
+    "mtime": 1778743232.889775,
+    "hash": "221bbc6565f65f18457902003373ca79"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.cache.rst": {
+    "mtime": 1778743232.6202512,
+    "hash": "2c3b3b942c3e83cad27d42f0f6522d52"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.pages.templates.rst": {
+    "mtime": 1778743233.0115335,
+    "hash": "9cf3d133695f7ced3ec9ea3c25fc37f4"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.lims.cache.rst": {
+    "mtime": 1778743232.776002,
+    "hash": "21d709d0eba189e746cd0359e3fc5900"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.metadata_pane.rst": {
+    "mtime": 1778877294.969995,
+    "hash": "58c05502057ecf62a939c6797a6cd6fa"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.sync.cleanup.rst": {
+    "mtime": 1778743232.8473356,
+    "hash": "85bdfd6b726d8b0ac2edd9b4c610f3bd"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.design.rst": {
+    "mtime": 1778743232.895463,
+    "hash": "302e9853b914c02f69f656925da9ee4b"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.api.schemas.rst": {
+    "mtime": 1778743232.7346604,
+    "hash": "721515ee44e0bc45f578d574defa1d87"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.validator.rst": {
+    "mtime": 1778743232.7131178,
+    "hash": "b2c003bb2ee7b145fc9ae2dba5fe87e8"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.sync.verifier.rst": {
+    "mtime": 1778743232.864626,
+    "hash": "b6a4f935c96c40cad83b0f72510c1de6"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.readme.generator.rst": {
+    "mtime": 1778743232.8446536,
+    "hash": "34933e343687e34de13bb62ba9b060b2"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.api.routers.staging.rst": {
+    "mtime": 1778743232.959288,
+    "hash": "0ae4cc7f2009aab0b0aa6d67d3461f21"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.validator.engine.rst": {
+    "mtime": 1778743232.9226258,
+    "hash": "af7d7fc043bc5529389c0fb87c9b9499"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.tree_context_menu.rst": {
+    "mtime": 1778877294.976748,
+    "hash": "af5ac01e64ff441299592b72ac9146b4"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.config.rst": {
+    "mtime": 1778743232.6300693,
+    "hash": "f932b6cbb20a73fc88abd7959c7e5a63"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.orchestrator.staging_query.rst": {
+    "mtime": 1778743232.8159475,
+    "hash": "8c7ddb31628df04042018fb333c8d3f0"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.validator.rules.rst": {
+    "mtime": 1778877294.9482949,
+    "hash": "adb33c0bbca6ee35445f90ed93ff5d24"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.pages.wizard_run.rst": {
+    "mtime": 1778743233.0226243,
+    "hash": "7513b888d80f873892e3bad7c9292d70"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.components.filter_chips.rst": {
+    "mtime": 1778743232.9708178,
+    "hash": "bc239a191bfd1ae59116ed9a136bf075"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.sync.transports.rst": {
+    "mtime": 1778743232.861698,
+    "hash": "c7c1f243e1efa54a828575a71c8ca9e7"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.logging.rst": {
+    "mtime": 1778743232.6808248,
+    "hash": "579a3cfdbb0aa652e15ac3eb532c9393"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.ui.mount.rst": {
+    "mtime": 1778743232.9071581,
+    "hash": "e05590a28a15c7f2960255a323ce7681"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/api/_generated/exlab_wizard.lims.schemas.rst": {
+    "mtime": 1778743232.7843103,
+    "hash": "8c8d4ec8d309c3652199b9c2af905708"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/superpowers/specs/2026-05-14-gui-orchestrator-redesign-design.md": {
+    "mtime": 1778887316.7049596,
+    "hash": "e19b6261125f625d3dbd1d6b8ddc6511"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/plugin_guide/manifest_schema.md": {
+    "mtime": 1778887316.7046688,
+    "hash": "ad16ce0ec77e0be02e29c8c1794fb3ac"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/plugin_guide/ipc_envelope.md": {
+    "mtime": 1778887316.704606,
+    "hash": "1c5db8cf418000fb0b014621f20ec580"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/plugin_guide/index.md": {
+    "mtime": 1778887316.7045462,
+    "hash": "83e23f045c4796bfd6e8755a56c37029"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/plugin_guide/worked_examples.md": {
+    "mtime": 1778887316.704729,
+    "hash": "a95d15b3fd67f4f74dd818b2771aa057"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/superpowers/specs/2026-05-21-operator-free-per-file-nas-sync-design.md": {
+    "mtime": 1779430584.872797,
+    "hash": "5367be02ac45a50b14099b0c7fc2d0ee"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/superpowers/specs/2026-05-26-rclone-only-nas-sync-design.md": {
+    "mtime": 1779845832.8495932,
+    "hash": "43b73291db0d69e51495778fdd2f6ff5"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/superpowers/specs/2026-05-28-staging-root-opt-in-design.md": {
+    "mtime": 1780017359.8830984,
+    "hash": "d56fc10fda54a79576688cc8bd9937c0"
+  },
+  "/Users/alex/Projects/ExLabWizard/design_specs/ExLab-Wizard_Frontend_Spec.md": {
+    "mtime": 1778871321.7729487,
+    "hash": "ab99d95d718e605df1592c2895316532"
+  },
+  "/Users/alex/Projects/ExLabWizard/design_specs/ExLab-Wizard_Design_Spec.md": {
+    "mtime": 1778871321.7720885,
+    "hash": "f5fd99ee8fafb546f2bb908f1fa0d548"
+  },
+  "/Users/alex/Projects/ExLabWizard/design_specs/IMPLEMENTATION_PLAN.md": {
+    "mtime": 1778871321.7734296,
+    "hash": "32b2530bc80f6db00868d08018c95733"
+  },
+  "/Users/alex/Projects/ExLabWizard/design_specs/design_spec_sections/07_Sync_and_Database_Integration.md": {
+    "mtime": 1778871321.7746224,
+    "hash": "1f6102cd6bba0d3789a5af275fab1da6"
+  },
+  "/Users/alex/Projects/ExLabWizard/design_specs/design_spec_sections/03_Directory_Structure_Convention.md": {
+    "mtime": 1778871321.7740068,
+    "hash": "d1f01c14513ac98f6d318c9ae3de3a90"
+  },
+  "/Users/alex/Projects/ExLabWizard/design_specs/design_spec_sections/12_Orchestrator_Mode.md": {
+    "mtime": 1777411057.8971348,
+    "hash": "728aa3e28932612d0c2ef2054e62a962"
+  },
+  "/Users/alex/Projects/ExLabWizard/design_specs/design_spec_sections/06_Plugin_System.md": {
+    "mtime": 1778061796.5506337,
+    "hash": "36945947a6ad809d615622ccc7e9f8ae"
+  },
+  "/Users/alex/Projects/ExLabWizard/design_specs/design_spec_sections/15_Distribution.md": {
+    "mtime": 1778058485.4633203,
+    "hash": "eb168a0f19078a0db433186fd943b876"
+  },
+  "/Users/alex/Projects/ExLabWizard/design_specs/design_spec_sections/04_Backend_Architecture.md": {
+    "mtime": 1778061776.422859,
+    "hash": "900eb2e7eddd534f6faae52f6d357e09"
+  },
+  "/Users/alex/Projects/ExLabWizard/design_specs/design_spec_sections/11_Cache_Folders.md": {
+    "mtime": 1778871321.7757447,
+    "hash": "a223611dd428d10b9f77181ddf030e03"
+  },
+  "/Users/alex/Projects/ExLabWizard/design_specs/design_spec_sections/05_Template_Format.md": {
+    "mtime": 1778871321.7743647,
+    "hash": "a6bc5d1bb02fa3b8dc24ff232f774552"
+  },
+  "/Users/alex/Projects/ExLabWizard/design_specs/design_spec_sections/13_Equipment_to_Orchestrator_Data_Flow.md": {
+    "mtime": 1778871321.7759976,
+    "hash": "0e2b65535a927935488c36a2f1c5d12d"
+  },
+  "/Users/alex/Projects/ExLabWizard/design_specs/design_spec_sections/08_Error_Handling_Principles.md": {
+    "mtime": 1778871321.7749019,
+    "hash": "57f00dba3869d2a467a6911b9d8d65cb"
+  },
+  "/Users/alex/Projects/ExLabWizard/design_specs/design_spec_sections/10_README_Generation.md": {
+    "mtime": 1778871321.7753968,
+    "hash": "e9e0927689e1d2645bb6a87386c19d87"
+  },
+  "/Users/alex/Projects/ExLabWizard/design_specs/design_spec_sections/16_Logging.md": {
+    "mtime": 1778871321.7761986,
+    "hash": "5c0367ae24907d6a2461840793ceb09c"
+  },
+  "/Users/alex/Projects/ExLabWizard/design_specs/design_spec_sections/02_User_Interaction.md": {
+    "mtime": 1778871321.7737012,
+    "hash": "000f4d2b3ef0ea572a57e7e8b59d6507"
+  },
+  "/Users/alex/Projects/ExLabWizard/design_specs/design_spec_sections/09_Configuration_File.md": {
+    "mtime": 1778871321.7751405,
+    "hash": "21b5351376a6036c30927b6bc6f98d04"
+  },
+  "/Users/alex/Projects/ExLabWizard/nas-verify-connected.png": {
+    "mtime": 1779991082.354783,
+    "hash": "d4b60a8c2b74a5d54f88076563e47f26"
+  },
+  "/Users/alex/Projects/ExLabWizard/nas-verify-01-main.png": {
+    "mtime": 1779990473.439531,
+    "hash": "a075f0118806caabb5cea4e8cb5be6fe"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/_static/screenshots/08_problems/01_initial.png": {
+    "mtime": 1779316926.8585918,
+    "hash": "cca8c2da2f99b78ba6f0545c88362d0e"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/_static/screenshots/05_create_test_run/01_initial.png": {
+    "mtime": 1779316926.8545485,
+    "hash": "a82a1bc681a091ee9d21b3a5f4bbba70"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/_static/screenshots/07_orchestrator/01_initial.png": {
+    "mtime": 1779316926.8553822,
+    "hash": "ec74c642222e14bb8d245968e6eb4b2d"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/_static/screenshots/07_orchestrator/02_main.png": {
+    "mtime": 1779316926.856255,
+    "hash": "5f2c38b7bfaed08d7cb88d7ca2cba0f7"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/_static/screenshots/06_readme/01_initial.png": {
+    "mtime": 1779316926.8547287,
+    "hash": "c7385382334f80b9c63631b725329192"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/_static/screenshots/02_browse/01_initial.png": {
+    "mtime": 1779316926.8536217,
+    "hash": "4a0f55fa548d22e20eb7c1f7b287ccbf"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/_static/screenshots/02_browse/02_selected.png": {
+    "mtime": 1779316926.853885,
+    "hash": "32b4948ac601571d6a2fdd0eece528a4"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/_static/screenshots/03_create_project/01_initial.png": {
+    "mtime": 1779316926.854103,
+    "hash": "c7385382334f80b9c63631b725329192"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/_static/screenshots/00_getting_started/01_initial.png": {
+    "mtime": 1779316926.8529668,
+    "hash": "d8987c32938c78e3b5181d983cc950fd"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/_static/screenshots/04_create_run/01_initial.png": {
+    "mtime": 1779316926.8543537,
+    "hash": "38f3cb9f705030e846b60b12b71fcc5a"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/_static/screenshots/01_settings/01_initial.png": {
+    "mtime": 1779316926.8532274,
+    "hash": "03c2022f890809db53cc8159eff3634e"
+  },
+  "/Users/alex/Projects/ExLabWizard/docs/source/_static/screenshots/01_settings/02_add_equipment.png": {
+    "mtime": 1779316926.853385,
+    "hash": "fad3b5872155a6cb29b492abf9f4fa34"
+  },
+  "/Users/alex/Projects/ExLabWizard/assets/ExLabWizardLogo.svg": {
+    "mtime": 1778231168.0,
+    "hash": "5531a61ca569e19d131bb71aebe4e6a5"
+  },
+  "/Users/alex/Projects/ExLabWizard/assets/sync_cloud.svg": {
+    "mtime": 1778193909.0,
+    "hash": "8da0304ffdc21ef8582673f82395506a"
+  },
+  "/Users/alex/Projects/ExLabWizard/assets/sync_local.svg": {
+    "mtime": 1778193909.0,
+    "hash": "60fa512b302bf8dfb4fbd85321932df0"
+  },
+  "/Users/alex/Projects/ExLabWizard/assets/equipment_graphics/Cytation10.png": {
+    "mtime": 1768258072.0,
+    "hash": "a818177d082a9d213db2aff9b4bfd697"
+  },
+  "/Users/alex/Projects/ExLabWizard/assets/equipment_graphics/Tecan.png": {
+    "mtime": 1771639030.0,
+    "hash": "a4f7415e3dcd701914490a33121674c7"
+  },
+  "/Users/alex/Projects/ExLabWizard/assets/equipment_graphics/SnP-ColonyPicker.png": {
+    "mtime": 1768258056.0,
+    "hash": "3680e0142a8967be6c271e9196386a90"
+  },
+  "/Users/alex/Projects/ExLabWizard/assets/equipment_graphics/SnP-Imager.png": {
+    "mtime": 1768258042.0,
+    "hash": "8f2b35b705389d84aaf14912473a5299"
+  },
+  "/Users/alex/Projects/ExLabWizard/assets/equipment_graphics/OpentronsBench.png": {
+    "mtime": 1771639130.0,
+    "hash": "ffd6ddecb1cb34a4ec0718835d2c238d"
+  },
+  "/Users/alex/Projects/ExLabWizard/assets/equipment_graphics/TecanFluent.png": {
+    "mtime": 1768591628.0,
+    "hash": "e1bfde2576c43e4c573948f45692b9c4"
+  },
+  "/Users/alex/Projects/ExLabWizard/assets/equipment_graphics/PinnerBench.png": {
+    "mtime": 1771639112.0,
+    "hash": "035b94e5aa560adc234054b4f36471c7"
+  }
+}

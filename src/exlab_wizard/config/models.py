@@ -353,10 +353,16 @@ class EquipmentConfig(BaseModel):
 
     ``sync_mode`` (Redesign Spec §3.2) is the per-equipment role this device
     plays for the equipment: ``nas`` means this device acquires runs and syncs
-    them directly to the NAS (requires ``transport``); ``stage`` means this
-    device acquires runs and pushes them to a connected PC's staging area
-    (requires ``orchestrator_staging_transport``). The two transport fields
-    are mutually exclusive — exactly one is populated, dictated by the mode.
+    them directly to the NAS; ``stage`` means this device acquires runs and
+    pushes them to a connected PC's staging area (requires
+    ``orchestrator_staging_transport``).
+
+    rclone.conf NAS-sync migration: nas-mode no longer carries a per-equipment
+    ``transport`` block -- the connection is defined once by the ``nas:`` block
+    (a single rclone remote). ``transport`` is therefore optional and ignored
+    for nas-mode (kept on the model for backward-compatible configs that still
+    declare it); stage-mode still requires ``orchestrator_staging_transport``
+    and must not declare ``transport``.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -389,9 +395,11 @@ class EquipmentConfig(BaseModel):
     def _sync_mode_dictates_transport(self) -> EquipmentConfig:
         match self.sync_mode:
             case SyncMode.NAS:
-                if self.transport is None:
-                    msg = "equipment.sync_mode == 'nas' requires a 'transport' block"
-                    raise ValueError(msg)
+                # rclone.conf NAS-sync migration: nas-mode no longer requires
+                # (nor forbids) a per-equipment ``transport`` block -- the
+                # ``nas:`` block carries the connection. A still-declared
+                # ``transport`` is simply allowed for backward compatibility;
+                # ``orchestrator_staging_transport`` remains nas-incompatible.
                 if self.orchestrator_staging_transport is not None:
                     msg = (
                         "equipment.sync_mode == 'nas' must not declare "
