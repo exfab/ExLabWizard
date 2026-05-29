@@ -3,8 +3,8 @@
 ``_test_app.py`` mounts a ``TestState``-backed surface for the flow
 tests. This module instead boots the real production app -- the same
 ``exlab_wizard.tray._build_default_app`` the tray uses -- so a
-Playwright test can drive the genuine welcome -> settings -> save ->
-restart-required flow built by ``exlab_wizard.ui.mount``.
+Playwright test can drive the genuine welcome -> settings -> save flow
+(applied live, no relaunch) built by ``exlab_wizard.ui.mount``.
 
 The e2e test spawns uvicorn against this factory with ``HOME`` pointed
 at a fresh tmp directory, so ``paths.os_config_path`` /

@@ -6,8 +6,8 @@ Covers the pure logic behind the three polish features:
   wizard's dynamic Variables step.
 * ``render_question_field`` -- seeds the answers dict with each
   question's default (the only headlessly-assertable behaviour).
-* ``build_equipment_config`` -- the equipment-editor builder, across
-  both completeness signals and both transports.
+* ``build_equipment_config`` -- the equipment-editor builder. rclone.conf
+  migration: nas-mode no longer carries a per-equipment transport.
 """
 
 from __future__ import annotations
@@ -17,8 +17,6 @@ from pydantic import ValidationError
 
 # Prime the api package before importing ui.pages (import-cycle workaround).
 import exlab_wizard.api.app  # noqa: F401
-from exlab_wizard.config.models import RcloneTransport, RsyncSshTransport
-from exlab_wizard.constants import CompletenessSignal
 from exlab_wizard.ui.pages.settings import build_equipment_config
 from exlab_wizard.ui.pages.templates import (
     TemplateQuestion,
@@ -123,59 +121,32 @@ def _equipment_kwargs(**overrides: object) -> dict[str, object]:
         "label": "Confocal 1",
         "local_root": "/data/microscope1",
         "nas_root": "/nas/microscope1",
-        "completeness_signal": "sentinel_file",
-        "sentinel_filename": "done.flag",
-        "manifest_filename": "",
-        "transport_type": "rclone",
-        "rclone_remote": "lab-nas",
-        "rclone_remote_path": "lab/microscope1",
-        "ssh_target": "",
-        "ssh_key_path": "",
-        "rsync_remote_path": "",
+        "sync_mode": "nas",
     }
     base.update(overrides)
     return base
 
 
-def test_build_equipment_rclone_sentinel() -> None:
+def test_build_equipment_nas_has_no_transport() -> None:
+    # rclone.conf migration: nas-mode carries no per-equipment transport;
+    # the ``nas:`` remote defines the connection.
     entry = build_equipment_config(**_equipment_kwargs())  # type: ignore[arg-type]
     assert entry.id == "MICROSCOPE1"
-    assert entry.completeness_signal is CompletenessSignal.SENTINEL_FILE
-    assert entry.sentinel_filename == "done.flag"
-    assert entry.manifest_filename is None
-    assert isinstance(entry.transport, RcloneTransport)
-    assert entry.transport.rclone_remote == "lab-nas"
+    assert entry.sync_mode.value == "nas"
+    assert not hasattr(entry, "transport")
 
 
-def test_build_equipment_rsync_manifest() -> None:
+def test_build_equipment_stage_has_no_per_equipment_transport() -> None:
+    # rclone.conf migration (Phase 8): stage-mode carries no per-equipment
+    # transport; the staging hop is the ``orchestrator.staging_remote``.
     entry = build_equipment_config(
-        **_equipment_kwargs(  # type: ignore[arg-type]
-            completeness_signal="manifest",
-            sentinel_filename="",
-            manifest_filename="manifest.json",
-            transport_type="rsync_ssh",
-            rclone_remote="",
-            rclone_remote_path="",
-            ssh_target="operator@host",
-            ssh_key_path="~/.ssh/id_ed25519",
-            rsync_remote_path="/remote/microscope1",
-        )
+        **_equipment_kwargs(sync_mode="stage")  # type: ignore[arg-type]
     )
-    assert entry.completeness_signal is CompletenessSignal.MANIFEST
-    assert entry.manifest_filename == "manifest.json"
-    assert entry.sentinel_filename is None
-    assert isinstance(entry.transport, RsyncSshTransport)
-    assert entry.transport.ssh_target == "operator@host"
-    assert entry.transport.remote_path == "/remote/microscope1"
+    assert entry.sync_mode.value == "stage"
+    assert not hasattr(entry, "transport")
+    assert not hasattr(entry, "orchestrator_staging_transport")
 
 
 def test_build_equipment_rejects_bad_id() -> None:
     with pytest.raises(ValidationError):
         build_equipment_config(**_equipment_kwargs(equipment_id="lower_case"))  # type: ignore[arg-type]
-
-
-def test_build_equipment_rejects_sentinel_without_filename() -> None:
-    with pytest.raises(ValidationError):
-        build_equipment_config(
-            **_equipment_kwargs(sentinel_filename="")  # type: ignore[arg-type]
-        )

@@ -174,7 +174,7 @@ def _build_default_components(
         session_store=getattr(deps, "session_store", None),
         nas_sync=getattr(deps, "nas_sync", None),
     )
-    return TrayApp(
+    tray_app = TrayApp(
         server_runner=server_runner,
         window_launcher=window_launcher,
         quit_coordinator=quit_coordinator,
@@ -182,6 +182,26 @@ def _build_default_components(
         notification_bus=notification_bus,
         autostart=autostart,
     )
+    if deps is not None:
+        # Expose a quit hook + tray-availability flag on deps so the in-window
+        # Settings -> Application section can trigger the same graceful
+        # shutdown as the tray menu (T9) and reflect real tray status (T11).
+        deps.request_quit = tray_app.request_quit
+        deps.tray_available = _tray_backend_available()
+    return tray_app
+
+
+def _tray_backend_available() -> bool:
+    """True when a ``pystray`` backend can be imported.
+
+    When it cannot (e.g. a headless Linux host with no system tray), the
+    app runs window-only per Backend Spec §15.7.4; Settings reflects that.
+    """
+    try:
+        import pystray  # noqa: F401
+    except Exception:
+        return False
+    return True
 
 
 def _parse_argv(argv: list[str] | None) -> argparse.Namespace:
@@ -297,14 +317,7 @@ def _bootstrap_test_config(config_path: Path, *, include_samples: bool) -> None:
                     "label": "Test Rig",
                     "local_root": str(sandbox / "local" / "TESTRIG"),
                     "nas_root": str(sandbox / "nas" / "TESTRIG"),
-                    "completeness_signal": "sentinel_file",
-                    "sentinel_filename": "done.flag",
                     "sync_mode": "nas",
-                    "transport": {
-                        "type": "rclone",
-                        "rclone_remote": "test-nas",
-                        "rclone_remote_path": "test/TESTRIG",
-                    },
                 }
             )
         )

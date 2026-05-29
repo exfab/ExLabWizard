@@ -10,8 +10,13 @@ expected to call ``render_file_list`` with the current entry list; the
 caller decides when to invoke and when to stop the underlying poll.
 
 Right-click context menu (Redesign §4.3 / decision 6A): selecting a row
-opens a menu with **Open in OS** and **Copy path** actions; the right
-metadata pane is NOT driven by file-list selection.
+opens a menu with **Open in OS**, **Copy path**, and **Keep local**
+actions; the right metadata pane is NOT driven by file-list selection.
+
+Operator-free per-file NAS sync design (2026-05-21): a row can be a
+**tombstone** -- a file present in the run's ``sync_state.json`` but
+absent on disk (an "On NAS" cleared-run file). A tombstone is not
+openable. A ``keep_local`` file carries a small "kept local" badge.
 """
 
 from __future__ import annotations
@@ -20,16 +25,24 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from exlab_wizard.ui.components.sync_status_icon import STATUS_ON_NAS
 from exlab_wizard.ui.pages.staging import format_bytes
 
 # Action discriminators consumed by the on_context_menu callback.
 FILE_CONTEXT_OPEN = "open_in_os"
 FILE_CONTEXT_COPY_PATH = "copy_path"
+FILE_CONTEXT_KEEP_LOCAL = "keep_local"
 
 
 @dataclass(frozen=True)
 class FileListEntry:
-    """One row in the centre-pane file list."""
+    """One row in the centre-pane file list.
+
+    ``keep_local`` mirrors the file's ``sync_state.json`` keep-local flag
+    (excluded from cleanup deletion). ``tombstone`` marks an "On NAS"
+    row -- a file recorded in ``sync_state.json`` but absent on disk;
+    such a row shows the ``on_nas`` icon and is not openable.
+    """
 
     name: str
     path: str
@@ -37,6 +50,8 @@ class FileListEntry:
     size_bytes: int | None = None
     modified_iso: str | None = None
     sync_status: str | None = None
+    keep_local: bool = False
+    tombstone: bool = False
 
 
 @dataclass
@@ -83,6 +98,8 @@ def diff_file_lists(
             before.size_bytes != after.size_bytes
             or before.modified_iso != after.modified_iso
             or before.sync_status != after.sync_status
+            or before.keep_local != after.keep_local
+            or before.tombstone != after.tombstone
         ):
             modified.append(path)
     return FileListDiff(
@@ -122,14 +139,42 @@ def render_file_list(
             .style("border-collapse: collapse; font-family: var(--font-mono);")
             .props('data-testid="file-list-table"')
         ):
-            for entry in state.entries:
-                _render_row(
-                    entry,
-                    is_new=entry.path in state.new_paths,
-                    on_double_click=on_double_click,
-                    on_context_menu=on_context_menu,
-                )
+            with ui.element("thead"):
+                _render_header()
+            with ui.element("tbody"):
+                for entry in state.entries:
+                    _render_row(
+                        entry,
+                        is_new=entry.path in state.new_paths,
+                        on_double_click=on_double_click,
+                        on_context_menu=on_context_menu,
+                    )
     return container
+
+
+def _render_header() -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
+    """Render the file-list column header row (Name / Size / Modified / Status)."""
+    try:
+        from nicegui import ui
+    except Exception:
+        return
+    cell = (
+        "font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; "
+        "color: var(--color-muted); font-weight: 600;"
+    )
+    with (
+        ui.element("tr")
+        .style("border-bottom: 1px solid var(--color-rule);")
+        .props('data-testid="file-list-header"')
+    ):
+        for title, align in (
+            ("Name", "left"),
+            ("Size", "right"),
+            ("Modified", "left"),
+            ("Status", "left"),
+        ):
+            with ui.element("th").classes("p-2").style(f"text-align: {align}; {cell}"):
+                ui.label(title)
 
 
 def _render_row(
@@ -146,14 +191,28 @@ def _render_row(
     highlight = "background: var(--color-highlight); " if is_new else ""
     size_text = "-" if entry.size_bytes is None else format_bytes(int(entry.size_bytes))
     modified_text = entry.modified_iso or "-"
-    sync_text = entry.sync_status or "-"
+    sync_text = entry.sync_status or (STATUS_ON_NAS if entry.tombstone else "-")
+    # A tombstone ("On NAS") row is dimmed -- the local copy is gone.
+    row_style = f"{highlight}border-bottom: 1px solid var(--color-rule);"
+    if entry.tombstone:
+        row_style += " opacity: 0.65;"
+    keep_local_attr = ' data-keep-local="true"' if entry.keep_local else ""
+    tombstone_attr = ' data-tombstone="true"' if entry.tombstone else ""
     with (
         ui.element("tr")
-        .style(f"{highlight}border-bottom: 1px solid var(--color-rule);")
-        .props(f'data-testid="file-list-row" data-path="{entry.path}"')
+        .style(row_style)
+        .props(
+            f'data-testid="file-list-row" data-path="{entry.path}"{keep_local_attr}{tombstone_attr}'
+        )
     ):
         with ui.element("td").classes("p-2").style("font-weight: 500;"):
             ui.label(entry.name)
+            if entry.keep_local:
+                ui.label("kept local").props('data-testid="file-keep-local-badge"').style(
+                    "display: inline-block; margin-left: 0.4rem; padding: 0 0.35rem; "
+                    "font-size: var(--text-xs); border-radius: var(--radius-sm); "
+                    "background: var(--color-highlight); color: var(--color-muted);"
+                )
         with ui.element("td").classes("p-2 text-right"):
             ui.label(size_text)
         with ui.element("td").classes("p-2"):
@@ -164,13 +223,21 @@ def _render_row(
             with ui.context_menu().props(
                 f'data-testid="file-context-menu" data-path="{entry.path}"'
             ):
-                ui.menu_item("Open in OS").props('data-testid="file-context-open-in-os"').on(
-                    "click",
-                    lambda _evt, e=entry: on_context_menu(e, FILE_CONTEXT_OPEN),
-                )
+                # A tombstone has no local copy -- "Open in OS" would
+                # fail, so it is omitted for tombstone rows.
+                if not entry.tombstone:
+                    ui.menu_item("Open in OS").props('data-testid="file-context-open-in-os"').on(
+                        "click",
+                        lambda _evt, e=entry: on_context_menu(e, FILE_CONTEXT_OPEN),
+                    )
                 ui.menu_item("Copy path").props('data-testid="file-context-copy-path"').on(
                     "click",
                     lambda _evt, e=entry: on_context_menu(e, FILE_CONTEXT_COPY_PATH),
+                )
+                keep_local_label = "Don't keep local" if entry.keep_local else "Keep local"
+                ui.menu_item(keep_local_label).props('data-testid="file-context-keep-local"').on(
+                    "click",
+                    lambda _evt, e=entry: on_context_menu(e, FILE_CONTEXT_KEEP_LOCAL),
                 )
 
     if on_double_click is not None:

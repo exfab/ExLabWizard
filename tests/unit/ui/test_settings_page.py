@@ -87,6 +87,20 @@ def test_finalize_round_trips_edited_scalar_fields() -> None:
     assert finalized.orchestrator.label == "BENCH-1"
 
 
+def test_finalize_allows_blank_staging_root() -> None:
+    """staging_root is opt-in: a blank value finalizes cleanly (the field is
+    optional). The greyed placeholder suggestion is a render concern covered
+    by the Playwright e2e, not this pure-logic layer."""
+    draft = build_settings_draft(None)
+    draft.orchestrator.label = "BENCH-1"
+    draft.orchestrator.staging_root = ""
+
+    finalized = finalize_settings_draft(draft)
+
+    assert finalized.orchestrator.staging_root == ""
+    assert finalized.orchestrator.label == "BENCH-1"
+
+
 def test_finalize_raises_on_invalid_edit() -> None:
     draft = build_settings_draft(None)
     # logging.level only accepts DEBUG/INFO/WARN/ERROR.

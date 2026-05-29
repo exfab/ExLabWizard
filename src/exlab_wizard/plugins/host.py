@@ -74,11 +74,12 @@ _logger = get_logger(__name__)
 # Registry surface used by the host.
 # ---------------------------------------------------------------------------
 #
-# ``plugins/registry.py`` is owned by Agent A and is not yet committed; the
-# host only needs the interface, not the implementation. The Protocol
-# below defines the minimum surface the host calls into. The
-# :class:`PluginRecord` dataclass is what the registry yields per
-# resolved plugin -- the registry will eventually ship this same shape.
+# The host depends only on the read-only :class:`PluginRegistryProtocol`
+# surface below; the concrete implementation is the committed, wired
+# :class:`exlab_wizard.plugins.registry.PluginRegistry` (a manifest-scanning,
+# lab-wins-merging registry; built and adapted in
+# ``tray.dependencies._build_plugin_host``). The :class:`PluginRecord`
+# dataclass is what the registry yields per resolved plugin.
 
 
 @dataclass(frozen=True)
@@ -115,9 +116,11 @@ class PluginRecord:
 class PluginRegistryProtocol(Protocol):
     """Read-only registry surface the host depends on. Backend Spec §6.2.
 
-    The concrete implementation lives in ``plugins/registry.py`` (Agent A).
-    The host only consumes a single method: ``get_record(name)`` which
-    returns the resolved :class:`PluginRecord` for a registered plugin.
+    The concrete implementation is
+    :class:`exlab_wizard.plugins.registry.PluginRegistry` (committed and
+    wired in ``tray.dependencies._build_plugin_host``). The host consumes a
+    single method: ``get_record(name)``, returning the resolved
+    :class:`PluginRecord` for a registered plugin.
     """
 
     def get_record(self, name: str) -> PluginRecord | None: ...
@@ -887,21 +890,20 @@ def _exit_code_to_status(exit_code: int, files_affected: list[str]) -> str:
 
 
 # A tiny convenience adapter for callers (and the integration tests) that
-# want to materialize a registry from a list of records inline. The real
-# registry implementation will replace this; we ship it here for now so
-# Phase 6B's tests can drive the host without depending on Agent A's
-# ``plugins/registry.py``.
+# want to materialize a registry from a list of records inline. This is a
+# test-only helper; production uses the committed
+# :class:`exlab_wizard.plugins.registry.PluginRegistry` (wired in
+# ``tray.dependencies._build_plugin_host``).
 
 
 @dataclass
 class _ListBackedRegistry:
     """Minimal :class:`PluginRegistryProtocol` implementation used for tests.
 
-    The production registry (Backend Spec §6.2.1, ``plugins/registry.py``,
-    Agent A) replaces this with a manifest-scanning, lab-wins-merging
-    implementation. Keeping the test adapter here lets the host's
-    integration suite drive the spawn path against fixture plugins
-    without prematurely committing to the registry's full surface.
+    Test-only. Production uses the committed, manifest-scanning,
+    lab-wins-merging :class:`exlab_wizard.plugins.registry.PluginRegistry`
+    (Backend Spec §6.2.1). Keeping this list-backed adapter here lets the
+    host's integration suite drive the spawn path against fixture plugins.
     """
 
     records: list[PluginRecord] = field(default_factory=list)
@@ -918,8 +920,8 @@ def build_test_registry(records: Iterable[PluginRecord]) -> PluginRegistryProtoc
     return _ListBackedRegistry(records=list(records))
 
 
-# Convenience for callers serializing the result before Agent A's
-# msgspec.Struct lands; not used by the host itself.
+# Convenience for callers that need a JSON-friendly copy of an applied
+# entry; not used by the host itself.
 def applied_entry_as_json(entry: dict[str, Any]) -> dict[str, Any]:
     """Return ``entry`` as a JSON-friendly dict (deep-copied)."""
     return json.loads(json.dumps(entry, default=str))

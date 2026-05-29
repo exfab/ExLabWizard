@@ -1,7 +1,6 @@
 """Settings dialog (Frontend Spec §7).
 
-Two-pane modal with a left vertical-nav and a right content area. Eight
-sections (``operators`` is deferred pending the chip editor);
+Two-pane modal with a left vertical-nav and a right content area;
 setup-incomplete mode auto-selects the first incomplete one.
 """
 
@@ -14,8 +13,8 @@ from typing import Any
 from pydantic import ValidationError
 
 from exlab_wizard.config.models import Config
-from exlab_wizard.constants import CompletenessSignal
 from exlab_wizard.logging import get_logger
+from exlab_wizard.paths import suggested_staging_root
 from exlab_wizard.ui import notifications
 from exlab_wizard.ui.components import credential_field, test_connection_panel
 
@@ -27,25 +26,70 @@ SETTINGS_SECTIONS: tuple[str, ...] = (
     "lims",
     "equipment",
     "nas_cleanup",
-    # "operators" is deferred -- backend OperatorsConfig + the
-    # controller/creation.py allowlist gate stay wired and are no-ops while
-    # the allowlist defaults to []. The chip editor lands in a future update.
+    # "operators" backs OperatorsConfig.allowlist (Frontend §7.9). It is a
+    # chip editor and is non-gating: the allowlist defaults to [] (any
+    # operator allowed) and it is never added to ``_missing_setup_sections``.
+    "operators",
     "validator",
     "logging",
     "orchestrator",
     "application",
 )
 
+# rclone.conf NAS-sync migration. The NAS-remote section is *not* part
+# of the canonical onboarding-order constant (``SETTINGS_SECTIONS`` stays
+# at the original eight); it is inserted dynamically after ``equipment``
+# by :func:`settings_sections_for` only when nas-mode equipment exists.
+# It shows the single ``nas:`` remote (read-only) plus a Test-connection
+# control -- the operator configures the remote with ``rclone config``,
+# not by typing a password here.
+NAS_REMOTE_SECTION = "nas_remote"
+
 SECTION_TITLES: dict[str, str] = {
     "paths": "Paths",
     "lims": "LIMS",
     "equipment": "Equipment List",
+    NAS_REMOTE_SECTION: "NAS Remote",
     "nas_cleanup": "NAS Cleanup",
+    "operators": "Operators",
     "validator": "Validator",
     "logging": "Logging",
     "orchestrator": "Orchestrator Mode",
     "application": "Application",
 }
+
+
+def _nas_mode_equipment(config: Config | None) -> list[Any]:
+    """Return the nas-mode equipment for ``config``.
+
+    Drives the NAS-remote section's visibility: the section appears
+    whenever this device has at least one device syncing directly to the
+    NAS, so the operator can confirm the configured ``nas:`` remote is
+    reachable.
+    """
+    if config is None:
+        return []
+    from exlab_wizard.constants import SyncMode
+
+    return [eq for eq in config.equipment if eq.sync_mode == SyncMode.NAS]
+
+
+def settings_sections_for(config: Config | None) -> tuple[str, ...]:
+    """Return the visible section ids for ``config``.
+
+    The NAS-remote section is inserted right after ``equipment`` only
+    when at least one nas-mode equipment exists; otherwise the canonical
+    :data:`SETTINGS_SECTIONS` order is returned unchanged (so a stage-only
+    / no-equipment install never sees an empty NAS-remote pane).
+    """
+    if not _nas_mode_equipment(config):
+        return SETTINGS_SECTIONS
+    out: list[str] = []
+    for section in SETTINGS_SECTIONS:
+        out.append(section)
+        if section == "equipment":
+            out.append(NAS_REMOTE_SECTION)
+    return tuple(out)
 
 
 @dataclass
@@ -59,9 +103,20 @@ class SettingsState:
 
 
 def first_incomplete_section(incomplete: tuple[str, ...]) -> str | None:
-    """Return the first section ID in canonical order that's incomplete."""
+    """Return the first section ID in canonical order that's incomplete.
 
+    The dynamic NAS-remote section is not part of the static
+    :data:`SETTINGS_SECTIONS` tuple, so it is folded into the canonical
+    order here (right after ``equipment``) -- otherwise an
+    ``INCOMPLETE_NO_NAS_REMOTE`` install would auto-select nothing
+    and land the operator on the default section (rclone.conf migration).
+    """
+    order: list[str] = []
     for section in SETTINGS_SECTIONS:
+        order.append(section)
+        if section == "equipment":
+            order.append(NAS_REMOTE_SECTION)
+    for section in order:
         if section in incomplete:
             return section
     return None
@@ -141,6 +196,12 @@ def render_settings_page(
     on_save_lims_password: Callable[[str], None] | None = None,
     on_clear_lims_password: Callable[[], None] | None = None,
     lims_password_present: bool = False,
+    nas_remote_available: Callable[[str], bool] | None = None,
+    on_test_connection: Callable[[], Any] | None = None,
+    autostart_registered: bool = False,
+    on_set_autostart: Callable[[bool], bool | None] | None = None,
+    on_quit: Callable[[], None] | None = None,
+    tray_available: bool = False,
 ) -> Any:
     """Render the settings dialog.
 
@@ -160,6 +221,15 @@ def render_settings_page(
     click time, so the host wires them to a :class:`KeyringStore` rather
     than to the draft. ``lims_password_present`` seeds the credential
     row's resting state from whether the keyring already holds one.
+
+    The NAS-remote section (rclone.conf migration) is read-only: the
+    operator no longer types a NAS password. ``nas_remote_available(name)``
+    answers whether the configured ``nas.remote`` is present in the
+    operator's ``rclone.conf`` (driving a found / not-found badge), and
+    ``on_test_connection()`` runs the rclone remote probe, returning a
+    :class:`TestConnectionResult` (or an awaitable of one) for the inline
+    panel. Both are optional so unit tests can render the section without
+    a wired rclone driver.
     """
 
     s = state or SettingsState()
@@ -181,10 +251,15 @@ def render_settings_page(
     # the re-validated result.
     draft = build_settings_draft(config)
 
+    # Section visibility is draft-derived: the NAS-credentials section
+    # appears only when password-requiring nas-mode equipment exists.
+    sections = settings_sections_for(draft)
+
     payload = {
         "active": s.active_section,
         "save_label": save_button_label(s),
-        "warnings": [section for section in SETTINGS_SECTIONS if section_has_warning(s, section)],
+        "sections": list(sections),
+        "warnings": [section for section in sections if section_has_warning(s, section)],
         "config": draft.model_dump(mode="python"),
     }
 
@@ -228,7 +303,7 @@ def render_settings_page(
 
         with ui.splitter(value=22).classes("w-full") as split:
             with split.before, ui.column().classes("w-full").style("gap: 0.25rem;"):
-                for section in SETTINGS_SECTIONS:
+                for section in sections:
                     nav_row = (
                         ui.row()
                         .classes("items-center w-full")
@@ -256,7 +331,7 @@ def render_settings_page(
                         if section_has_warning(s, section):
                             ui.icon("warning").style("color: var(--color-warning);")
             with split.after:
-                for section in SETTINGS_SECTIONS:
+                for section in sections:
                     body = ui.column().classes("w-full")
                     body.visible = section == s.active_section
                     with body:
@@ -266,6 +341,12 @@ def render_settings_page(
                             on_save_lims_password=on_save_lims_password,
                             on_clear_lims_password=on_clear_lims_password,
                             lims_password_present=lims_password_present,
+                            nas_remote_available=nas_remote_available,
+                            on_test_connection=on_test_connection,
+                            autostart_registered=autostart_registered,
+                            on_set_autostart=on_set_autostart,
+                            on_quit=on_quit,
+                            tray_available=tray_available,
                         )
                     section_bodies[section] = body
 
@@ -301,6 +382,91 @@ def render_settings_page(
     return card
 
 
+def _render_chip_editor(
+    values: list[str],
+    *,
+    add_label: str,
+    testid: str,
+    validate: Callable[[str], str | None] | None = None,
+    on_reset: Callable[[], None] | None = None,
+    reset_label: str = "Reset to defaults",
+    empty_text: str = "(none)",
+) -> None:
+    """Reusable chip / list editor bound to a draft string list (T7 / T10).
+
+    Mutates ``values`` in place -- ``[+ Add]`` appends (rejecting blanks,
+    duplicates, and ``validate`` failures), each chip carries a delete, and
+    an optional ``[Reset]`` replaces the contents -- so persistence rides
+    the existing draft -> ``finalize_settings_draft`` -> Save path with no
+    new plumbing. Entries are stored verbatim (case-sensitive, no
+    lowercasing); whitespace is trimmed on add.
+    """
+    from nicegui import ui
+
+    chips = ui.row().classes("items-center w-full").style("gap: 0.35rem; flex-wrap: wrap;")
+
+    def _render_chips() -> None:
+        chips.clear()
+        with chips:
+            if not values:
+                ui.label(empty_text).props(f'data-testid="{testid}-empty"').style(
+                    "color: var(--color-muted);"
+                )
+            for idx, value in enumerate(values):
+                with (
+                    ui.row()
+                    .classes("items-center")
+                    .props(f'data-testid="{testid}-chip"')
+                    .style(
+                        "gap: 0.15rem; background: var(--color-rule); "
+                        "border-radius: var(--radius-sm); padding: 0.05rem 0.1rem 0.05rem 0.5rem;"
+                    )
+                ):
+                    ui.label(value).style(
+                        "font-family: var(--font-mono); font-size: var(--text-xs);"
+                    )
+                    ui.button(icon="close", on_click=lambda _e, i=idx: _remove(i)).props(
+                        "flat dense round size=sm"
+                    )
+
+    def _remove(idx: int) -> None:
+        if 0 <= idx < len(values):
+            del values[idx]
+            _render_chips()
+
+    _render_chips()
+
+    new_input = ui.input(label=add_label).props(f'data-testid="{testid}-input"')
+
+    def _add() -> None:
+        raw = (new_input.value or "").strip()
+        if not raw:
+            return
+        if validate is not None:
+            error = validate(raw)
+            if error is not None:
+                notifications.notify_error(error)
+                return
+        if raw in values:
+            notifications.notify_error(f"{raw!r} is already in the list")
+            return
+        values.append(raw)
+        _render_chips()
+        new_input.value = ""
+
+    with ui.row().classes("items-center").style("gap: 0.5rem;"):
+        ui.button("+ Add", on_click=lambda _e: _add()).props(f'flat data-testid="{testid}-add"')
+        if on_reset is not None:
+
+            def _reset() -> None:
+                on_reset()
+                _render_chips()
+
+            ui.button(reset_label, on_click=lambda _e: _reset()).props(
+                f'flat data-testid="{testid}-reset"'
+            )
+
+
 def _render_section_body(
     section: str,
     draft: Config,
@@ -308,6 +474,12 @@ def _render_section_body(
     on_save_lims_password: Callable[[str], None] | None = None,
     on_clear_lims_password: Callable[[], None] | None = None,
     lims_password_present: bool = False,
+    nas_remote_available: Callable[[str], bool] | None = None,
+    on_test_connection: Callable[[], Any] | None = None,
+    autostart_registered: bool = False,
+    on_set_autostart: Callable[[bool], bool | None] | None = None,
+    on_quit: Callable[[], None] | None = None,
+    tray_available: bool = False,
 ) -> None:
     """Render the content for a single section, bound to ``draft``.
 
@@ -372,6 +544,13 @@ def _render_section_body(
             test_connection_panel.test_connection_panel(None)
         elif section == "equipment":
             _render_equipment_section(draft)
+        elif section == NAS_REMOTE_SECTION:
+            _render_nas_remote_section(
+                ui.column().classes("w-full"),
+                nas=draft.nas,
+                nas_remote_available=nas_remote_available or (lambda _name: False),
+                on_test_connection=on_test_connection,
+            )
         elif section == "nas_cleanup":
             ui.checkbox("Cleanup enabled", value=draft.nas_cleanup.enabled).bind_value(
                 draft.nas_cleanup, "enabled"
@@ -385,13 +564,39 @@ def _render_section_body(
             ui.checkbox(
                 "Retain .exlab-wizard/ metadata", value=draft.nas_cleanup.retain_cache
             ).bind_value(draft.nas_cleanup, "retain_cache")
+        elif section == "operators":
+            # Frontend §7.9: empty allowlist = any operator; non-empty = the
+            # wizard renders a dropdown of these names and rejects free-text.
+            # Case-sensitive (OperatorsConfig is str_strip_whitespace, not
+            # lowercased) and non-gating.
+            ui.label(
+                "If empty, the operator field accepts any value. If non-empty, the wizard "
+                "shows a dropdown of these names and rejects free-text."
+            ).style("color: var(--color-muted); font-size: var(--text-sm);")
+            _render_chip_editor(
+                draft.operators.allowlist,
+                add_label="Add operator username",
+                testid="settings-operators",
+                empty_text="Any operator allowed (allowlist empty)",
+            )
         elif section == "validator":
             ui.number(
                 label="Max content-scan size (MiB)",
                 value=draft.validator.content_scan_max_mib,
             ).bind_value(draft.validator, "content_scan_max_mib")
-            ui.label(
-                "Scanned file extensions: " + ", ".join(draft.validator.content_scan_extensions)
+            ui.label("Scanned file extensions").style("color: var(--color-body);")
+
+            def _reset_extensions() -> None:
+                from exlab_wizard.config.models import _default_content_scan_extensions
+
+                draft.validator.content_scan_extensions[:] = _default_content_scan_extensions()
+
+            _render_chip_editor(
+                draft.validator.content_scan_extensions,
+                add_label="Add extension (e.g. .txt)",
+                testid="settings-scan-ext",
+                validate=lambda v: None if v.startswith(".") else "Extensions must start with '.'",
+                on_reset=_reset_extensions,
             )
         elif section == "logging":
             ui.radio(["DEBUG", "INFO", "WARN", "ERROR"], value=draft.logging.level).bind_value(
@@ -404,24 +609,89 @@ def _render_section_body(
                 label="Rotated log copies kept", value=draft.logging.central_log_keep
             ).bind_value(draft.logging, "central_log_keep")
         elif section == "orchestrator":
-            # Redesign §3.1: orchestrator pipeline is always active; the
-            # enabled toggle is removed. label + staging_root are now
-            # always required (they join the setup-incomplete gate). The
-            # full Settings refactor that folds these into an early
-            # section lands in Phase 6.
+            # ``label`` is required (it identifies this workstation in every
+            # run's creation.json). ``staging_root`` is opt-in: blank means
+            # this device is not a staging PC. The placeholder shows an
+            # OS-appropriate suggestion without prefilling the value -- the
+            # directory is created only when a non-empty path is saved (see
+            # ui.mount._persist_config).
             ui.input(label="Workstation label", value=draft.orchestrator.label).bind_value(
                 draft.orchestrator, "label"
             )
-            ui.input(label="Staging root", value=draft.orchestrator.staging_root).bind_value(
-                draft.orchestrator, "staging_root"
-            )
+            ui.input(
+                label="Staging root (optional)",
+                value=draft.orchestrator.staging_root,
+                placeholder=str(suggested_staging_root()),
+            ).bind_value(draft.orchestrator, "staging_root")
         elif section == "application":
-            # "Start at login" is the autostart toggle, not a config.yaml
-            # field -- it is set from the welcome card. Shown here for
-            # discoverability; wiring it is a follow-up.
-            ui.checkbox("Start ExLab-Wizard at login")
-            ui.label("Show in system tray: available")
-            ui.button("Quit ExLab-Wizard now").props("flat")
+            # "Start at login" (T8): applied immediately (NOT draft-bound,
+            # §7.13). Seeded from the real registration state; on toggle it
+            # reflects the actual post-op ``is_registered()`` and reverts on
+            # failure. Disabled when no toggle is wired (headless/tests).
+            _guard = {"busy": False}
+            autostart_box: Any = None
+
+            def _on_autostart(event: Any) -> None:
+                if _guard["busy"] or on_set_autostart is None:
+                    return
+                actual = on_set_autostart(bool(event.value))
+                if actual is not None and bool(actual) != bool(event.value):
+                    # Programmatic revert re-fires on_change synchronously;
+                    # the guard makes that re-entrant call a no-op.
+                    _guard["busy"] = True
+                    try:
+                        autostart_box.value = bool(actual)
+                    finally:
+                        _guard["busy"] = False
+
+            autostart_box = ui.checkbox(
+                "Start ExLab-Wizard at login",
+                value=autostart_registered,
+                on_change=_on_autostart,
+            ).props('data-testid="settings-autostart"')
+            if on_set_autostart is None:
+                autostart_box.props("disable")
+
+            # Real tray availability + window-on-close behavior (T11, §7.13).
+            tray_text = "available" if tray_available else "unavailable (window-only)"
+            ui.label(f"Show in system tray: {tray_text}").props(
+                'data-testid="settings-tray-status"'
+            )
+            ui.label(
+                "Closing the window keeps ExLab-Wizard running in the tray; "
+                "use Quit to exit completely."
+            ).style("color: var(--color-muted); font-size: var(--text-sm);")
+
+            # "Quit ExLab-Wizard now" (T9): graceful shutdown behind a confirm,
+            # scheduled non-blocking by the host. Disabled when no hook wired.
+            quit_btn = ui.button("Quit ExLab-Wizard now").props('flat data-testid="settings-quit"')
+            if on_quit is None:
+                quit_btn.props("disable")
+            else:
+
+                def _confirm_quit() -> None:
+                    confirm = ui.dialog()
+                    with (
+                        confirm,
+                        ui.card().props('data-testid="settings-quit-dialog"'),
+                    ):
+                        ui.label("Quit ExLab-Wizard?").style("font-weight: 600;")
+                        ui.label("In-flight operations are allowed to finish first.").style(
+                            "color: var(--color-muted);"
+                        )
+
+                        def _do_quit() -> None:
+                            confirm.close()
+                            on_quit()
+
+                        with ui.row().classes("justify-end w-full").style("gap: 0.5rem;"):
+                            ui.button("Cancel", on_click=lambda _e: confirm.close()).props("flat")
+                            ui.button("Quit", on_click=lambda _e: _do_quit()).props(
+                                'color=negative data-testid="settings-quit-confirm"'
+                            )
+                    confirm.open()
+
+                quit_btn.on("click", lambda _e: _confirm_quit())
 
 
 # Redesign §6: the canonical equipment-config assembler now lives in
@@ -438,10 +708,11 @@ def _render_equipment_section(draft: Config) -> None:
     ``draft.equipment`` and reflects it in the visible list; the whole
     draft is re-validated and persisted when the operator clicks Save.
 
-    The sub-form covers the full §9 equipment surface: a
-    completeness-signal radio (``sentinel_file`` / ``manifest``) that
-    swaps the filename field, and a transport radio (``rclone`` /
-    ``rsync_ssh``) that swaps the transport fieldset.
+    rclone.conf NAS-sync migration: nas-mode equipment no longer carry a
+    per-equipment SFTP/SMB transport -- the connection is defined once by
+    the ``nas:`` remote (see the NAS Remote section). The sub-form
+    therefore collects only identity + paths and builds a nas-mode entry
+    with ``transport=None``.
     """
     from nicegui import ui
 
@@ -452,13 +723,10 @@ def _render_equipment_section(draft: Config) -> None:
         with rows:
             if draft.equipment:
                 for entry in draft.equipment:
-                    transport_summary = (
-                        entry.transport.type if entry.transport is not None else "stage"
+                    mode = getattr(entry.sync_mode, "value", str(entry.sync_mode))
+                    ui.label(f"{entry.id} -- {entry.label} [{mode}]").props(
+                        'data-testid="settings-equipment-row"'
                     )
-                    ui.label(
-                        f"{entry.id} -- {entry.label} "
-                        f"[{entry.completeness_signal} / {transport_summary}]"
-                    ).props('data-testid="settings-equipment-row"')
             else:
                 ui.label("No equipment configured yet.").props(
                     'data-testid="settings-equipment-empty"'
@@ -473,62 +741,6 @@ def _render_equipment_section(draft: Config) -> None:
     eq_local = ui.input(label="Local root").props('data-testid="settings-equipment-local-root"')
     eq_nas = ui.input(label="NAS root").props('data-testid="settings-equipment-nas-root"')
 
-    # Completeness signal: a radio that swaps the filename field.
-    signal_radio = ui.radio(
-        [CompletenessSignal.SENTINEL_FILE.value, CompletenessSignal.MANIFEST.value],
-        value=CompletenessSignal.SENTINEL_FILE.value,
-    ).props('data-testid="settings-equipment-signal"')
-    # Widget refs the swap-panels and ``_add`` share.
-    fields: dict[str, Any] = {}
-
-    @ui.refreshable
-    def _signal_field() -> None:
-        if signal_radio.value == CompletenessSignal.MANIFEST.value:
-            fields["manifest"] = ui.input(label="Manifest filename", value="manifest.json").props(
-                'data-testid="settings-equipment-manifest"'
-            )
-            fields.pop("sentinel", None)
-        else:
-            fields["sentinel"] = ui.input(
-                label="Sentinel filename", value="acquisition_complete.flag"
-            ).props('data-testid="settings-equipment-sentinel"')
-            fields.pop("manifest", None)
-
-    _signal_field()
-    signal_radio.on_value_change(lambda _e: _signal_field.refresh())
-
-    # Transport: a radio that swaps the transport fieldset.
-    transport_radio = ui.radio(["rclone", "rsync_ssh"], value="rclone").props(
-        'data-testid="settings-equipment-transport"'
-    )
-
-    @ui.refreshable
-    def _transport_fields() -> None:
-        if transport_radio.value == "rsync_ssh":
-            fields["ssh_target"] = ui.input(label="SSH target").props(
-                'data-testid="settings-equipment-ssh-target"'
-            )
-            fields["ssh_key"] = ui.input(label="SSH key path", value="~/.ssh/id_ed25519").props(
-                'data-testid="settings-equipment-ssh-key"'
-            )
-            fields["rsync_path"] = ui.input(label="Remote path").props(
-                'data-testid="settings-equipment-rsync-path"'
-            )
-            for stale in ("rclone_remote", "rclone_path"):
-                fields.pop(stale, None)
-        else:
-            fields["rclone_remote"] = ui.input(label="rclone remote").props(
-                'data-testid="settings-equipment-rclone-remote"'
-            )
-            fields["rclone_path"] = ui.input(label="rclone remote path").props(
-                'data-testid="settings-equipment-rclone-path"'
-            )
-            for stale in ("ssh_target", "ssh_key", "rsync_path"):
-                fields.pop(stale, None)
-
-    _transport_fields()
-    transport_radio.on_value_change(lambda _e: _transport_fields.refresh())
-
     def _add(_evt: Any = None) -> None:
         try:
             entry = build_equipment_config(
@@ -536,21 +748,7 @@ def _render_equipment_section(draft: Config) -> None:
                 label=eq_label.value or "",
                 local_root=eq_local.value or "",
                 nas_root=eq_nas.value or "",
-                completeness_signal=signal_radio.value or CompletenessSignal.SENTINEL_FILE.value,
-                sentinel_filename=(fields["sentinel"].value or "" if "sentinel" in fields else ""),
-                manifest_filename=(fields["manifest"].value or "" if "manifest" in fields else ""),
-                transport_type=transport_radio.value or "rclone",
-                rclone_remote=(
-                    fields["rclone_remote"].value or "" if "rclone_remote" in fields else ""
-                ),
-                rclone_remote_path=(
-                    fields["rclone_path"].value or "" if "rclone_path" in fields else ""
-                ),
-                ssh_target=(fields["ssh_target"].value or "" if "ssh_target" in fields else ""),
-                ssh_key_path=(fields["ssh_key"].value or "" if "ssh_key" in fields else ""),
-                rsync_remote_path=(
-                    fields["rsync_path"].value or "" if "rsync_path" in fields else ""
-                ),
+                sync_mode="nas",
             )
         except Exception as exc:
             notifications.notify_error(f"Equipment invalid: {exc}")
@@ -565,3 +763,74 @@ def _render_equipment_section(draft: Config) -> None:
         notifications.notify_success(f"Equipment {entry.id!r} added")
 
     ui.button("Add equipment", on_click=_add).props('data-testid="settings-equipment-add"')
+
+
+def _render_nas_remote_section(
+    container: Any,
+    *,
+    nas: Any,
+    nas_remote_available: Callable[[str], bool],
+    on_test_connection: Callable[[], Any] | None,
+) -> None:
+    """Render the read-only NAS-remote status + a Test-connection panel.
+
+    rclone.conf NAS-sync migration. The operator no longer types a NAS
+    password; the app references a single ``nas:`` remote defined in their
+    ``rclone.conf`` (created out-of-band with ``rclone config``). This
+    section shows that remote + its base root read-only, a found /
+    not-found badge derived from ``nas_remote_available(nas.remote)``, and
+    a single "Test connection" button wired to ``on_test_connection`` (the
+    rclone remote probe) that renders its result inline.
+    """
+    import inspect
+
+    from nicegui import ui
+
+    remote = getattr(nas, "remote", "") or ""
+    base_root = getattr(nas, "base_root", "") or ""
+    available = bool(remote) and nas_remote_available(remote)
+
+    with container:
+        ui.label(
+            "NAS sync references a single rclone remote configured in your "
+            "rclone.conf (run `rclone config` to create it). No password is "
+            "stored here."
+        ).style("font-size: var(--text-sm); color: var(--color-muted);")
+
+        with ui.row().classes("items-center w-full").style("gap: 0.5rem;"):
+            ui.label("Remote").style("color: var(--color-body); min-width: 6rem;")
+            ui.label(remote or "(not configured)").props(
+                'data-testid="settings-nas-remote-name"'
+            ).style("font-family: var(--font-mono);")
+
+        with ui.row().classes("items-center w-full").style("gap: 0.5rem;"):
+            ui.label("Base root").style("color: var(--color-body); min-width: 6rem;")
+            ui.label(base_root or "(not configured)").props(
+                'data-testid="settings-nas-remote-base-root"'
+            ).style("font-family: var(--font-mono);")
+
+        if available:
+            badge_text = "Found in rclone.conf"
+            badge_color = "var(--color-success)"
+        else:
+            badge_text = "Not found — run `rclone config`"
+            badge_color = "var(--color-warning)"
+        ui.label(badge_text).props('data-testid="settings-nas-remote-status"').style(
+            f"color: {badge_color}; font-size: var(--text-sm); font-weight: 600;"
+        )
+
+        panel = ui.column().classes("w-full")
+
+        async def _test() -> None:
+            panel.clear()
+            if on_test_connection is None:
+                return
+            result = on_test_connection()
+            if inspect.isawaitable(result):
+                result = await result
+            with panel:
+                test_connection_panel.test_connection_panel(result)
+
+        ui.button("Test connection", on_click=_test).props(
+            'flat data-testid="settings-nas-test-connection"'
+        )

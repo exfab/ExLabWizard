@@ -22,9 +22,9 @@ from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
     LIMSConfig,
+    NasConfig,
     OrchestratorConfig,
     PathsConfig,
-    RcloneTransport,
 )
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
@@ -61,17 +61,11 @@ def _ready_config(local_root: Path) -> Config:
                 label="Equipment 1",
                 local_root=str(local_root),
                 nas_root="/n",
-                completeness_signal="sentinel_file",
-                sentinel_filename="done.flag",
-                transport=RcloneTransport(
-                    type="rclone",
-                    rclone_remote="lab-nas",
-                    rclone_remote_path="lab/EQ1",
-                ),
             )
         ],
         lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),
         orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
     )
 
 

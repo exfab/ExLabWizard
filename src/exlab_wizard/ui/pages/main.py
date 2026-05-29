@@ -39,6 +39,9 @@ class MainPageState:
     """
 
     setup_incomplete: bool = False
+    # §4.9.3 next-action discriminator, used to tailor the setup-incomplete
+    # banner subline (rclone-only NAS migration, 2026-05-26).
+    setup_next_action: str | None = None
     selected_node: str | None = None
     chip_state: filter_chips.ChipState = field(
         default_factory=lambda: filter_chips.initial_state(_default_chips())
@@ -46,6 +49,14 @@ class MainPageState:
     active_tab: str = "details"  # "details" | "problems"
     problems_count_hard: int = 0
     problems_count_soft: int = 0
+    # In-flight controller operations (Frontend §9.5). ``operations_count``
+    # gates the toolbar [Operations…] button; ``operations_input_required``
+    # drives the footer Sync segment's "N need input" warning.
+    operations_count: int = 0
+    operations_input_required: int = 0
+    # §9.6 single-equipment concurrency: the three creation buttons are
+    # disabled while any session is mid-flight (non-terminal).
+    creation_in_flight: bool = False
     # Legacy field — the orchestrator pipeline is always active under
     # Redesign §3.1, so this always renders True in production.
     orchestrator_enabled: bool = True
@@ -94,12 +105,28 @@ def problems_badge_text(state: MainPageState) -> str:
     return f"{state.problems_count_hard} + {state.problems_count_soft}"
 
 
-def setup_incomplete_banner_props() -> dict[str, str]:
-    """Banner content for the setup-incomplete state (§3.1.4)."""
+def setup_incomplete_banner_props(next_action: str | None = None) -> dict[str, str]:
+    """Banner content for the setup-incomplete state (§3.1.4).
 
+    ``next_action`` is the §4.9.3 next-action discriminator (e.g.
+    ``configure_rclone_remote``). When supplied it tailors the subline so
+    the operator knows exactly which section to open; the rclone-only
+    NAS migration (2026-05-26) added the rclone-remote variant.
+    """
+
+    sublines = {
+        "configure_rclone_remote": ("Configure the rclone remote (see setup docs) to begin."),
+        "configure_lims": "Open Settings → LIMS to finish configuring LIMS.",
+        "test_lims": "Open Settings → LIMS to finish configuring LIMS.",
+        "set_paths": "Open Settings and complete the highlighted sections to begin.",
+        "add_equipment": "Add an equipment in Settings to begin.",
+    }
     return {
         "headline": "Setup incomplete: required configuration is missing.",
-        "subline": "Open Settings and complete the highlighted sections to begin.",
+        "subline": sublines.get(
+            next_action or "",
+            "Open Settings and complete the highlighted sections to begin.",
+        ),
         "cta_label": "Open Settings",
         "color_var": "--color-warning",
     }
@@ -114,6 +141,7 @@ def render_file_explorer_page(
     on_open_settings: Callable[[], None],
     on_refresh: Callable[[], None],
     on_select_node: Callable[[str], None],
+    on_open_operations: Callable[[], None] | None = None,
     on_navigate_breadcrumb: Callable[[str], None] | None = None,
     on_toggle_right_pane: Callable[[], None] | None = None,
     on_run_staging_action: Callable[[str, str], None] | None = None,
@@ -176,12 +204,25 @@ def render_file_explorer_page(
         ntr_btn = ui.button("New Test Run", on_click=lambda _evt: on_open_new_test_run()).props(
             'color=warning data-testid="toolbar-new-test-run"'
         )
-        if s.selected_node_is_received:
+        # Creation is disabled on received-equipment nodes (decision 1) and
+        # while any session is mid-flight (single-equipment concurrency, §9.6).
+        if s.selected_node_is_received or s.creation_in_flight:
             for btn in (np_btn, nr_btn, ntr_btn):
                 btn.props("disable")
+            if s.creation_in_flight and not s.selected_node_is_received:
+                np_btn.tooltip("A creation is already in progress")
         ui.button("Add Equipment", on_click=lambda _evt: on_open_add_equipment()).props(
             'color=primary data-testid="toolbar-add-equipment"'
         )
+        # [Operations…] surfaces only while ≥1 operation is in flight
+        # (Frontend §9.5). Label carries the count; a warning color flags
+        # any suspended (INPUT_REQUIRED) session needing an answer.
+        if on_open_operations is not None and s.operations_count > 0:
+            ops_color = "warning" if s.operations_input_required > 0 else "primary"
+            ui.button(
+                f"Operations ({s.operations_count})",
+                on_click=lambda _evt: on_open_operations(),
+            ).props(f'flat color={ops_color} data-testid="toolbar-operations"')
         ui.button("Refresh", on_click=lambda _evt: on_refresh()).props(
             'flat data-testid="toolbar-refresh"'
         )
@@ -199,7 +240,7 @@ def render_file_explorer_page(
             notifications.BannerId.SETUP_INCOMPLETE,
             container=notifications.ContainerId.GLOBAL,
             severity=notifications.Severity.WARNING,
-            message=setup_incomplete_banner_props()["subline"],
+            message=setup_incomplete_banner_props(s.setup_next_action)["subline"],
             action=notifications.ActionSpec(
                 label="Open Settings",
                 on_click=on_open_settings,
@@ -233,36 +274,103 @@ def render_file_explorer_page(
                 ),
                 expand_all=tree_expand_all,
             )
-        with outer_split.after:
-            if s.right_pane_collapsed:
-                # File list only.
+        # Flex row: the centre file list grows to fill, a tall vertical
+        # toggle tab sits on the metadata pane's left edge, then the
+        # metadata pane itself. The tab lives *between* the two panes, so
+        # it travels horizontally with the pane -- open, it hugs the pane's
+        # left border; collapsed (pane unrendered) the growing file list
+        # pushes it to the right screen edge.
+        #
+        # The tab is TOP-aligned (align-self:flex-start), not centred. The
+        # splitter panel's top is identical in both states, but its height
+        # differs (the metadata pane adds height when open), so a centred
+        # tab landed at a different Y per state -- that vertical shift was
+        # the up/down "jump". Pinning to the top ties the tab's Y to the
+        # constant panel top, so it holds its line on toggle.
+        with (
+            outer_split.after,
+            ui.element("div")
+            .classes("w-full h-full")
+            .style("display: flex; flex-direction: row; flex-wrap: nowrap; align-items: stretch;"),
+        ):
+            with ui.element("div").style(
+                "flex: 1 1 auto; min-width: 0; height: 100%; overflow: auto;"
+            ):
                 _render_centre_file_list(
                     s,
                     file_list_entries=file_list_entries,
                     on_file_context_action=on_file_context_action,
                 )
-            else:
-                with ui.splitter(value=60).classes("w-full h-full") as centre_split:
-                    with centre_split.before:
-                        _render_centre_file_list(
-                            s,
-                            file_list_entries=file_list_entries,
-                            on_file_context_action=on_file_context_action,
-                        )
-                    with centre_split.after:
-                        _render_right_pane(
-                            s,
-                            metadata_payload=metadata_payload,
-                            on_run_staging_action=on_run_staging_action,
-                        )
-            # Right-pane toggle button is rendered after the splitter so
-            # it remains accessible whether the right pane is open or
-            # collapsed. Its callback is wired by the mount layer.
+            # Vertical collapse/expand tab: a chevron stacked above a rotated
+            # text label, inside one tall box with a raised-surface background
+            # so it reads as a distinct tab. The glyph points the way the pane
+            # will move -- right-chevron collapses it away, left-chevron pulls
+            # it back; the label names the action. Callback wired by the mount
+            # layer.
             if on_toggle_right_pane is not None:
-                ui.button(
-                    "Toggle right pane",
-                    on_click=lambda _evt: on_toggle_right_pane(),
-                ).props('flat data-testid="toggle-right-pane"')
+                collapsed = s.right_pane_collapsed
+                chevron = "◀" if collapsed else "▶"
+                tab_label = "Expand metadata" if collapsed else "Collapse metadata"
+                # The button stays `flat` (Quasar forces its own background to
+                # transparent !important on flat buttons, so the tab fill must
+                # live on an inner element, not the button). The button is just
+                # the sized, padding-free click target; the inner column paints
+                # the raised-surface tab.
+                #
+                # Every theme var carries a literal fallback: register_theme()
+                # is not injected on every route, so a bare var(--color-surface)
+                # resolves to empty and the whole declaration is dropped (no
+                # fill). The fallbacks make the tab render regardless.
+                toggle = (
+                    ui.button(on_click=lambda _evt: on_toggle_right_pane())
+                    .props(
+                        'flat dense no-caps data-testid="toggle-right-pane" '
+                        'aria-label="Toggle metadata pane" title="Toggle metadata pane"'
+                    )
+                    .style(
+                        "align-self: flex-start; flex: 0 0 auto; margin: 8px 2px 0 2px; "
+                        "min-width: 0; width: 40px; height: 190px; padding: 0; "
+                        "color: var(--color-muted, #8892a4);"
+                    )
+                )
+                with (
+                    toggle,
+                    ui.column().style(
+                        "align-items: center; gap: 6px; flex-wrap: nowrap; "
+                        "height: 100%; width: 100%; padding: 8px 2px; "
+                        # Surface fill + border + soft shadow so the chevron and
+                        # label read as a distinct raised tab against the page.
+                        "background: var(--color-surface, #ffffff); "
+                        "border: 1px solid var(--color-border, #dde3ed); border-radius: 6px; "
+                        "box-shadow: 0 1px 3px rgba(0, 54, 96, 0.12);"
+                    ),
+                ):
+                    ui.label(chevron).style(
+                        "flex: 0 0 auto; font-size: 12px; line-height: 1; "
+                        "color: var(--color-muted, #8892a4);"
+                    )
+                    # The label is rotated 270deg (reads bottom-to-top). A
+                    # transform keeps the element's layout box horizontal, so
+                    # this flex-grow wrapper supplies the vertical room and
+                    # centres the rotated text within it.
+                    with ui.element("div").style(
+                        "flex: 1 1 auto; width: 100%; display: flex; "
+                        "align-items: center; justify-content: center; overflow: hidden;"
+                    ):
+                        ui.label(tab_label).style(
+                            "transform: rotate(270deg); white-space: nowrap; "
+                            "font-size: 11px; letter-spacing: 0.05em; text-transform: none; "
+                            "color: var(--color-muted, #8892a4);"
+                        )
+            if not s.right_pane_collapsed:
+                with ui.element("div").style(
+                    "flex: 0 0 40%; min-width: 0; height: 100%; overflow: auto;"
+                ):
+                    _render_right_pane(
+                        s,
+                        metadata_payload=metadata_payload,
+                        on_run_staging_action=on_run_staging_action,
+                    )
 
     if not s.setup_incomplete:
         with (
@@ -273,10 +381,23 @@ def render_file_explorer_page(
             ),
             ui.row().classes("items-center w-full"),
         ):
-            status_bar_segment.status_bar_segment(
-                label="Sync",
-                state=status_bar_segment.SEGMENT_NORMAL,
-            )
+            # Sync segment doubles as the Operations entry point: when any
+            # session is suspended awaiting input it flips to a warning
+            # "N operations need input" and opens the same modal (§3.5.5).
+            if s.operations_input_required > 0:
+                status_bar_segment.status_bar_segment(
+                    label=f"{s.operations_input_required} operations need input",
+                    state=status_bar_segment.SEGMENT_WARNING,
+                    on_click=on_open_operations,
+                )
+            else:
+                # Only clickable when there is something to show, so a click
+                # never opens an empty Operations panel.
+                status_bar_segment.status_bar_segment(
+                    label="Sync",
+                    state=status_bar_segment.SEGMENT_NORMAL,
+                    on_click=on_open_operations if s.operations_count > 0 else None,
+                )
             status_bar_segment.status_bar_segment(
                 label="Validator",
                 state=status_bar_segment.SEGMENT_NORMAL,
@@ -363,8 +484,10 @@ def _render_right_pane(
                 on_run_staging_action=on_run_staging_action,
             )
         with ui.tab_panel("problems"):
+            total = state.problems_count_hard + state.problems_count_soft
             ui.label(
-                f"Showing 0 of {state.problems_count_hard + state.problems_count_soft} findings",
+                f"{total} findings ({state.problems_count_hard} hard, "
+                f"{state.problems_count_soft} soft)",
             ).props('data-testid="problems-summary"').style(
                 "font-family: var(--font-mono); color: var(--color-muted);"
             )

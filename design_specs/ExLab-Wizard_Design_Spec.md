@@ -96,7 +96,7 @@ Defines the class-based `Plugin` contract (lifecycle hooks: `validate_variables`
 
 Moved to [[design_spec_sections/07_Sync_and_Database_Integration]].
 
-Covers NAS mirror behavior, the LIMS record schema, and the Pre-Sync Gate that consumes validator findings to block flagged runs from sync.
+Covers NAS sync via operator-managed rclone named remotes (`RcloneDriver`), the two-tier verify model (cheap `rclone lsjson` reconcile after each push + `rclone check --download` hash gate at cleanup), bandwidth limiting, the LIMS record schema, and the Pre-Sync Gate that consumes validator findings to block flagged runs from sync.
 
 ---
 
@@ -112,7 +112,7 @@ Top-level error handling principles plus the §8.1 path validation rules: unreso
 
 Moved to [[design_spec_sections/09_Configuration_File]].
 
-Full annotated `config.yaml` example: paths, database, README defaults, equipment registry (with transports and completeness signals), sync, and orchestrator settings.
+Full annotated `config.yaml` example: paths, database, README defaults, equipment registry (id/label/local_root/nas_root/sync_mode only — no per-equipment transport block), the top-level `nas:` block (remote name, base_root, rclone_config_path, mtime_tolerance_s, perf, bandwidth), sync, and orchestrator settings (including staging_remote/staging_base_root for the stage-mode hop).
 
 ---
 

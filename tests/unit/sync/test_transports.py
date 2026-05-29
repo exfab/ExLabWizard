@@ -1,8 +1,10 @@
-"""Tests for the rclone + rsync_ssh transport drivers.
+"""Tests for the rclone transport driver.
 
-Backend Spec §7.1.3, §7.1.5. The drivers are thin async wrappers around
-the upstream binaries; these tests use the Python stub binaries from
-``tests/fixtures`` to drive deterministic outcomes.
+Backend Spec §7.1.3, §7.1.5. The driver is a thin async wrapper around
+the upstream binary; these tests use the Python stub at
+``tests/fixtures/stub_rclone.py`` to drive deterministic outcomes. After
+the rclone-only migration (2026-05-26) rsync is gone; there is one
+driver, one stub, and one set of behaviors to assert.
 """
 
 from __future__ import annotations
@@ -19,302 +21,109 @@ from exlab_wizard.sync.transports import (
     TransportError,
     TransportErrorKind,
 )
-from exlab_wizard.sync.transports.rclone import RcloneTransport
-from exlab_wizard.sync.transports.rsync_ssh import RsyncSshTransport
+from exlab_wizard.sync.transports.rclone import (
+    AboutResult,
+    CheckResult,
+    RcloneDriver,
+    _classify_failure,
+    _parse_combined,
+)
 
 
 @pytest.fixture()
 def stub_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Install all stub binaries under ``tmp_path/bin`` and prepend to PATH.
-
-    The stub Python scripts already have ``+x`` permissions in the repo;
-    we copy them to the per-test bin dir under their canonical command
-    names (``rclone``, ``rsync``, and ``ssh`` -- the rsync_ssh hashsum
-    path spawns ``ssh`` directly, so the same stub_rsync script is also
-    installed as ``ssh`` and dispatches on its argv[0] basename).
-    """
+    """Install the rclone stub under ``tmp_path/bin`` and prepend to PATH."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     fixtures = Path(__file__).parent.parent.parent / "fixtures"
     rclone_target = bin_dir / "rclone"
-    rsync_target = bin_dir / "rsync"
-    ssh_target = bin_dir / "ssh"
     shutil.copy(fixtures / "stub_rclone.py", rclone_target)
-    shutil.copy(fixtures / "stub_rsync.py", rsync_target)
-    shutil.copy(fixtures / "stub_rsync.py", ssh_target)
-    for f in (rclone_target, rsync_target, ssh_target):
-        st = f.stat()
-        f.chmod(st.st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    st = rclone_target.stat()
+    rclone_target.chmod(st.st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     return bin_dir
 
 
 @pytest.fixture()
 def record_argv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Tell both stubs to append every invocation's argv to a log file.
-
-    Tests read ``[json.loads(line) for line in record.read_text().splitlines()]``
-    to assert exact argv shapes for the rclone and rsync_ssh drivers.
-    """
+    """Tell the stub to append every invocation's argv to a log file."""
     record = tmp_path / "argv.log"
     monkeypatch.setenv("STUB_RCLONE_RECORD_PATH", str(record))
-    monkeypatch.setenv("STUB_RSYNC_RECORD_PATH", str(record))
     return record
-
-
-# ---------------------------------------------------------------------------
-# RcloneTransport
-# ---------------------------------------------------------------------------
-
-
-async def test_rclone_success(
-    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    src = tmp_path / "src"
-    src.mkdir()
-    (src / "a.txt").write_text("hello")
-    dest = tmp_path / "dest"
-    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
-    monkeypatch.setenv("STUB_RCLONE_DEST_ROOT", str(dest))
-    transport = RcloneTransport()
-    result = await transport.push(src, "remote:path/to/run")
-    assert result.ok is True
-    assert result.returncode == 0
-    # Stub copied the contents to the destination root.
-    assert (dest / "path" / "to" / "run" / "a.txt").exists()
-
-
-async def test_rclone_network_error_is_retryable(
-    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    src = tmp_path / "src"
-    src.mkdir()
-    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "network_error")
-    transport = RcloneTransport()
-    result = await transport.push(src, "remote:path")
-    assert result.ok is False
-    assert result.error_kind is TransportErrorKind.NETWORK
-
-
-async def test_rclone_auth_error_is_terminal(
-    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    src = tmp_path / "src"
-    src.mkdir()
-    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "auth_error")
-    transport = RcloneTransport()
-    result = await transport.push(src, "remote:path")
-    assert result.ok is False
-    assert result.error_kind is TransportErrorKind.AUTH
-
-
-async def test_rclone_hash_mismatch(
-    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    src = tmp_path / "src"
-    src.mkdir()
-    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "hash_mismatch")
-    transport = RcloneTransport()
-    result = await transport.push(src, "remote:path")
-    assert result.ok is False
-    assert result.error_kind is TransportErrorKind.HASH_MISMATCH
-
-
-async def test_rclone_with_bwlimit_passes_flag(
-    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The driver passes ``--bwlimit <K>K`` when ``bwlimit_kibps`` is set."""
-    src = tmp_path / "src"
-    src.mkdir()
-    (src / "a.txt").write_text("hi")
-    dest = tmp_path / "dest"
-    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
-    monkeypatch.setenv("STUB_RCLONE_DEST_ROOT", str(dest))
-    transport = RcloneTransport()
-    result = await transport.push(src, "remote:run", bwlimit_kibps=512)
-    assert result.ok is True
-
-
-async def test_rclone_missing_binary_raises(tmp_path: Path) -> None:
-    """A missing binary raises :class:`TransportError`, not a retry result."""
-    transport = RcloneTransport(binary="rclone-not-installed-12345")
-    with pytest.raises(TransportError):
-        await transport.push(tmp_path, "remote:path")
-
-
-# ---------------------------------------------------------------------------
-# RsyncSshTransport
-# ---------------------------------------------------------------------------
-
-
-async def test_rsync_success(
-    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    src = tmp_path / "src"
-    src.mkdir()
-    (src / "a.txt").write_text("hello")
-    dest = tmp_path / "dest"
-    monkeypatch.setenv("STUB_RSYNC_BEHAVIOR", "success")
-    monkeypatch.setenv("STUB_RSYNC_DEST_ROOT", str(dest))
-    transport = RsyncSshTransport()
-    key = tmp_path / "id_ed25519"
-    key.write_bytes(b"FAKE-KEY")
-    result = await transport.push(src, "user@host", key, "/srv/nas/run")
-    assert result.ok is True
-    assert (dest / "srv" / "nas" / "run" / "a.txt").exists()
-
-
-async def test_rsync_network_error(
-    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    src = tmp_path / "src"
-    src.mkdir()
-    monkeypatch.setenv("STUB_RSYNC_BEHAVIOR", "network_error")
-    transport = RsyncSshTransport()
-    result = await transport.push(src, "user@host", tmp_path / "key", "/p")
-    assert result.ok is False
-    assert result.error_kind is TransportErrorKind.NETWORK
-
-
-async def test_rsync_auth_error(
-    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    src = tmp_path / "src"
-    src.mkdir()
-    monkeypatch.setenv("STUB_RSYNC_BEHAVIOR", "auth_error")
-    transport = RsyncSshTransport()
-    result = await transport.push(src, "user@host", tmp_path / "key", "/p")
-    assert result.ok is False
-    assert result.error_kind is TransportErrorKind.AUTH
-
-
-async def test_rsync_hash_mismatch(
-    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    src = tmp_path / "src"
-    src.mkdir()
-    monkeypatch.setenv("STUB_RSYNC_BEHAVIOR", "hash_mismatch")
-    transport = RsyncSshTransport()
-    result = await transport.push(src, "user@host", tmp_path / "key", "/p")
-    assert result.ok is False
-    assert result.error_kind is TransportErrorKind.HASH_MISMATCH
-
-
-async def test_rsync_missing_binary_raises(tmp_path: Path) -> None:
-    transport = RsyncSshTransport(binary="rsync-not-installed-12345")
-    with pytest.raises(TransportError):
-        await transport.push(tmp_path, "user@host", tmp_path, "/p")
-
-
-async def test_rsync_with_bwlimit(
-    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    src = tmp_path / "src"
-    src.mkdir()
-    (src / "a.txt").write_text("ok")
-    dest = tmp_path / "dest"
-    monkeypatch.setenv("STUB_RSYNC_BEHAVIOR", "success")
-    monkeypatch.setenv("STUB_RSYNC_DEST_ROOT", str(dest))
-    transport = RsyncSshTransport()
-    result = await transport.push(src, "user@host", tmp_path / "key", "/p/run", bwlimit_kibps=128)
-    assert result.ok is True
-
-
-# ---------------------------------------------------------------------------
-# hashsum tests
-# ---------------------------------------------------------------------------
-
-
-async def test_rclone_hashsum_parses_output(
-    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The stub emits a two-line manifest; the driver parses it into a dict."""
-    manifest_text = "deadbeef  a.txt\ncafebabe  data/b.bin\n"
-    manifest_file = tmp_path / "manifest.txt"
-    manifest_file.write_text(manifest_text)
-    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "hashsum_success")
-    monkeypatch.setenv("STUB_RCLONE_HASHSUM_PATH", str(manifest_file))
-    transport = RcloneTransport()
-    result = await transport.hashsum("remote:/srv/run")
-    assert result == {"a.txt": "deadbeef", "data/b.bin": "cafebabe"}
-
-
-async def test_rclone_hashsum_raises_transport_error_on_auth(
-    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Spec §7.1.4 step 2 + §7.1.5: an AUTH failure on the hashsum probe
-    must surface as :class:`TransportError` carrying ``error_kind=AUTH``.
-
-    Returning an empty dict would silently bypass the §7.1.4 step-2
-    remote SHA-256 walk and let the verifier promote the job through
-    VERIFIED on the strength of the local-only pass. The queue worker
-    needs the classified ``error_kind`` so it can mark the job terminal
-    FAILED per the §7.1.5 AUTH row, distinct from a HASH_MISMATCH single
-    retry.
-    """
-    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "auth_error")
-    transport = RcloneTransport()
-    with pytest.raises(TransportError) as excinfo:
-        await transport.hashsum("remote:/srv/run")
-    assert excinfo.value.error_kind is TransportErrorKind.AUTH
-
-
-async def test_rclone_hashsum_missing_binary_raises_transport_error(
-    tmp_path: Path,
-) -> None:
-    """A missing binary on the hashsum path raises :class:`TransportError`."""
-    transport = RcloneTransport(binary="rclone-not-installed-12345")
-    with pytest.raises(TransportError):
-        await transport.hashsum("remote:/srv/run")
-
-
-async def test_rsync_hashsum_parses_output(
-    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The stub ssh emits a manifest; the driver strips the remote_path prefix."""
-    manifest_text = "deadbeef  /srv/nas/myrun/a.txt\ncafebabe  /srv/nas/myrun/data/b.bin\n"
-    manifest_file = tmp_path / "manifest.txt"
-    manifest_file.write_text(manifest_text)
-    monkeypatch.setenv("STUB_RSYNC_BEHAVIOR", "hashsum_success")
-    monkeypatch.setenv("STUB_RSYNC_HASHSUM_PATH", str(manifest_file))
-    transport = RsyncSshTransport()
-    key = tmp_path / "id_ed25519"
-    key.write_bytes(b"FAKE-KEY")
-    result = await transport.hashsum("user@host", key, "/srv/nas/myrun")
-    assert result == {"a.txt": "deadbeef", "data/b.bin": "cafebabe"}
-
-
-async def test_rsync_hashsum_raises_transport_error_on_network(
-    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Spec §7.1.4 step 2 + §7.1.5: a NETWORK failure on the rsync_ssh
-    hashsum probe must surface as :class:`TransportError` carrying
-    ``error_kind=NETWORK``.
-
-    Returning an empty dict would silently bypass the §7.1.4 step-2
-    remote SHA-256 walk and let the verifier promote the job through
-    VERIFIED on the strength of the local-only pass. The queue worker
-    needs the classified ``error_kind`` so it can route the failure
-    through the §7.1.5 NETWORK exponential-backoff retry path, distinct
-    from a HASH_MISMATCH single retry.
-    """
-    monkeypatch.setenv("STUB_RSYNC_BEHAVIOR", "network_error")
-    transport = RsyncSshTransport()
-    key = tmp_path / "id_ed25519"
-    key.write_bytes(b"k")
-    with pytest.raises(TransportError) as excinfo:
-        await transport.hashsum("user@host", key, "/srv/nas/myrun")
-    assert excinfo.value.error_kind is TransportErrorKind.NETWORK
-
-
-# ---------------------------------------------------------------------------
-# argv-shape tests
-# ---------------------------------------------------------------------------
 
 
 def _read_recorded_argvs(record: Path) -> list[list[str]]:
     """Return the recorded argv lists, in invocation order."""
     return [json.loads(line) for line in record.read_text().splitlines()]
+
+
+# ---------------------------------------------------------------------------
+# push
+# ---------------------------------------------------------------------------
+
+
+async def test_rclone_push_success(
+    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("hello")
+    dest = tmp_path / "dest"
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
+    monkeypatch.setenv("STUB_RCLONE_DEST_ROOT", str(dest))
+    driver = RcloneDriver()
+    result = await driver.push(src, "remote:path/to/run")
+    assert result.ok is True
+    assert result.returncode == 0
+    assert (dest / "path" / "to" / "run" / "a.txt").exists()
+
+
+async def test_rclone_push_network_error_is_retryable(
+    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "network_error")
+    driver = RcloneDriver()
+    result = await driver.push(src, "remote:path")
+    assert result.ok is False
+    assert result.error_kind is TransportErrorKind.NETWORK
+
+
+async def test_rclone_push_auth_error_is_terminal(
+    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "auth_error")
+    driver = RcloneDriver()
+    result = await driver.push(src, "remote:path")
+    assert result.ok is False
+    assert result.error_kind is TransportErrorKind.AUTH
+
+
+async def test_rclone_push_hash_mismatch(
+    stub_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "hash_mismatch")
+    driver = RcloneDriver()
+    result = await driver.push(src, "remote:path")
+    assert result.ok is False
+    assert result.error_kind is TransportErrorKind.HASH_MISMATCH
+
+
+async def test_rclone_push_missing_binary_raises(tmp_path: Path) -> None:
+    """A missing binary raises :class:`TransportError`, not a retry result."""
+    driver = RcloneDriver(binary="rclone-not-installed-12345")
+    with pytest.raises(TransportError):
+        await driver.push(tmp_path, "remote:path")
+
+
+# ---------------------------------------------------------------------------
+# argv shape
+# ---------------------------------------------------------------------------
 
 
 async def test_rclone_argv_includes_checksum_flag(
@@ -323,12 +132,11 @@ async def test_rclone_argv_includes_checksum_flag(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The push argv always carries ``--checksum`` (per Backend Spec §7.1.3)."""
     src = tmp_path / "src"
     src.mkdir()
     monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
-    transport = RcloneTransport()
-    await transport.push(src, "remote:/srv/run")
+    driver = RcloneDriver()
+    await driver.push(src, "remote:/srv/run")
     argvs = _read_recorded_argvs(record_argv)
     assert argvs, "stub did not record any invocations"
     assert "--checksum" in argvs[0]
@@ -340,12 +148,11 @@ async def test_rclone_argv_includes_bwlimit_when_set(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``bwlimit_kibps=512`` -> ``--bwlimit`` immediately followed by ``512K``."""
     src = tmp_path / "src"
     src.mkdir()
     monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
-    transport = RcloneTransport()
-    await transport.push(src, "remote:/srv/run", bwlimit_kibps=512)
+    driver = RcloneDriver()
+    await driver.push(src, "remote:/srv/run", bwlimit_kibps=512)
     argv = _read_recorded_argvs(record_argv)[0]
     assert "--bwlimit" in argv
     idx = argv.index("--bwlimit")
@@ -358,145 +165,273 @@ async def test_rclone_argv_omits_bwlimit_when_none(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``bwlimit_kibps=None`` -> ``--bwlimit`` is absent from argv."""
     src = tmp_path / "src"
     src.mkdir()
     monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
-    transport = RcloneTransport()
-    await transport.push(src, "remote:/srv/run", bwlimit_kibps=None)
+    driver = RcloneDriver()
+    await driver.push(src, "remote:/srv/run", bwlimit_kibps=None)
     argv = _read_recorded_argvs(record_argv)[0]
     assert "--bwlimit" not in argv
 
 
-async def test_rsync_argv_includes_checksum_partial(
+async def test_rclone_argv_includes_files_from_when_set(
     stub_dir: Path,
     record_argv: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The push argv always carries both ``--checksum`` and ``--partial``."""
     src = tmp_path / "src"
     src.mkdir()
-    monkeypatch.setenv("STUB_RSYNC_BEHAVIOR", "success")
-    transport = RsyncSshTransport()
-    key = tmp_path / "id_ed25519"
-    key.write_bytes(b"k")
-    await transport.push(src, "user@host", key, "/srv/run")
+    files_from = tmp_path / "files.txt"
+    files_from.write_text("data.bin\n")
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
+    driver = RcloneDriver()
+    await driver.push(src, "remote:/srv/run", files_from=files_from)
     argv = _read_recorded_argvs(record_argv)[0]
-    assert {"--checksum", "--partial"} <= set(argv)
+    assert "--files-from" in argv
+    idx = argv.index("--files-from")
+    assert argv[idx + 1] == str(files_from)
 
 
-async def test_rsync_argv_includes_ssh_dash_e_with_key_and_batchmode(
+async def test_rclone_argv_omits_files_from_when_none(
     stub_dir: Path,
     record_argv: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The ``-e`` value carries ``ssh -i <key>`` and ``-o BatchMode=yes``."""
     src = tmp_path / "src"
     src.mkdir()
-    monkeypatch.setenv("STUB_RSYNC_BEHAVIOR", "success")
-    transport = RsyncSshTransport()
-    key = tmp_path / "id_ed25519"
-    key.write_bytes(b"k")
-    await transport.push(src, "user@host", key, "/srv/run")
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
+    driver = RcloneDriver()
+    await driver.push(src, "remote:/srv/run")
     argv = _read_recorded_argvs(record_argv)[0]
-    assert "-e" in argv
-    e_value = argv[argv.index("-e") + 1]
-    assert "ssh -i" in e_value
-    assert str(key) in e_value
-    assert "-o BatchMode=yes" in e_value
+    assert "--files-from" not in argv
 
 
-async def test_rsync_argv_passes_target_and_remote_path(
-    stub_dir: Path,
-    record_argv: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The final positional arg is exactly ``<ssh_target>:<remote_path>``."""
-    src = tmp_path / "src"
-    src.mkdir()
-    monkeypatch.setenv("STUB_RSYNC_BEHAVIOR", "success")
-    transport = RsyncSshTransport()
-    key = tmp_path / "id_ed25519"
-    key.write_bytes(b"k")
-    ssh_target = "user@host"
-    remote_path = "/srv/nas/myrun"
-    await transport.push(src, ssh_target, key, remote_path)
-    argv = _read_recorded_argvs(record_argv)[0]
-    assert argv[-1] == f"{ssh_target}:{remote_path}"
+# ---------------------------------------------------------------------------
+# about
+# ---------------------------------------------------------------------------
 
 
-async def test_rsync_argv_includes_bwlimit_equals_form_when_set(
-    stub_dir: Path,
-    record_argv: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Spec gap fix: §7.1.7 mandates ``--bwlimit=<K>`` (equals form) for rsync.
-
-    The rclone path uses the space-separated ``--bwlimit <K>`` form; the
-    rsync path uses the equals form. The unit-suffix-less integer is what
-    the spec spells (``K = upload_mbps * 1024 / 8`` KiB/s, no trailing
-    ``K`` in the rsync invocation). This test was missing in the initial
-    transport-argv coverage; see Backend Spec §7.1.7.
-    """
-    src = tmp_path / "src"
-    src.mkdir()
-    monkeypatch.setenv("STUB_RSYNC_BEHAVIOR", "success")
-    transport = RsyncSshTransport()
-    key = tmp_path / "id_ed25519"
-    key.write_bytes(b"k")
-    await transport.push(src, "user@host", key, "/srv/run", bwlimit_kibps=128)
-    argv = _read_recorded_argvs(record_argv)[0]
-    # Spec form: "--bwlimit=<K>" as a single argv token.
-    assert "--bwlimit=128" in argv
-    # And the space-separated rclone form must NOT appear.
-    assert "--bwlimit" not in [a for a in argv if a == "--bwlimit"]
+async def test_about_success(stub_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "about_success")
+    monkeypatch.setenv("STUB_RCLONE_ABOUT_JSON", '{"total": 1024, "used": 512, "free": 512}')
+    driver = RcloneDriver()
+    result = await driver.about("remote:")
+    assert result.ok is True
+    assert result.info == {"total": 1024, "used": 512, "free": 512}
 
 
-async def test_rsync_argv_omits_bwlimit_when_none(
-    stub_dir: Path,
-    record_argv: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Spec §7.1.7: ``upload_mbps`` ``null or absent disables limiting``."""
-    src = tmp_path / "src"
-    src.mkdir()
-    monkeypatch.setenv("STUB_RSYNC_BEHAVIOR", "success")
-    transport = RsyncSshTransport()
-    key = tmp_path / "id_ed25519"
-    key.write_bytes(b"k")
-    await transport.push(src, "user@host", key, "/srv/run", bwlimit_kibps=None)
-    argv = _read_recorded_argvs(record_argv)[0]
-    assert not any(a.startswith("--bwlimit") for a in argv)
+async def test_about_auth_failure(stub_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "about_auth_error")
+    driver = RcloneDriver()
+    result = await driver.about("remote:")
+    assert result.ok is False
+    assert result.reason is not None
+    assert "auth" in result.reason.lower()
 
 
-async def test_rsync_hashsum_argv_uses_find_sha256sum_form(
-    stub_dir: Path,
-    record_argv: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Spec §7.1.4 step 2: rsync remote walk uses ``ssh <target> "find ... -exec sha256sum {} +"``.
+# ---------------------------------------------------------------------------
+# _parse_combined (rclone check --combined output parser)
+# ---------------------------------------------------------------------------
 
-    The remote-side hashsum command must use ``find ... -exec sha256sum {} +``
-    (literal wording in §7.1.4 step 2) so the verifier sees a manifest in
-    the standard ``<hex>  <path>`` form. This argv-shape test was missing
-    from the initial coverage.
-    """
-    monkeypatch.setenv("STUB_RSYNC_BEHAVIOR", "hashsum_success")
-    transport = RsyncSshTransport()
-    key = tmp_path / "id_ed25519"
-    key.write_bytes(b"k")
-    await transport.hashsum("user@host", key, "/srv/nas/myrun")
-    argv = _read_recorded_argvs(record_argv)[0]
-    # The remote command lives as the trailing argv token.
-    remote_cmd = argv[-1]
-    assert "find " in remote_cmd
-    assert "-type f" in remote_cmd
-    assert "-exec sha256sum {} +" in remote_cmd
-    # The target path appears literally in the find argument.
-    assert "/srv/nas/myrun" in remote_cmd
+
+def test_parse_combined_handles_all_prefixes() -> None:
+    text = "= same.txt\n* differ.txt\n+ extra.txt\n- missing.txt\n! error.txt\n"
+    result = _parse_combined(text)
+    assert result.equal == ("same.txt",)
+    assert result.differ == ("differ.txt",)
+    assert result.extra_on_dst == ("extra.txt",)
+    assert result.missing_on_dst == ("missing.txt",)
+    assert result.errors == ("error.txt",)
+
+
+def test_parse_combined_empty_returns_empty_result() -> None:
+    assert _parse_combined("") == CheckResult()
+
+
+def test_parse_combined_tolerates_blank_lines_and_unknown_prefix() -> None:
+    text = "\n= a.txt\n  \n? mysterious.txt\n* b.txt\n"
+    result = _parse_combined(text)
+    assert result.equal == ("a.txt",)
+    assert result.differ == ("b.txt",)
+
+
+# ---------------------------------------------------------------------------
+# Task 2.1 — --config / --transfers / --checkers plumbing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_push_argv_includes_config_and_perf(monkeypatch, tmp_path):
+    captured = {}
+
+    async def fake_run(cmd):
+        captured["cmd"] = cmd
+        return 0, "", ""
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    drv = RcloneDriver(config_path="/etc/rclone.conf", transfers=2, checkers=3)
+    await drv.push(tmp_path, "nas01:/srv/lab/EQ/run", bwlimit_kibps=None)
+    cmd = captured["cmd"]
+    assert "--config" in cmd and "/etc/rclone.conf" in cmd
+    assert cmd[cmd.index("--transfers") + 1] == "2"
+    assert cmd[cmd.index("--checkers") + 1] == "3"
+
+
+# ---------------------------------------------------------------------------
+# Task 2.2 — RcloneDriver.lsjson
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_lsjson_argv_is_recursive_readonly(monkeypatch):
+    captured = {}
+
+    async def fake_run(cmd):
+        captured["cmd"] = cmd
+        return (
+            0,
+            '[{"Path":"a.txt","Name":"a.txt","Size":3,"ModTime":"2026-05-28T00:00:00Z","IsDir":false}]',
+            "",
+        )
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    out = await RcloneDriver().lsjson("nas01:/srv/lab/EQ/run")
+    assert captured["cmd"][:2] == ["rclone", "lsjson"]
+    assert "-R" in captured["cmd"]
+    assert "nas01:/srv/lab/EQ/run" in captured["cmd"]
+    assert '"Path":"a.txt"' in out
+
+
+@pytest.mark.asyncio
+async def test_lsjson_raises_transport_error_on_failure(monkeypatch):
+    async def fake_run(cmd):
+        return 1, "", "401 Unauthorized"
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    with pytest.raises(TransportError):
+        await RcloneDriver().lsjson("nas01:/x")
+
+
+# ---------------------------------------------------------------------------
+# Task 2.3 — RcloneDriver.listremotes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_listremotes_parses_lines(monkeypatch):
+    async def fake_run(cmd):
+        assert cmd[:2] == ["rclone", "listremotes"]
+        return 0, "nas01:\nstagepc:\n", ""
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    remotes = await RcloneDriver().listremotes()
+    assert remotes == ("nas01:", "stagepc:")
+
+
+@pytest.mark.asyncio
+async def test_listremotes_empty_on_failure(monkeypatch):
+    async def fake_run(cmd):
+        return 1, "", "config not found"
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    assert await RcloneDriver().listremotes() == ()
+
+
+# ---------------------------------------------------------------------------
+# _classify_failure -- the UNKNOWN fallback (rc == 0, no markers)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_failure_unknown_when_rc_zero_and_no_markers() -> None:
+    assert _classify_failure("everything fine", 0) is TransportErrorKind.UNKNOWN
+
+
+# ---------------------------------------------------------------------------
+# check -- error paths (missing binary / auth failure / unreadable combined)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_check_missing_binary_raises(monkeypatch, tmp_path) -> None:
+    async def fake_run(cmd):
+        raise FileNotFoundError("rclone")
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    files_from = tmp_path / "files.txt"
+    files_from.write_text("a.txt\n")
+    with pytest.raises(TransportError):
+        await RcloneDriver().check(tmp_path, "nas01:/x", files_from=files_from)
+
+
+@pytest.mark.asyncio
+async def test_check_auth_failure_with_no_combined_output_raises(monkeypatch, tmp_path) -> None:
+    async def fake_run(cmd):
+        # Non-zero exit, auth marker, and the --combined file is left empty.
+        return 1, "", "403 Forbidden"
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    files_from = tmp_path / "files.txt"
+    files_from.write_text("a.txt\n")
+    with pytest.raises(TransportError) as exc:
+        await RcloneDriver().check(tmp_path, "nas01:/x", files_from=files_from)
+    assert exc.value.error_kind is TransportErrorKind.AUTH
+
+
+@pytest.mark.asyncio
+async def test_check_unreadable_combined_file_is_tolerated(monkeypatch, tmp_path) -> None:
+    """If the --combined tempfile cannot be read, treat it as empty output."""
+
+    async def fake_run(cmd):
+        # Delete the --combined target so read_text raises OSError; exit clean.
+        combined = Path(cmd[cmd.index("--combined") + 1])
+        combined.unlink(missing_ok=True)
+        return 0, "", ""
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    files_from = tmp_path / "files.txt"
+    files_from.write_text("a.txt\n")
+    result = await RcloneDriver().check(tmp_path, "nas01:/x", files_from=files_from)
+    assert result == CheckResult()
+
+
+# ---------------------------------------------------------------------------
+# about -- error paths (missing binary / malformed JSON)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_about_missing_binary_returns_not_ok(monkeypatch) -> None:
+    async def fake_run(cmd):
+        raise FileNotFoundError("rclone")
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    result = await RcloneDriver().about("nas01:")
+    assert result == AboutResult(ok=False, reason="rclone binary not found")
+
+
+@pytest.mark.asyncio
+async def test_about_malformed_json_is_ok_with_empty_info(monkeypatch) -> None:
+    async def fake_run(cmd):
+        return 0, "this is not json", ""
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    result = await RcloneDriver().about("nas01:")
+    assert result.ok is True
+    assert result.info == {}
+
+
+# ---------------------------------------------------------------------------
+# lsjson -- missing binary
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_lsjson_missing_binary_raises(monkeypatch) -> None:
+    async def fake_run(cmd):
+        raise FileNotFoundError("rclone")
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    with pytest.raises(TransportError):
+        await RcloneDriver().lsjson("nas01:/x")

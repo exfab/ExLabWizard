@@ -19,8 +19,8 @@ from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
     LIMSConfig,
+    NasConfig,
     PathsConfig,
-    RcloneTransport,
 )
 from exlab_wizard.constants import SetupState
 
@@ -40,17 +40,31 @@ def _ready_config() -> Config:
                 label="Equipment 1",
                 local_root="/data",
                 nas_root="/srv/nas",
-                completeness_signal="sentinel_file",
-                sentinel_filename="done.flag",
-                transport=RcloneTransport(
-                    type="rclone",
-                    rclone_remote="lab-nas",
-                    rclone_remote_path="lab/EQ1",
-                ),
             )
         ],
         lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),
         orchestrator=OrchestratorConfig(label="LAB-1", staging_root="/staging"),
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
+    )
+
+
+def _ready_config_without_lims() -> Config:
+    """``_ready_config`` minus the LIMS slot, for exercising the LIMS gate."""
+    from exlab_wizard.config.models import OrchestratorConfig
+
+    return Config(
+        paths=PathsConfig(templates_dir="/tpl", plugin_dir="/plugin", local_root="/data"),
+        equipment=[
+            EquipmentConfig(
+                id="EQ1",
+                label="Equipment 1",
+                local_root="/data",
+                nas_root="/srv/nas",
+            )
+        ],
+        lims=LIMSConfig(endpoint="", email="", offline_catalogue_path=""),
+        orchestrator=OrchestratorConfig(label="LAB-1", staging_root="/staging"),
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
     )
 
 
@@ -70,18 +84,57 @@ def test_is_creation_blocked_treats_lims_unreachable_as_soft() -> None:
     assert is_creation_blocked(SetupState.INCOMPLETE_NO_CONFIG) is True
     assert is_creation_blocked(SetupState.INCOMPLETE_MISSING_PATHS) is True
     assert is_creation_blocked(SetupState.INCOMPLETE_NO_EQUIPMENT) is True
+    assert is_creation_blocked(SetupState.INCOMPLETE_NO_NAS_REMOTE) is True
     assert is_creation_blocked(SetupState.INCOMPLETE_NO_LIMS) is True
+
+
+def test_compute_setup_state_returns_incomplete_no_nas_remote() -> None:
+    """NAS sync in use but the configured remote is absent from rclone.conf gates."""
+    deps = AppDependencies(
+        config=_ready_config(),
+        lims_reachable=True,
+        nas_remote_available=lambda _n: False,
+    )
+    assert compute_setup_state(deps) is SetupState.INCOMPLETE_NO_NAS_REMOTE
+
+
+def test_get_setup_status_reports_configure_rclone_remote() -> None:
+    """When the nas remote is unavailable the status surfaces the rclone next-action."""
+    deps = AppDependencies(
+        config=_ready_config(),
+        lims_reachable=True,
+        nas_remote_available=lambda _n: False,
+    )
+    app = create_app(dependencies=deps)
+    client = TestClient(app)
+    response = client.get("/api/v1/setup/status")
+    body = response.json()
+    assert body["state"] == "incomplete_no_nas_remote"
+    assert body["next_action"] == "configure_rclone_remote"
+    field_names = {entry["field"] for entry in body["missing"]}
+    assert "nas.remote" in field_names
 
 
 def test_setup_state_gate_returns_503_in_incomplete_states() -> None:
     """Each non-soft INCOMPLETE_* state returns a 503 with the right code."""
+    from collections.abc import Callable
+
     from exlab_wizard.config.models import OrchestratorConfig
 
+    # A config that is complete up to (but not including) the NAS-remote
+    # gate. Reused for the last two hard-block cases by varying the deps'
+    # ``nas_remote_available`` predicate.
+    nas_ready = _ready_config()
+    always: Callable[[str], bool] = lambda _n: True  # noqa: E731
+    never: Callable[[str], bool] = lambda _n: False  # noqa: E731
+
+    # (config, nas_remote_available, expected_state)
     test_cases = [
-        (None, "incomplete_no_config"),
-        (Config(), "incomplete_missing_paths"),
+        (None, always, "incomplete_no_config"),
+        (Config(), always, "incomplete_missing_paths"),
         (
             Config(paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d")),
+            always,
             "incomplete_no_orchestrator",
         ),
         (
@@ -89,11 +142,21 @@ def test_setup_state_gate_returns_503_in_incomplete_states() -> None:
                 paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
                 orchestrator=OrchestratorConfig(label="LAB", staging_root="/s"),
             ),
+            always,
             "incomplete_no_equipment",
         ),
+        # NAS gate: nas-mode equipment present but the remote is unavailable.
+        (nas_ready, never, "incomplete_no_nas_remote"),
+        # LIMS gate: satisfy the NAS gate so the LIMS gate is the first failure.
+        # ``_ready_config`` carries a configured LIMS, so drop it for this case.
+        (
+            _ready_config_without_lims(),
+            always,
+            "incomplete_no_lims",
+        ),
     ]
-    for config, expected_state in test_cases:
-        deps = AppDependencies(config=config)
+    for config, remote_available, expected_state in test_cases:
+        deps = AppDependencies(config=config, nas_remote_available=remote_available)
         app = FastAPI()
         app.state.dependencies = deps
 
@@ -205,20 +268,17 @@ def test_post_test_lims_without_probe_reports_not_wired() -> None:
     assert response.json()["ok"] is False
 
 
-def test_post_test_equipment_invokes_probe() -> None:
-    captured: dict[str, Any] = {}
-
-    def probe(equipment: Any) -> dict[str, Any]:
-        captured["id"] = equipment.id
-        return {"ok": True, "reason": None, "latency_ms": 10}
-
-    deps = AppDependencies(config=_ready_config(), equipment_probe=probe)
+def test_post_test_equipment_requires_equipment_id() -> None:
+    deps = AppDependencies(
+        config=_ready_config(),
+        equipment_probe=lambda _e: True,
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
+    # Rclone-only migration: the body-equipment pre-save path is gone, so
+    # an empty body is rejected by pydantic with 422.
     response = client.post("/api/v1/setup/test-equipment", json={})
-    assert response.status_code == 200
-    assert response.json()["ok"] is True
-    assert captured["id"] == "EQ1"
+    assert response.status_code == 422
 
 
 def test_post_test_equipment_with_explicit_equipment_id() -> None:
@@ -237,12 +297,16 @@ def test_post_test_equipment_with_explicit_equipment_id() -> None:
     assert captured["id"] == "EQ1"
 
 
-def test_post_test_equipment_unknown_id_returns_no_match() -> None:
-    deps = AppDependencies(config=_ready_config(), equipment_probe=lambda _e: True)
+def test_post_test_equipment_unknown_id_returns_404() -> None:
+    deps = AppDependencies(
+        config=_ready_config(),
+        equipment_probe=lambda _e: True,
+    )
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.post("/api/v1/setup/test-equipment", json={"equipment_id": "NO_SUCH"})
-    assert response.json()["ok"] is False
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "equipment_not_found"
 
 
 def test_post_autostart_calls_toggle() -> None:

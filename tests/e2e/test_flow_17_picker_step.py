@@ -44,7 +44,7 @@ def test_flow_17_creation_buttons_disabled_on_received_node(page, server_url) ->
     # The click-then-navigate path races against Playwright's
     # networkidle wait under CI, where the URL doesn't change and the
     # state-mutation render may not finish before the assertion.
-    _goto(page, f"{server_url}/main?view=explorer&selected=RELAY_EQX")
+    _goto(page, f"{server_url}/main?view=explorer&selected=TEST_RELAY_EQX")
     for testid in ("toolbar-new-project", "toolbar-new-run", "toolbar-new-test-run"):
         btn = page.locator(f'[data-testid="{testid}"]')
         btn.wait_for(state="visible", timeout=10_000)

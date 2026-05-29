@@ -3,12 +3,11 @@
 Pydantic models that mirror ``config.yaml`` (Backend Spec §9). These tests
 exercise the happy path, every ``Field(...)`` constraint, every
 ``field_validator``, and every ``model_validator`` -- including the
-cross-field invariants on ``Config``. The loader (``exlab_wizard.config.loader``)
-is responsible for converting Pydantic ``ValidationError``s into ``ConfigError``;
-this file only checks the model layer in isolation, so most assertions raise
-``ValidationError`` directly. The one exception is :class:`RsyncSshTransport`,
-which raises a custom ``ConfigError`` from a ``mode='before'`` validator before
-Pydantic ever sees the input.
+cross-field invariants on ``Config``. The loader
+(``exlab_wizard.config.loader``) is responsible for converting Pydantic
+``ValidationError``s into ``ConfigError``; this file only checks the
+model layer in isolation, so most assertions raise ``ValidationError``
+directly.
 """
 
 from __future__ import annotations
@@ -24,18 +23,18 @@ from exlab_wizard.config.models import (
     LIMSConfig,
     LoggingConfig,
     NASCleanupConfig,
+    NasConfig,
     OperatorsConfig,
     OrchestratorConfig,
     OrchestratorStagingCleanup,
-    OrchestratorStagingTransport,
     PathsConfig,
     PluginsConfig,
-    RcloneTransport,
+    RclonePerf,
     READMEConfig,
     READMEDefaultField,
-    RsyncSshTransport,
     SyncConfig,
     ValidatorConfig,
+    config_with_equipment_appended,
 )
 from exlab_wizard.errors import ConfigError
 
@@ -44,31 +43,9 @@ from exlab_wizard.errors import ConfigError
 # ---------------------------------------------------------------------------
 
 
-def _rclone_transport_dict() -> dict:
-    """Minimal valid rclone transport block."""
-    return {
-        "type": "rclone",
-        "rclone_remote": "lab-nas",
-        "rclone_remote_path": "lab/CONFOCAL_01",
-    }
-
-
-def _rsync_transport_dict() -> dict:
-    """Minimal valid rsync_ssh transport block."""
-    return {
-        "type": "rsync_ssh",
-        "ssh_target": "labuser@nas01.lab.example",
-        "remote_path": "/srv/lab/FLOW_01",
-    }
-
-
 def _equipment_dict(
     *,
     equipment_id: str = "CONFOCAL_01",
-    completeness_signal: str = "sentinel_file",
-    sentinel_filename: str | None = "acquisition_complete.flag",
-    manifest_filename: str | None = None,
-    transport: dict | None = None,
 ) -> dict:
     """Build a valid EquipmentConfig dict with sensible defaults."""
     return {
@@ -76,10 +53,6 @@ def _equipment_dict(
         "label": "Confocal Microscope 1",
         "local_root": "/data/lab",
         "nas_root": "//nas01/lab",
-        "completeness_signal": completeness_signal,
-        "sentinel_filename": sentinel_filename,
-        "manifest_filename": manifest_filename,
-        "transport": transport or _rclone_transport_dict(),
     }
 
 
@@ -114,47 +87,14 @@ def _full_config_dict() -> dict:
                 "label": "Confocal Microscope 1",
                 "local_root": "/data/lab",
                 "nas_root": "//nas01/lab",
-                "completeness_signal": "sentinel_file",
-                "sentinel_filename": "acquisition_complete.flag",
-                "manifest_filename": None,
                 "sync_mode": "nas",
-                "transport": {
-                    "type": "rclone",
-                    "rclone_remote": "lab-nas",
-                    "rclone_remote_path": "lab/CONFOCAL_01",
-                    "bandwidth": {
-                        "upload_mbps": 50.0,
-                        "schedule": [
-                            {
-                                "days": ["mon", "tue", "wed", "thu", "fri"],
-                                "from": "08:00",
-                                "to": "18:00",
-                            },
-                        ],
-                    },
-                },
-                "orchestrator_staging_transport": None,
             },
             {
                 "id": "FLOW_01",
                 "label": "Flow Cytometer 1",
                 "local_root": "/data/lab",
                 "nas_root": "/mnt/nas/lab",
-                "completeness_signal": "manifest",
-                "sentinel_filename": None,
-                "manifest_filename": "run_manifest.json",
                 "sync_mode": "nas",
-                "transport": {
-                    "type": "rsync_ssh",
-                    "ssh_target": "labuser@nas01.lab.example",
-                    "ssh_key_path": "~/.ssh/id_ed25519",
-                    "remote_path": "/srv/lab/FLOW_01",
-                    "bandwidth": {
-                        "upload_mbps": None,
-                        "schedule": [],
-                    },
-                },
-                "orchestrator_staging_transport": None,
             },
         ],
         "nas_cleanup": {
@@ -189,11 +129,37 @@ def _full_config_dict() -> dict:
             ],
         },
         "plugins": {"allow_network": False},
-        "sync": {"enabled": True, "retry_attempts": 3},
+        "sync": {
+            "enabled": True,
+            "retry_attempts": 3,
+            "quiescence_minutes": 10,
+            "ignore_globs": ["*.partial", "*.tmp"],
+            "poll_interval_seconds": 120,
+        },
         "orchestrator": {
             "label": "Lab Acquisition Station 01",
             "staging_root": "/staging",
+            "staging_remote": "stagepc",
+            "staging_base_root": "/staging-area",
+            "staging_perf": {"transfers": 4, "checkers": 8},
             "staging_cleanup": {"mode": "manual", "retain_hours": 24},
+        },
+        "nas": {
+            "remote": "",
+            "base_root": "",
+            "rclone_config_path": "",
+            "mtime_tolerance_s": 2,
+            "perf": {"transfers": 4, "checkers": 8},
+            "bandwidth": {
+                "upload_mbps": 50.0,
+                "schedule": [
+                    {
+                        "days": ["mon", "tue", "wed", "thu", "fri"],
+                        "from": "08:00",
+                        "to": "18:00",
+                    },
+                ],
+            },
         },
     }
 
@@ -379,130 +345,6 @@ def test_bandwidth_config_accepts_positive_upload_mbps() -> None:
 
 
 # ---------------------------------------------------------------------------
-# RcloneTransport
-# ---------------------------------------------------------------------------
-
-
-def test_rclone_transport_minimal() -> None:
-    t = RcloneTransport.model_validate(_rclone_transport_dict())
-    assert t.type == "rclone"
-    assert t.rclone_remote == "lab-nas"
-
-
-def test_rclone_transport_rejects_missing_remote() -> None:
-    with pytest.raises(ValidationError):
-        RcloneTransport.model_validate({"type": "rclone", "rclone_remote_path": "x"})
-
-
-def test_rclone_transport_rejects_empty_remote() -> None:
-    with pytest.raises(ValidationError):
-        RcloneTransport.model_validate(
-            {"type": "rclone", "rclone_remote": "", "rclone_remote_path": "x"}
-        )
-
-
-def test_rclone_transport_rejects_wrong_type_tag() -> None:
-    with pytest.raises(ValidationError):
-        RcloneTransport.model_validate(
-            {"type": "rsync_ssh", "rclone_remote": "x", "rclone_remote_path": "y"}
-        )
-
-
-# ---------------------------------------------------------------------------
-# RsyncSshTransport
-# ---------------------------------------------------------------------------
-
-
-def test_rsync_ssh_transport_minimal() -> None:
-    t = RsyncSshTransport.model_validate(_rsync_transport_dict())
-    assert t.type == "rsync_ssh"
-    assert t.ssh_key_path == "~/.ssh/id_ed25519"
-
-
-def test_rsync_ssh_rejects_password_field() -> None:
-    # The mode='before' validator catches this and raises ConfigError directly,
-    # not a Pydantic ValidationError, so the loader's user-facing message is
-    # crisp even when extra='forbid' would otherwise fire first.
-    bad = dict(_rsync_transport_dict())
-    bad["password"] = "hunter2"
-    with pytest.raises(ConfigError) as info:
-        RsyncSshTransport.model_validate(bad)
-    assert "password" in str(info.value).lower()
-
-
-def test_rsync_ssh_rejects_empty_ssh_target() -> None:
-    bad = dict(_rsync_transport_dict())
-    bad["ssh_target"] = ""
-    with pytest.raises(ValidationError):
-        RsyncSshTransport.model_validate(bad)
-
-
-def test_rsync_ssh_rejects_empty_remote_path() -> None:
-    bad = dict(_rsync_transport_dict())
-    bad["remote_path"] = ""
-    with pytest.raises(ValidationError):
-        RsyncSshTransport.model_validate(bad)
-
-
-# ---------------------------------------------------------------------------
-# Discriminated EquipmentTransport union
-# ---------------------------------------------------------------------------
-
-
-def test_equipment_transport_discriminates_on_type_rclone() -> None:
-    eq = EquipmentConfig.model_validate(_equipment_dict())
-    assert isinstance(eq.transport, RcloneTransport)
-
-
-def test_equipment_transport_discriminates_on_type_rsync() -> None:
-    eq = EquipmentConfig.model_validate(
-        _equipment_dict(
-            equipment_id="FLOW_01",
-            completeness_signal="manifest",
-            sentinel_filename=None,
-            manifest_filename="run_manifest.json",
-            transport=_rsync_transport_dict(),
-        )
-    )
-    assert isinstance(eq.transport, RsyncSshTransport)
-
-
-def test_equipment_transport_rejects_unknown_type() -> None:
-    bad = _equipment_dict()
-    bad["transport"] = {"type": "ftp", "host": "ftp.example.com"}
-    with pytest.raises(ValidationError):
-        EquipmentConfig.model_validate(bad)
-
-
-# ---------------------------------------------------------------------------
-# OrchestratorStagingTransport
-# ---------------------------------------------------------------------------
-
-
-def test_orchestrator_staging_transport_smb_mount() -> None:
-    t = OrchestratorStagingTransport(
-        type="smb_mount", mount_point="/mnt/staging", staging_subpath="CONFOCAL_01"
-    )
-    assert t.type == "smb_mount"
-
-
-def test_orchestrator_staging_transport_file_transfer() -> None:
-    t = OrchestratorStagingTransport(
-        type="file_transfer", mount_point="/staging", staging_subpath="FLOW_01"
-    )
-    assert t.type == "file_transfer"
-
-
-def test_orchestrator_staging_transport_rejects_unknown_type() -> None:
-    with pytest.raises(ValidationError):
-        OrchestratorStagingTransport(
-            type="rclone",  # type: ignore[arg-type]
-            mount_point="/mnt",
-            staging_subpath="X",
-        )
-
-
-# ---------------------------------------------------------------------------
 # EquipmentConfig
 # ---------------------------------------------------------------------------
 
@@ -539,24 +381,15 @@ def test_equipment_id_accepts_max_length() -> None:
     assert eq.id == at_max
 
 
-def test_completeness_signal_sentinel_requires_filename() -> None:
-    with pytest.raises(ValidationError) as info:
-        EquipmentConfig.model_validate(
-            _equipment_dict(completeness_signal="sentinel_file", sentinel_filename=None)
-        )
-    assert "sentinel_filename" in str(info.value)
-
-
-def test_completeness_signal_manifest_requires_filename() -> None:
-    with pytest.raises(ValidationError) as info:
-        EquipmentConfig.model_validate(
-            _equipment_dict(
-                completeness_signal="manifest",
-                sentinel_filename=None,
-                manifest_filename=None,
-            )
-        )
-    assert "manifest_filename" in str(info.value)
+def test_equipment_config_rejects_removed_completeness_fields() -> None:
+    """The operator-free quiescence redesign drops the per-equipment
+    completeness-signal fields; ``extra='forbid'`` now rejects them."""
+    for stale_key in ("completeness_signal", "sentinel_filename", "manifest_filename"):
+        bad = _equipment_dict()
+        bad[stale_key] = "x"
+        with pytest.raises(ValidationError) as info:
+            EquipmentConfig.model_validate(bad)
+        assert stale_key in str(info.value)
 
 
 def test_equipment_label_must_be_non_empty() -> None:
@@ -580,9 +413,18 @@ def test_equipment_nas_root_must_be_non_empty() -> None:
         EquipmentConfig.model_validate(bad)
 
 
-def test_equipment_orchestrator_staging_transport_optional() -> None:
-    eq = EquipmentConfig.model_validate(_equipment_dict())
-    assert eq.orchestrator_staging_transport is None
+def test_equipment_rejects_removed_orchestrator_staging_transport() -> None:
+    """rclone.conf migration (Phase 8): the per-equipment staging-transport
+    block is gone; ``extra='forbid'`` now rejects a stray key."""
+    bad = _equipment_dict()
+    bad["orchestrator_staging_transport"] = {
+        "type": "smb_mount",
+        "mount_point": "/mnt/staging",
+        "staging_subpath": "incoming/EQ1",
+    }
+    with pytest.raises(ValidationError) as info:
+        EquipmentConfig.model_validate(bad)
+    assert "orchestrator_staging_transport" in str(info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -590,65 +432,60 @@ def test_equipment_orchestrator_staging_transport_optional() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _orch_staging_transport_dict() -> dict:
-    return {
-        "type": "smb_mount",
-        "mount_point": "/mnt/orch-staging",
-        "staging_subpath": "incoming/EQ1",
-    }
-
-
 def test_sync_mode_defaults_to_nas_when_absent() -> None:
     eq = EquipmentConfig.model_validate(_equipment_dict())
     assert eq.sync_mode.value == "nas"
 
 
-def test_sync_mode_nas_requires_transport_block() -> None:
-    bad = _equipment_dict()
-    bad["sync_mode"] = "nas"
-    bad["transport"] = None
+def test_nas_mode_equipment_needs_no_transport_block() -> None:
+    """rclone.conf migration: nas-mode carries no per-equipment connection.
+
+    The ``nas:`` block now carries the connection, so a nas-mode equipment
+    validates with only its id / roots / sync_mode.
+    """
+    eq = EquipmentConfig(
+        id="EQ_01",
+        label="Eq",
+        local_root="/l",
+        nas_root="//n/x",
+        sync_mode="nas",
+    )
+    assert eq.sync_mode.value == "nas"
+
+
+def test_nas_mode_equipment_rejects_stray_transport_block() -> None:
+    """rclone.conf migration: a stray ``transport`` key is now forbidden."""
+    spec = _equipment_dict()
+    spec["sync_mode"] = "nas"
+    spec["transport"] = {
+        "type": "rclone_sftp",
+        "host": "nas01.lab.example",
+        "user": "labuser",
+        "remote_path": "/srv/lab/CONFOCAL_01",
+    }
     with pytest.raises(ValidationError) as info:
-        EquipmentConfig.model_validate(bad)
+        EquipmentConfig.model_validate(spec)
     assert "transport" in str(info.value)
 
 
-def test_sync_mode_nas_forbids_orchestrator_staging_transport() -> None:
-    bad = _equipment_dict()
-    bad["sync_mode"] = "nas"
-    bad["orchestrator_staging_transport"] = _orch_staging_transport_dict()
-    with pytest.raises(ValidationError) as info:
-        EquipmentConfig.model_validate(bad)
-    assert "orchestrator_staging_transport" in str(info.value)
-
-
-def test_sync_mode_stage_requires_orchestrator_staging_transport() -> None:
-    bad = _equipment_dict()
-    bad["sync_mode"] = "stage"
-    bad["transport"] = None
-    with pytest.raises(ValidationError) as info:
-        EquipmentConfig.model_validate(bad)
-    assert "orchestrator_staging_transport" in str(info.value)
-
-
-def test_sync_mode_stage_forbids_transport_block() -> None:
-    bad = _equipment_dict()
-    bad["sync_mode"] = "stage"
-    bad["orchestrator_staging_transport"] = _orch_staging_transport_dict()
-    # transport is still set by _equipment_dict() default
-    with pytest.raises(ValidationError) as info:
-        EquipmentConfig.model_validate(bad)
-    assert "transport" in str(info.value)
-
-
-def test_sync_mode_stage_with_only_orchestrator_transport_is_valid() -> None:
+def test_sync_mode_stage_needs_no_per_equipment_block() -> None:
+    """rclone.conf migration (Phase 8): stage-mode no longer requires (or
+    accepts) a per-equipment staging-transport block; the staging hop is
+    defined once by ``orchestrator.staging_remote``."""
     spec = _equipment_dict()
     spec["sync_mode"] = "stage"
-    spec["transport"] = None
-    spec["orchestrator_staging_transport"] = _orch_staging_transport_dict()
     eq = EquipmentConfig.model_validate(spec)
     assert eq.sync_mode.value == "stage"
-    assert eq.transport is None
-    assert eq.orchestrator_staging_transport is not None
+
+
+def test_sync_mode_stage_rejects_stray_transport_block() -> None:
+    bad = _equipment_dict()
+    bad["sync_mode"] = "stage"
+    bad["transport"] = {"type": "rclone_sftp", "host": "x", "user": "y", "remote_path": "/z"}
+    # ``transport`` is no longer a model field; extra='forbid' rejects it.
+    with pytest.raises(ValidationError) as info:
+        EquipmentConfig.model_validate(bad)
+    assert "transport" in str(info.value)
 
 
 def test_sync_mode_serializes_to_string() -> None:
@@ -670,14 +507,11 @@ def test_sync_mode_stage_round_trip_via_dict() -> None:
     """Build a stage-mode EquipmentConfig from a dict, dump it, compare."""
     spec = _equipment_dict()
     spec["sync_mode"] = "stage"
-    spec["transport"] = None
-    spec["orchestrator_staging_transport"] = _orch_staging_transport_dict()
     eq = EquipmentConfig.model_validate(spec)
     dumped = eq.model_dump(mode="python")
     assert dumped["sync_mode"] == "stage"
-    assert dumped["transport"] is None
-    assert dumped["orchestrator_staging_transport"]["type"] == "smb_mount"
-    assert dumped["orchestrator_staging_transport"]["mount_point"] == "/mnt/orch-staging"
+    assert "transport" not in dumped
+    assert "orchestrator_staging_transport" not in dumped
 
 
 # ---------------------------------------------------------------------------
@@ -818,11 +652,43 @@ def test_sync_config_defaults() -> None:
     cfg = SyncConfig()
     assert cfg.enabled is True
     assert cfg.retry_attempts == 3
+    assert cfg.quiescence_minutes == 10
+    assert cfg.ignore_globs == ["*.partial", "*.tmp"]
+    assert cfg.poll_interval_seconds == 120
 
 
 def test_sync_config_retry_attempts_non_negative() -> None:
     with pytest.raises(ValidationError):
         SyncConfig(retry_attempts=-1)
+
+
+def test_sync_config_quiescence_minutes_at_least_one() -> None:
+    with pytest.raises(ValidationError):
+        SyncConfig(quiescence_minutes=0)
+
+
+def test_sync_config_poll_interval_seconds_at_least_one() -> None:
+    with pytest.raises(ValidationError):
+        SyncConfig(poll_interval_seconds=0)
+
+
+def test_sync_config_accepts_custom_quiescence_settings() -> None:
+    cfg = SyncConfig(
+        quiescence_minutes=30,
+        ignore_globs=["*.lock"],
+        poll_interval_seconds=60,
+    )
+    assert cfg.quiescence_minutes == 30
+    assert cfg.ignore_globs == ["*.lock"]
+    assert cfg.poll_interval_seconds == 60
+
+
+def test_sync_config_ignore_globs_default_is_independent_per_instance() -> None:
+    # default_factory: mutating one instance's list must not bleed into another.
+    first = SyncConfig()
+    first.ignore_globs.append("*.bak")
+    second = SyncConfig()
+    assert second.ignore_globs == ["*.partial", "*.tmp"]
 
 
 # ---------------------------------------------------------------------------
@@ -859,7 +725,33 @@ def test_orchestrator_config_defaults() -> None:
     cfg = OrchestratorConfig()
     assert cfg.label == ""
     assert cfg.staging_root == ""
+    assert cfg.staging_remote == ""
+    assert cfg.staging_base_root == ""
     assert cfg.staging_cleanup.mode == "manual"
+
+
+def test_orchestrator_config_staging_remote_validates_with_perf_defaults() -> None:
+    """rclone.conf migration (Phase 8): the orchestrator stage hop is a
+    named rclone remote. ``staging_perf`` defaults to transfers=4/checkers=8,
+    matching the NAS leg's :class:`RclonePerf` default."""
+    cfg = OrchestratorConfig(staging_remote="stagepc", staging_base_root="/staging")
+    assert cfg.staging_remote == "stagepc"
+    assert cfg.staging_base_root == "/staging"
+    assert cfg.staging_perf.transfers == 4
+    assert cfg.staging_perf.checkers == 8
+
+
+def test_stage_mode_equipment_validates_without_staging_block() -> None:
+    """rclone.conf migration (Phase 8): a stage-mode equipment validates with
+    only its id / roots / sync_mode -- no per-equipment staging-transport."""
+    eq = EquipmentConfig(
+        id="STAGE_01",
+        label="Stage 1",
+        local_root="/data",
+        nas_root="//nas/x",
+        sync_mode="stage",
+    )
+    assert eq.sync_mode.value == "stage"
 
 
 # ---------------------------------------------------------------------------
@@ -893,13 +785,7 @@ def test_distinct_equipment_ids_accepted() -> None:
     payload = {
         "equipment": [
             _equipment_dict(equipment_id="CONFOCAL_01"),
-            _equipment_dict(
-                equipment_id="FLOW_01",
-                completeness_signal="manifest",
-                sentinel_filename=None,
-                manifest_filename="run_manifest.json",
-                transport=_rsync_transport_dict(),
-            ),
+            _equipment_dict(equipment_id="FLOW_01"),
         ],
     }
     cfg = Config.model_validate(payload)
@@ -985,7 +871,70 @@ def test_full_config_round_trip_via_dict() -> None:
 def test_round_trip_preserves_bandwidth_alias_for_from() -> None:
     cfg = Config.model_validate(_full_config_dict())
     dumped = cfg.model_dump(mode="python", by_alias=True)
-    schedule = dumped["equipment"][0]["transport"]["bandwidth"]["schedule"]
+    schedule = dumped["nas"]["bandwidth"]["schedule"]
     assert schedule[0]["from"] == "08:00"
     assert schedule[0]["to"] == "18:00"
     assert "from_" not in schedule[0]
+
+
+# ---------------------------------------------------------------------------
+# config_with_equipment_appended (Redesign §6 -- shared append helper)
+# ---------------------------------------------------------------------------
+
+
+def test_config_with_equipment_appended_seeds_from_none() -> None:
+    """A ``None`` config (fresh install) yields a default Config + the device."""
+    eq = EquipmentConfig.model_validate(_equipment_dict(equipment_id="CONFOCAL_01"))
+    result = config_with_equipment_appended(None, eq)
+    assert isinstance(result, Config)
+    assert [e.id for e in result.equipment] == ["CONFOCAL_01"]
+
+
+def test_config_with_equipment_appended_preserves_existing_state() -> None:
+    """Appending keeps prior equipment and other config sections, unmutated."""
+    first = EquipmentConfig.model_validate(_equipment_dict(equipment_id="CONFOCAL_01"))
+    base = Config(equipment=[first], logging=LoggingConfig(level="DEBUG"))
+    second = EquipmentConfig.model_validate(_equipment_dict(equipment_id="FLOW_02"))
+    result = config_with_equipment_appended(base, second)
+    assert [e.id for e in result.equipment] == ["CONFOCAL_01", "FLOW_02"]
+    assert result.logging.level == "DEBUG"
+    # The input config is copied, never mutated in place.
+    assert [e.id for e in base.equipment] == ["CONFOCAL_01"]
+
+
+def test_config_with_equipment_appended_rejects_duplicate_id() -> None:
+    """A device whose id already exists raises ConfigError, not a silent merge."""
+    existing = EquipmentConfig.model_validate(_equipment_dict(equipment_id="CONFOCAL_01"))
+    base = Config(equipment=[existing])
+    dupe = EquipmentConfig.model_validate(_equipment_dict(equipment_id="CONFOCAL_01"))
+    with pytest.raises(ConfigError, match="CONFOCAL_01"):
+        config_with_equipment_appended(base, dupe)
+
+
+# ---------------------------------------------------------------------------
+# NasConfig / RclonePerf
+# ---------------------------------------------------------------------------
+
+
+def test_nas_config_defaults():
+    nas = NasConfig(remote="nas01", base_root="/srv/lab")
+    assert nas.remote == "nas01"
+    assert nas.base_root == "/srv/lab"
+    assert nas.rclone_config_path == ""
+    assert nas.perf.transfers == 4
+    assert nas.perf.checkers == 8
+    assert nas.bandwidth.upload_mbps is None
+    assert nas.mtime_tolerance_s == 2
+
+
+def test_nas_config_rejects_nonpositive_perf():
+    with pytest.raises(ValueError):
+        RclonePerf(transfers=0)
+    with pytest.raises(ValueError):
+        RclonePerf(checkers=0)
+
+
+def test_config_has_default_nas_block():
+    cfg = Config()
+    assert cfg.nas.remote == ""
+    assert cfg.nas.base_root == ""

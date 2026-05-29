@@ -20,11 +20,13 @@ _log = get_logger(__name__)
 STATE_RUNNING = "running"
 STATE_SUSPENDED = "suspended"
 STATE_COMPLETED = "completed"
+STATE_FAILED = "failed"
 
 _STATE_GLYPH: dict[str, str] = {
     STATE_RUNNING: "play_arrow",
     STATE_SUSPENDED: "pause",
     STATE_COMPLETED: "check",
+    STATE_FAILED: "error",
 }
 
 
@@ -39,6 +41,40 @@ class OperationRow:
     project: str
     run: str
     plugin: str | None = None
+
+    @classmethod
+    def from_session(cls, session_id: str, session: Any) -> OperationRow:
+        """Map a controller ``Session`` to a panel row.
+
+        Collapses the §4.7 state machine onto the panel's three buckets:
+        ``INPUT_REQUIRED`` -> suspended (offers Resume/Cancel), ``DONE`` ->
+        completed, every other non-terminal state -> running. Shares
+        ``project_identifier`` with the ``/operations`` route so both label
+        rows identically (imported lazily to respect the controller/api
+        import ordering).
+        """
+        from exlab_wizard.controller import SessionState, project_identifier
+        from exlab_wizard.utils.time import dt_to_iso
+
+        if session.state is SessionState.INPUT_REQUIRED:
+            row_state = STATE_SUSPENDED
+        elif session.state is SessionState.DONE:
+            row_state = STATE_COMPLETED
+        elif session.state is SessionState.FAILED:
+            row_state = STATE_FAILED
+        else:
+            row_state = STATE_RUNNING
+        request = session.request
+        plugin = session.pending_input.get("plugin") if session.pending_input else None
+        return cls(
+            operation_id=session_id,
+            state=row_state,
+            started_at=dt_to_iso(session.created_at) if session.created_at is not None else "",
+            equipment=getattr(request, "equipment_id", None) or "",
+            project=project_identifier(request) or "",
+            run=getattr(request, "label", None) or "",
+            plugin=plugin,
+        )
 
 
 def operation_columns() -> list[dict[str, Any]]:
@@ -61,7 +97,7 @@ def sort_rows(rows: list[OperationRow]) -> list[OperationRow]:
     first so the operator clears the longest-pending input first.
     """
 
-    state_priority = {STATE_SUSPENDED: 0, STATE_RUNNING: 1, STATE_COMPLETED: 2}
+    state_priority = {STATE_SUSPENDED: 0, STATE_RUNNING: 1, STATE_FAILED: 2, STATE_COMPLETED: 3}
     return sorted(
         rows,
         key=lambda r: (state_priority.get(r.state, 99), r.started_at),

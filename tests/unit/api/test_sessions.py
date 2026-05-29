@@ -14,7 +14,6 @@ from exlab_wizard.config.models import (
     EquipmentConfig,
     LIMSConfig,
     PathsConfig,
-    RcloneTransport,
 )
 from exlab_wizard.constants import RunKind
 from exlab_wizard.controller.creation import (
@@ -27,7 +26,7 @@ from exlab_wizard.controller.state_machine import Phase, SessionState
 
 
 def _ready_config() -> Config:
-    from exlab_wizard.config.models import OrchestratorConfig
+    from exlab_wizard.config.models import NasConfig, OrchestratorConfig
 
     return Config(
         paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
@@ -37,17 +36,11 @@ def _ready_config() -> Config:
                 label="Equipment 1",
                 local_root="/d",
                 nas_root="/n",
-                completeness_signal="sentinel_file",
-                sentinel_filename="done.flag",
-                transport=RcloneTransport(
-                    type="rclone",
-                    rclone_remote="lab-nas",
-                    rclone_remote_path="lab/EQ1",
-                ),
             )
         ],
         lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),
         orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
     )
 
 

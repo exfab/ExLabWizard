@@ -163,6 +163,15 @@ class _FakeController:
 # ---------------------------------------------------------------------------
 
 
+# ``_is_setup_ready`` delegates to ``api.setup.compute_setup_state`` (the
+# single source of truth ``/setup/status`` uses), so these assert the
+# delegation -- READY -> True, any INCOMPLETE_* -> False -- across the
+# real §4.9 gate chain rather than a hand-rolled LIMS-only mirror. The
+# fully-satisfied configs use ``_nas_config`` because the real evaluator
+# requires non-empty equipment, ``plugin_dir``, and orchestrator identity
+# that the lightweight ``_config`` stand-in deliberately omits.
+
+
 def test_is_setup_ready_false_when_deps_none() -> None:
     assert mount._is_setup_ready(None) is False
 
@@ -172,13 +181,18 @@ def test_is_setup_ready_false_when_config_missing() -> None:
 
 
 def test_is_setup_ready_false_when_keyring_missing() -> None:
-    deps = _deps(config=_config(), keyring_password_present=False)
+    """Live-LIMS branch with the keyring password absent -> not ready."""
+    deps = _deps(
+        config=_nas_config(),
+        keyring_password_present=False,
+        lims_reachable=True,
+    )
     assert mount._is_setup_ready(deps) is False
 
 
 def test_is_setup_ready_false_when_lims_unreachable() -> None:
     deps = _deps(
-        config=_config(),
+        config=_nas_config(),
         keyring_password_present=True,
         lims_reachable=False,
     )
@@ -187,8 +201,44 @@ def test_is_setup_ready_false_when_lims_unreachable() -> None:
 
 def test_is_setup_ready_true_when_all_satisfied() -> None:
     deps = _deps(
-        config=_config(),
+        config=_nas_config(),
         keyring_password_present=True,
+        lims_reachable=True,
+    )
+    assert mount._is_setup_ready(deps) is True
+
+
+def test_is_setup_ready_false_when_nas_remote_unset() -> None:
+    """A nas-mode device whose ``nas.remote`` is unset blocks ready."""
+    deps = _deps(
+        config=_nas_config(nas_remote=""),
+        keyring_password_present=True,
+        lims_reachable=True,
+    )
+    assert mount._is_setup_ready(deps) is False
+
+
+def test_is_setup_ready_false_when_nas_remote_unavailable() -> None:
+    """A configured nas remote absent from rclone.conf blocks ready."""
+    deps = _deps(
+        config=_nas_config(),
+        keyring_password_present=True,
+        lims_reachable=True,
+        nas_remote_available=lambda _remote: False,
+    )
+    assert mount._is_setup_ready(deps) is False
+
+
+def test_is_setup_ready_true_with_offline_catalogue_lims() -> None:
+    """Regression: LIMS satisfied via the offline catalogue (no keyring
+    password) must read as ready on the main page, matching
+    ``GET /setup/status``. The earlier narrow mirror checked only the
+    LIMS keyring branch and so kept the setup-incomplete banner up for a
+    disconnected-workstation install that the API reported as READY.
+    """
+    deps = _deps(
+        config=_nas_config(offline_catalogue=True),
+        keyring_password_present=False,
         lims_reachable=True,
     )
     assert mount._is_setup_ready(deps) is True
@@ -208,6 +258,14 @@ def test_build_main_state_marks_incomplete_without_config() -> None:
     assert state.orchestrator_enabled is True
 
 
+def test_build_main_state_sources_problems_counts_from_audit() -> None:
+    # Counts come straight off deps (the 30 s background audit), not a
+    # per-render re-audit (T6 / §B5).
+    state = mount._build_main_state(_deps(last_audit_hard=3, last_audit_soft=12))
+    assert state.problems_count_hard == 3
+    assert state.problems_count_soft == 12
+
+
 def test_build_main_state_always_on_orchestrator() -> None:
     """Redesign §3.1: the orchestrator pipeline is unconditional."""
     deps = _deps(
@@ -219,6 +277,36 @@ def test_build_main_state_always_on_orchestrator() -> None:
     )
     state = mount._build_main_state(deps)
     assert state.orchestrator_enabled is True
+
+
+# ---------------------------------------------------------------------------
+# _operation_counts (T3/T4)
+# ---------------------------------------------------------------------------
+
+
+def test_operation_counts_distinguishes_panel_active_and_input_required() -> None:
+    from exlab_wizard.controller.session_store import SessionStore
+
+    store = SessionStore()
+    running = store.open("project", {})
+    suspended = store.open("run", {})
+    failed = store.open("project", {})
+    done = store.open("run", {})
+    store.get(running.session_id).state = SessionState.RENDERING
+    store.get(suspended.session_id).state = SessionState.INPUT_REQUIRED
+    store.get(failed.session_id).state = SessionState.FAILED
+    store.get(done.session_id).state = SessionState.DONE
+
+    deps = SimpleNamespace(controller=SimpleNamespace(session_store=store))
+    panel, input_required, active = mount._operation_counts(deps)
+    # panel: all but DONE/ABORTED -> running + suspended + failed
+    assert panel == 3
+    assert input_required == 1  # only the suspended session
+    assert active == 2  # strictly non-terminal -> running + suspended (FAILED excluded)
+
+
+def test_operation_counts_zero_without_controller() -> None:
+    assert mount._operation_counts(SimpleNamespace()) == (0, 0, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +342,76 @@ def test_missing_sections_with_keyring_absent_reports_lims() -> None:
 def test_missing_sections_empty_when_fully_configured() -> None:
     deps = _deps(config=_config(), keyring_password_present=True)
     assert mount._missing_setup_sections(deps) == ()
+
+
+def _nas_config(*, offline_catalogue: bool = False, nas_remote: str = "nas01") -> Any:
+    """Real Config with one nas-mode equipment.
+
+    ``offline_catalogue`` swaps the live-LIMS slot (endpoint + email +
+    keyring password) for the offline-catalogue branch
+    (``offline_catalogue_path`` set, no endpoint / email / keyring) --
+    the disconnected-workstation setup that exposed the main-page banner
+    staying up despite a ``READY`` ``/setup/status``.
+
+    ``nas_remote`` is the configured ``nas.remote`` name (rclone.conf
+    NAS-sync migration: the setup gate keys on it). Pass ``""`` to model
+    a device whose NAS sync is in use but whose remote is unset.
+    """
+    from exlab_wizard.config.models import (
+        Config,
+        EquipmentConfig,
+        LIMSConfig,
+        NasConfig,
+        OrchestratorConfig,
+        PathsConfig,
+    )
+
+    lims = (
+        LIMSConfig(offline_catalogue_path="/cat/projects.json")
+        if offline_catalogue
+        else LIMSConfig(endpoint="https://lims.example", email="op@example")
+    )
+    return Config(
+        paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
+        lims=lims,
+        equipment=[
+            EquipmentConfig(
+                id="EQ1",
+                label="Equipment 1",
+                local_root="/d",
+                nas_root="/n",
+            )
+        ],
+        orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
+        nas=NasConfig(remote=nas_remote, base_root="/srv/nas"),
+    )
+
+
+def test_missing_sections_includes_nas_remote_when_remote_unavailable() -> None:
+    deps = _deps(
+        config=_nas_config(),
+        keyring_password_present=True,
+        nas_remote_available=lambda _remote: False,
+    )
+    assert "nas_remote" in mount._missing_setup_sections(deps)
+
+
+def test_missing_sections_includes_nas_remote_when_remote_unset() -> None:
+    deps = _deps(
+        config=_nas_config(nas_remote=""),
+        keyring_password_present=True,
+    )
+    assert "nas_remote" in mount._missing_setup_sections(deps)
+
+
+def test_missing_sections_excludes_nas_remote_when_remote_available() -> None:
+    # No ``nas_remote_available`` override -> the _dependencies reader's
+    # default ("available") applies, so a configured remote is usable.
+    deps = _deps(
+        config=_nas_config(),
+        keyring_password_present=True,
+    )
+    assert "nas_remote" not in mount._missing_setup_sections(deps)
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +499,7 @@ def test_staging_state_returns_empty_rows_on_query_failure(
 
 
 # ---------------------------------------------------------------------------
-# _restart_gate
+# _persist_config / _apply_live_config
 # ---------------------------------------------------------------------------
 
 
@@ -353,108 +511,160 @@ class _NavSpy:
         self.navigate = SimpleNamespace(to=self.navigated.append)
 
 
-def test_restart_gate_false_when_deps_none() -> None:
-    nav = _NavSpy()
-    assert mount._restart_gate(None, nav) is False
-    assert nav.navigated == []
+def test_persist_config_writes_and_applies_live(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A successful save persists, then hot-reloads the live components.
 
-
-def test_restart_gate_false_when_flag_unset() -> None:
-    nav = _NavSpy()
-    assert mount._restart_gate(_deps(restart_required=False), nav) is False
-    assert nav.navigated == []
-
-
-def test_restart_gate_redirects_when_flag_set() -> None:
-    nav = _NavSpy()
-    assert mount._restart_gate(_deps(restart_required=True), nav) is True
-    assert nav.navigated == ["/restart-required"]
-
-
-# ---------------------------------------------------------------------------
-# _persist_config
-# ---------------------------------------------------------------------------
-
-
-def test_persist_config_writes_and_arms_restart_gate() -> None:
+    The old behaviour armed ``deps.restart_required`` and routed to a
+    relaunch screen; now the new config is pushed in-process via
+    ``_apply_live_config`` and no restart flag is set.
+    """
     nav = _NavSpy()
     saved: list[Any] = []
-    deps = _deps(save_config=saved.append, restart_required=False)
+    applied: list[tuple[Any, Any]] = []
+    monkeypatch.setattr(mount, "_apply_live_config", lambda d, c: applied.append((d, c)))
+    deps = _deps(save_config=saved.append)
     sentinel_config = object()
 
     ok = mount._persist_config(deps, sentinel_config, nav)
 
     assert ok is True
     assert saved == [sentinel_config]
-    assert deps.config is sentinel_config
-    assert deps.restart_required is True
+    assert applied == [(deps, sentinel_config)]
+    # The restart gate is gone -- no flag is armed.
+    assert not hasattr(deps, "restart_required")
 
 
-def test_persist_config_returns_false_when_no_saver() -> None:
+def test_persist_config_returns_false_when_no_saver(monkeypatch: pytest.MonkeyPatch) -> None:
     nav = _NavSpy()
-    deps = _deps(save_config=None, restart_required=False)
+    applied: list[Any] = []
+    monkeypatch.setattr(mount, "_apply_live_config", lambda d, c: applied.append(c))
+    deps = _deps(save_config=None)
 
     ok = mount._persist_config(deps, object(), nav)
 
     assert ok is False
-    assert deps.restart_required is False
+    assert applied == []  # never reached the live-apply step
 
 
-def test_persist_config_returns_false_when_saver_raises() -> None:
+def test_persist_config_returns_false_when_saver_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     nav = _NavSpy()
+    applied: list[Any] = []
+    monkeypatch.setattr(mount, "_apply_live_config", lambda d, c: applied.append(c))
 
     def _boom(_config: Any) -> None:
         msg = "disk full"
         raise OSError(msg)
 
-    deps = _deps(save_config=_boom, restart_required=False)
+    deps = _deps(save_config=_boom)
 
     ok = mount._persist_config(deps, object(), nav)
 
     assert ok is False
-    assert deps.restart_required is False
+    assert applied == []  # write failed before the live-apply step
 
 
 def test_persist_config_warns_when_saver_returns_awaitable(
+    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     nav = _NavSpy()
+    applied: list[Any] = []
+    monkeypatch.setattr(mount, "_apply_live_config", lambda d, c: applied.append(c))
 
     class _Awaitable:
         def __await__(self) -> Any:
             yield
 
-    deps = _deps(save_config=lambda _cfg: _Awaitable(), restart_required=False)
+    deps = _deps(save_config=lambda _cfg: _Awaitable())
     sentinel = object()
 
     with caplog.at_level("WARNING"):
         ok = mount._persist_config(deps, sentinel, nav)
 
     assert ok is True
-    assert deps.config is sentinel
-    assert deps.restart_required is True
+    assert applied == [sentinel]
     assert any("awaitable" in r.message for r in caplog.records)
 
 
-# ---------------------------------------------------------------------------
-# _render_restart_required / _render_unavailable
-# ---------------------------------------------------------------------------
+def test_persist_config_creates_staging_root_when_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Opt-in: a saved non-empty staging_root is created on save."""
+    monkeypatch.setattr(mount, "_apply_live_config", lambda _d, _c: None)
+    staging = tmp_path / "staging"
+    updated = _config(orchestrator_staging_root=str(staging))
+    deps = _deps(save_config=lambda _cfg: None)
+
+    ok = mount._persist_config(deps, updated, _NavSpy())
+
+    assert ok is True
+    assert staging.is_dir()
 
 
-def test_render_restart_required_builds_card() -> None:
-    ui = _FakeUI()
-    result = mount._render_restart_required(ui)
-    assert result is not None
-    assert ui.cards == 1
-    assert any("Restart required" in label for label in ui.labels)
+def test_persist_config_does_not_create_staging_root_when_blank(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Blank staging_root creates nothing -- the device is not a staging PC."""
+    monkeypatch.setattr(mount, "_apply_live_config", lambda _d, _c: None)
+    updated = _config(orchestrator_staging_root="")
+    deps = _deps(save_config=lambda _cfg: None)
+
+    ok = mount._persist_config(deps, updated, _NavSpy())
+
+    assert ok is True
+    assert list(tmp_path.iterdir()) == []  # nothing created
 
 
-def test_render_restart_required_swallows_failure(
+def test_persist_config_staging_dir_failure_is_non_fatal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An ensure_dir failure warns but keeps the persisted config."""
+    monkeypatch.setattr(mount, "_apply_live_config", lambda _d, _c: None)
+    toasts: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        mount, "_show_toast", lambda _ui, msg, *, positive: toasts.append((msg, positive))
+    )
+
+    def _boom(_path: Any) -> Any:
+        msg = "permission denied"
+        raise OSError(msg)
+
+    monkeypatch.setattr("exlab_wizard.paths.ensure_dir", _boom)
+    saved: list[Any] = []
+    updated = _config(orchestrator_staging_root=str(tmp_path / "staging"))
+    deps = _deps(save_config=saved.append)
+
+    ok = mount._persist_config(deps, updated, _NavSpy())
+
+    assert ok is True  # non-fatal: config is already persisted
+    assert saved == [updated]
+    assert toasts and toasts[-1][1] is False  # a negative toast was surfaced
+
+
+def test_apply_live_config_falls_back_to_setting_config(
+    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    with caplog.at_level("WARNING"):
-        assert mount._render_restart_required(_BoomUI()) is None
-    assert any("render_restart_required" in r.message for r in caplog.records)
+    """If the coordinator raises wholesale, the live config is still kept."""
+
+    def _boom(_deps: Any, _cfg: Any) -> None:
+        msg = "coordinator exploded"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr("exlab_wizard.tray.dependencies.apply_live_config", _boom)
+    deps = _deps()
+    sentinel = object()
+
+    with caplog.at_level("ERROR"):
+        mount._apply_live_config(deps, sentinel)
+
+    assert deps.config is sentinel
+    assert any("live config reload failed" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# _render_unavailable
+# ---------------------------------------------------------------------------
 
 
 def test_render_unavailable_renders_headline_and_subline() -> None:
@@ -577,6 +787,15 @@ def test_apply_autostart_invokes_toggle() -> None:
     deps = _deps(autostart_toggle=calls.append)
     mount._apply_autostart(deps, True)
     assert calls == [True]
+
+
+def test_apply_autostart_returns_real_registration_state() -> None:
+    # The toggle returns is_registered(); _apply_autostart relays it so
+    # Settings can reflect / revert the checkbox (T8).
+    assert mount._apply_autostart(_deps(autostart_toggle=lambda _e: True), True) is True
+    assert mount._apply_autostart(_deps(autostart_toggle=lambda _e: False), False) is False
+    assert mount._apply_autostart(None, True) is None
+    assert mount._apply_autostart(_deps(autostart_toggle=None), True) is None
 
 
 def test_apply_autostart_swallows_toggle_failure(
@@ -1038,7 +1257,6 @@ def test_build_metadata_payload_owned_equipment_reads_config() -> None:
         sync_mode="nas",
         local_root="/data/EQ1",
         nas_root="//nas/EQ1",
-        completeness_signal="sentinel_file",
     )
     config = _config(equipment=(equipment,))
     payload = mount._build_metadata_payload("EQ1", "equipment", _deps(config=config))
@@ -1047,7 +1265,6 @@ def test_build_metadata_payload_owned_equipment_reads_config() -> None:
     assert payload["sync_mode"] == "nas"
     assert payload["local_root"] == "/data/EQ1"
     assert payload["nas_root"] == "//nas/EQ1"
-    assert payload["completeness_signal"] == "sentinel_file"
 
 
 def test_build_metadata_payload_unknown_equipment_id_returns_empty() -> None:
@@ -1232,7 +1449,7 @@ def test_file_context_action_open_in_os_dispatches_to_helper(
     monkeypatch.setattr(mount, "_open_in_os", lambda p: called.append(p) or True)
     ui = _UiSpy()
     entry = SimpleNamespace(path="/data/EQ1/scan.tif")
-    mount._file_context_action(entry, "open_in_os", ui)
+    mount._file_context_action(None, entry, "open_in_os", ui)
     assert called == ["/data/EQ1/scan.tif"]
 
 
@@ -1243,7 +1460,7 @@ def test_file_context_action_open_in_os_failure_toasts_negative(
     monkeypatch.setattr(mount, "_open_in_os", lambda _p: False)
     ui = _UiSpy()
     entry = SimpleNamespace(path="/data/scan.tif")
-    mount._file_context_action(entry, "open_in_os", ui)
+    mount._file_context_action(None, entry, "open_in_os", ui)
     # No assertion needed -- the test only verifies the call doesn't raise.
 
 
@@ -1251,7 +1468,7 @@ def test_file_context_action_copy_path_writes_clipboard() -> None:
     """``copy_path`` writes the entry path to the NiceGUI clipboard."""
     ui = _UiSpy()
     entry = SimpleNamespace(path="/data/EQ1/scan.tif")
-    mount._file_context_action(entry, "copy_path", ui)
+    mount._file_context_action(None, entry, "copy_path", ui)
     assert ui.clipboard.writes == ["/data/EQ1/scan.tif"]
 
 
@@ -1259,13 +1476,13 @@ def test_file_context_action_unknown_action_no_raise() -> None:
     """An unknown action verb is logged + toasted without raising."""
     ui = _UiSpy()
     entry = SimpleNamespace(path="/data/x.bin")
-    mount._file_context_action(entry, "rename", ui)  # no AssertionError
+    mount._file_context_action(None, entry, "rename", ui)  # no AssertionError
 
 
 def test_file_context_action_empty_path_toasts_negative() -> None:
     """An entry with no path triggers the early-return toast."""
     ui = _UiSpy()
-    mount._file_context_action(SimpleNamespace(path=""), "open_in_os", ui)
+    mount._file_context_action(None, SimpleNamespace(path=""), "open_in_os", ui)
 
 
 # ---------------------------------------------------------------------------
@@ -1329,7 +1546,7 @@ def test_run_staging_action_view_log_invokes_log_dialog(
 ) -> None:
     """``view_log`` dispatches to the dialog opener helper."""
     seen: list[Path] = []
-    monkeypatch.setattr(mount, "_open_log_dialog", lambda path, _ui: seen.append(path))
+    monkeypatch.setattr(mount, "_open_log_dialog", lambda _deps, path, _ui: seen.append(path))
     deps = _deps(config=_config())
     ui = _UiSpy()
     mount._run_staging_action(deps, "EQ1/proj/Run_x", "view_log", ui)
@@ -1343,18 +1560,18 @@ def test_run_staging_action_unknown_action_no_raise() -> None:
     mount._run_staging_action(deps, "EQ1/proj/Run_x", "rename", ui)
 
 
-async def test_run_staging_action_clear_verified_invokes_clear_run(
+async def test_run_staging_action_clear_verified_invokes_clear(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``clear_verified`` calls orchestrator.cleanup.clear_run via background."""
+    """``clear_verified`` deletes the run directory via the local helper."""
     captured: list[Path] = []
 
-    async def _stub(run_path: Path, **_kw: Any) -> tuple[int, int]:
+    def _stub(run_path: Path) -> tuple[int, int]:
         captured.append(run_path)
         return 3, 1024
 
-    monkeypatch.setattr("exlab_wizard.orchestrator.cleanup.clear_run", _stub)
-    deps = _deps(config=_config(), ingest_writer=None)
+    monkeypatch.setattr(mount, "clear_run_dir", _stub)
+    deps = _deps(config=_config())
     ui = _UiSpy()
     mount._run_staging_action(deps, "EQ1/proj/Run_x", "clear_verified", ui)
     pending = [t for t in mount._BACKGROUND_TASKS if not t.done()]
@@ -1368,25 +1585,33 @@ async def test_run_staging_action_clear_verified_invokes_clear_run(
 # ---------------------------------------------------------------------------
 
 
-async def test_bulk_clear_verified_calls_orchestrator_helper(
+async def test_bulk_clear_verified_clears_verified_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The bulk action awaits ``clear_all_verified`` and toasts the count."""
-    calls: list[Any] = []
+    """The bulk action clears every ``synced`` row and toasts the count."""
+    cleared: list[Path] = []
 
-    async def _stub(*, config: Any, ingest_writer: Any, host: Any = None) -> list[str]:
-        del ingest_writer, host
-        calls.append(config)
-        return ["/staging/EQ1/proj/Run_a", "/staging/EQ1/proj/Run_b"]
+    def _summary(path: str, state: str) -> SimpleNamespace:
+        return SimpleNamespace(path=path, current_state=state)
 
-    monkeypatch.setattr("exlab_wizard.orchestrator.cleanup.clear_all_verified", _stub)
-    deps = _deps(config=_config(), ingest_writer=None)
+    monkeypatch.setattr(
+        mount,
+        "list_staged_runs",
+        lambda **_kw: [
+            _summary("/staging/EQ1/proj/Run_a", "synced"),
+            _summary("/staging/EQ1/proj/Run_b", "synced"),
+            _summary("/staging/EQ1/proj/Run_c", "syncing"),
+        ],
+    )
+    monkeypatch.setattr(mount, "clear_run_dir", lambda p: cleared.append(p) or (1, 10))
+    deps = _deps(config=_config())
     ui = _UiSpy()
     mount._bulk_clear_verified(deps, ui)
     pending = [t for t in mount._BACKGROUND_TASKS if not t.done()]
     for task in pending:
         await task
-    assert len(calls) == 1
+    # Only the two verified rows were cleared.
+    assert cleared == [Path("/staging/EQ1/proj/Run_a"), Path("/staging/EQ1/proj/Run_b")]
 
 
 def test_bulk_clear_verified_no_config_toasts_and_returns() -> None:
@@ -1399,13 +1624,13 @@ def test_bulk_clear_verified_no_config_toasts_and_returns() -> None:
 async def test_bulk_clear_verified_logs_helper_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An exception from clear_all_verified is caught + toasted."""
+    """An exception from the clear sweep is caught + toasted."""
 
-    async def _raise(**_kw: Any) -> list[str]:
+    def _raise(**_kw: Any) -> list[Any]:
         raise RuntimeError("staging walker exploded")
 
-    monkeypatch.setattr("exlab_wizard.orchestrator.cleanup.clear_all_verified", _raise)
-    deps = _deps(config=_config(), ingest_writer=None)
+    monkeypatch.setattr(mount, "list_staged_runs", _raise)
+    deps = _deps(config=_config())
     ui = _UiSpy()
     mount._bulk_clear_verified(deps, ui)
     pending = [t for t in mount._BACKGROUND_TASKS if not t.done()]
@@ -1546,26 +1771,38 @@ async def test_fetch_folder_async_swallows_helper_exceptions(
 
 
 # ---------------------------------------------------------------------------
-# _open_log_dialog: missing ingest / malformed / dialog mounted
+# _open_log_dialog: no queue job / queue job present
 # ---------------------------------------------------------------------------
 
 
-def test_open_log_dialog_missing_ingest_toasts(tmp_path: Path) -> None:
-    """A run without an ingest.json file shows a negative toast."""
+async def test_open_log_dialog_no_queue_job_renders_dialog(tmp_path: Path) -> None:
+    """A run with no sync-queue job still renders a dialog without raising."""
     ui = _UiSpy()
-    mount._open_log_dialog(tmp_path / "nope", ui)
+    deps = _deps(nas_sync=None)
+    mount._open_log_dialog(deps, tmp_path / "nope", ui)
+    for task in [t for t in mount._BACKGROUND_TASKS if not t.done()]:
+        await task
 
 
-def test_open_log_dialog_malformed_ingest_toasts(tmp_path: Path) -> None:
-    """A corrupt ingest.json surfaces a parse-error toast without raising."""
-    from exlab_wizard.constants import CACHE_DIR_NAME, INGEST_JSON_NAME
+async def test_open_log_dialog_with_queue_job_renders_dialog(tmp_path: Path) -> None:
+    """A run with a sync-queue job renders its state without raising."""
 
-    run_dir = tmp_path / "EQ1" / "PROJ" / "Run_x"
-    cache = run_dir / CACHE_DIR_NAME
-    cache.mkdir(parents=True)
-    (cache / INGEST_JSON_NAME).write_bytes(b"{not-valid")
+    class _Row:
+        state = SimpleNamespace(value="verified")
+        enqueued_at = "2026-05-01T10:00:00Z"
+        verified_at = "2026-05-01T10:35:00Z"
+        attempts = 1
+        last_error = None
+
+    class _Queue:
+        async def get_by_run_path(self, _path: Path) -> Any:
+            return _Row()
+
     ui = _UiSpy()
-    mount._open_log_dialog(run_dir, ui)
+    deps = _deps(nas_sync=_Queue())
+    mount._open_log_dialog(deps, tmp_path / "EQ1" / "Run_x", ui)
+    for task in [t for t in mount._BACKGROUND_TASKS if not t.done()]:
+        await task
 
 
 # ---------------------------------------------------------------------------
@@ -1661,12 +1898,12 @@ async def test_run_staging_action_force_sync_exception_path_no_raise(
 async def test_run_staging_action_clear_verified_exception_path_no_raise(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When clear_run raises, the background task swallows + toasts."""
+    """When the clear helper raises, the background task swallows + toasts."""
 
-    async def _raise(*_a: Any, **_kw: Any) -> tuple[int, int]:
+    def _raise(*_a: Any, **_kw: Any) -> tuple[int, int]:
         raise RuntimeError("oh no")
 
-    monkeypatch.setattr("exlab_wizard.orchestrator.cleanup.clear_run", _raise)
+    monkeypatch.setattr(mount, "clear_run_dir", _raise)
     deps = _deps(config=_config())
     ui = _UiSpy()
     mount._run_staging_action(deps, "EQ1/Run_x", "clear_verified", ui)
@@ -1679,10 +1916,7 @@ async def test_run_staging_action_clear_verified_zero_files_branch(
 ) -> None:
     """The 0-file path reports ``already cleared`` rather than ``cleared N``."""
 
-    async def _stub(*_a: Any, **_kw: Any) -> tuple[int, int]:
-        return 0, 0
-
-    monkeypatch.setattr("exlab_wizard.orchestrator.cleanup.clear_run", _stub)
+    monkeypatch.setattr(mount, "clear_run_dir", lambda *_a, **_kw: (0, 0))
     deps = _deps(config=_config())
     ui = _UiSpy()
     mount._run_staging_action(deps, "EQ1/Run_x", "clear_verified", ui)
@@ -1702,4 +1936,896 @@ def test_file_context_action_clipboard_failure_toasts(
     ui = _UiSpy()
     ui.clipboard = _BadClipboard()
     entry = SimpleNamespace(path="/data/scan.tif")
-    mount._file_context_action(entry, "copy_path", ui)
+    mount._file_context_action(None, entry, "copy_path", ui)
+
+
+# ---------------------------------------------------------------------------
+# A richer fake ``ui`` that can build dialogs/cards/rows/buttons -- needed by
+# the helpers that render NiceGUI elements through the *passed* ui object
+# (``_open_operation_details``, ``_cancel_session``, ``_open_log_dialog``).
+# It records labels and button (text, handler) pairs so a test can fire a
+# button click and assert the downstream behaviour.
+# ---------------------------------------------------------------------------
+
+
+class _DialogStub(_Fluent):
+    def __init__(self, log: list[str]) -> None:
+        self._log = log
+        self.opened = 0
+        self.closed = 0
+
+    def open(self) -> None:
+        self.opened += 1
+        self._log.append("open")
+
+    def close(self, *_args: Any) -> None:
+        self.closed += 1
+        self._log.append("close")
+
+
+class _DialogUI:
+    """A fake ``ui`` whose factories build recording stand-ins.
+
+    Unlike ``_UiSpy`` (which raises on every element factory to drive the
+    *except* paths) this one returns chainable elements so the dialog
+    *render* bodies execute. Buttons capture their ``on_click`` handler so a
+    test can invoke it.
+    """
+
+    def __init__(self) -> None:
+        self.labels: list[str] = []
+        self.buttons: list[tuple[str, Any]] = []
+        self.dialogs: list[_DialogStub] = []
+        self.events: list[str] = []
+        self.navigate = SimpleNamespace(to=lambda _url: None)
+
+    def dialog(self, *_args: Any, **_kwargs: Any) -> _DialogStub:
+        d = _DialogStub(self.events)
+        self.dialogs.append(d)
+        return d
+
+    def card(self, *_args: Any, **_kwargs: Any) -> _Fluent:
+        return _Fluent()
+
+    def row(self, *_args: Any, **_kwargs: Any) -> _Fluent:
+        return _Fluent()
+
+    def label(self, text: str = "", *_args: Any, **_kwargs: Any) -> _Fluent:
+        self.labels.append(text)
+        return _Fluent()
+
+    def icon(self, *_args: Any, **_kwargs: Any) -> _Fluent:
+        return _Fluent()
+
+    def button(self, text: str = "", *, on_click: Any = None, **_kwargs: Any) -> _Fluent:
+        self.buttons.append((text, on_click))
+        return _Fluent()
+
+
+# ---------------------------------------------------------------------------
+# _nas_test_connection
+# ---------------------------------------------------------------------------
+
+
+async def test_nas_test_connection_unavailable_when_probe_missing() -> None:
+    """No probe wired -> a failure result rather than a crash."""
+    result = await mount._nas_test_connection(_deps(config=_nas_config()))
+    assert result.success is False
+    assert "not available" in result.detail
+
+
+async def test_nas_test_connection_unavailable_when_config_missing() -> None:
+    result = await mount._nas_test_connection(_deps(config=None, equipment_probe=lambda _e: {}))
+    assert result.success is False
+
+
+async def test_nas_test_connection_success_maps_latency() -> None:
+    """A reachable probe maps ok/latency into a Connected result."""
+    probed: list[Any] = []
+
+    def _probe(equipment: Any) -> dict[str, Any]:
+        probed.append(equipment)
+        return {"ok": True, "latency_ms": 42}
+
+    deps = _deps(config=_nas_config(), equipment_probe=_probe)
+    result = await mount._nas_test_connection(deps)
+    assert result.success is True
+    assert result.headline == "Connected"
+    assert "42 ms" in result.detail
+    # The nas-mode equipment was chosen as the probe argument.
+    assert probed[0].id == "EQ1"
+
+
+async def test_nas_test_connection_failure_maps_reason() -> None:
+    deps = _deps(
+        config=_nas_config(),
+        equipment_probe=lambda _e: {"ok": False, "reason": "auth denied"},
+    )
+    result = await mount._nas_test_connection(deps)
+    assert result.success is False
+    assert result.detail == "auth denied"
+
+
+async def test_nas_test_connection_awaits_coroutine_probe() -> None:
+    """An async probe is awaited before its dict is mapped."""
+
+    async def _probe(_equipment: Any) -> dict[str, Any]:
+        return {"ok": True}
+
+    result = await mount._nas_test_connection(_deps(config=_nas_config(), equipment_probe=_probe))
+    assert result.success is True
+    assert result.detail == "reachable"
+
+
+async def test_nas_test_connection_swallows_probe_exception() -> None:
+    def _probe(_equipment: Any) -> dict[str, Any]:
+        msg = "boom"
+        raise RuntimeError(msg)
+
+    result = await mount._nas_test_connection(_deps(config=_nas_config(), equipment_probe=_probe))
+    assert result.success is False
+    assert result.detail == "boom"
+
+
+# ---------------------------------------------------------------------------
+# _setup_next_action
+# ---------------------------------------------------------------------------
+
+
+def test_setup_next_action_none_when_deps_none() -> None:
+    assert mount._setup_next_action(None) is None
+
+
+def test_setup_next_action_returns_action_for_incomplete_setup() -> None:
+    """A half-wired install names its first-failing gate as the next action."""
+    action = mount._setup_next_action(_deps(config=_nas_config(nas_remote="")))
+    assert isinstance(action, str)
+    assert action
+
+
+def test_setup_next_action_none_when_ready() -> None:
+    """A fully-satisfied install has no outstanding next action."""
+    deps = _deps(config=_nas_config(), keyring_password_present=True, lims_reachable=True)
+    assert mount._setup_next_action(deps) is None
+
+
+def test_setup_next_action_swallows_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def _boom(_deps: Any) -> Any:
+        msg = "evaluator exploded"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr("exlab_wizard.api.setup.compute_setup_state", _boom)
+    with caplog.at_level("WARNING"):
+        assert mount._setup_next_action(_deps(config=_nas_config())) is None
+    assert any("setup next-action" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# _toggle_keep_local
+# ---------------------------------------------------------------------------
+
+
+def test_toggle_keep_local_no_writer_toasts() -> None:
+    """No sync-state writer wired -> negative toast, no task spawned."""
+    ui = _UiSpy()
+    entry = SimpleNamespace(path="/data/EQ1/proj/Run_x/scan.tif", keep_local=False)
+    mount._toggle_keep_local(_deps(sync_state_writer=None), entry, ui)
+
+
+def test_toggle_keep_local_file_not_in_run_toasts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A path with no enclosing run root surfaces a negative toast."""
+    monkeypatch.setattr("exlab_wizard.api.routers.browse._find_run_root", lambda _parent: None)
+    writer = SimpleNamespace(set_keep_local=lambda *a, **k: None)
+    ui = _UiSpy()
+    entry = SimpleNamespace(path=str(tmp_path / "loose.tif"), keep_local=False)
+    mount._toggle_keep_local(_deps(sync_state_writer=writer), entry, ui)
+
+
+async def test_toggle_keep_local_invokes_writer_and_on_done(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A resolvable file flips keep_local via the writer and fires on_done."""
+    run_root = tmp_path / "EQ1" / "proj" / "Run_x"
+    run_root.mkdir(parents=True)
+    file_path = run_root / "scan.tif"
+    file_path.write_text("x")
+
+    monkeypatch.setattr("exlab_wizard.api.routers.browse._find_run_root", lambda _parent: run_root)
+    monkeypatch.setattr(
+        "exlab_wizard.api.routers.browse._run_relative_posix",
+        lambda _root, _path: "scan.tif",
+    )
+
+    calls: list[tuple[Any, str, bool]] = []
+    done: list[bool] = []
+
+    class _Writer:
+        async def set_keep_local(self, root: Any, rel: str, value: bool) -> None:
+            calls.append((root, rel, value))
+
+    ui = _UiSpy()
+    entry = SimpleNamespace(path=str(file_path), keep_local=False)
+    mount._toggle_keep_local(
+        _deps(sync_state_writer=_Writer()), entry, ui, on_done=lambda: done.append(True)
+    )
+    for task in [t for t in mount._BACKGROUND_TASKS if not t.done()]:
+        await task
+    # keep_local was False -> the new value flips to True; on_done fired.
+    assert calls == [(run_root, "scan.tif", True)]
+    assert done == [True]
+
+
+async def test_toggle_keep_local_writer_failure_toasts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_root = tmp_path / "EQ1" / "Run_x"
+    run_root.mkdir(parents=True)
+    monkeypatch.setattr("exlab_wizard.api.routers.browse._find_run_root", lambda _parent: run_root)
+    monkeypatch.setattr(
+        "exlab_wizard.api.routers.browse._run_relative_posix",
+        lambda _root, _path: "scan.tif",
+    )
+
+    class _BadWriter:
+        async def set_keep_local(self, *_a: Any, **_k: Any) -> None:
+            msg = "disk full"
+            raise RuntimeError(msg)
+
+    ui = _UiSpy()
+    entry = SimpleNamespace(path=str(run_root / "scan.tif"), keep_local=True)
+    mount._toggle_keep_local(_deps(sync_state_writer=_BadWriter()), entry, ui)
+    for task in [t for t in mount._BACKGROUND_TASKS if not t.done()]:
+        await task
+
+
+def test_file_context_action_keep_local_dispatches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The ``keep_local`` action routes to ``_toggle_keep_local``."""
+    seen: list[Any] = []
+    monkeypatch.setattr(
+        mount, "_toggle_keep_local", lambda _deps, entry, _ui, on_done=None: seen.append(entry)
+    )
+    ui = _UiSpy()
+    entry = SimpleNamespace(path="/data/EQ1/Run_x/scan.tif", keep_local=False)
+    mount._file_context_action(_deps(), entry, "keep_local", ui)
+    assert seen == [entry]
+
+
+# ---------------------------------------------------------------------------
+# _open_in_os (win32 branch)
+# ---------------------------------------------------------------------------
+
+
+def test_open_in_os_win32_invokes_startfile(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On win32 the helper calls ``os.startfile`` and reports success."""
+    import os as _os
+
+    monkeypatch.setattr("sys.platform", "win32")
+    started: list[str] = []
+    # ``os.startfile`` only exists on Windows; create it for the test.
+    monkeypatch.setattr(_os, "startfile", lambda p: started.append(p), raising=False)
+    assert mount._open_in_os("C:/data/scan.tif") is True
+    assert started == ["C:/data/scan.tif"]
+
+
+# ---------------------------------------------------------------------------
+# _build_operation_rows / _open_operations_modal
+# ---------------------------------------------------------------------------
+
+
+def _store_with_running_session() -> Any:
+    from exlab_wizard.controller.session_store import SessionStore
+
+    store = SessionStore()
+    handle = store.open("project", {})
+    store.get(handle.session_id).state = SessionState.RENDERING
+    return store, handle.session_id
+
+
+def test_build_operation_rows_maps_panel_sessions() -> None:
+    store, sid = _store_with_running_session()
+    deps = SimpleNamespace(controller=SimpleNamespace(session_store=store))
+    rows = mount._build_operation_rows(deps)
+    assert len(rows) == 1
+    assert rows[0].operation_id == sid
+
+
+def test_open_operations_modal_no_controller_toasts() -> None:
+    """No controller -> a negative toast and no dialog open."""
+    ui = _UiSpy()
+    mount._open_operations_modal(_deps(controller=None), ui)
+
+
+def test_open_operations_modal_opens_with_controller() -> None:
+    """A wired controller builds the modal and opens it (no raise)."""
+    store, _sid = _store_with_running_session()
+    deps = SimpleNamespace(controller=SimpleNamespace(session_store=store))
+    ui = _UiSpy()
+    mount._open_operations_modal(deps, ui)
+
+
+# ---------------------------------------------------------------------------
+# _open_operation_details
+# ---------------------------------------------------------------------------
+
+
+def test_open_operation_details_session_not_found_toasts() -> None:
+    deps = SimpleNamespace(
+        controller=SimpleNamespace(session_store=SimpleNamespace(get=lambda _s: None))
+    )
+    ui = _UiSpy()
+    mount._open_operation_details(deps, "sess-x", ui)
+
+
+def test_open_operation_details_renders_state_and_pending() -> None:
+    """The details dialog renders the session state plus pending/error lines."""
+    session = SimpleNamespace(
+        state=SimpleNamespace(value="input_required"),
+        pending_input={"reason": "need sample id"},
+        error={"message": "earlier failure"},
+    )
+    store = SimpleNamespace(get=lambda _s: session)
+    deps = SimpleNamespace(controller=SimpleNamespace(session_store=store))
+    ui = _DialogUI()
+    mount._open_operation_details(deps, "sess-7", ui)
+    assert ui.dialogs and ui.dialogs[0].opened == 1
+    rendered = " | ".join(ui.labels)
+    assert "Operation sess-7" in rendered
+    assert "State: input_required" in rendered
+    assert "need sample id" in rendered
+    assert "earlier failure" in rendered
+
+
+# ---------------------------------------------------------------------------
+# _resume_operation
+# ---------------------------------------------------------------------------
+
+
+def test_resume_operation_no_pending_input_toasts() -> None:
+    """A session not awaiting input cannot be resumed -> negative toast."""
+    session = SimpleNamespace(pending_input=None)
+    store = SimpleNamespace(get=lambda _s: session)
+    deps = SimpleNamespace(controller=SimpleNamespace(session_store=store))
+    ui = _UiSpy()
+    mount._resume_operation(deps, "sess-1", ui)
+
+
+def test_resume_operation_opens_input_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A suspended session re-opens its escalation dialog with parked fields."""
+    captured: dict[str, Any] = {}
+
+    def _fake_dialog(controller: Any, session_id: str, _ui: Any, **kwargs: Any) -> Any:
+        captured["session_id"] = session_id
+        captured.update(kwargs)
+        return SimpleNamespace()
+
+    monkeypatch.setattr(mount, "_open_input_required_dialog", _fake_dialog)
+    session = SimpleNamespace(
+        pending_input={"plugin": "checksum", "reason": "verify", "fields": [{"key": "ok"}]}
+    )
+    store = SimpleNamespace(get=lambda _s: session)
+    controller = SimpleNamespace(session_store=store)
+    mount._resume_operation(SimpleNamespace(controller=controller), "sess-2", _UiSpy())
+    assert captured["session_id"] == "sess-2"
+    assert captured["plugin"] == "checksum"
+    assert captured["reason"] == "verify"
+    assert captured["fields"] == [{"key": "ok"}]
+
+
+# ---------------------------------------------------------------------------
+# _open_input_required_dialog (submit / cancel callbacks)
+# ---------------------------------------------------------------------------
+
+
+async def test_open_input_required_dialog_submit_resumes_controller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The dialog's Submit handler calls ``controller.resume`` in the background."""
+    resumed: list[tuple[str, dict[str, Any]]] = []
+
+    class _Controller:
+        async def resume(self, session_id: str, values: dict[str, Any]) -> None:
+            resumed.append((session_id, values))
+
+    captured: dict[str, Any] = {}
+
+    def _fake_builder(
+        *, plugin: str, reason: str, fields: Any, on_submit: Any, on_cancel: Any
+    ) -> Any:
+        captured["on_submit"] = on_submit
+        captured["on_cancel"] = on_cancel
+        return SimpleNamespace(open=lambda: None)
+
+    monkeypatch.setattr(
+        "exlab_wizard.ui.components.input_required_dialog.input_required_dialog", _fake_builder
+    )
+    mount._open_input_required_dialog(
+        _Controller(), "sess-3", _UiSpy(), plugin="p", reason="r", fields=[]
+    )
+    # Fire the captured submit handler -> spawns the resume task.
+    captured["on_submit"]({"answer": "yes"})
+    for task in [t for t in mount._BACKGROUND_TASKS if not t.done()]:
+        await task
+    assert resumed == [("sess-3", {"answer": "yes"})]
+
+
+def test_open_input_required_dialog_cancel_routes_to_cancel_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The dialog's Cancel handler routes through ``_cancel_session``."""
+    cancelled: list[str] = []
+    monkeypatch.setattr(mount, "_cancel_session", lambda _ctrl, sid, _ui: cancelled.append(sid))
+    captured: dict[str, Any] = {}
+
+    def _fake_builder(
+        *, plugin: str, reason: str, fields: Any, on_submit: Any, on_cancel: Any
+    ) -> Any:
+        captured["on_cancel"] = on_cancel
+        return SimpleNamespace(open=lambda: None)
+
+    monkeypatch.setattr(
+        "exlab_wizard.ui.components.input_required_dialog.input_required_dialog", _fake_builder
+    )
+    mount._open_input_required_dialog(
+        SimpleNamespace(), "sess-4", _UiSpy(), plugin="p", reason="r", fields=[]
+    )
+    captured["on_cancel"]()
+    assert cancelled == ["sess-4"]
+
+
+# ---------------------------------------------------------------------------
+# _cancel_operation / _cancel_session
+# ---------------------------------------------------------------------------
+
+
+def test_cancel_operation_no_controller_toasts() -> None:
+    ui = _UiSpy()
+    mount._cancel_operation(_deps(controller=None), "sess-1", ui)
+
+
+def test_cancel_operation_routes_to_cancel_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+    monkeypatch.setattr(mount, "_cancel_session", lambda _ctrl, sid, _ui: seen.append(sid))
+    controller = SimpleNamespace()
+    mount._cancel_operation(SimpleNamespace(controller=controller), "sess-5", _UiSpy())
+    assert seen == ["sess-5"]
+
+
+async def test_cancel_session_discard_calls_controller_cancel() -> None:
+    """The §9.4 dialog's Discard button cancels with discard_files=True."""
+    cancels: list[tuple[str, bool]] = []
+
+    class _Controller:
+        async def cancel(self, session_id: str, *, discard_files: bool) -> None:
+            cancels.append((session_id, discard_files))
+
+    ui = _DialogUI()
+    mount._cancel_session(_Controller(), "sess-6", ui)
+    # Buttons: Back, Keep files, Discard files. Fire "Discard files".
+    handlers = {text: fn for text, fn in ui.buttons}
+    assert set(handlers) == {"Back", "Keep files", "Discard files"}
+    handlers["Discard files"](None)
+    for task in [t for t in mount._BACKGROUND_TASKS if not t.done()]:
+        await task
+    assert cancels == [("sess-6", True)]
+
+
+async def test_cancel_session_keep_files_calls_controller_cancel() -> None:
+    """The Keep-files button cancels with discard_files=False."""
+    cancels: list[tuple[str, bool]] = []
+
+    class _Controller:
+        async def cancel(self, session_id: str, *, discard_files: bool) -> None:
+            cancels.append((session_id, discard_files))
+
+    ui = _DialogUI()
+    mount._cancel_session(_Controller(), "sess-7", ui)
+    handlers = {text: fn for text, fn in ui.buttons}
+    handlers["Keep files"](None)
+    for task in [t for t in mount._BACKGROUND_TASKS if not t.done()]:
+        await task
+    assert cancels == [("sess-7", False)]
+
+
+async def test_cancel_session_swallows_controller_failure() -> None:
+    """A cancel failure is caught and toasted, not raised."""
+
+    class _Controller:
+        async def cancel(self, *_a: Any, **_k: Any) -> None:
+            msg = "already gone"
+            raise RuntimeError(msg)
+
+    ui = _DialogUI()
+    mount._cancel_session(_Controller(), "sess-8", ui)
+    handlers = {text: fn for text, fn in ui.buttons}
+    handlers["Discard files"](None)
+    for task in [t for t in mount._BACKGROUND_TASKS if not t.done()]:
+        await task
+
+
+def test_cancel_session_back_button_closes_dialog() -> None:
+    """The Back button closes the dialog without cancelling."""
+    ui = _DialogUI()
+    mount._cancel_session(SimpleNamespace(), "sess-9", ui)
+    handlers = {text: fn for text, fn in ui.buttons}
+    handlers["Back"](None)
+    assert ui.dialogs[0].closed >= 1
+
+
+# ---------------------------------------------------------------------------
+# _open_log_dialog: render body via a dialog-capable ui
+# ---------------------------------------------------------------------------
+
+
+async def test_open_log_dialog_renders_row_fields(tmp_path: Path) -> None:
+    """With a job row, the dialog renders each populated field line."""
+
+    class _Row:
+        state = SimpleNamespace(value="verified")
+        enqueued_at = "2026-05-01T10:00:00Z"
+        verified_at = "2026-05-01T10:35:00Z"
+        attempts = 2
+        last_error = None
+
+    class _Queue:
+        async def get_by_run_path(self, _path: Path) -> Any:
+            return _Row()
+
+    ui = _DialogUI()
+    deps = _deps(nas_sync=_Queue())
+    mount._open_log_dialog(deps, tmp_path / "EQ1" / "Run_x", ui)
+    for task in [t for t in mount._BACKGROUND_TASKS if not t.done()]:
+        await task
+    rendered = " | ".join(ui.labels)
+    assert "Sync state: verified" in rendered
+    assert "enqueued_at" in rendered
+    assert "attempts" in rendered
+    # last_error is None -> not rendered.
+    assert "last_error" not in rendered
+    assert ui.dialogs[0].opened == 1
+
+
+async def test_open_log_dialog_no_row_renders_empty_line(tmp_path: Path) -> None:
+    """Without a job row the dialog shows the 'no sync job' line."""
+    ui = _DialogUI()
+    mount._open_log_dialog(_deps(nas_sync=None), tmp_path / "Run_y", ui)
+    for task in [t for t in mount._BACKGROUND_TASKS if not t.done()]:
+        await task
+    rendered = " | ".join(ui.labels)
+    assert "Sync state: none" in rendered
+    assert "No sync job recorded" in rendered
+
+
+# ---------------------------------------------------------------------------
+# _consume_session_progress / _close_dialog
+# ---------------------------------------------------------------------------
+
+
+async def test_consume_session_progress_early_return_without_progress() -> None:
+    """No progress view on the wizard state -> the consumer returns at once."""
+
+    class _Controller:
+        async def subscribe(self, _sid: str) -> Any:  # pragma: no cover -- never called
+            yield {"kind": "done"}
+
+    state = SimpleNamespace(progress=None, progress_refresh=None)
+    await mount._consume_session_progress(_Controller(), "sess-1", state, _UiSpy())
+
+
+async def test_consume_session_progress_opens_dialog_then_closes_on_done() -> None:
+    """An input_required frame opens the dialog; a done frame closes it."""
+    from exlab_wizard.ui.components import session_progress
+
+    closed: list[bool] = []
+    opened_dialog = SimpleNamespace(close=lambda: closed.append(True))
+
+    import exlab_wizard.ui.mount as _m
+
+    orig = _m._open_input_required_dialog
+    try:
+        _m._open_input_required_dialog = (  # type: ignore[assignment]
+            lambda *a, **k: opened_dialog
+        )
+
+        class _Controller:
+            async def subscribe(self, _sid: str) -> Any:
+                yield {"kind": "phase", "phase": "validating_inputs"}
+                yield {"kind": "input_required", "plugin": "p", "reason": "r", "fields": []}
+                yield {"kind": "done"}
+
+        refreshed: list[bool] = []
+        state = SimpleNamespace(
+            progress=session_progress.SessionProgressState(),
+            progress_refresh=lambda: refreshed.append(True),
+        )
+        await mount._consume_session_progress(_Controller(), "sess-2", state, _UiSpy())
+    finally:
+        _m._open_input_required_dialog = orig  # type: ignore[assignment]
+    # The terminal frame force-closed the open dialog.
+    assert closed == [True]
+    # The phase frame triggered a re-render.
+    assert refreshed
+
+
+async def test_consume_session_progress_swallows_stream_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A subscribe error is logged, not raised."""
+    from exlab_wizard.ui.components import session_progress
+
+    class _Controller:
+        async def subscribe(self, _sid: str) -> Any:
+            msg = "stream broke"
+            raise RuntimeError(msg)
+            yield  # pragma: no cover -- unreachable, makes this an async gen
+
+    state = SimpleNamespace(progress=session_progress.SessionProgressState(), progress_refresh=None)
+    with caplog.at_level("ERROR"):
+        await mount._consume_session_progress(_Controller(), "sess-3", state, _UiSpy())
+    assert any("progress consumer failed" in r.message for r in caplog.records)
+
+
+def test_close_dialog_none_is_noop() -> None:
+    mount._close_dialog(None)
+
+
+def test_close_dialog_calls_close() -> None:
+    closed: list[bool] = []
+    mount._close_dialog(SimpleNamespace(close=lambda: closed.append(True)))
+    assert closed == [True]
+
+
+def test_close_dialog_swallows_close_failure() -> None:
+    def _boom() -> None:
+        msg = "no slot"
+        raise RuntimeError(msg)
+
+    # Must not raise.
+    mount._close_dialog(SimpleNamespace(close=_boom))
+
+
+# ---------------------------------------------------------------------------
+# _submit_run no-template gate + _render_run_wizard
+# ---------------------------------------------------------------------------
+
+
+async def test_submit_run_toasts_without_template() -> None:
+    """Submitting a run with no template selected surfaces a negative toast."""
+    controller = _FakeController(final_state=SessionState.DONE)
+    deps = _deps(config=_config(), controller=controller)
+    state = SimpleNamespace(selected_template="")
+    ui = _UiSpy()
+    await mount._submit_run(deps, state, RunKind.EXPERIMENTAL, ui)
+    # No request was built (no template) and the controller never created.
+    assert controller.created == []
+
+
+def test_render_run_wizard_builds_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``_render_run_wizard`` wires templates/equipment into the run-wizard page."""
+    from exlab_wizard.ui.pages import wizard_run as wizard_run_page
+
+    captured: dict[str, Any] = {}
+
+    def _fake_render(*, state: Any, templates: Any, equipment_ids: Any, **kwargs: Any) -> Any:
+        captured["run_kind"] = state.run_kind
+        captured["templates"] = templates
+        captured["equipment_ids"] = equipment_ids
+        return "PAGE"
+
+    monkeypatch.setattr(wizard_run_page, "render_run_wizard", _fake_render)
+    monkeypatch.setattr(mount, "_template_names", lambda _deps, _t: ["run_basic"])
+    monkeypatch.setattr(mount, "_template_questions_map", lambda _deps, _t: {})
+    deps = _deps(config=_config(equipment=(SimpleNamespace(id="EQ1"),)))
+    out = mount._render_run_wizard(deps, RunKind.TEST, _UiSpy())
+    assert out == "PAGE"
+    assert captured["run_kind"] is RunKind.TEST
+    assert captured["templates"] == ["run_basic"]
+    assert captured["equipment_ids"] == ["EQ1"]
+
+
+# ---------------------------------------------------------------------------
+# Small remaining branches: _classify_node non-EquipmentNode, metadata kinds,
+# _lims_catalogue_projects schema mismatch, _drive_folder_feed storage error.
+# ---------------------------------------------------------------------------
+
+
+def test_classify_node_skips_non_equipment_hierarchy_keys() -> None:
+    """Non-EquipmentNode keys in the hierarchy are ignored; unknown root ->
+    treated as unselected."""
+    hierarchy = {"a-plain-string-key": ["child"]}
+    assert mount._classify_node("EQ1", hierarchy) == (None, False)
+
+
+def test_build_metadata_payload_received_equipment_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The received_equipment kind routes to the relay-equipment builder."""
+    monkeypatch.setattr(
+        "exlab_wizard.api.routers.browse.build_received_equipment_nodes",
+        lambda _config: [SimpleNamespace(id="RELAY_X", label="Relay X")],
+    )
+    out = mount._build_metadata_payload("RELAY_X", "received_equipment", _deps(config=_config()))
+    assert out["id"] == "RELAY_X"
+    assert out["label"] == "Relay X"
+
+
+def test_build_metadata_payload_unknown_kind_returns_empty() -> None:
+    out = mount._build_metadata_payload("EQ1", "some_other_kind", _deps(config=_config()))
+    assert out == {}
+
+
+def test_metadata_for_owned_equipment_projects_fields() -> None:
+    """A matching equipment id projects its config fields into the payload."""
+    config = SimpleNamespace(
+        equipment=[
+            SimpleNamespace(
+                id="EQ1",
+                label="Confocal",
+                sync_mode="nas",
+                local_root="/d/EQ1",
+                nas_root="/n/EQ1",
+            )
+        ]
+    )
+    out = mount._metadata_for_owned_equipment("EQ1", config)
+    assert out["id"] == "EQ1"
+    assert out["label"] == "Confocal"
+    assert out["local_root"] == "/d/EQ1"
+    assert out["nas_root"] == "/n/EQ1"
+
+
+def test_lims_catalogue_projects_schema_mismatch_returns_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A schema_version mismatch (read_catalogue -> None) yields ``[]``."""
+    catalogue = tmp_path / "catalogue.json"
+    catalogue.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        "exlab_wizard.lims.catalogue.read_catalogue",
+        lambda _path, expected_endpoint=None: None,
+    )
+    deps = _deps(config=_config(offline_catalogue_path=str(catalogue)))
+    assert mount._lims_catalogue_projects(deps) == []
+
+
+def test_drive_folder_feed_tolerates_storage_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A raising ``app.storage.tab`` degrades to an in-memory feed (no tab)."""
+    monkeypatch.setattr(mount, "_spawn_background", lambda coro: coro.close())
+
+    class _BadStorage:
+        @property
+        def tab(self) -> Any:
+            msg = "no tab context"
+            raise RuntimeError(msg)
+
+    app = SimpleNamespace(storage=_BadStorage())
+    out = mount._drive_folder_feed(app, _deps(), "EQ1/proj/Run_a")
+    assert out == []
+
+
+# ---------------------------------------------------------------------------
+# Remaining helper branches
+# ---------------------------------------------------------------------------
+
+
+def test_is_setup_ready_swallows_evaluation_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A raising evaluator degrades to 'not ready' (banner stays up)."""
+
+    def _boom(_deps: Any) -> Any:
+        msg = "evaluator exploded"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr("exlab_wizard.api.setup.compute_setup_state", _boom)
+    with caplog.at_level("WARNING"):
+        assert mount._is_setup_ready(_deps(config=_nas_config())) is False
+    assert any("setup-readiness" in r.message for r in caplog.records)
+
+
+def test_metadata_for_owned_equipment_no_match_returns_empty() -> None:
+    """An equipment id absent from config yields ``{}``."""
+    config = SimpleNamespace(equipment=[SimpleNamespace(id="EQ_OTHER")])
+    assert mount._metadata_for_owned_equipment("EQ1", config) == {}
+
+
+async def test_bulk_clear_verified_no_verified_rows_toasts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no SYNCED rows the sweep clears nothing and toasts 'none'."""
+    monkeypatch.setattr(
+        mount,
+        "list_staged_runs",
+        lambda **_kw: [SimpleNamespace(path="/staging/EQ1/Run_a", current_state="syncing")],
+    )
+    cleared: list[Any] = []
+    monkeypatch.setattr(mount, "clear_run_dir", lambda p: cleared.append(p) or (0, 0))
+    mount._bulk_clear_verified(_deps(config=_config()), _UiSpy())
+    for task in [t for t in mount._BACKGROUND_TASKS if not t.done()]:
+        await task
+    assert cleared == []  # syncing rows are never cleared
+
+
+async def test_toggle_keep_local_unresolvable_relative_path_toasts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A run root that can't yield a relative path surfaces a negative toast."""
+    run_root = tmp_path / "EQ1" / "Run_x"
+    run_root.mkdir(parents=True)
+    monkeypatch.setattr("exlab_wizard.api.routers.browse._find_run_root", lambda _parent: run_root)
+    monkeypatch.setattr(
+        "exlab_wizard.api.routers.browse._run_relative_posix", lambda _root, _path: None
+    )
+    writer = SimpleNamespace(set_keep_local=lambda *a, **k: None)
+    ui = _UiSpy()
+    entry = SimpleNamespace(path=str(run_root / "scan.tif"), keep_local=False)
+    mount._toggle_keep_local(_deps(sync_state_writer=writer), entry, ui)
+    # No background task spawned -- the early return fires before _do_toggle.
+    assert not [t for t in mount._BACKGROUND_TASKS if not t.done()]
+
+
+async def test_open_input_required_dialog_submit_swallows_resume_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing ``controller.resume`` is caught + toasted, not raised."""
+
+    class _Controller:
+        async def resume(self, *_a: Any, **_k: Any) -> None:
+            msg = "stale session"
+            raise RuntimeError(msg)
+
+    captured: dict[str, Any] = {}
+
+    def _fake_builder(
+        *, plugin: str, reason: str, fields: Any, on_submit: Any, on_cancel: Any
+    ) -> Any:
+        captured["on_submit"] = on_submit
+        return SimpleNamespace(open=lambda: None)
+
+    monkeypatch.setattr(
+        "exlab_wizard.ui.components.input_required_dialog.input_required_dialog", _fake_builder
+    )
+    mount._open_input_required_dialog(
+        _Controller(), "sess-x", _UiSpy(), plugin="p", reason="r", fields=[]
+    )
+    captured["on_submit"]({"a": 1})
+    for task in [t for t in mount._BACKGROUND_TASKS if not t.done()]:
+        await task
+
+
+def test_template_questions_map_swallows_outer_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An import/engine failure in the outer try yields ``{}``."""
+    from exlab_wizard.ui.pages import templates as templates_page
+
+    def _boom(*_a: Any, **_k: Any) -> None:
+        msg = "scanner died"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(templates_page, "list_templates", _boom)
+    with caplog.at_level("WARNING"):
+        assert mount._template_questions_map(_deps(config=_config()), "project") == {}
+    assert any("template question scan" in r.message for r in caplog.records)
+
+
+def test_build_staging_state_query_failure_returns_empty_rows(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A staging-query failure degrades to an empty dock, not a crash."""
+
+    def _raise(**_kw: Any) -> Any:
+        msg = "no staging root"
+        raise RuntimeError(msg)
+
+    # mount imports ``list_staged_runs`` into its own namespace, so patch there.
+    monkeypatch.setattr(mount, "list_staged_runs", _raise)
+    deps = _deps(config=_config(orchestrator_label="LAB", orchestrator_staging_root="/staging"))
+    with caplog.at_level("WARNING"):
+        state = mount._build_staging_state(deps)
+    assert state is not None
+    assert state.rows == []
+    assert any("staging_query failed" in r.message for r in caplog.records)

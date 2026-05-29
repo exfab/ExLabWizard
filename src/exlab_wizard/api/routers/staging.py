@@ -27,21 +27,22 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
 from exlab_wizard.api._dependencies import require_deps
-from exlab_wizard.cache.ingest_writer import IngestWriter
 from exlab_wizard.config.models import Config
-from exlab_wizard.constants import IngestState, SyncHandleState
+from exlab_wizard.constants import RunSyncState, SyncHandleState
 from exlab_wizard.logging import get_logger
+from exlab_wizard.orchestrator.staging_clear import clear_run_dir
 from exlab_wizard.orchestrator.staging_query import (
     StagedRunSummary,
     list_staged_runs,
 )
-from exlab_wizard.paths import ingest_json_path
 from exlab_wizard.utils.time import utc_now
 
 __all__ = [
     "ClearResponse",
     "ClearVerifiedResponse",
     "ForceSyncResponse",
+    "KeepLocalRequest",
+    "KeepLocalResponse",
     "StagedRunRow",
     "StagingListResponse",
     "build_staging_router",
@@ -107,6 +108,31 @@ class ClearVerifiedResponse(BaseModel):
     cleared_paths: list[str]
 
 
+class KeepLocalRequest(BaseModel):
+    """``POST /staging/{run_path}/keep-local`` request body.
+
+    Operator-free per-file NAS sync design (2026-05-21): the operator
+    toggles a file's ``keep_local`` flag from the file-list context menu.
+    ``relative_path`` is the run-relative POSIX path of the file within
+    the run directory; ``keep_local`` is the desired flag value.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    relative_path: str
+    keep_local: bool
+
+
+class KeepLocalResponse(BaseModel):
+    """``POST /staging/{run_path}/keep-local`` response."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_path: str
+    relative_path: str
+    keep_local: bool
+
+
 # ---------------------------------------------------------------------------
 # Router builder
 # ---------------------------------------------------------------------------
@@ -120,7 +146,11 @@ def build_staging_router() -> APIRouter:
     async def get_staging(request: Request) -> StagingListResponse:
         deps = require_deps(request)
         config = _require_config(deps)
-        rows = list_staged_runs(config=config, now_utc=utc_now())
+        rows = list_staged_runs(
+            config=config,
+            now_utc=utc_now(),
+            sync_state_writer=getattr(deps, "sync_state_writer", None),
+        )
         return StagingListResponse(runs=[_row_from_summary(s) for s in rows])
 
     @router.post(
@@ -128,28 +158,91 @@ def build_staging_router() -> APIRouter:
         response_model=ClearVerifiedResponse,
     )
     async def post_clear_verified(request: Request) -> ClearVerifiedResponse:
-        """Bulk-clear every staged run in ``sync_verified`` state.
+        """Bulk-clear every staged run whose NAS sync is verified.
 
         Redesign §4.6: the file-explorer footer's "Clear verified runs"
-        action. Routes through the same
-        :func:`exlab_wizard.orchestrator.cleanup.clear_run` primitive
-        as the per-run endpoint, so failure modes (missing dirs, ingest
-        write errors) behave identically. Returns the list of cleared
-        run paths so the UI can report a count.
+        action. Phase 5 keys "clearable" off the ``sync_state.json``
+        ``SYNCED`` rollup -- a run is clearable when every tracked file is
+        verified on the NAS and the run has not already been cleared.
         """
         deps = require_deps(request)
         config = _require_config(deps)
-        ingest_writer = _require_ingest_writer(deps)
-        # Deferred import: see the per-run /clear endpoint below for the
-        # cycle-avoidance rationale.
-        from exlab_wizard.orchestrator.cleanup import clear_all_verified
-
-        cleared = await clear_all_verified(
+        cleared: list[str] = []
+        for summary in list_staged_runs(
             config=config,
-            ingest_writer=ingest_writer,
-        )
+            sync_state_writer=getattr(deps, "sync_state_writer", None),
+        ):
+            # Only a fully-SYNCED run is clearable; ``cleared`` runs have
+            # no staging copy left and ``syncing`` runs are unproven.
+            if summary.current_state != RunSyncState.SYNCED.value:
+                continue
+            run_path = Path(summary.path)
+            try:
+                files, _bytes = clear_run_dir(run_path)
+            except Exception as exc:
+                _log.warning("clear-verified: clear failed for %s: %s", run_path, exc)
+                continue
+            if files > 0:
+                cleared.append(str(run_path))
         _log.info("clear-verified bulk action: cleared=%d", len(cleared))
         return ClearVerifiedResponse(cleared_paths=cleared)
+
+    @router.post(
+        "/staging/{run_path:path}/keep-local",
+        response_model=KeepLocalResponse,
+    )
+    async def post_keep_local(
+        request: Request,
+        run_path: str,
+        body: KeepLocalRequest,
+    ) -> KeepLocalResponse:
+        """Toggle a file's ``keep_local`` flag in the run's ``sync_state.json``.
+
+        Operator-free per-file NAS sync design (2026-05-21): a
+        ``keep_local`` file still syncs to the NAS but is excluded from
+        cleanup deletion. ``sync_state.json`` has a single writer -- the
+        orchestrator's :class:`SyncStateWriter` -- so the GUI never writes
+        the file directly; it calls this endpoint instead. Returns 503
+        when no ``SyncStateWriter`` is wired on the app instance, and 404
+        when ``run_path`` is not a real run inside an allowed root.
+        """
+        deps = require_deps(request)
+        config = _require_config(deps)
+        writer = getattr(deps, "sync_state_writer", None)
+        if writer is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "sync_state_writer_unavailable",
+                    "message": "sync-state writer is not wired on this app instance",
+                },
+            )
+        # Path-containment guard: ``run_path`` comes straight from the URL
+        # and ``SyncStateWriter`` *creates* ``<run_path>/.exlab-wizard/
+        # sync_state.json``. Reject any path that is not a real run -- it
+        # must sit under an allowed root and carry a ``creation.json``
+        # cache -- so a hostile path (``%2Fetc``) cannot provoke a write.
+        path = Path(run_path)
+        if not _is_real_run(path, config):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "session_not_found",
+                    "message": f"no run found at {run_path}",
+                },
+            )
+        await writer.set_keep_local(path, body.relative_path, body.keep_local)
+        _log.info(
+            "keep-local toggled via API: run=%s file=%s value=%s",
+            run_path,
+            body.relative_path,
+            body.keep_local,
+        )
+        return KeepLocalResponse(
+            run_path=run_path,
+            relative_path=body.relative_path,
+            keep_local=body.keep_local,
+        )
 
     @router.post(
         "/staging/{run_path:path}/force-sync",
@@ -183,40 +276,28 @@ def build_staging_router() -> APIRouter:
     async def post_clear(request: Request, run_path: str) -> ClearResponse:
         deps = require_deps(request)
         config = _require_config(deps)
-        ingest_writer = _require_ingest_writer(deps)
         path = Path(run_path)
-        # Defensive check: the spec only allows clearing sync-verified
-        # runs (manual mode). The watcher would never call this on
-        # earlier states, but the API is operator-facing so we enforce
-        # the rule here too.
-        ingest_path = ingest_json_path(path)
-        if ingest_path.exists():
-            try:
-                payload = await ingest_writer.read_ingest(ingest_path)
-            except Exception:
-                payload = None
-            if payload is not None and payload.current_state != IngestState.SYNC_VERIFIED:
+        # Defensive check: only a fully-SYNCED run may be cleared. Phase 5
+        # derives the run rollup from ``sync_state.json``; a ``syncing`` run
+        # is unproven and a ``cleared`` run has no staging copy left.
+        from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+
+        writer = getattr(deps, "sync_state_writer", None)
+        if writer is not None:
+            state = SyncStateWriter.rollup_state(writer.read_sync(path)).value
+            if state != RunSyncState.SYNCED.value:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail={
                         "code": "staging_not_sync_verified",
                         "message": (
-                            f"Cannot clear run in state {payload.current_state!r}; "
-                            "only sync_verified runs may be cleared."
+                            f"Cannot clear run in sync state {state!r}; "
+                            "only synced runs may be cleared."
                         ),
                     },
                 )
-        # Deferred import: ``orchestrator.cleanup`` pulls in
-        # ``api.schemas`` -> ``api`` package, so a module-level import
-        # here creates an ``api.routers.staging`` <-> ``orchestrator``
-        # cycle whenever ``orchestrator`` is imported before ``api``.
-        from exlab_wizard.orchestrator.cleanup import clear_run
-
-        files_freed, bytes_freed = await clear_run(
-            path,
-            config=config,
-            ingest_writer=ingest_writer,
-        )
+        _ = config  # kept for parity / future hooks
+        files_freed, bytes_freed = clear_run_dir(path)
         return ClearResponse(
             run_path=run_path,
             files_freed=files_freed,
@@ -243,6 +324,29 @@ def _row_from_summary(summary: StagedRunSummary) -> StagedRunRow:
         elapsed_seconds_since_last_activity=summary.elapsed_seconds_since_last_activity,
         last_activity_at=summary.last_activity_at,
     )
+
+
+def _is_real_run(run_path: Path, config: Config) -> bool:
+    """Return True when ``run_path`` is a real run inside an allowed root.
+
+    A "real run" is a directory that (a) sits under one of the configured
+    roots (local_root / staging_root / templates / plugins) -- reusing the
+    same containment helper the ``GET /folder`` endpoint uses -- and (b)
+    carries a ``.exlab-wizard/creation.json`` cache. The containment check
+    guards against a hostile URL path; the ``creation.json`` check ensures
+    ``SyncStateWriter`` only ever creates ``sync_state.json`` under a
+    genuine run directory.
+    """
+    from exlab_wizard.api.routers.browse import _path_is_under_allowed_root
+    from exlab_wizard.paths import creation_json_path
+
+    try:
+        resolved = run_path.resolve()
+    except OSError:
+        return False
+    if not _path_is_under_allowed_root(resolved, config):
+        return False
+    return creation_json_path(run_path).exists()
 
 
 def _require_config(deps: Any) -> Config:
@@ -274,12 +378,3 @@ def _require_nas_sync(deps: Any) -> Any:
             },
         )
     return nas_sync
-
-
-def _require_ingest_writer(deps: Any) -> IngestWriter:
-    writer = getattr(deps, "ingest_writer", None)
-    if writer is None:
-        # Fall back to a freshly constructed writer; the IngestWriter is
-        # stateless across calls (one FileLock per ingest path).
-        return IngestWriter()
-    return writer

@@ -105,7 +105,6 @@ def _render_equipment(
     _kv("Sync mode", payload.get("sync_mode"))
     _kv("Local root", payload.get("local_root"))
     _kv("NAS root", payload.get("nas_root"))
-    _kv("Completeness signal", payload.get("completeness_signal"))
     if payload.get("sync_mode") == "stage":
         ui.label(
             "Stage mode: this device pushes runs to a connected PC's staging "

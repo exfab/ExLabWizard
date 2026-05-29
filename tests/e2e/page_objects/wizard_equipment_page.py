@@ -22,6 +22,10 @@ class WizardEquipmentPage:
     def label(self) -> Any:
         return self._page.locator('[data-testid="wizard-equipment-label"]')
 
+    @property
+    def step_paths(self) -> Any:
+        return self._page.locator('[data-testid="wizard-equipment-step-paths"]')
+
     # Paths
     @property
     def local_root(self) -> Any:
@@ -31,19 +35,20 @@ class WizardEquipmentPage:
     def nas_root(self) -> Any:
         return self._page.locator('[data-testid="wizard-equipment-nas-root"]')
 
-    # Sync mode
+    # Sync mode -- rclone.conf migration (Phase 8) removed the per-equipment
+    # SFTP/SMB transport fieldsets; the radio selects nas/stage only and the
+    # connection is the single nas: remote / orchestrator.staging_remote.
     @property
     def sync_mode(self) -> Any:
         return self._page.locator('[data-testid="wizard-equipment-sync-mode"]')
 
-    # Signal
     @property
-    def signal(self) -> Any:
-        return self._page.locator('[data-testid="wizard-equipment-signal"]')
+    def nas_note(self) -> Any:
+        return self._page.locator('[data-testid="wizard-equipment-nas-note"]')
 
     @property
-    def sentinel_filename(self) -> Any:
-        return self._page.locator('[data-testid="wizard-equipment-sentinel-filename"]')
+    def stage_note(self) -> Any:
+        return self._page.locator('[data-testid="wizard-equipment-stage-note"]')
 
     # Review / confirm
     @property
@@ -57,6 +62,10 @@ class WizardEquipmentPage:
     @property
     def next_button(self) -> Any:
         return self._page.locator('[data-testid="wizard-equipment-next"]')
+
+    @property
+    def back(self) -> Any:
+        return self._page.locator('[data-testid="wizard-equipment-back"]')
 
     @property
     def success(self) -> Any:

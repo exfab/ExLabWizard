@@ -72,6 +72,13 @@ class ProjectWizardState:
     validator_findings: list[dict[str, Any]] = field(default_factory=list)
     free_disk_bytes: int | None = None
     plugin_host_ok: bool = True
+    # Live creation-progress state, folded from the controller WS stream
+    # while the Confirm & Create step is showing (T2 / Frontend §10.1).
+    progress: session_progress.SessionProgressState = field(
+        default_factory=session_progress.SessionProgressState
+    )
+    # Bound to the confirm step's ``@ui.refreshable`` view's ``.refresh``.
+    progress_refresh: Callable[..., Any] | None = None
 
 
 def can_advance(state: ProjectWizardState) -> bool:
@@ -221,9 +228,22 @@ def render_project_wizard(
                             on_template_change=_variables_panel.refresh,
                         )
                     if step_id == "confirm":
-                        session_progress.session_progress(
-                            active_phase=None,
-                        )
+
+                        @ui.refreshable
+                        def _progress_view() -> None:
+                            p = s.progress
+                            session_progress.session_progress(
+                                active_phase=p.active_phase,
+                                completed=p.completed,
+                                plugin_current=p.plugin_current,
+                                plugin_total=p.plugin_total,
+                                plugin_name=p.plugin_name,
+                            )
+
+                        _progress_view()
+                        # The submit flow folds WS frames into ``s.progress``
+                        # and calls this to advance the phase bar live (T2).
+                        s.progress_refresh = _progress_view.refresh
                     with ui.stepper_navigation():
                         # The first step has nowhere to step back to, so
                         # Cancel is its only exit -- rendering a dead Back

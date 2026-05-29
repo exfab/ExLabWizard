@@ -28,6 +28,7 @@ import contextlib
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Final
 
 from fastapi import APIRouter, FastAPI
@@ -43,7 +44,7 @@ from exlab_wizard.api.routers.sessions import build_sessions_router
 from exlab_wizard.api.routers.staging import build_staging_router
 from exlab_wizard.api.setup import build_setup_router
 from exlab_wizard.config.models import Config
-from exlab_wizard.constants import AUDIT_REFRESH_SECONDS, AuditScopeKind
+from exlab_wizard.constants import AUDIT_REFRESH_SECONDS, AuditScopeKind, Tier
 from exlab_wizard.logging import get_logger
 from exlab_wizard.utils.time import utc_now_iso
 
@@ -179,15 +180,24 @@ class AppDependencies:
     # Setup-state inputs ------------------------------------------------
     lims_reachable: bool = True
     keyring_password_present: bool = True
+    # rclone.conf NAS-sync migration. The setup gate now depends on whether
+    # the configured ``nas.remote`` is present in rclone.conf rather than on
+    # a per-equipment keyring password. ``nas_remotes`` is the raw
+    # ``listremotes`` snapshot (each name incl. trailing ``:``) hydrated once
+    # at tray boot; ``nas_remote_available`` is the derived predicate read by
+    # ``api/_dependencies.py::nas_remote_available``. The default predicate
+    # answers "always available" so headless/test apps that have not wired
+    # the rclone probe do not gate on NAS.
+    nas_remotes: tuple[str, ...] = ()
+    nas_remote_available: Callable[[str], bool] = field(default=lambda _n: True)
     lims_reason: str | None = None
 
-    # Restart-required gate ---------------------------------------------
-    # Set True after the wizard writes config.yaml: the config-dependent
-    # components (controller / lims_client / nas_sync) are built once at
-    # tray boot, so the operator must relaunch the tray for a freshly
-    # written config to take effect. The NiceGUI mount helper reads this
-    # to route every page to the restart-required screen.
-    restart_required: bool = False
+    # State directory the tray was launched with. Stored so the live
+    # config-reload coordinator (``tray.dependencies.apply_live_config``)
+    # can build the durable NAS-sync queue under the same root when a
+    # fresh-install first save brings the config-dependent components to
+    # life without a tray relaunch.
+    state_dir: Path | None = None
 
     # Components --------------------------------------------------------
     controller: Any = None
@@ -197,8 +207,13 @@ class AppDependencies:
     lims_client: Any = None
     nas_sync: Any = None
     session_store: Any = None
-    ingest_writer: Any = None
-    staging_watcher: Any = None
+    quiescence_poller: Any = None
+    # Orchestrator-only ``sync_state.json`` writer
+    # (:class:`exlab_wizard.cache.sync_state_writer.SyncStateWriter`). The
+    # quiescence poller reads it; the NAS-sync client writes per-file
+    # verify reconciliation into it (operator-free per-file NAS sync,
+    # 2026-05-21).
+    sync_state_writer: Any = None
     # OS-keyring store (:class:`exlab_wizard.lims.keyring_store.KeyringStore`).
     # The settings dialog's credential fields write the LIMS password
     # straight to this at click time (Frontend Spec §7.3, §7.4.1).
@@ -207,6 +222,10 @@ class AppDependencies:
     # Audit / pub-sub ---------------------------------------------------
     audit_channel: AuditChannel | None = None
     last_audit_at: str | None = None
+    # Tier counts from the latest background audit pass, read by the GUI
+    # Problems tab badge + right-pane summary (T6 / §B5).
+    last_audit_hard: int = 0
+    last_audit_soft: int = 0
 
     # Health snapshot probes -------------------------------------------
     nas_sync_snapshot: Callable[[], dict[str, Any]] | None = None
@@ -218,6 +237,14 @@ class AppDependencies:
     lims_probe: Callable[..., Any] | None = None
     equipment_probe: Callable[..., Any] | None = None
     autostart_toggle: Callable[[bool], Any] | None = None
+    # Real platform autostart-registration state, seeded at tray build so
+    # Settings -> Application can reflect it (T8).
+    autostart_is_registered: bool = False
+    # Graceful-shutdown hook + tray-availability flag, attached by the tray
+    # builder so the in-window Settings -> Application section can quit (T9)
+    # and show real tray status (T11). Absent in headless / server-only runs.
+    request_quit: Callable[[], None] | None = None
+    tray_available: bool = False
 
     # Background tasks --------------------------------------------------
     audit_task: asyncio.Task[None] | None = field(default=None, repr=False)
@@ -257,9 +284,27 @@ def create_app(
                 _audit_loop(deps, audit_interval_seconds),
                 name="exlab-audit-loop",
             )
+        # Operator-free per-file NAS sync (2026-05-21): the NASSyncClient
+        # owns the durable queue + transport worker; ``init()`` opens the
+        # queue DB and spawns the worker task -- ``enqueue`` itself fails
+        # without it. The quiescence poller is the auto-sync trigger and
+        # must start *after* the client it feeds. Both are ``None`` when
+        # no staging_root / nas-mode equipment is configured.
+        if deps.nas_sync is not None:
+            with contextlib.suppress(Exception):
+                await deps.nas_sync.init()
+        if deps.quiescence_poller is not None:
+            with contextlib.suppress(Exception):
+                await deps.quiescence_poller.start()
         try:
             yield
         finally:
+            if deps.quiescence_poller is not None:
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await deps.quiescence_poller.stop()
+            if deps.nas_sync is not None:
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await deps.nas_sync.close()
             if deps.audit_task is not None and not deps.audit_task.done():
                 deps.audit_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -314,6 +359,16 @@ async def _audit_loop(deps: AppDependencies, interval_seconds: float) -> None:
                 continue
             audit_at = utc_now_iso()
             deps.last_audit_at = audit_at
+            # Cache tier counts so the in-process GUI (Problems tab badge +
+            # right-pane summary) reads them straight off deps -- a single
+            # source, refreshed on the 30 s cadence -- without re-running a
+            # full O(tree) audit on every page render (T6 / §B5).
+            deps.last_audit_hard = sum(
+                1 for f in findings if getattr(f, "tier", "") == Tier.HARD.value
+            )
+            deps.last_audit_soft = sum(
+                1 for f in findings if getattr(f, "tier", "") == Tier.SOFT.value
+            )
             added, removed, changed = _diff_findings(last, findings)
             if deps.audit_channel is not None:
                 if not last:

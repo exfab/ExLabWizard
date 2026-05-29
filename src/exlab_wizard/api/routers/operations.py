@@ -21,7 +21,13 @@ from pydantic import BaseModel, ConfigDict
 
 from exlab_wizard.api._dependencies import require_controller
 from exlab_wizard.api.setup import setup_state_gate
-from exlab_wizard.controller import SessionState
+
+# Import from the submodules (not the ``exlab_wizard.controller`` package)
+# to avoid a circular import: ``api.app`` pulls in this router while the
+# controller package's ``__init__`` is still initializing, so reading
+# attributes off the partially-built package would fail.
+from exlab_wizard.controller.session_store import on_operations_panel, project_identifier
+from exlab_wizard.controller.state_machine import SessionState
 from exlab_wizard.utils.time import dt_to_iso
 
 __all__ = ["OperationEntry", "OperationsResponse", "build_operations_router"]
@@ -63,14 +69,11 @@ def build_operations_router() -> APIRouter:
         controller = require_controller(request)
         sessions = controller.session_store
         operations: list[OperationEntry] = []
-        # SessionStore exposes a private ``_sessions`` dict; iterate
-        # explicitly rather than reaching into the dict so the public
-        # surface stays narrow.
-        for sid, session in _iter_sessions(sessions):
-            if session.state in (SessionState.DONE, SessionState.ABORTED):
-                # Terminal-success and explicit-cancel rows fall off
-                # the panel; FAILED rows stay so the operator can see
-                # the recent failure.
+        for sid, session in sessions.iter_sorted():
+            # Terminal-success and explicit-cancel rows fall off the panel;
+            # FAILED rows stay so the operator can see the recent failure
+            # (Frontend §9.5 -- the shared membership rule).
+            if not on_operations_panel(session):
                 continue
             operations.append(_session_to_entry(sid, session))
         return OperationsResponse(operations=operations)
@@ -81,23 +84,6 @@ def build_operations_router() -> APIRouter:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _iter_sessions(store: Any) -> list[tuple[str, Any]]:
-    """Return ``(session_id, session)`` pairs from the store.
-
-    The :class:`SessionStore` keeps its dict private; we use the
-    documented contract that ``store._sessions`` is a ``dict``. A
-    public accessor would be cleaner; until that lands the shim here
-    is the single touchpoint.
-    """
-    sessions = getattr(store, "_sessions", {})
-    if not isinstance(sessions, dict):
-        return []
-    return sorted(
-        sessions.items(),
-        key=lambda pair: getattr(pair[1], "created_at", None) or 0,
-    )
 
 
 def _session_to_entry(session_id: str, session: Any) -> OperationEntry:
@@ -114,28 +100,8 @@ def _session_to_entry(session_id: str, session: Any) -> OperationEntry:
         else str(session.state),
         started_at=dt_to_iso(session.created_at) if session.created_at is not None else "",
         equipment_id=getattr(request, "equipment_id", None),
-        project_short_id=_project_short_id(request),
+        project_short_id=project_identifier(request),
         run_label=getattr(request, "label", None),
         plugin_name=plugin_name,
         suspended_reason=suspended_reason,
     )
-
-
-def _project_short_id(request: Any) -> str | None:
-    """Pluck a project identifier off a project / run request.
-
-    A project request carries the LIMS ``short_id`` in its
-    ``lims_project`` block; a run request carries only the parent
-    project's folder name (the human-readable LIMS name, Backend Spec
-    §3.2), so that name is used as the operations-panel identifier.
-    """
-    short = getattr(request, "project_short_id", None)
-    if short:
-        return short
-    lims_project = getattr(request, "lims_project", None)
-    if isinstance(lims_project, dict):
-        value = lims_project.get("short_id")
-        if isinstance(value, str) and value:
-            return value
-    project_name = getattr(request, "project_name", None)
-    return project_name if isinstance(project_name, str) and project_name else None

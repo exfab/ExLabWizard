@@ -6,7 +6,7 @@ and drives, end to end, every create flow the wizard exposes:
 
     fresh install
       -> welcome -> settings (paths + LIMS + add equipment) -> Save
-      -> RESTART (config.yaml now drives the controller)
+      -> config applied live in-process (no restart needed)
       -> create a project template
       -> create a run template (experimental)
       -> create a run template (test scope)
@@ -83,13 +83,6 @@ def _select(
     option.click()
 
 
-def _pick_radio(page, group_testid: str, option_label: str, *, timeout: int = 8_000) -> None:
-    """Select a Quasar ``ui.radio`` option by its label within the group."""
-    group = page.get_by_test_id(group_testid)
-    group.wait_for(state="attached", timeout=timeout)
-    group.get_by_text(option_label, exact=True).click()
-
-
 def _step_button(
     page,
     step_testid: str,
@@ -144,10 +137,21 @@ def _goto(page, url: str, *, retries: int = 2) -> None:
 
 @pytest.fixture
 def prod_server(tmp_path: Path):
-    """Yield a started :class:`ProdServer` rooted at a fresh tmp HOME."""
+    """Yield a started :class:`ProdServer` rooted at a fresh tmp HOME.
+
+    The keyring is pinned to the encrypted-at-rest fallback so the
+    NAS-credential round-trip (rclone-only migration, 2026-05-26) is
+    deterministic and never prompts an OS keychain.
+    """
     home = tmp_path / "home"
     home.mkdir()
-    server = ProdServer(home)
+    server = ProdServer(
+        home,
+        extra_env={
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.fail.Keyring",
+            "EXLAB_WIZARD_SECRET_PASSPHRASE": "e2e-lifecycle-passphrase",
+        },
+    )
     if not server.start():
         pytest.skip("production wizard app did not become healthy within 30s")
     try:
@@ -220,53 +224,52 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         _fill(page, "settings-lims-offline-path", str(catalogue_path))
 
         # ---- Phase 4: add equipment ------------------------------------
-        # 4a. rclone transport + sentinel_file signal (the default radios).
+        # rclone.conf migration (Phase 8): the Settings equipment form no
+        # longer collects a per-equipment SFTP/SMB transport. A nas-mode
+        # device is created with just id/label/local_root/nas_root; the NAS
+        # connection is the single nas: remote (configured in rclone.conf).
         page.get_by_test_id("settings-nav-equipment").click()
         _fill(page, "settings-equipment-id", "MICROSCOPE1")
         _fill(page, "settings-equipment-label", "Confocal Microscope 1")
         _fill(page, "settings-equipment-local-root", str(data_root))
         _fill(page, "settings-equipment-nas-root", "/srv/nas/microscope1")
-        _fill(page, "settings-equipment-sentinel", "acquisition_complete.flag")
-        _fill(page, "settings-equipment-rclone-remote", "lab-nas")
-        _fill(page, "settings-equipment-rclone-path", "lab/microscope1")
         page.get_by_test_id("settings-equipment-add").click()
         page.get_by_test_id("settings-equipment-row").first.wait_for(state="visible", timeout=8_000)
 
-        # 4b. rsync_ssh transport + manifest signal -- exercises the
-        #     completeness-signal and transport radios swapping fields.
+        # 4b. a second nas-mode device -- same no-transport form.
         _fill(page, "settings-equipment-id", "SPECTROMETER1")
         _fill(page, "settings-equipment-label", "Mass Spectrometer 1")
         _fill(page, "settings-equipment-local-root", str(data_root))
         _fill(page, "settings-equipment-nas-root", "/srv/nas/spectrometer1")
-        _pick_radio(page, "settings-equipment-signal", "manifest")
-        _fill(page, "settings-equipment-manifest", "manifest.json")
-        _pick_radio(page, "settings-equipment-transport", "rsync_ssh")
-        _fill(page, "settings-equipment-ssh-target", "operator@nas.example.test")
-        _fill(page, "settings-equipment-rsync-path", "/srv/nas/spectrometer1/incoming")
         page.get_by_test_id("settings-equipment-add").click()
         # Two equipment rows now present.
         page.wait_for_function(
             "document.querySelectorAll('[data-testid=\"settings-equipment-row\"]').length === 2"
         )
 
-        # ---- Phase 5: save -> restart-required gate --------------------
+        # ---- Phase 5: save -> config applied live (no restart) ---------
+        # The "Settings saved" toast is emitted only after the handler has
+        # persisted config.yaml and pushed it into the running components,
+        # so waiting for it is the deterministic completion signal.
         page.get_by_test_id("settings-save").click()
-        page.wait_for_load_state("networkidle")
-        page.get_by_test_id("restart-required").wait_for(state="visible", timeout=10_000)
+        page.get_by_text("Settings saved").wait_for(state="visible", timeout=10_000)
+        assert "/restart-required" not in page.url
         assert config_path.exists(), "Save must persist config.yaml"
         config_text = config_path.read_text(encoding="utf-8")
         assert "MICROSCOPE1" in config_text
         assert "SPECTROMETER1" in config_text
-        assert "rsync_ssh" in config_text
-        assert "manifest.json" in config_text
         assert str(data_root) in config_text
 
-        # ---- Phase 6: restart so the controller picks up the config ----
-        assert server.restart(), "production app failed to come back up after restart"
-        # The old page holds a websocket to the now-dead server; a fresh
-        # page avoids the stale NiceGUI client racing the new boot.
-        page.close()
-        page = context.new_page()
+        # ---- Phase 6: verify NAS Remote section is present ---------------
+        # The two nas-mode equipment registered above leave the install in
+        # the INCOMPLETE_NO_NAS_REMOTE state (rclone.conf migration).
+        # The NAS Remote settings section (read-only) appears once equipment
+        # with sync_mode=NAS is present; the operator resolves the gate by
+        # running `rclone config` out-of-band and setting nas.remote in
+        # config.yaml. We verify the section nav is visible and can be clicked.
+        _goto(page, f"{server.base_url}/settings")
+        page.get_by_test_id("settings-dialog").wait_for(state="visible", timeout=10_000)
+        page.get_by_test_id("settings-nav-nas_remote").click()
 
         # ---- Phase 7: create a project template ------------------------
         _goto(page, f"{server.base_url}/templates")

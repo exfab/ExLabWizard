@@ -33,4 +33,4 @@ def test_flow_05_browse_view(page, server_url) -> None:
     main.footer_clear_verified.wait_for(state="visible")
 
     # Tree contains the seeded equipment label.
-    assert page.locator('[data-testid="main-tree"]').inner_text().find("EQ1") >= 0
+    assert page.locator('[data-testid="main-tree"]').inner_text().find("TEST_EQ1") >= 0

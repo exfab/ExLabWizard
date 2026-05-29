@@ -136,21 +136,16 @@ def test_lims_project_source_values() -> None:
     }
 
 
-def test_ingest_state_values() -> None:
-    # Backend Spec §13.3.
-    assert issubclass(enums.IngestState, StrEnum)
-    assert enums.IngestState.STAGING.value == "staging"
-    assert enums.IngestState.COMPLETE.value == "complete"
-    assert enums.IngestState.SYNC_QUEUED.value == "sync_queued"
-    assert enums.IngestState.SYNC_VERIFIED.value == "sync_verified"
-    assert enums.IngestState.CLEARED.value == "cleared"
-    assert {m.value for m in enums.IngestState} == {
-        "staging",
-        "complete",
-        "sync_queued",
-        "sync_verified",
-        "cleared",
-    }
+def test_ingest_state_enum_is_removed() -> None:
+    # The operator-free per-file NAS sync redesign (2026-05-21) removed the
+    # five-state ``IngestState`` machine along with ``ingest.json``.
+    assert not hasattr(enums, "IngestState")
+
+
+def test_run_sync_state_values() -> None:
+    # Operator-free per-file NAS sync design (2026-05-21) -- derived rollup.
+    assert issubclass(enums.RunSyncState, StrEnum)
+    assert {m.value for m in enums.RunSyncState} == {"syncing", "synced", "cleared"}
 
 
 def test_setup_state_values() -> None:
@@ -159,6 +154,7 @@ def test_setup_state_values() -> None:
     assert enums.SetupState.INCOMPLETE_NO_CONFIG.value == "incomplete_no_config"
     assert enums.SetupState.INCOMPLETE_MISSING_PATHS.value == "incomplete_missing_paths"
     assert enums.SetupState.INCOMPLETE_NO_EQUIPMENT.value == "incomplete_no_equipment"
+    assert enums.SetupState.INCOMPLETE_NO_NAS_REMOTE.value == "incomplete_no_nas_remote"
     assert enums.SetupState.INCOMPLETE_NO_LIMS.value == "incomplete_no_lims"
     assert enums.SetupState.INCOMPLETE_LIMS_UNREACHABLE.value == "incomplete_lims_unreachable"
     assert enums.SetupState.READY.value == "ready"
@@ -167,26 +163,29 @@ def test_setup_state_values() -> None:
         "incomplete_missing_paths",
         "incomplete_no_orchestrator",
         "incomplete_no_equipment",
+        "incomplete_no_nas_remote",
         "incomplete_no_lims",
         "incomplete_lims_unreachable",
         "ready",
     }
 
 
-def test_transport_type_values() -> None:
-    # Backend Spec §7.1.3.
-    assert issubclass(enums.TransportType, StrEnum)
-    assert enums.TransportType.RCLONE.value == "rclone"
-    assert enums.TransportType.RSYNC_SSH.value == "rsync_ssh"
-    assert {m.value for m in enums.TransportType} == {"rclone", "rsync_ssh"}
+def test_nas_remote_setup_members_exist() -> None:
+    from exlab_wizard.constants.enums import SetupNextAction, SetupState
+
+    assert SetupState.INCOMPLETE_NO_NAS_REMOTE.value == "incomplete_no_nas_remote"
+    assert SetupNextAction.CONFIGURE_RCLONE_REMOTE.value == "configure_rclone_remote"
 
 
-def test_completeness_signal_values() -> None:
-    # Backend Spec §9, §13.5.
-    assert issubclass(enums.CompletenessSignal, StrEnum)
-    assert enums.CompletenessSignal.SENTINEL_FILE.value == "sentinel_file"
-    assert enums.CompletenessSignal.MANIFEST.value == "manifest"
-    assert {m.value for m in enums.CompletenessSignal} == {"sentinel_file", "manifest"}
+def test_transport_type_enum_removed() -> None:
+    # The rclone.conf NAS-sync migration (Phase 7) removed the per-equipment
+    # TransportType enum: NAS sync is now purely rclone.conf-driven.
+    assert not hasattr(enums, "TransportType")
+
+
+def test_completeness_signal_enum_removed() -> None:
+    # The operator-free quiescence redesign removes CompletenessSignal.
+    assert not hasattr(enums, "CompletenessSignal")
 
 
 def test_staging_cleanup_mode_values() -> None:
@@ -220,14 +219,6 @@ def test_creation_level_values() -> None:
     assert issubclass(enums.CreationLevel, StrEnum)
     assert enums.CreationLevel.PROJECT.value == "project"
     assert enums.CreationLevel.RUN.value == "run"
-
-
-def test_orchestrator_transport_type_values() -> None:
-    # Backend Spec §13.3 -- ingest.json transport field.
-    # Full set coverage is in test_enum_literal_alignment.py.
-    assert issubclass(enums.OrchestratorTransportType, StrEnum)
-    assert enums.OrchestratorTransportType.SMB_MOUNT.value == "smb_mount"
-    assert enums.OrchestratorTransportType.FILE_TRANSFER.value == "file_transfer"
 
 
 def test_field_type_values() -> None:
@@ -335,14 +326,11 @@ def test_enums_re_exported_from_package() -> None:
     assert constants.RunScope is enums.RunScope
     assert constants.LIMSProjectStatus is enums.LIMSProjectStatus
     assert constants.LIMSProjectSource is enums.LIMSProjectSource
-    assert constants.IngestState is enums.IngestState
+    assert constants.RunSyncState is enums.RunSyncState
     assert constants.SetupState is enums.SetupState
-    assert constants.TransportType is enums.TransportType
-    assert constants.CompletenessSignal is enums.CompletenessSignal
     assert constants.StagingCleanupMode is enums.StagingCleanupMode
     assert constants.PluginStatus is enums.PluginStatus
     assert constants.CreationLevel is enums.CreationLevel
-    assert constants.OrchestratorTransportType is enums.OrchestratorTransportType
     assert constants.FieldType is enums.FieldType
     assert constants.BandwidthDay is enums.BandwidthDay
     assert constants.SessionKind is enums.SessionKind

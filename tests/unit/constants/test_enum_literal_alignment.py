@@ -25,10 +25,6 @@ from exlab_wizard.constants import enums
         # New enums introduced for closed-set cleanup.
         (enums.CreationLevel, frozenset({"project", "run"})),
         (
-            enums.OrchestratorTransportType,
-            frozenset({"smb_mount", "file_transfer"}),
-        ),
-        (
             enums.FieldType,
             frozenset({"string", "text", "choice", "date", "boolean"}),
         ),
@@ -49,7 +45,15 @@ from exlab_wizard.constants import enums
         (enums.Platform, frozenset({"macos", "windows", "linux"})),
         (
             enums.SetupNextAction,
-            frozenset({"set_paths", "add_equipment", "configure_lims", "test_lims"}),
+            frozenset(
+                {
+                    "set_paths",
+                    "add_equipment",
+                    "configure_rclone_remote",
+                    "configure_lims",
+                    "test_lims",
+                }
+            ),
         ),
         (enums.SyncHandleState, frozenset({"queued", "blocked"})),
         (enums.PluginSourceRoot, frozenset({"bundled", "lab"})),

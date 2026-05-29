@@ -1,0 +1,60 @@
+# Local password-based NAS emulator for ExLab-Wizard sync tests.
+# Two backends for both rclone transport types:
+#
+#   - SFTP:  host=localhost port=${SFTP_HOST_PORT} user=${NAS_USER} password=${NAS_PASSWORD}
+#   - SMB:   host=localhost port=${SMB_HOST_PORT}  user=${NAS_USER} share=${SMB_SHARE}
+#
+# ExLab-Wizard uses operator-managed rclone named remotes (rclone.conf).
+# Configure the remotes in tests/docker/rclone.conf, point nas.remote and
+# nas.rclone_config_path in config.yaml at them, and run normally.
+# See README.md for the full walkthrough.
+
+services:
+
+  nas-sftp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NAS_USER: ${NAS_USER}
+        NAS_UID: ${NAS_UID}
+        NAS_GID: ${NAS_GID}
+    image: exlab/nas-emulator-sftp:local
+    container_name: exlab-nas-sftp
+    env_file: .env
+    ports:
+      - "${SFTP_HOST_PORT:-2222}:22"
+    volumes:
+      # Bind-mount so the host can inspect what the sync wrote.
+      - ./nas-data:/home/${NAS_USER}/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "ss -ltn | grep -q ':22 '"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+      start_period: 3s
+
+  nas-smb:
+    build:
+      context: .
+      dockerfile: Dockerfile.smb
+      args:
+        NAS_USER: ${NAS_USER}
+        NAS_UID: ${NAS_UID}
+        NAS_GID: ${NAS_GID}
+        SMB_SHARE: ${SMB_SHARE}
+    image: exlab/nas-emulator-smb:local
+    container_name: exlab-nas-smb
+    env_file: .env
+    ports:
+      - "${SMB_HOST_PORT:-1445}:445"
+    volumes:
+      - ./nas-data:/srv/${SMB_SHARE}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "ss -ltn 2>/dev/null | grep -q ':445 '"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+      start_period: 5s

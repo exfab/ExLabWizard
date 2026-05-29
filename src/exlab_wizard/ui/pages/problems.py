@@ -169,8 +169,16 @@ def render_problems_page(
     state: ProblemsPageState | None = None,
     on_override: Callable[[str], None] | None = None,
     on_revoke_override: Callable[[str], None] | None = None,
+    last_audit_at: str | None = None,
+    refresh_interval_seconds: int = 30,
 ) -> Any:
-    """Render the Problems tab content."""
+    """Render the Problems tab content.
+
+    ``last_audit_at`` is the ISO timestamp of the most recent background
+    audit pass (``deps.last_audit_at``); the footer shows it as ``HH:MM:SS``
+    plus a live "Next refresh in Ns" countdown over ``refresh_interval_seconds``
+    (T6 / §B5).
+    """
 
     s = state or ProblemsPageState()
     visible = filter_findings(findings, s)
@@ -276,12 +284,47 @@ def render_problems_page(
                             on_click=lambda _evt, fid=finding.finding_id: on_revoke_override(fid),
                         ).props(f'flat data-testid="problems-row-{idx}-revoke"')
 
-        ui.label(
-            f"Showing {len(visible)} of {len(findings)} findings  ·  Last audit: --",
-        ).style(
-            "font-family: var(--font-mono); "
-            "font-size: var(--text-xs); "
-            "color: var(--color-muted); "
-            "padding: 0.5rem 0;"
+        from exlab_wizard.utils.time import parse_utc_iso, utc_now
+
+        def _audit_time_text() -> str:
+            if not last_audit_at:
+                return "--"
+            try:
+                return parse_utc_iso(last_audit_at).strftime("%H:%M:%S")
+            except Exception:
+                return last_audit_at
+
+        def _remaining_seconds() -> int:
+            if not last_audit_at:
+                return refresh_interval_seconds
+            try:
+                elapsed = (utc_now() - parse_utc_iso(last_audit_at)).total_seconds()
+            except Exception:
+                return refresh_interval_seconds
+            # Clamp at 0 once the interval has elapsed (an overdue / in-progress
+            # pass) rather than re-cycling, which would misreport the wait.
+            return max(0, int(refresh_interval_seconds - elapsed))
+
+        footer = (
+            ui.label("")
+            .props('data-testid="problems-footer"')
+            .style(
+                "font-family: var(--font-mono); "
+                "font-size: var(--text-xs); "
+                "color: var(--color-muted); "
+                "padding: 0.5rem 0;"
+            )
         )
+
+        def _render_footer() -> None:
+            footer.text = (
+                f"Showing {len(visible)} of {len(findings)} findings  ·  "
+                f"Last audit: {_audit_time_text()}  ·  "
+                f"Next refresh in {_remaining_seconds()}s"
+            )
+
+        _render_footer()
+        # Tick the countdown once a second; the background audit refreshes
+        # ``last_audit_at`` itself on its own 30 s cadence (§4.6.2).
+        ui.timer(1.0, _render_footer)
     return container

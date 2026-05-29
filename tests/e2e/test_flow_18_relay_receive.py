@@ -25,7 +25,7 @@ def test_flow_18_received_equipment_node_appears(page, server_url) -> None:
     _goto(page, f"{server_url}/main?view=explorer")
     node = page.locator('[data-testid="tree-node-received_equipment"]')
     node.wait_for(state="visible", timeout=10_000)
-    assert "RELAY_EQX" in node.inner_text()
+    assert "TEST_RELAY_EQX" in node.inner_text()
 
 
 def test_flow_18_received_metadata_shows_relay_badge(page, server_url) -> None:

@@ -24,10 +24,10 @@ from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
     LIMSConfig,
+    NasConfig,
     OperatorsConfig,
     OrchestratorConfig,
     PathsConfig,
-    RcloneTransport,
     READMEConfig,
 )
 from exlab_wizard.constants import (
@@ -61,15 +61,9 @@ def ready_config(tmp_path: Path) -> Config:
                 label="Equipment 1",
                 local_root=str(tmp_path / "data"),
                 nas_root="/srv/nas",
-                completeness_signal="sentinel_file",
-                sentinel_filename="acquisition_complete.flag",
-                transport=RcloneTransport(
-                    type="rclone",
-                    rclone_remote="lab-nas",
-                    rclone_remote_path="lab/EQ1",
-                ),
             )
         ],
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
         operators=OperatorsConfig(allowlist=["asmith"]),
         readme=READMEConfig(defaults=[]),
         lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),

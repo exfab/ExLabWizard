@@ -22,11 +22,11 @@ All four components below are Python objects inside the FastAPI app process. The
 │  │  NAS sync module (NASSyncClient + workers)                  │ │
 │  │                                                             │ │
 │  │  ┌──────────────────────────┐  ┌────────────────────┐       │ │
-│  │  │ Durable Job Queue        │  │ Transport Drivers  │       │ │
-│  │  │ (SQLite at               │  │  - rclone          │       │ │
-│  │  │  {state_dir}/            │  │  - rsync-over-ssh  │       │ │
-│  │  │  sync_queue.db)          │  └────────────────────┘       │ │
-│  │  └──────────────────────────┘                               │ │
+│  │  │ Durable Job Queue        │  │ RcloneDriver       │       │ │
+│  │  │ (SQLite at               │  │  - copy   - check  │       │ │
+│  │  │  {state_dir}/            │  │  - lsjson - about  │       │ │
+│  │  │  sync_queue.db)          │  │  - listremotes     │       │ │
+│  │  └──────────────────────────┘  └────────────────────┘       │ │
 │  │  ┌──────────────────────────┐  ┌────────────────────┐       │ │
 │  │  │ Verifier (SHA-256)       │  │ Cleanup Reaper     │       │ │
 │  │  └──────────────────────────┘  └────────────────────┘       │ │
@@ -34,9 +34,9 @@ All four components below are Python objects inside the FastAPI app process. The
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-The queue's SQLite file is durable so a server restart does not lose pending or in-flight syncs; the queue itself is just a table the in-process module reads and writes. The transport driver is selected per-equipment from `config.yaml` `equipment.transport.type` ([[09_Configuration_File|§9]]); valid values for v1 are `"rclone"` and `"rsync_ssh"`. The previous `"smb_mount"` and `"file_transfer"` transport types from the orchestrator topology ([[13_Equipment_to_Orchestrator_Data_Flow|§13]]) describe how data lands in *staging*; the NAS sync module's transport choice is independent and describes the staging-or-local-to-NAS hop.
+The queue's SQLite file is durable so a server restart does not lose pending or in-flight syncs; the queue itself is just a table the in-process module reads and writes. The sole transport driver for v1 is `RcloneDriver` — a thin wrapper around the `rclone` binary ([[09_Configuration_File|§9]], `nas:` block). Connection details and credentials live entirely in the operator's `rclone.conf`; the app references remotes by name only. Both the NAS leg (for `sync_mode: nas` equipment) and the orchestrator staging leg (for `sync_mode: stage` equipment) use the same `RcloneDriver` methods, with the target composed from the appropriate remote name and base root.
 
-When the rclone or rsync transport drivers shell out to the upstream binary, that subprocess is a child of the app process — also not a separate "service." It runs for the duration of one transfer and exits.
+When the `RcloneDriver` shells out to the `rclone` binary, that subprocess is a child of the app process — also not a separate "service." It runs for the duration of one transfer and exits.
 
 ### 7.1.2 Job lifecycle
 
@@ -60,26 +60,74 @@ QUEUED → RUNNING → AWAITING_VERIFY → VERIFIED → CLEANUP_ELIGIBLE → CLE
 
 Job rows persist across restarts. On startup, NASSync requeues any `RUNNING` or `AWAITING_VERIFY` jobs (treating them as `QUEUED` and `VERIFIED → AWAITING_VERIFY` respectively, since transport may have completed but verification didn't run).
 
-### 7.1.3 Transport drivers
+### 7.1.3 Transport driver (`RcloneDriver`)
 
-Each driver is a thin wrapper around the upstream tool:
+The sole transport for v1 is `RcloneDriver` (`exlab_wizard.sync.transports.rclone`),
+a thin wrapper around the `rclone` binary. The driver exposes four operations:
 
-**rclone driver.** Shells out to `rclone copy --checksum <local_path> <remote>:<nas_path>` with `--transfers <N>` and `--bwlimit <K>` driven by config (§7.1.7). The remote name is configured per-equipment as `equipment.transport.rclone_remote` (e.g. `"lab-nas"`) and resolved against the operator's `rclone.conf` (default `~/.config/rclone/rclone.conf`). NASSync does not write `rclone.conf`; it expects IT to provision it once per machine. Credentials referenced by `rclone.conf` (S3 keys, SMB passwords, etc.) are managed by rclone and outside our keyring scope.
+| Method | Command | Purpose |
+|---|---|---|
+| `push` | `rclone copy --checksum [--files-from F] <local> <remote>:<path>` | Push local run to the named remote |
+| `check` | `rclone check --download --files-from F --combined <out> <local> <remote>:<path>` | Stream remote files back and hash locally (pre-deletion integrity gate) |
+| `lsjson` | `rclone lsjson -R <remote>:<path>` | List remote subtree (routine post-push reconcile; read-only) |
+| `about` | `rclone about <remote>: --json` | Probe reachability + free-space (Settings "Test connection") |
 
-**rsync-over-SSH driver.** Shells out to `rsync -a --checksum --partial -e "ssh -i <key_path>" <local_path>/ <user>@<host>:<nas_path>/` with optional `--bwlimit=<K>`. The SSH key path is `equipment.transport.ssh_key_path` (default `~/.ssh/id_ed25519`); the `<user>@<host>` is `equipment.transport.ssh_target`. Authentication is **key-based only**; password authentication is rejected by config validation. The SSH key file lives under standard SSH file permissions; no app-managed credential is stored.
+**Named-remote model.** The connection (host, credentials, backend type) is defined entirely by a named remote in the operator's `rclone.conf` (set up with `rclone config`; see `docs/setup/rclone-remote-setup.md`). The driver injects no credentials and never sees a password. It only passes `--config <path>` when `nas.rclone_config_path` is set; otherwise rclone uses its default config-discovery path.
 
-Both drivers stream stderr/stdout into the equipment-level `wizard.<hostname>.log` with structured prefixes so transfer failures are diagnosable from the cache log alone. Transfer progress (bytes-per-second, current file, ETA) is published to the controller's WebSocket via `phase: "queueing_nas_sync"` progress frames.
+**Target composition.** The run target is `<remote>:/<base_root>/<equipment_id>/<run-leaf>`. For `sync_mode: nas` equipment, `remote` and `base_root` come from the `nas:` block. For `sync_mode: stage` equipment, they come from `orchestrator.staging_remote` and `orchestrator.staging_base_root`. Both legs share `nas.rclone_config_path` as the `--config` override (both remotes live in the same `rclone.conf`); only the parallelism dial differs (`nas.perf` vs `orchestrator.staging_perf`).
 
-### 7.1.4 Hash verification
+**Parallelism.** `--transfers` and `--checkers` are forwarded from the relevant `perf` block. On space- and RAM-constrained acquisition machines, lowering these values bounds peak memory (rclone buffers per-stream data in RAM).
 
-After the transport reports success the job moves to `AWAITING_VERIFY`. The verifier:
+**Bandwidth.** `--bwlimit <K>K` is forwarded when `nas.bandwidth.upload_mbps` is set and the current local time falls inside any configured schedule window (see §7.1.7). The schedule is evaluated at push time in the workstation's local time zone.
 
-1. Walks the local subtree, computing SHA-256 for every file.
-2. Walks the remote subtree (via the same transport: `rclone hashsum sha256` for rclone, `ssh <target> "find ... -exec sha256sum {} +"` for rsync). For rsync targets where invoking remote shell commands is restricted, the verifier falls back to `rclone`-style streaming download-and-hash bounded by `verify.max_stream_bytes` (configurable, default 1 GiB per file; oversize files emit a `verify_skipped_oversize` finding into the job log and require manual resolution).
-3. Compares both hash sets pairwise. Mismatch on any file marks the job `FAILED` with the offending paths logged.
-4. Writes the hash manifest into the run's `.exlab-wizard/checksums.sha256` (already referenced from `ingest.json` schema in §13.4) so a later out-of-band verification can re-confirm.
+Driver stderr/stdout is logged to the equipment-level `wizard.<hostname>.log` so transfer failures are diagnosable from the cache log alone.
 
-A successful verifier run transitions the job to `VERIFIED` and updates `creation.json` `sync_status` to `"synced"` via `CacheWriter.update_creation_atomic`. (No LIMS write per run in v1; the LIMS-side mirror returns in v1.x — see [[#7.2 LIMS Integration|§7.2.7]].)
+### 7.1.4 Verify flow (lsjson reconcile + cleanup-time hash gate)
+
+The verify model has two tiers — a cheap routine reconcile after every push, and
+an expensive content-hash gate run exactly once immediately before local deletion.
+
+**Routine post-push reconcile (`rclone lsjson`, read-only).**
+After the transport reports push success the job moves to `AWAITING_VERIFY`. The
+sync worker calls `rclone lsjson -R <target>` to list the remote run subtree,
+parses the result into a `RemoteManifest` (keyed by run-relative POSIX path), and
+credits each file when **all** of the following hold:
+
+1. The remote entry is present.
+2. Its `Size` equals the local file size.
+3. Its `ModTime` is within `nas.mtime_tolerance_s` (default 2 s) of the local
+   `st_mtime` (absorbs SFTP/SMB modtime rounding).
+
+Files that pass all three checks are recorded in `sync_state.json` with
+`verified_at` and a local SHA-256 captured before the push (`verified_sha256`).
+Files that do not reconcile cause the job to re-queue (no backoff) so the next
+sweep re-pushes and re-reconciles the laggards. Once every file in the job
+reconciles, the job advances to `VERIFIED` and `creation.json` `sync_status`
+flips to `"synced"`. (No LIMS write per run in v1; see [[#7.2 LIMS Integration|§7.2.7]].)
+
+**Pre-deletion integrity gate (`rclone check --download`, content-hash).**
+The expensive download-and-hash verify runs **only** immediately before local
+deletion inside the `_maybe_cleanup` path. Two stages over the tracked files:
+
+1. A cheap `rclone lsjson` existence probe confirms every tracked file is present
+   remotely; any missing file defers the run in `CLEANUP_ELIGIBLE`.
+2. `rclone check --download --files-from <list> --combined <out>` streams each
+   remote file back and computes its SHA-256 locally (the only reliable way to
+   integrity-check SFTP and SMB backends, which expose no server-side hashing).
+   **No *data* files are staged to disk** — rclone streams and hashes remote
+   bytes in memory. Only two small, immediately-cleaned-up tempfiles (the
+   `--combined` output and the `--files-from` list) touch disk, so disk cost is
+   ≈ 0 regardless of run size. Any transport error, missing file, or hash
+   mismatch defers the run in `CLEANUP_ELIGIBLE` rather than deleting.
+
+This design means a run's data is hashed exactly once from the remote before any
+irreversible local deletion. The `rclone check --download` call is also available
+via the Settings "verify integrity" action (`force_verify`), which reports
+mismatches without advancing the queue state.
+
+**What is NOT done per push:** no full re-download or remote SHA lookup after
+every push. The routine reconcile is metadata-only (`lsjson`); the content-hash
+gate runs at most once per run, at cleanup time.
 
 ### 7.1.5 Retry policy
 
@@ -107,27 +155,28 @@ The cleanup reaper logs every deletion to the equipment-level `wizard.<hostname>
 
 ### 7.1.7 Bandwidth limiting
 
-Optional, per-equipment, in `config.yaml`:
+Global, under the top-level `nas:` block (not per-equipment):
 
 ```yaml
-equipment:
-  - id: "CONFOCAL_01"
-    transport:
-      type: "rclone"
-      rclone_remote: "lab-nas"
-      bandwidth:
-        upload_mbps: 50           # null or absent disables limiting
-        schedule:                  # optional; if set, upload_mbps applies during the listed windows only
-          - { days: ["mon", "tue", "wed", "thu", "fri"], from: "08:00", to: "18:00" }
+nas:
+  bandwidth:
+    upload_mbps: 50           # null or absent disables limiting
+    schedule:                  # optional; if set, upload_mbps applies during the listed windows only
+      - { days: ["mon", "tue", "wed", "thu", "fri"], from: "08:00", to: "18:00" }
 ```
 
-`upload_mbps` translates to `--bwlimit <K>` for rclone (where K = `upload_mbps * 1024 / 8` KiB/s) and `--bwlimit=<K>` for rsync. Outside the configured schedule windows (or when no schedule is set and no `upload_mbps`), the transport runs unthrottled. The schedule is evaluated in the workstation's local time zone.
+`upload_mbps` translates to `--bwlimit <K>K` for rclone (where K = `upload_mbps * 1024 / 8` KiB/s). Outside the configured schedule windows (or when no schedule is set and no `upload_mbps`), the transport runs unthrottled. The schedule is evaluated in the workstation's local time zone.
 
 This addresses the acquisition-machine network-sharing concern: instrument control planes and acquisition data often share a NIC, and a saturated upstream during acquisition is a data-integrity risk. Bandwidth limiting + schedule lets the lab cap NASSync to off-peak hours.
 
 ### 7.1.8 Credential storage
 
-NASSync credential storage is governed by §7.4 (the unified keyring model). Briefly: rsync uses SSH-key auth with no app-managed credential; rclone delegates to its own `rclone.conf`. The only NASSync-managed credential is the rare case of HTTP basic auth against an SMB-via-WebDAV endpoint, which is stored under keyring service `exlab-wizard` username `nas:<equipment_id>`.
+NASSync manages **no NAS credentials**. Connection details (host, user, password,
+SSH key, etc.) live entirely in the operator's `rclone.conf`, managed by rclone.
+The app never sees a password; it only passes `--config <path>` when
+`nas.rclone_config_path` is set. The only credential the app manages is the LIMS
+password (§7.4). See `docs/setup/rclone-remote-setup.md` for the rclone setup
+walkthrough.
 
 ### 7.1.9 What NASSync does not do
 
@@ -423,9 +472,7 @@ No secret material is ever written to `config.yaml`, the cache, or the wizard lo
 | Component | Service | Username | Secret value |
 |---|---|---|---|
 | LIMS | `exlab-wizard` | `lims` | The API credential as the LIMS expects it (token, password, etc.) |
-| NASSync (per-equipment, only for HTTP-basic edge case) | `exlab-wizard` | `nas:<equipment_id>` | The HTTP-basic password |
-| NASSync via rclone | (none) | (none) | rclone manages its own credentials in `rclone.conf`; we do not duplicate |
-| NASSync via rsync-over-SSH | (none) | (none) | SSH key on disk under standard SSH file permissions |
+| NASSync | (none) | (none) | NAS credentials live entirely in `rclone.conf`; the app never manages them |
 
 Conventions:
 

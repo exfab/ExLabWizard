@@ -10,28 +10,26 @@ section citations.
 from __future__ import annotations
 
 # ---- App-level identifiers ----
-from exlab_wizard.constants.app import APP_NAME
+from exlab_wizard.constants.app import APP_NAME, TEST_MODE_ENV, TEST_MODE_PREFIX
 
 # ---- Enums (Backend §4.7, §4.9.1, §5.2, §6.2.4, §7, §8.1, §11.3, §13.3) ----
 from exlab_wizard.constants.enums import (
     AuditScopeKind,
     BandwidthDay,
-    CompletenessSignal,
     CreationLevel,
     DirectoryLevel,
     FieldType,
     FindingKind,
-    IngestState,
     LIMSProjectSource,
     LIMSProjectStatus,
     NextAction,
-    OrchestratorTransportType,
     Platform,
     PluginSourceRoot,
     PluginStatus,
     ProblemClass,
     RunKind,
     RunScope,
+    RunSyncState,
     SessionKind,
     SetupNextAction,
     SetupState,
@@ -41,7 +39,6 @@ from exlab_wizard.constants.enums import (
     SyncStatus,
     TemplateType,
     Tier,
-    TransportType,
     TreeProjectStatus,
 )
 
@@ -50,11 +47,9 @@ from exlab_wizard.constants.filenames import (
     ANSWERS_FILE_NAME,
     CACHE_DIR_NAME,
     CENTRAL_LOG_FILE,
-    CHECKSUMS_RELATIVE,
     COPIER_MANIFEST_NAME,
     CREATION_JSON_NAME,
     EQUIPMENT_JSON_NAME,
-    INGEST_JSON_NAME,
     LIMS_CACHE_DB_NAME,
     LOG_FILE_TEMPLATE,
     PLUGIN_MANIFEST_NAME,
@@ -63,6 +58,7 @@ from exlab_wizard.constants.filenames import (
     SECRETS_FILE,
     SERVER_STATE_FILE,
     SYNC_QUEUE_DB_NAME,
+    SYNC_STATE_FILENAME,
     TEST_RUNS_JSON_NAME,
 )
 
@@ -70,8 +66,6 @@ from exlab_wizard.constants.filenames import (
 from exlab_wizard.constants.keyring import (
     KEYRING_SERVICE,
     KEYRING_USERNAME_LIMS,
-    KEYRING_USERNAME_NAS_TEMPLATE,
-    keyring_nas_username,
 )
 
 # ---- Limits (Backend §4, §6, §8.1.1, §15; Frontend §4.6) -------------------
@@ -141,10 +135,10 @@ from exlab_wizard.constants.patterns import (
 from exlab_wizard.constants.schema_versions import (
     CREATION_JSON_VERSION,
     EQUIPMENT_JSON_VERSION,
-    INGEST_JSON_VERSION,
     OFFLINE_CATALOGUE_VERSION,
     README_FIELDS_JSON_VERSION,
     README_FRONT_MATTER_SCHEMA_VERSION,
+    SYNC_STATE_JSON_VERSION,
     TEST_RUNS_JSON_VERSION,
 )
 
@@ -161,7 +155,6 @@ __all__ = [
     "BEARER_REGEX",
     "CACHE_DIR_NAME",
     "CENTRAL_LOG_FILE",
-    "CHECKSUMS_RELATIVE",
     "COPIER_MANIFEST_NAME",
     "CREATION_JSON_NAME",
     # Schema versions
@@ -173,12 +166,9 @@ __all__ = [
     "EQUIPMENT_ID_REGEX",
     "EQUIPMENT_JSON_NAME",
     "EQUIPMENT_JSON_VERSION",
-    "INGEST_JSON_NAME",
-    "INGEST_JSON_VERSION",
     # Keyring
     "KEYRING_SERVICE",
     "KEYRING_USERNAME_LIMS",
-    "KEYRING_USERNAME_NAS_TEMPLATE",
     "LABEL_MAX_LENGTH",
     "LIMS_CACHE_DB_NAME",
     "LOG_FILE_TEMPLATE",
@@ -223,8 +213,12 @@ __all__ = [
     "SESSION_GC_AFTER_SECONDS",
     "SIGTERM_DRAIN_TIMEOUT_SECONDS",
     "SYNC_QUEUE_DB_NAME",
+    "SYNC_STATE_FILENAME",
+    "SYNC_STATE_JSON_VERSION",
     "TEMPLATE_QUESTION_ID_PATTERN",
     "TEMPLATE_QUESTION_ID_REGEX",
+    "TEST_MODE_ENV",
+    "TEST_MODE_PREFIX",
     "TEST_RUNS_DIR_NAME",
     "TEST_RUNS_JSON_NAME",
     "TEST_RUNS_JSON_VERSION",
@@ -241,22 +235,20 @@ __all__ = [
     # Enum classes
     "AuditScopeKind",
     "BandwidthDay",
-    "CompletenessSignal",
     "CreationLevel",
     "DirectoryLevel",
     "FieldType",
     "FindingKind",
-    "IngestState",
     "LIMSProjectSource",
     "LIMSProjectStatus",
     "NextAction",
-    "OrchestratorTransportType",
     "Platform",
     "PluginSourceRoot",
     "PluginStatus",
     "ProblemClass",
     "RunKind",
     "RunScope",
+    "RunSyncState",
     "SessionKind",
     "SetupNextAction",
     "SetupState",
@@ -266,7 +258,5 @@ __all__ = [
     "SyncStatus",
     "TemplateType",
     "Tier",
-    "TransportType",
     "TreeProjectStatus",
-    "keyring_nas_username",
 ]

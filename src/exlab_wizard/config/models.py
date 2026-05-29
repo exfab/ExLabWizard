@@ -5,8 +5,7 @@ These models are the typed schema for the on-disk ``config.yaml``. The loader
 ``Config.model_validate``, and converts any Pydantic ``ValidationError`` into a
 ``ConfigError`` at the boundary; nothing here raises ``ConfigError`` directly
 except for cases that need a custom message before the model layer sees the
-input (for instance the ``password``-key rejection in
-:class:`RsyncSshTransport`).
+input.
 
 Style:
 - ``model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)`` on
@@ -21,7 +20,7 @@ Style:
 from __future__ import annotations
 
 from datetime import time
-from typing import Annotated, Any, Literal
+from typing import Any
 
 from pydantic import (
     BaseModel,
@@ -35,9 +34,7 @@ from pydantic import (
 from exlab_wizard.constants import (
     TEMPLATE_QUESTION_ID_PATTERN,
     BandwidthDay,
-    CompletenessSignal,
     FieldType,
-    OrchestratorTransportType,
     StagingCleanupMode,
     SyncMode,
 )
@@ -48,20 +45,18 @@ __all__ = [
     "BandwidthWindow",
     "Config",
     "EquipmentConfig",
-    "EquipmentTransport",
     "LIMSConfig",
     "LoggingConfig",
     "NASCleanupConfig",
+    "NasConfig",
     "OperatorsConfig",
     "OrchestratorConfig",
     "OrchestratorStagingCleanup",
-    "OrchestratorStagingTransport",
     "PathsConfig",
     "PluginsConfig",
     "READMEConfig",
     "READMEDefaultField",
-    "RcloneTransport",
-    "RsyncSshTransport",
+    "RclonePerf",
     "SyncConfig",
     "ValidatorConfig",
 ]
@@ -221,70 +216,45 @@ class BandwidthConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# transports
+# nas
 # ---------------------------------------------------------------------------
 
 
-class RcloneTransport(BaseModel):
-    """``transport:`` block when ``type == 'rclone'``."""
+class RclonePerf(BaseModel):
+    """Parallelism knobs forwarded to rclone (``--transfers`` / ``--checkers``).
 
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    type: Literal["rclone"]
-    rclone_remote: str = Field(min_length=1)
-    rclone_remote_path: str = Field(min_length=1)
-    bandwidth: BandwidthConfig = Field(default_factory=BandwidthConfig)
-
-
-class RsyncSshTransport(BaseModel):
-    """``transport:`` block when ``type == 'rsync_ssh'``.
-
-    The model rejects any input dict that contains a ``password`` key. SSH
-    password auth is forbidden by spec; only key-based auth is supported. The
-    ``extra='forbid'`` setting also rejects the field, but the explicit
-    ``mode='before'`` validator emits a more actionable error message.
+    These double as the memory dial on space- and RAM-constrained
+    acquisition machines: peak memory scales with these counts times
+    rclone's per-stream buffer.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    type: Literal["rsync_ssh"]
-    ssh_target: str = Field(min_length=1)
-    ssh_key_path: str = "~/.ssh/id_ed25519"
-    remote_path: str = Field(min_length=1)
-    bandwidth: BandwidthConfig = Field(default_factory=BandwidthConfig)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_password_field(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "password" in data:
-            msg = (
-                "rsync_ssh transport must not declare a 'password' field; "
-                "SSH password auth is unsupported. Use ssh_key_path instead."
-            )
-            raise ConfigError(msg)
-        return data
+    transfers: int = Field(default=4, ge=1, le=64)
+    checkers: int = Field(default=8, ge=1, le=64)
 
 
-# Discriminated union over the transport ``type`` tag. Pydantic 2 picks the
-# right submodel by inspecting the ``type`` value.
-EquipmentTransport = Annotated[
-    RcloneTransport | RsyncSshTransport,
-    Field(discriminator="type"),
-]
+class NasConfig(BaseModel):
+    """``nas:`` block — the single rclone remote + base root for NAS sync.
 
-
-class OrchestratorStagingTransport(BaseModel):
-    """``orchestrator_staging_transport:`` -- staging hop only. Backend Spec §13."""
+    ``remote`` is the name of a remote defined in the operator's
+    ``rclone.conf`` (set up separately with ``rclone config``). Equipment
+    run folders live under ``<remote>:<base_root>/<equipment_id>/…``.
+    ``rclone_config_path`` optionally pins ``rclone --config <path>`` for
+    when the app runs as a different OS user than the one who created the
+    config; blank means rclone's default discovery.
+    """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    type: OrchestratorTransportType
-    mount_point: str = Field(min_length=1)
-    staging_subpath: str = Field(min_length=1)
-
-    @field_serializer("type")
-    def _serialize_type(self, value: OrchestratorTransportType) -> str:
-        return value.value
+    remote: str = ""
+    base_root: str = ""
+    rclone_config_path: str = ""
+    # Reconcile tolerance: a file counts as synced only when its remote modtime
+    # is within this many seconds of local (absorbs SFTP/SMB modtime rounding).
+    mtime_tolerance_s: int = Field(default=2, ge=0)
+    perf: RclonePerf = Field(default_factory=RclonePerf)
+    bandwidth: BandwidthConfig = Field(default_factory=BandwidthConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -297,10 +267,15 @@ class EquipmentConfig(BaseModel):
 
     ``sync_mode`` (Redesign Spec §3.2) is the per-equipment role this device
     plays for the equipment: ``nas`` means this device acquires runs and syncs
-    them directly to the NAS (requires ``transport``); ``stage`` means this
-    device acquires runs and pushes them to a connected PC's staging area
-    (requires ``orchestrator_staging_transport``). The two transport fields
-    are mutually exclusive — exactly one is populated, dictated by the mode.
+    them directly to the NAS; ``stage`` means this device acquires runs and
+    pushes them to a connected staging PC's staging area instead.
+
+    rclone.conf NAS-sync migration: neither mode carries a per-equipment
+    connection block. The NAS connection is defined once by the ``nas:`` block
+    (a single rclone remote); the staging hop is defined once by
+    ``orchestrator.staging_remote`` / ``orchestrator.staging_base_root`` (a
+    second rclone remote in the same ``rclone.conf``). The push target is
+    selected by ``sync_mode`` at sync time, not by a per-equipment block.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -309,17 +284,7 @@ class EquipmentConfig(BaseModel):
     label: str = Field(min_length=1)
     local_root: str = Field(min_length=1)
     nas_root: str = Field(min_length=1)
-    completeness_signal: CompletenessSignal
-    sentinel_filename: str | None = None
-    manifest_filename: str | None = None
     sync_mode: SyncMode = SyncMode.NAS
-    transport: EquipmentTransport | None = None
-    orchestrator_staging_transport: OrchestratorStagingTransport | None = None
-
-    @field_serializer("completeness_signal")
-    def _serialize_completeness_signal(self, value: CompletenessSignal) -> str:
-        # Emit the bare string so YAML/JSON dumps round-trip the wire format.
-        return value.value
 
     @field_serializer("sync_mode")
     def _serialize_sync_mode(self, value: SyncMode) -> str:
@@ -336,50 +301,6 @@ class EquipmentConfig(BaseModel):
             return canonicalize_equipment_id(value)
         except ConfigError as exc:
             raise ValueError(str(exc)) from exc
-
-    @model_validator(mode="after")
-    def _completeness_signal_requires_matching_filename(self) -> EquipmentConfig:
-        match self.completeness_signal:
-            case CompletenessSignal.SENTINEL_FILE:
-                if not self.sentinel_filename:
-                    msg = (
-                        "equipment.completeness_signal == 'sentinel_file' "
-                        "requires a non-empty sentinel_filename"
-                    )
-                    raise ValueError(msg)
-            case CompletenessSignal.MANIFEST:
-                if not self.manifest_filename:
-                    msg = (
-                        "equipment.completeness_signal == 'manifest' "
-                        "requires a non-empty manifest_filename"
-                    )
-                    raise ValueError(msg)
-        return self
-
-    @model_validator(mode="after")
-    def _sync_mode_dictates_transport(self) -> EquipmentConfig:
-        match self.sync_mode:
-            case SyncMode.NAS:
-                if self.transport is None:
-                    msg = "equipment.sync_mode == 'nas' requires a 'transport' block"
-                    raise ValueError(msg)
-                if self.orchestrator_staging_transport is not None:
-                    msg = (
-                        "equipment.sync_mode == 'nas' must not declare "
-                        "'orchestrator_staging_transport'"
-                    )
-                    raise ValueError(msg)
-            case SyncMode.STAGE:
-                if self.orchestrator_staging_transport is None:
-                    msg = (
-                        "equipment.sync_mode == 'stage' requires an "
-                        "'orchestrator_staging_transport' block"
-                    )
-                    raise ValueError(msg)
-                if self.transport is not None:
-                    msg = "equipment.sync_mode == 'stage' must not declare a 'transport' block"
-                    raise ValueError(msg)
-        return self
 
 
 # ---------------------------------------------------------------------------
@@ -504,13 +425,20 @@ class PluginsConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _default_ignore_globs() -> list[str]:
+    return ["*.partial", "*.tmp"]
+
+
 class SyncConfig(BaseModel):
-    """``sync:`` block. NAS sync engine kill-switch + retry policy."""
+    """``sync:`` block. NAS sync engine kill-switch + retry / quiescence policy."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     enabled: bool = True
     retry_attempts: int = Field(default=3, ge=0)
+    quiescence_minutes: int = Field(default=10, ge=1)
+    ignore_globs: list[str] = Field(default_factory=_default_ignore_globs)
+    poll_interval_seconds: int = Field(default=120, ge=1)
 
 
 # ---------------------------------------------------------------------------
@@ -538,16 +466,28 @@ class OrchestratorConfig(BaseModel):
     """``orchestrator:`` block. Backend Spec §9, §13.
 
     GUI/Orchestrator Redesign §3.1 collapsed the single-equipment /
-    orchestrator distinction: the staging pipeline is always active, so
-    ``label`` and ``staging_root`` become required at the top-level
-    ``Config`` cross-field validator (no longer gated on a removed
-    ``enabled`` toggle).
+    orchestrator distinction (no ``enabled`` toggle). ``label`` is required
+    by the setup-state gate -- it identifies this workstation in every run's
+    ``creation.json``. ``staging_root`` is **opt-in**: a blank value means
+    this device is not a staging PC, so it does not gate setup and no staging
+    directory is created until the operator saves a non-empty path.
+
+    rclone.conf NAS-sync migration (Phase 8): ``staging_remote`` /
+    ``staging_base_root`` define the orchestrator's stage-mode hop as a named
+    rclone remote (a second remote in the same ``rclone.conf`` as the
+    ``nas:`` remote). stage-mode equipment push run folders to
+    ``<staging_remote>:<staging_base_root>/<equipment_id>/<run-leaf>`` using
+    the same :class:`RcloneDriver` ops as the NAS leg. ``staging_perf`` is the
+    parallelism dial for that hop.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     label: str = ""
     staging_root: str = ""
+    staging_remote: str = ""
+    staging_base_root: str = ""
+    staging_perf: RclonePerf = Field(default_factory=RclonePerf)
     staging_cleanup: OrchestratorStagingCleanup = Field(
         default_factory=OrchestratorStagingCleanup,
     )
@@ -567,6 +507,7 @@ class Config(BaseModel):
     lims: LIMSConfig = Field(default_factory=LIMSConfig)
     readme: READMEConfig = Field(default_factory=READMEConfig)
     equipment: list[EquipmentConfig] = []
+    nas: NasConfig = Field(default_factory=NasConfig)
     nas_cleanup: NASCleanupConfig = Field(default_factory=NASCleanupConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     operators: OperatorsConfig = Field(default_factory=OperatorsConfig)
@@ -586,11 +527,36 @@ class Config(BaseModel):
                 raise ValueError(msg)
             seen.add(entry.id)
 
-        # 2. The staging pipeline is always active (Redesign §3.1), so
-        #    label and staging_root are always required (or empty for the
-        #    setup-incomplete gate to trip — see paths.setup_state).
-        # The non-empty check has moved to the setup-incomplete evaluator
-        # so that an in-flight first-launch config is loadable but flagged
-        # for completion. Pydantic validation only ensures the fields are
-        # present (which they always are due to the empty-string defaults).
+        # 2. Orchestrator identity: ``label`` is required and ``staging_root``
+        #    is opt-in (a blank value just means this device is not a staging
+        #    PC). The non-empty ``label`` check lives in the setup-incomplete
+        #    evaluator (see paths.setup_state) so an in-flight first-launch
+        #    config is loadable but flagged for completion. Pydantic only
+        #    ensures the fields are present (always true via empty-string
+        #    defaults).
         return self
+
+
+def config_with_equipment_appended(config: Config | None, equipment: EquipmentConfig) -> Config:
+    """Return a copy of ``config`` with ``equipment`` appended.
+
+    The single place the Add-Equipment flow merges a new device into the
+    live config -- shared by the ``POST /config/equipment`` route and the
+    NiceGUI wizard's confirm step so both reject duplicate ids and re-run
+    the same cross-field validation instead of open-coding the merge
+    twice. ``config`` may be ``None`` on a fresh install that has no
+    ``config.yaml`` yet, in which case a default :class:`Config` is the
+    base.
+
+    Raises :class:`exlab_wizard.errors.ConfigError` when an equipment
+    entry with the same id already exists.
+    """
+    base = config or Config()
+    for entry in base.equipment:
+        if entry.id == equipment.id:
+            msg = f"equipment id {equipment.id!r} already exists in config"
+            raise ConfigError(msg)
+    merged = base.model_copy(update={"equipment": [*base.equipment, equipment]})
+    # Re-run the full cross-field validation (unique ids, etc.) on the
+    # merged result so a bad merge fails loudly rather than persisting.
+    return Config.model_validate(merged.model_dump(mode="python"))

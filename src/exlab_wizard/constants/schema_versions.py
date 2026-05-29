@@ -14,9 +14,9 @@ CREATION_JSON_VERSION: str = "1.9"
 # Version of the per-equipment ``readme_fields.json`` cache. Backend Spec §11.4.
 README_FIELDS_JSON_VERSION: str = "1.1"
 
-# Version of the per-run ``ingest.json`` cache produced during NAS ingest.
-# Backend Spec §13.4.
-INGEST_JSON_VERSION: str = "1.1"
+# Version of the per-run ``sync_state.json`` cache produced by the
+# quiescence-driven per-file NAS sync poller (2026-05-21 design).
+SYNC_STATE_JSON_VERSION: str = "1.0"
 
 # Version of the per-equipment ``equipment.json`` cache. Backend Spec §11.4.1.
 EQUIPMENT_JSON_VERSION: str = "1.0"

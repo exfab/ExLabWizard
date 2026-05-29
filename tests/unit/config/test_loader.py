@@ -23,12 +23,14 @@ from pydantic import ValidationError as PydanticValidationError
 from ruamel.yaml import YAML
 
 from exlab_wizard.config.loader import (
+    apply_test_mode_prefix,
     dump_config,
     load_config,
     load_config_from_text,
     save_config,
 )
 from exlab_wizard.config.models import Config
+from exlab_wizard.constants import TEST_MODE_ENV, TEST_MODE_PREFIX
 from exlab_wizard.errors import ConfigError
 
 # Fixtures are read-only inputs committed to the repo. Resolve from this
@@ -60,17 +62,14 @@ def test_load_config_complete_yaml() -> None:
     assert len(cfg.equipment) == 2
     confocal = cfg.equipment[0]
     assert confocal.id == "CONFOCAL_01"
-    assert confocal.completeness_signal == "sentinel_file"
-    assert confocal.sentinel_filename == "acquisition_complete.flag"
-    assert confocal.transport.type == "rclone"
-    assert confocal.transport.rclone_remote == "lab-nas"
+    assert confocal.sync_mode.value == "nas"
 
     flow = cfg.equipment[1]
     assert flow.id == "FLOW_01"
-    assert flow.completeness_signal == "manifest"
-    assert flow.manifest_filename == "run_manifest.json"
-    assert flow.transport.type == "rsync_ssh"
-    assert flow.transport.ssh_target == "labuser@nas01.lab.example"
+    assert flow.sync_mode.value == "nas"
+
+    # The NAS connection + bandwidth policy now live on the nas: block.
+    assert cfg.nas.bandwidth.upload_mbps == 50
 
     # Operators allowlist (one entry per the prompt).
     assert cfg.operators.allowlist == ["alex.nguyen"]
@@ -113,17 +112,7 @@ def test_load_config_validation_error_raises_config_error(tmp_path: Path) -> Non
     # the original error chained as __cause__.
     bad = tmp_path / "validation.yaml"
     bad.write_text(
-        "equipment:\n"
-        "  - id: lowercase\n"
-        "    label: x\n"
-        "    local_root: /tmp\n"
-        "    nas_root: /mnt\n"
-        "    completeness_signal: sentinel_file\n"
-        "    sentinel_filename: done.flag\n"
-        "    transport:\n"
-        "      type: rclone\n"
-        "      rclone_remote: r\n"
-        "      rclone_remote_path: p\n",
+        "equipment:\n  - id: lowercase\n    label: x\n    local_root: /tmp\n    nas_root: /mnt\n",
         encoding="utf-8",
     )
     with pytest.raises(ConfigError) as info:
@@ -253,13 +242,6 @@ def test_dump_config_round_trip() -> None:
                 "label": "Confocal",
                 "local_root": "/l",
                 "nas_root": "/n",
-                "completeness_signal": "sentinel_file",
-                "sentinel_filename": "done.flag",
-                "transport": {
-                    "type": "rclone",
-                    "rclone_remote": "lab-nas",
-                    "rclone_remote_path": "lab/CONFOCAL_01",
-                },
             },
         ],
     }
@@ -273,6 +255,158 @@ def test_dump_config_round_trip() -> None:
 # ---------------------------------------------------------------------------
 # library identity
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# EXLAB_WIZARD_TEST_MODE prefix
+# ---------------------------------------------------------------------------
+
+
+# Minimal two-equipment YAML used by the test-mode flavour tests. Kept inline
+# (rather than as a fixture file) so the original-vs-prefixed comparison is
+# obvious to a reader and so the test stays robust if the shared
+# ``complete.yaml`` adds an equipment entry later.
+_TWO_EQUIPMENT_YAML = (
+    "equipment:\n"
+    "  - id: EQ1\n"
+    "    label: First\n"
+    "    local_root: /data/eq1\n"
+    "    nas_root: /mnt/eq1\n"
+    "  - id: EQ2\n"
+    "    label: Second\n"
+    "    local_root: /data/eq2\n"
+    "    nas_root: /mnt/eq2\n"
+)
+
+
+def test_test_mode_unset_leaves_equipment_ids_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default code path is a no-op: no env var, no rewrite."""
+    monkeypatch.delenv(TEST_MODE_ENV, raising=False)
+    cfg = load_config_from_text(_TWO_EQUIPMENT_YAML)
+    assert [e.id for e in cfg.equipment] == ["EQ1", "EQ2"]
+
+
+def test_test_mode_enabled_prefixes_every_equipment_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A truthy env value rewrites every id with the canonical prefix."""
+    monkeypatch.setenv(TEST_MODE_ENV, "1")
+    cfg = load_config_from_text(_TWO_EQUIPMENT_YAML)
+    assert [e.id for e in cfg.equipment] == [
+        f"{TEST_MODE_PREFIX}EQ1",
+        f"{TEST_MODE_PREFIX}EQ2",
+    ]
+    # Non-id fields are untouched.
+    assert cfg.equipment[0].label == "First"
+    assert cfg.equipment[1].local_root == "/data/eq2"
+
+
+def test_test_mode_is_idempotent_on_already_prefixed_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An already-``TEST_``-prefixed id must NOT be re-prefixed."""
+    monkeypatch.setenv(TEST_MODE_ENV, "true")
+    seeded = (
+        "equipment:\n"
+        "  - id: TEST_EQ1\n"
+        "    label: Already prefixed\n"
+        "    local_root: /data/eq1\n"
+        "    nas_root: /mnt/eq1\n"
+        "  - id: EQ2\n"
+        "    label: Plain\n"
+        "    local_root: /data/eq2\n"
+        "    nas_root: /mnt/eq2\n"
+    )
+    cfg = load_config_from_text(seeded)
+    # The first id is unchanged (no ``TEST_TEST_…`` doubling); the
+    # second picks up the prefix exactly once.
+    assert [e.id for e in cfg.equipment] == ["TEST_EQ1", "TEST_EQ2"]
+
+
+def test_test_mode_preserves_unique_id_invariant(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The transformed config still passes Config.model_validate."""
+    monkeypatch.setenv(TEST_MODE_ENV, "1")
+    cfg = load_config_from_text(_TWO_EQUIPMENT_YAML)
+    # Re-validate the dumped form so duplicate ids or pattern violations
+    # would surface here too. (The loader already does this internally;
+    # the explicit re-validation guards against future regressions in
+    # apply_test_mode_prefix.)
+    revalidated = Config.model_validate(cfg.model_dump(mode="python"))
+    seen: set[str] = set()
+    for entry in revalidated.equipment:
+        assert entry.id not in seen, f"duplicate id {entry.id!r} after test-mode rewrite"
+        seen.add(entry.id)
+
+
+@pytest.mark.parametrize("truthy", ["1", "true", "TRUE", "True", "yes", "on", "ON"])
+def test_test_mode_truthy_values_trigger_prefix(
+    monkeypatch: pytest.MonkeyPatch, truthy: str
+) -> None:
+    """Every accepted spelling flips the loader on (case-insensitive)."""
+    monkeypatch.setenv(TEST_MODE_ENV, truthy)
+    cfg = load_config_from_text(_TWO_EQUIPMENT_YAML)
+    assert all(e.id.startswith(TEST_MODE_PREFIX) for e in cfg.equipment), (
+        f"{truthy!r} should have enabled test mode"
+    )
+
+
+@pytest.mark.parametrize("falsy", ["", "0", "false", "FALSE", "no", "off", "  "])
+def test_test_mode_falsy_values_do_not_trigger_prefix(
+    monkeypatch: pytest.MonkeyPatch, falsy: str
+) -> None:
+    """Falsy / unrecognized values leave the loaded config untouched."""
+    monkeypatch.setenv(TEST_MODE_ENV, falsy)
+    cfg = load_config_from_text(_TWO_EQUIPMENT_YAML)
+    assert [e.id for e in cfg.equipment] == ["EQ1", "EQ2"]
+
+
+def test_test_mode_unset_via_delenv_does_not_trigger_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An absent env var (not just empty) leaves the config untouched."""
+    monkeypatch.delenv(TEST_MODE_ENV, raising=False)
+    cfg = load_config_from_text(_TWO_EQUIPMENT_YAML)
+    assert [e.id for e in cfg.equipment] == ["EQ1", "EQ2"]
+
+
+def test_apply_test_mode_prefix_helper_is_a_pure_function(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``apply_test_mode_prefix`` itself ignores the env var.
+
+    The env-var check is the loader's responsibility; the helper is
+    the deterministic transformation tests can call directly.
+    """
+    monkeypatch.delenv(TEST_MODE_ENV, raising=False)
+    cfg = load_config_from_text(_TWO_EQUIPMENT_YAML)
+    prefixed = apply_test_mode_prefix(cfg)
+    assert [e.id for e in prefixed.equipment] == [
+        f"{TEST_MODE_PREFIX}EQ1",
+        f"{TEST_MODE_PREFIX}EQ2",
+    ]
+    # The input config is not mutated.
+    assert [e.id for e in cfg.equipment] == ["EQ1", "EQ2"]
+
+
+def test_loader_round_trips_nas_block(tmp_path):
+    from exlab_wizard.config.loader import load_config, save_config
+
+    text = (
+        "paths:\n"
+        "  templates_dir: /t\n  plugin_dir: /p\n  local_root: /l\n"
+        "orchestrator:\n  label: ws-1\n"
+        "nas:\n"
+        "  remote: nas01\n"
+        "  base_root: /srv/lab\n"
+        "  perf:\n    transfers: 2\n    checkers: 3\n"
+    )
+    p = tmp_path / "config.yaml"
+    p.write_text(text, encoding="utf-8")
+    cfg = load_config(p)
+    assert cfg.nas.remote == "nas01"
+    assert cfg.nas.perf.transfers == 2
+    save_config(p, cfg, original_text=text)
+    reloaded = load_config(p)
+    assert reloaded.nas.remote == "nas01"
+    assert reloaded.nas.perf.transfers == 2
 
 
 def test_load_config_uses_ruamel_round_trip(tmp_path: Path) -> None:

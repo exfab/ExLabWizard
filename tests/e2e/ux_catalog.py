@@ -162,77 +162,34 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
         action="Type the equipment NAS root",
         outcome="Provides the EquipmentConfig.nas_root for the new entry.",
     ),
+    # rclone.conf migration (Phase 8): the per-equipment SFTP/SMB transport
+    # radio + connection fields were removed from the Settings equipment form.
+    # A nas-mode device now carries only id/label/local_root/nas_root; the NAS
+    # connection is the single nas: remote configured in Settings -> NAS Remote.
+    # -- Settings: NAS Remote (rclone.conf migration) ----------------------
     UXInteraction(
-        flow="Equipment",
+        flow="NAS Remote",
         route="/settings",
-        testid="settings-equipment-signal",
-        element="radio",
-        action="Pick the completeness signal (sentinel_file / manifest)",
-        outcome="Swaps the filename field between sentinel and manifest.",
+        testid="settings-nav-nas_remote",
+        element="nav row",
+        action="Click the 'NAS Remote' sidebar row",
+        outcome="Shows the configured rclone remote name, base root, and found/not-found badge.",
     ),
     UXInteraction(
-        flow="Equipment",
+        flow="NAS Remote",
         route="/settings",
-        testid="settings-equipment-sentinel",
-        element="input",
-        action="Type the sentinel filename",
-        outcome="Sets the sentinel_file completeness signal filename.",
+        testid="settings-nas-remote-name",
+        element="label",
+        action="View the configured rclone remote name",
+        outcome="Displays the remote name from config.nas.remote (or '(not configured)').",
     ),
     UXInteraction(
-        flow="Equipment",
+        flow="NAS Remote",
         route="/settings",
-        testid="settings-equipment-manifest",
-        element="input",
-        action="Type the manifest filename",
-        outcome="Sets the manifest completeness signal filename.",
-    ),
-    UXInteraction(
-        flow="Equipment",
-        route="/settings",
-        testid="settings-equipment-transport",
-        element="radio",
-        action="Pick the transport (rclone / rsync_ssh)",
-        outcome="Swaps the transport fieldset between rclone and rsync_ssh.",
-    ),
-    UXInteraction(
-        flow="Equipment",
-        route="/settings",
-        testid="settings-equipment-rclone-remote",
-        element="input",
-        action="Type the rclone remote",
-        outcome="Sets the rclone transport remote for the new entry.",
-    ),
-    UXInteraction(
-        flow="Equipment",
-        route="/settings",
-        testid="settings-equipment-rclone-path",
-        element="input",
-        action="Type the rclone remote path",
-        outcome="Sets the rclone transport remote path for the new entry.",
-    ),
-    UXInteraction(
-        flow="Equipment",
-        route="/settings",
-        testid="settings-equipment-ssh-target",
-        element="input",
-        action="Type the rsync_ssh SSH target",
-        outcome="Sets the rsync_ssh transport ssh_target for the new entry.",
-    ),
-    UXInteraction(
-        flow="Equipment",
-        route="/settings",
-        testid="settings-equipment-ssh-key",
-        element="input",
-        action="Type the rsync_ssh SSH key path",
-        outcome="Sets the rsync_ssh transport ssh_key_path for the new entry.",
-    ),
-    UXInteraction(
-        flow="Equipment",
-        route="/settings",
-        testid="settings-equipment-rsync-path",
-        element="input",
-        action="Type the rsync_ssh remote path",
-        outcome="Sets the rsync_ssh transport remote_path for the new entry.",
+        testid="settings-nas-test-connection",
+        element="button",
+        action="Click 'Test connection'",
+        outcome="Runs the rclone remote probe and renders the result inline.",
     ),
     UXInteraction(
         flow="Equipment",
@@ -242,14 +199,15 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
         action="Click 'Add equipment'",
         outcome="Validates and appends an EquipmentConfig to the draft; row appears.",
     ),
-    # -- Settings: save / restart gate --------------------------------------
+    # -- Settings: save (applied live, no restart) --------------------------
     UXInteraction(
         flow="Settings",
         route="/settings",
         testid="settings-save",
         element="button",
         action="Click 'Save all'",
-        outcome="Persists config.yaml and routes to the restart-required gate.",
+        outcome="Persists config.yaml, applies it to the running components "
+        "in-process, and shows a 'Settings saved' toast (no relaunch).",
     ),
     UXInteraction(
         flow="Settings",
@@ -258,14 +216,6 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
         element="button",
         action="Click 'Discard all'",
         outcome="Drops the in-memory draft edits.",
-    ),
-    UXInteraction(
-        flow="First-launch setup",
-        route="/restart-required",
-        testid="restart-required",
-        element="screen",
-        action="Observe the restart-required gate",
-        outcome="Terminal screen instructing the operator to relaunch the tray.",
     ),
     # -- Template manager ---------------------------------------------------
     UXInteraction(
@@ -564,14 +514,6 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
         element="radio",
         action="Pick 'nas' or 'stage' sync mode",
         outcome="Swaps the transport sub-form between NAS-direct and stage-push.",
-    ),
-    UXInteraction(
-        flow="Add equipment",
-        route="/wizard/equipment",
-        testid="wizard-equipment-signal",
-        element="radio",
-        action="Pick 'sentinel_file' or 'manifest' completeness signal",
-        outcome="Swaps the filename input between sentinel and manifest naming.",
     ),
     UXInteraction(
         flow="Add equipment",

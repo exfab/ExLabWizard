@@ -93,10 +93,10 @@ def test_flow_25_select_node_threads_selected_into_url(page, server_url) -> None
 
 
 def test_flow_25_selected_query_renders_centre_and_right_panes(page, server_url) -> None:
-    """Loading /main?selected=EQ1 directly renders the centre + right panes."""
-    _goto(page, f"{server_url}/main?selected=EQ1")
+    """Loading /main?selected=TEST_EQ1 directly renders the centre + right panes."""
+    _goto(page, f"{server_url}/main?selected=TEST_EQ1")
     # Centre pane: seeded folder feed shows the default two rows when no
-    # specific path is seeded for EQ1.
+    # specific path is seeded for TEST_EQ1.
     page.locator('[data-testid="file-list-row"]').first.wait_for(state="visible", timeout=5_000)
     # Right pane (metadata tab) renders with the equipment payload.
     page.locator('[data-testid="metadata-pane"]').wait_for(state="visible", timeout=5_000)
@@ -109,7 +109,7 @@ def test_flow_25_breadcrumb_navigation_re_navigates_main(page, server_url) -> No
     clickable; wired to the same callback as on_select_node so the
     URL flow is identical.
     """
-    _goto(page, f"{server_url}/main?selected=EQ1/Demo Project")
+    _goto(page, f"{server_url}/main?selected=TEST_EQ1/Demo Project")
     page.locator('[data-testid="breadcrumb"]').wait_for(state="visible", timeout=5_000)
     segments = page.locator('[data-testid="breadcrumb-segment"]')
     assert segments.count() >= 1
@@ -120,7 +120,7 @@ def test_flow_25_breadcrumb_navigation_re_navigates_main(page, server_url) -> No
 
 def test_flow_25_toggle_right_pane_toggles_query_param(page, server_url) -> None:
     """Clicking the right-pane toggle flips ?right_pane=collapsed in the URL."""
-    _goto(page, f"{server_url}/main?selected=EQ1")
+    _goto(page, f"{server_url}/main?selected=TEST_EQ1")
     page.locator('[data-testid="toggle-right-pane"]').wait_for(state="visible", timeout=5_000)
     page.locator('[data-testid="toggle-right-pane"]').click()
     page.wait_for_url(lambda url: "right_pane=collapsed" in url, timeout=10_000)
@@ -139,17 +139,19 @@ def test_flow_25_tree_context_action_deep_links_into_settings(page, server_url) 
     eq.wait_for(state="visible", timeout=10_000)
     eq.click(button="right")
     page.locator('[data-testid="tree-context-edit-equipment"]').click()
-    page.wait_for_url(lambda url: "/settings" in url and "equipment_id=EQ1" in url, timeout=10_000)
+    page.wait_for_url(
+        lambda url: "/settings" in url and "equipment_id=TEST_EQ1" in url, timeout=10_000
+    )
 
 
 def test_flow_25_received_equipment_disables_creation_buttons(page, server_url) -> None:
-    """Selecting a RELAY_* node disables the New Project/Run/Test-Run buttons.
+    """Selecting a TEST_RELAY_* node disables the New Project/Run/Test-Run buttons.
 
     Verifies MainPageState.selected_node_is_received flows from the URL
     -> _classify_node -> render_file_explorer_page's disable logic
     (Redesign §3.3 / decision 1).
     """
-    _goto(page, f"{server_url}/main?selected=RELAY_EQX")
+    _goto(page, f"{server_url}/main?selected=TEST_RELAY_EQX")
     # Quasar's q-btn ``disable`` prop renders as ``aria-disabled="true"``
     # on the wrapper element; the inner <button> may or may not carry
     # the HTML ``disabled`` attribute depending on Quasar version.

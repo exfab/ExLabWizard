@@ -1,7 +1,7 @@
 """Unit tests for ``exlab_wizard.orchestrator._scan``.
 
 The shared filesystem helpers used by both ``staging_query`` and
-``staging_watcher``. Covers the §13.2 walk pattern and the
+``quiescence_poller``. Covers the §13.2 walk pattern and the
 file-count / byte-total accounting (with and without the cache dir).
 """
 

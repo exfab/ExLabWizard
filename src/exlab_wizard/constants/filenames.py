@@ -20,8 +20,9 @@ README_FIELDS_JSON_NAME: str = "readme_fields.json"
 # Cache filename for per-equipment static metadata. Backend Spec §11.4.1.
 EQUIPMENT_JSON_NAME: str = "equipment.json"
 
-# Cache filename for the NAS ingest state machine. Backend Spec §13.4.
-INGEST_JSON_NAME: str = "ingest.json"
+# Cache filename for the per-run quiescence-driven per-file sync state.
+# Operator-free per-file NAS sync design (2026-05-21).
+SYNC_STATE_FILENAME: str = "sync_state.json"
 
 # Cache filename for the per-equipment test-run history. Backend Spec §11.4.2.
 TEST_RUNS_JSON_NAME: str = "test_runs.json"
@@ -39,7 +40,6 @@ README_FILE_NAME: str = "README.md"
 
 # Path (relative to the run/project root) of the integrity-checksum file
 # written by the wizard after a successful creation. Backend Spec §11.3.
-CHECKSUMS_RELATIVE: str = f"{CACHE_DIR_NAME}/checksums.sha256"
 
 # Manifest filename inside a Copier template root. Backend Spec §5.2.
 COPIER_MANIFEST_NAME: str = "copier.yml"

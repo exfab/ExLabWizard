@@ -17,15 +17,7 @@ equipment:
     label: "Confocal Microscope 1"
     local_root: "/data/lab"
     nas_root: "//nas01/lab"
-    completeness_signal: "sentinel_file"
-    sentinel_filename: "acquisition_complete.flag"
     sync_mode: "nas"
-    transport:
-      type: "rclone"
-      rclone_remote: "lab-nas"
-      rclone_remote_path: "lab/CONFOCAL_01"
-      bandwidth:
-        upload_mbps: 50
 
 nas_cleanup:
   enabled: true

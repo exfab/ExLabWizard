@@ -26,8 +26,16 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from exlab_wizard.constants import KEYRING_USERNAME_LIMS, AuditScopeKind, RunKind
+from exlab_wizard.constants import (
+    KEYRING_USERNAME_LIMS,
+    AuditScopeKind,
+    RunKind,
+    RunSyncState,
+    SetupState,
+)
 from exlab_wizard.logging import get_logger
+from exlab_wizard.orchestrator.staging_clear import clear_run_dir
+from exlab_wizard.orchestrator.staging_query import list_staged_runs
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -112,26 +120,13 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
     @ui.page("/")
     def _index() -> Any:
         deps = _deps()
-        if _restart_gate(deps, ui):
-            return
         if _is_setup_ready(deps):
             ui.navigate.to("/main")
         else:
             ui.navigate.to("/welcome")
 
-    @ui.page("/restart-required")
-    def _restart_required() -> Any:
-        # Terminal screen: config.yaml was written but the tray's
-        # config-dependent components were built once at boot, so the
-        # operator must relaunch to finish setup. Not gated -- this is
-        # the gate's destination.
-        return _render_restart_required(ui)
-
     @ui.page("/welcome")
     def _welcome() -> Any:
-        if _restart_gate(_deps(), ui):
-            return None
-
         def _on_started(autostart: bool) -> None:
             _apply_autostart(_deps(), autostart)
             ui.navigate.to("/settings")
@@ -148,8 +143,6 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
     @ui.page("/main")
     def _main(selected: str = "", right_pane: str = "") -> Any:
         deps = _deps()
-        if _restart_gate(deps, ui):
-            return None
         from exlab_wizard.api.routers import browse as _browse
 
         config = getattr(deps, "config", None)
@@ -193,7 +186,7 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             ui.navigate.to(f"/settings?active=equipment&equipment_id={node_id}")
 
         def _on_file_context_action(entry: Any, action: str) -> None:
-            _file_context_action(entry, action, ui)
+            _file_context_action(deps, entry, action, ui, on_done=_refresh)
 
         return main_page.render_file_explorer_page(
             on_open_new_project=lambda: ui.navigate.to("/wizard/project"),
@@ -203,6 +196,7 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             on_open_settings=lambda: ui.navigate.to("/settings"),
             on_refresh=_refresh,
             on_select_node=_on_select_node,
+            on_open_operations=lambda: _open_operations_modal(deps, ui),
             on_navigate_breadcrumb=_on_select_node,
             on_toggle_right_pane=_on_toggle_right_pane,
             on_run_staging_action=_on_run_staging_action,
@@ -218,8 +212,6 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
     @ui.page("/wizard/project")
     async def _wizard_project() -> Any:
         deps = _deps()
-        if _restart_gate(deps, ui):
-            return None
         return wizard_project_page.render_project_wizard(
             templates=_template_names(deps, "project"),
             equipment_ids=_equipment_ids(deps),
@@ -232,54 +224,62 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
     @ui.page("/wizard/run")
     def _wizard_run() -> Any:
         deps = _deps()
-        if _restart_gate(deps, ui):
-            return None
         return _render_run_wizard(deps, RunKind.EXPERIMENTAL, ui)
 
     @ui.page("/wizard/test-run")
     def _wizard_test_run() -> Any:
         deps = _deps()
-        if _restart_gate(deps, ui):
-            return None
         return _render_run_wizard(deps, RunKind.TEST, ui)
 
     @ui.page("/wizard/equipment")
     def _wizard_equipment() -> Any:
-        """Redesign §6 — Add-Equipment wizard route."""
+        """Redesign §6 — Add-Equipment wizard route.
+
+        ``state`` is created once for the wizard's whole lifetime: the
+        render layer drives Next / Back internally (re-rendering in
+        place), so nothing here navigates mid-wizard -- a navigation
+        would rebuild the page and reset every field the operator typed.
+        """
         deps = _deps()
-        if _restart_gate(deps, ui):
-            return None
         state = wizard_equipment_page.EquipmentWizardState()
 
-        def _on_advance(current_step: str) -> None:
-            idx = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS.index(current_step)
-            if idx + 1 < len(wizard_equipment_page.EQUIPMENT_WIZARD_STEPS):
-                state.active_step = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS[idx + 1]
-                ui.navigate.to("/wizard/equipment")
-
-        def _on_back(current_step: str) -> None:
-            idx = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS.index(current_step)
-            if idx > 0:
-                state.active_step = wizard_equipment_page.EQUIPMENT_WIZARD_STEPS[idx - 1]
-                ui.navigate.to("/wizard/equipment")
-
         def _on_confirm(eq: Any) -> None:
-            # Posts through the config router. The actual HTTP wiring is
-            # supplied by the deps' append-equipment callable; tests can
-            # stub it.
-            append = getattr(deps, "append_equipment", None) if deps is not None else None
-            if append is not None:
-                try:
-                    append(eq)
-                except Exception as exc:
-                    _show_toast(ui, f"Could not add equipment: {exc}", positive=False)
-                    return
+            # Persist straight into the live config (Redesign §6): merge
+            # via the same shared helper the POST /config/equipment route
+            # uses, save through ``deps.save_config``, then push the merged
+            # config into the running NAS-sync client / poller via
+            # ``apply_live_config`` so the new equipment is live without a
+            # tray relaunch -- matching the route's no-restart contract.
+            from exlab_wizard.config.models import config_with_equipment_appended
+            from exlab_wizard.errors import ConfigError
+
+            try:
+                merged = config_with_equipment_appended(getattr(deps, "config", None), eq)
+            except ConfigError as exc:
+                _show_toast(ui, f"Could not add equipment: {exc}", positive=False)
+                return
+            saver = getattr(deps, "save_config", None) if deps is not None else None
+            if saver is None:
+                _show_toast(
+                    ui, "Cannot add equipment: no config writer is available", positive=False
+                )
+                return
+            try:
+                result = saver(merged)
+                if hasattr(result, "__await__"):
+                    # Production wires a synchronous saver; an awaitable
+                    # here would silently no-op, so surface it.
+                    _log.warning("save_config returned an awaitable; a sync saver is expected")
+            except Exception as exc:
+                _log.exception("append-equipment save_config failed")
+                _show_toast(ui, f"Could not add equipment: {exc}", positive=False)
+                return
+            if deps is not None:
+                _apply_live_config(deps, merged)
             ui.navigate.to("/main")
 
         return wizard_equipment_page.render_wizard_equipment(
             state=state,
-            on_advance=_on_advance,
-            on_back=_on_back,
             on_confirm=_on_confirm,
             on_cancel=lambda: ui.navigate.to("/main"),
         )
@@ -287,8 +287,6 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
     @ui.page("/templates")
     def _templates() -> Any:
         deps = _deps()
-        if _restart_gate(deps, ui):
-            return None
         templates_dir = _templates_dir(deps)
 
         def _on_create(
@@ -322,9 +320,9 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
 
     @ui.page("/settings")
     def _settings(active: str = "") -> Any:
+        from exlab_wizard.api._dependencies import lims_password_present, nas_remote_available
+
         deps = _deps()
-        if _restart_gate(deps, ui):
-            return None
         incomplete = _missing_setup_sections(deps)
         # ``active`` is an optional deep-link query param; when absent the
         # page falls back to its own first-incomplete-section logic.
@@ -341,9 +339,40 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         def _on_save(updated: Any) -> None:
             if not _persist_config(deps, updated, ui):
                 return
-            ui.navigate.to("/restart-required")
+            # Live-applied in-process (no relaunch): confirm and keep the
+            # operator on the settings page so they can keep editing.
+            _show_toast(ui, "Settings saved", positive=True)
 
         on_save_lims_password, on_clear_lims_password = _lims_credential_handlers(deps, ui)
+
+        def _on_set_autostart(enabled: bool) -> bool | None:
+            return _apply_autostart(deps, enabled)
+
+        # Quit hook (T9): run the graceful-shutdown hook on a separate thread,
+        # NOT via ui.timer. The timer callback runs on the server's *running*
+        # event loop, where ``request_quit``'s ``asyncio.run(...)`` raises
+        # "loop already running" (and the fallback re-raises) -- the app would
+        # never shut down. A fresh thread has no running loop so ``asyncio.run``
+        # works; the click handler returns immediately so the HTTP response
+        # still flushes. Absent in headless/test fixtures.
+        _quit_hook = getattr(deps, "request_quit", None) if deps is not None else None
+        on_quit: Callable[[], None] | None = None
+        if _quit_hook is not None:
+            quit_hook = _quit_hook
+
+            def on_quit() -> None:
+                import threading
+
+                def _do() -> None:
+                    try:
+                        quit_hook()
+                    except Exception as exc:
+                        _log.warning("quit hook raised: %s", exc)
+
+                threading.Thread(target=_do, name="exlab-quit", daemon=True).start()
+
+        async def _on_test_connection() -> Any:
+            return await _nas_test_connection(deps)
 
         # ``on_select_section`` is left unset: the settings dialog swaps
         # sections client-side, so a navigation hook would only reload
@@ -355,22 +384,27 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             on_discard=None,
             on_save_lims_password=on_save_lims_password,
             on_clear_lims_password=on_clear_lims_password,
-            lims_password_present=bool(getattr(deps, "keyring_password_present", False)),
+            lims_password_present=lims_password_present(deps),
+            nas_remote_available=lambda remote: nas_remote_available(deps, remote),
+            on_test_connection=_on_test_connection,
+            autostart_registered=bool(getattr(deps, "autostart_is_registered", False)),
+            on_set_autostart=_on_set_autostart,
+            on_quit=on_quit,
+            tray_available=bool(getattr(deps, "tray_available", False)),
         )
 
     @ui.page("/problems")
     def _problems() -> Any:
         deps = _deps()
-        if _restart_gate(deps, ui):
-            return None
         findings = _safe_audit(deps)
-        return problems_page.render_problems_page(findings=findings)
+        return problems_page.render_problems_page(
+            findings=findings,
+            last_audit_at=getattr(deps, "last_audit_at", None),
+        )
 
     @ui.page("/staging")
     def _staging() -> Any:
         deps = _deps()
-        if _restart_gate(deps, ui):
-            return None
         state = _build_staging_state(deps)
         if state is None:
             _render_unavailable(
@@ -385,20 +419,6 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _restart_gate(deps: Any, ui: Any) -> bool:
-    """Route to ``/restart-required`` when config was written this session.
-
-    The config-dependent components (controller / lims_client /
-    nas_sync) are built once at tray boot, so a config.yaml written by
-    the settings wizard only takes effect after a relaunch. Returns
-    ``True`` when the caller should stop rendering its normal page.
-    """
-    if deps is not None and getattr(deps, "restart_required", False):
-        ui.navigate.to("/restart-required")
-        return True
-    return False
 
 
 def _lims_credential_handlers(
@@ -427,6 +447,13 @@ def _lims_credential_handlers(
             _log.exception("LIMS keyring set_password failed")
             _show_toast(ui, f"Could not save the LIMS password: {exc}", positive=False)
             return
+        # The credential field re-seeds its "Set / Not set" status from
+        # ``deps.keyring_password_present`` on the next render, and the
+        # §4.9 setup gate reads the same flag. It is computed once at
+        # tray boot, so flip it here -- otherwise a freshly saved
+        # password would still read as absent until the next tray launch.
+        if deps is not None:
+            deps.keyring_password_present = True
         _show_toast(ui, "LIMS password saved to the OS keyring", positive=True)
 
     def _on_clear() -> None:
@@ -441,17 +468,82 @@ def _lims_credential_handlers(
             _log.exception("LIMS keyring delete_password failed")
             _show_toast(ui, f"Could not clear the LIMS password: {exc}", positive=False)
             return
+        # Mirror of the Save path: clearing the password makes the slot
+        # incomplete again, so drop the boot-time flag in step.
+        if deps is not None:
+            deps.keyring_password_present = False
         _show_toast(ui, "LIMS password removed from the OS keyring", positive=True)
 
     return _on_save, _on_clear
 
 
-def _persist_config(deps: Any, updated: Any, ui: Any) -> bool:
-    """Write ``updated`` via ``deps.save_config`` and arm the restart gate.
+async def _nas_test_connection(deps: Any) -> Any:
+    """Run the rclone NAS-remote probe and adapt it for the inline panel.
 
-    Returns ``True`` on success. On failure a negative toast is shown
-    and the function returns ``False`` so the caller leaves the operator
-    on the settings page to retry.
+    rclone.conf NAS-sync migration. The Settings "NAS Remote" section's
+    Test-connection button probes the single configured ``nas:`` remote
+    (no per-equipment password). It reuses ``deps.equipment_probe`` -- the
+    same probe the ``POST /setup/test-equipment`` endpoint uses, which now
+    targets ``nas.remote`` and ignores the per-equipment fields -- passing
+    the first nas-mode equipment (or any equipment) as the probe argument.
+    The probe's ``{ok, reason, latency_ms}`` dict is mapped to a
+    :class:`TestConnectionResult`.
+    """
+    import json
+
+    from exlab_wizard.constants import SyncMode
+    from exlab_wizard.ui.components.test_connection_panel import TestConnectionResult
+
+    config = getattr(deps, "config", None) if deps is not None else None
+    probe = getattr(deps, "equipment_probe", None) if deps is not None else None
+    if probe is None or config is None:
+        return TestConnectionResult(
+            success=False,
+            headline="Connection failed",
+            detail="equipment probe is not available",
+            raw="",
+        )
+    equipment = next(
+        (e for e in config.equipment if e.sync_mode == SyncMode.NAS),
+        next(iter(config.equipment), None),
+    )
+    try:
+        result = probe(equipment)
+        if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+            result = await result
+    except Exception as exc:
+        return TestConnectionResult(
+            success=False, headline="Connection failed", detail=str(exc), raw=str(exc)
+        )
+    payload = result if isinstance(result, dict) else {"ok": bool(result)}
+    ok = bool(payload.get("ok"))
+    reason = payload.get("reason")
+    latency_ms = payload.get("latency_ms")
+    if ok:
+        detail = f"reachable ({latency_ms} ms)" if latency_ms is not None else "reachable"
+        headline = "Connected"
+    else:
+        detail = str(reason) if reason else "connection failed"
+        headline = "Connection failed"
+    return TestConnectionResult(
+        success=ok,
+        headline=headline,
+        detail=detail,
+        raw=json.dumps(payload, indent=2, sort_keys=True),
+    )
+
+
+def _persist_config(deps: Any, updated: Any, ui: Any) -> bool:
+    """Write ``updated`` via ``deps.save_config`` and hot-reload components.
+
+    Returns ``True`` on success. On a write failure a negative toast is
+    shown and the function returns ``False`` so the caller leaves the
+    operator on the settings page to retry. The disk write is the success
+    boundary: once it lands, the new config is pushed into the running
+    components via ``apply_live_config`` so the change takes effect
+    without a tray relaunch. A hiccup in that live push is logged but
+    does not fail the save -- the config is already persisted and the
+    in-memory copy is kept in step.
     """
     saver = getattr(deps, "save_config", None) if deps is not None else None
     if saver is None:
@@ -467,57 +559,128 @@ def _persist_config(deps: Any, updated: Any, ui: Any) -> bool:
         _log.exception("save_config failed")
         _show_toast(ui, f"Save failed: {exc}", positive=False)
         return False
+    _ensure_staging_root(updated, ui)
     if deps is not None:
-        deps.config = updated
-        deps.restart_required = True
+        _apply_live_config(deps, updated)
     return True
 
 
-def _render_restart_required(ui: Any) -> Any:
-    """Render the terminal restart-required screen."""
+def _ensure_staging_root(updated: Any, ui: Any) -> None:
+    """Create the staging directory when the operator saved a non-empty path.
+
+    ``staging_root`` is opt-in: a blank value means this device is not a
+    staging PC, so nothing is created. A non-empty path is created here --
+    the operator specifying and saving it is the only trigger, so no
+    ``/staging`` (or any staging directory) is ever made implicitly. A
+    creation failure is non-fatal: the config is already persisted and the
+    validator flags an inaccessible root on the next audit, so we only warn.
+
+    ``updated`` is read defensively so a non-``Config`` value (e.g. a test
+    sentinel) is a no-op rather than an ``AttributeError``.
+    """
+    orch = getattr(updated, "orchestrator", None)
+    staging = getattr(orch, "staging_root", "")
+    if not staging:
+        return
+    from exlab_wizard.paths import ensure_dir
+
     try:
-        card = (
-            ui.card()
-            .props('data-testid="restart-required"')
-            .style(
-                "max-width: 520px; margin: 4rem auto; padding: var(--sp-8); "
-                "background: var(--color-surface); border-radius: var(--radius-lg);"
-            )
-        )
-        with card:
-            ui.label("Restart required").style(
-                "font-family: var(--font-display); font-size: var(--text-lg); "
-                "font-weight: 600; color: var(--color-heading);"
-            )
-            ui.label(
-                "Your configuration has been saved. Quit ExLab-Wizard from the "
-                "system tray and relaunch it so the new settings take effect."
-            ).props('data-testid="restart-required-message"').style("color: var(--color-body);")
-        return card
-    except Exception as exc:
-        _log.warning("render_restart_required failed: %s", exc)
-        return None
+        ensure_dir(Path(staging))
+    except OSError as exc:
+        _log.exception("failed to create staging_root")
+        _show_toast(ui, f"Couldn't create staging directory: {exc}", positive=False)
+
+
+def _apply_live_config(deps: Any, updated: Any) -> None:
+    """Push ``updated`` into the running components (no tray relaunch).
+
+    Wraps :func:`exlab_wizard.tray.dependencies.apply_live_config` (imported
+    lazily to avoid a tray<->api import cycle). The coordinator is already
+    best-effort per component, so reaching the ``except`` is unexpected;
+    it still keeps ``deps.config`` in step so ``GET /config`` is correct.
+    """
+    try:
+        from exlab_wizard.tray.dependencies import apply_live_config
+
+        apply_live_config(deps, updated)
+    except Exception:
+        _log.exception("live config reload failed after save")
+        deps.config = updated
+
+
+def _nas_remote_missing(deps: Any, config: Any) -> bool:
+    """True when nas-mode equipment exist but the ``nas:`` remote is unusable.
+
+    rclone.conf NAS-sync migration. Drives the Settings page's NAS-remote
+    section visibility via :func:`_missing_setup_sections` so the
+    setup-incomplete banner auto-selects it. The remote is "missing" when
+    at least one device syncs directly to the NAS AND either no
+    ``nas.remote`` is configured or that remote is not present in the
+    operator's ``rclone.conf`` (the same gate the §4.9 setup evaluator,
+    ``INCOMPLETE_NO_NAS_REMOTE``, keys on).
+    """
+    from exlab_wizard.api._dependencies import nas_remote_available
+    from exlab_wizard.constants import SyncMode
+
+    has_nas_equipment = any(
+        eq.sync_mode == SyncMode.NAS for eq in getattr(config, "equipment", ()) or ()
+    )
+    if not has_nas_equipment:
+        return False
+    nas = getattr(config, "nas", None)
+    remote = getattr(nas, "remote", "") if nas is not None else ""
+    return not remote or not nas_remote_available(deps, remote)
 
 
 def _is_setup_ready(deps: Any) -> bool:
-    """Mirror ``api.setup.compute_setup_state`` without the API import."""
+    """Return True when the §4.9 setup state is ``READY``.
+
+    Delegates to :func:`api.setup.compute_setup_state` -- the single
+    source of truth that ``GET /api/v1/setup/status``, the route gate,
+    and the banner subline (:func:`_setup_next_action`) all consult --
+    so the main-page setup-incomplete banner agrees with the API's
+    verdict on every gate (paths, orchestrator, equipment, NAS
+    credentials, and *both* LIMS branches).
+
+    An earlier hand-rolled mirror checked only the LIMS *keyring*
+    branch, so it kept the banner up for an otherwise-ready install
+    whose LIMS slot is satisfied by ``offline_catalogue_path`` rather
+    than a stored password -- a disconnected-workstation setup read as
+    perpetually incomplete even though ``/setup/status`` reported
+    ``ready`` (rclone-only migration follow-up, 2026-05-28).
+
+    Best-effort: any evaluation failure degrades to "not ready" so a
+    half-wired backend keeps the operator on the onboarding path rather
+    than leaking a stack trace into the index route.
+    """
     if deps is None or getattr(deps, "config", None) is None:
         return False
-    keyring = getattr(deps, "keyring_password_present", False)
-    lims_reachable = getattr(deps, "lims_reachable", True)
-    return bool(keyring and lims_reachable)
+    try:
+        from exlab_wizard.api.setup import compute_setup_state
+
+        return compute_setup_state(deps) is SetupState.READY
+    except Exception as exc:
+        _log.warning("setup-readiness computation failed: %s", exc)
+        return False
 
 
-def _apply_autostart(deps: Any, enabled: bool) -> None:
+def _apply_autostart(deps: Any, enabled: bool) -> bool | None:
+    """Register / unregister platform autostart; return the real post-op state.
+
+    Returns ``deps.autostart_toggle``'s ``is_registered()`` result so callers
+    (Settings -> Application) can reflect / revert the checkbox to reality;
+    ``None`` when no toggle is wired or the op raised.
+    """
     if deps is None:
-        return
+        return None
     toggle: Callable[[bool], Any] | None = getattr(deps, "autostart_toggle", None)
     if toggle is None:
-        return
+        return None
     try:
-        toggle(enabled)
+        return bool(toggle(enabled))
     except Exception as exc:
-        _log.warning("autostart toggle failed in welcome: %s", exc)
+        _log.warning("autostart toggle failed: %s", exc)
+        return None
 
 
 def _build_main_state(
@@ -534,14 +697,79 @@ def _build_main_state(
     # surface always renders, so MainPageState.orchestrator_enabled keeps
     # its True default. Folder-feed path mirrors the selected node so the
     # centre pane shows the right folder.
+    ops_count, ops_input_required, ops_active = _operation_counts(deps)
     return main_page.MainPageState(
         setup_incomplete=not _is_setup_ready(deps),
+        setup_next_action=_setup_next_action(deps),
         selected_node=selected_node,
         selected_node_kind=node_kind,
         selected_node_is_received=is_received,
         right_pane_collapsed=right_pane_collapsed,
         folder_feed_path=selected_node,
+        operations_count=ops_count,
+        operations_input_required=ops_input_required,
+        creation_in_flight=ops_active > 0,
+        # Real Problems counts from the 30 s background audit (T6 / §B5).
+        problems_count_hard=int(getattr(deps, "last_audit_hard", 0) or 0),
+        problems_count_soft=int(getattr(deps, "last_audit_soft", 0) or 0),
     )
+
+
+def _panel_sessions(deps: Any) -> list[tuple[str, Any]]:
+    """Return the (session_id, session) pairs the Operations panel shows.
+
+    The §9.5 membership rule lives here only: everything except the
+    terminal ``DONE`` / ``ABORTED`` (``FAILED`` stays so a recent failure
+    is visible). Shared by :func:`_operation_counts` and
+    :func:`_build_operation_rows` so the rule can't drift.
+    """
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    store = getattr(controller, "session_store", None) if controller is not None else None
+    if store is None:
+        return []
+    from exlab_wizard.controller import on_operations_panel
+
+    return [(sid, session) for sid, session in store.iter_sorted() if on_operations_panel(session)]
+
+
+def _operation_counts(deps: Any) -> tuple[int, int, int]:
+    """Return ``(panel_count, input_required, active)`` operation counts.
+
+    ``panel_count`` is the §9.5 panel size (see :func:`_panel_sessions`).
+    ``input_required`` counts suspended sessions awaiting a plugin answer
+    (Frontend §9.5 / §3.5.5). ``active`` counts strictly non-terminal
+    sessions and gates the §9.6 creation-button lock (``FAILED`` is
+    terminal, so it sits in the panel but does not lock creation).
+    """
+    from exlab_wizard.controller import SessionState
+
+    panel_rows = _panel_sessions(deps)
+    input_required = sum(1 for _sid, s in panel_rows if s.state is SessionState.INPUT_REQUIRED)
+    active = sum(1 for _sid, s in panel_rows if not s.is_terminal())
+    return (len(panel_rows), input_required, active)
+
+
+def _setup_next_action(deps: Any) -> str | None:
+    """Return the §4.9.3 next-action string for the banner subline.
+
+    Unlike :func:`_is_setup_ready` (a deliberately narrow LIMS-only
+    readiness mirror), this consults the real evaluator via
+    ``compute_setup_state`` so the banner names the actual first-failing
+    gate -- notably the NAS-credentials gate added by the rclone-only
+    migration (2026-05-26). Best-effort: any failure yields ``None`` so
+    the banner falls back to its generic subline.
+    """
+    if deps is None:
+        return None
+    try:
+        from exlab_wizard.api.setup import compute_setup_state
+        from exlab_wizard.paths import setup_state_next_action
+
+        action = setup_state_next_action(compute_setup_state(deps))
+        return action.value if action is not None else None
+    except Exception as exc:
+        _log.warning("setup next-action computation failed: %s", exc)
+        return None
 
 
 def _build_main_query(selected: str, right_pane: str) -> str:
@@ -647,7 +875,6 @@ def _metadata_for_owned_equipment(node_id: str, config: Any) -> dict[str, Any]:
             "sync_mode": str(getattr(entry, "sync_mode", "")) or "nas",
             "local_root": entry.local_root or "",
             "nas_root": entry.nas_root or "",
-            "completeness_signal": getattr(entry, "completeness_signal", "") or "",
         }
     return {}
 
@@ -803,6 +1030,8 @@ def _drive_folder_feed(app: Any, deps: Any, selected_path: str | None) -> list[A
                 size_bytes=entry.size_bytes,
                 modified_iso=entry.modified_iso,
                 sync_status=entry.sync_status,
+                keep_local=getattr(entry, "keep_local", False),
+                tombstone=getattr(entry, "tombstone", False),
             )
         )
     return entries
@@ -836,12 +1065,10 @@ def _run_staging_action(deps: Any, path: str, action: str, ui: Any) -> None:
     """Dispatch a per-run context action to its backend surface.
 
     Mirrors :func:`api.routers.staging.post_force_sync` /
-    :func:`api.routers.staging.post_clear` /
-    :func:`api.routers.browse.get_run_log` but invokes the underlying
+    :func:`api.routers.staging.post_clear` but invokes the underlying
     primitives directly from the mount so the action stays in-process
     (no HTTP round trip from the same Python interpreter).
     """
-    from exlab_wizard.cache.ingest_writer import IngestWriter
     from exlab_wizard.ui.components.tree_context_menu import (
         RUN_CONTEXT_CLEAR_VERIFIED,
         RUN_CONTEXT_FORCE_SYNC,
@@ -871,14 +1098,10 @@ def _run_staging_action(deps: Any, path: str, action: str, ui: Any) -> None:
         _spawn_background(_do_enqueue())
         return
     if action == RUN_CONTEXT_CLEAR_VERIFIED:
-        ingest_writer = getattr(deps, "ingest_writer", None) or IngestWriter()
-        from exlab_wizard.orchestrator.cleanup import clear_run
 
         async def _do_clear() -> None:
             try:
-                files, _bytes = await clear_run(
-                    run_path, config=config, ingest_writer=ingest_writer
-                )
+                files, _bytes = await asyncio.to_thread(clear_run_dir, run_path)
             except Exception as exc:
                 _log.exception("per-run clear failed")
                 _show_toast(ui, f"Clear failed: {exc}", positive=False)
@@ -891,29 +1114,37 @@ def _run_staging_action(deps: Any, path: str, action: str, ui: Any) -> None:
         _spawn_background(_do_clear())
         return
     if action == RUN_CONTEXT_VIEW_LOG:
-        _open_log_dialog(run_path, ui)
+        _open_log_dialog(deps, run_path, ui)
         return
     _show_toast(ui, f"Unknown staging action: {action}", positive=False)
 
 
 def _bulk_clear_verified(deps: Any, ui: Any) -> None:
-    """Run the orchestrator's bulk ``clear_all_verified`` helper.
+    """Bulk-clear every staged run whose sync job is verified.
 
     Wired from the file-explorer footer's *Clear verified runs* button.
-    Same in-process dispatch pattern as the per-run actions.
+    Same in-process dispatch pattern as the per-run actions. The
+    operator-free per-file NAS sync redesign (2026-05-21) keys the
+    "clearable" set off the sync-queue job state; Phase 5 swaps this to
+    the ``sync_state.json`` ``SYNCED`` rollup.
     """
-    from exlab_wizard.cache.ingest_writer import IngestWriter
-    from exlab_wizard.orchestrator.cleanup import clear_all_verified
-
     config = getattr(deps, "config", None) if deps is not None else None
     if config is None:
         _show_toast(ui, "Clear-verified unavailable: no config", positive=False)
         return
-    ingest_writer = getattr(deps, "ingest_writer", None) or IngestWriter()
 
     async def _do_bulk() -> None:
         try:
-            cleared = await clear_all_verified(config=config, ingest_writer=ingest_writer)
+            cleared: list[str] = []
+            sync_state_writer = getattr(deps, "sync_state_writer", None)
+            for summary in list_staged_runs(config=config, sync_state_writer=sync_state_writer):
+                # Only a fully-SYNCED run is clearable; ``cleared`` runs
+                # have no staging copy left and ``syncing`` runs are unproven.
+                if summary.current_state != RunSyncState.SYNCED.value:
+                    continue
+                files, _bytes = await asyncio.to_thread(clear_run_dir, Path(summary.path))
+                if files > 0:
+                    cleared.append(summary.path)
         except Exception as exc:
             _log.exception("bulk clear-verified failed")
             _show_toast(ui, f"Clear-verified failed: {exc}", positive=False)
@@ -926,9 +1157,20 @@ def _bulk_clear_verified(deps: Any, ui: Any) -> None:
     _spawn_background(_do_bulk())
 
 
-def _file_context_action(entry: Any, action: str, ui: Any) -> None:
-    """Handle ``Open in OS`` / ``Copy path`` from the centre-pane file row."""
-    from exlab_wizard.ui.components.file_list import FILE_CONTEXT_COPY_PATH, FILE_CONTEXT_OPEN
+def _file_context_action(
+    deps: Any,
+    entry: Any,
+    action: str,
+    ui: Any,
+    *,
+    on_done: Callable[[], None] | None = None,
+) -> None:
+    """Handle ``Open in OS`` / ``Copy path`` / ``Keep local`` file actions."""
+    from exlab_wizard.ui.components.file_list import (
+        FILE_CONTEXT_COPY_PATH,
+        FILE_CONTEXT_KEEP_LOCAL,
+        FILE_CONTEXT_OPEN,
+    )
 
     path = str(getattr(entry, "path", ""))
     if not path:
@@ -949,7 +1191,59 @@ def _file_context_action(entry: Any, action: str, ui: Any) -> None:
             return
         _show_toast(ui, "Path copied to clipboard", positive=True)
         return
+    if action == FILE_CONTEXT_KEEP_LOCAL:
+        _toggle_keep_local(deps, entry, ui, on_done=on_done)
+        return
     _show_toast(ui, f"Unknown file action: {action}", positive=False)
+
+
+def _toggle_keep_local(
+    deps: Any,
+    entry: Any,
+    ui: Any,
+    *,
+    on_done: Callable[[], None] | None = None,
+) -> None:
+    """Flip a file's ``keep_local`` flag via the orchestrator's writer.
+
+    Operator-free per-file NAS sync design (2026-05-21): ``sync_state.json``
+    has a single writer -- the orchestrator's :class:`SyncStateWriter` --
+    so the GUI never writes the file directly. The mount calls
+    ``set_keep_local`` in-process (matching the per-run staging actions),
+    which is exactly what the ``POST /staging/{run}/keep-local`` endpoint
+    does. The run root is resolved by walking up to the nearest
+    ``creation.json`` cache.
+    """
+    from exlab_wizard.api.routers.browse import _find_run_root, _run_relative_posix
+
+    writer = getattr(deps, "sync_state_writer", None) if deps is not None else None
+    if writer is None:
+        _show_toast(ui, "Keep-local unavailable: sync-state writer not wired", positive=False)
+        return
+    path = Path(str(getattr(entry, "path", "")))
+    run_root = _find_run_root(path.parent)
+    if run_root is None:
+        _show_toast(ui, "Keep-local unavailable: file is not inside a run", positive=False)
+        return
+    rel = _run_relative_posix(run_root, path)
+    if rel is None:
+        _show_toast(ui, "Keep-local unavailable: could not resolve file path", positive=False)
+        return
+    new_value = not bool(getattr(entry, "keep_local", False))
+
+    async def _do_toggle() -> None:
+        try:
+            await writer.set_keep_local(run_root, rel, new_value)
+        except Exception as exc:
+            _log.exception("keep-local toggle failed")
+            _show_toast(ui, f"Keep-local failed: {exc}", positive=False)
+            return
+        verb = "kept local" if new_value else "no longer kept local"
+        _show_toast(ui, f"{path.name} {verb}", positive=True)
+        if on_done is not None:
+            on_done()
+
+    _spawn_background(_do_toggle())
 
 
 def _open_in_os(path: str) -> bool:
@@ -980,46 +1274,242 @@ def _open_in_os(path: str) -> bool:
     return False
 
 
-def _open_log_dialog(run_path: Path, ui: Any) -> None:
-    """Open a NiceGUI dialog showing the run's ingest.json history."""
-    import msgspec
+def _build_operation_rows(deps: Any) -> list[Any]:
+    """Build the Operations-panel rows from the live session store (T3).
 
-    from exlab_wizard.api.schemas import IngestJson
-    from exlab_wizard.io import read_msgspec_json
-    from exlab_wizard.paths import ingest_json_path
+    Uses the shared §9.5 membership rule (:func:`_panel_sessions`): terminal
+    ``DONE`` / ``ABORTED`` sessions fall off; ``FAILED`` stays so a recent
+    failure is visible.
+    """
+    from exlab_wizard.ui.components.operations_modal import OperationRow
 
-    ingest_path = ingest_json_path(run_path)
-    if not ingest_path.exists():
-        _show_toast(ui, "No log: ingest.json not found", positive=False)
+    return [OperationRow.from_session(sid, session) for sid, session in _panel_sessions(deps)]
+
+
+def _open_operations_modal(deps: Any, ui: Any) -> None:
+    """Open the in-flight Operations panel (Frontend §9.5).
+
+    Builds a fresh snapshot on each open (true auto-refresh is the wizard's
+    live stream, T2). Row actions dispatch to resume / cancel / details.
+    """
+    from exlab_wizard.ui.components.operations_modal import operations_modal
+
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    if controller is None:
+        _show_toast(ui, "Operations unavailable: controller not initialized", positive=False)
         return
-    try:
-        payload = read_msgspec_json(ingest_path, IngestJson)
-    except (msgspec.DecodeError, msgspec.ValidationError) as exc:
-        _show_toast(ui, f"Log unreadable: {exc}", positive=False)
+    rows = _build_operation_rows(deps)
+    dialog = operations_modal(
+        rows,
+        on_resume=lambda oid: _resume_operation(deps, oid, ui),
+        on_cancel=lambda oid: _cancel_operation(deps, oid, ui),
+        on_view_log=lambda oid: _open_operation_details(deps, oid, ui),
+    )
+    opener = getattr(dialog, "open", None)
+    if callable(opener):
+        opener()
+
+
+def _open_operation_details(deps: Any, session_id: str, ui: Any) -> None:
+    """Show a lightweight details/"log" dialog for one in-flight operation.
+
+    The §9.5 "View log" action: surfaces the session's current state plus
+    any suspend reason or error. (The NAS-sync run log is a separate,
+    post-creation concern handled by :func:`_open_log_dialog`.)
+    """
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    store = getattr(controller, "session_store", None) if controller is not None else None
+    session = store.get(session_id) if store is not None else None
+    if session is None:
+        _show_toast(ui, "Operation not found", positive=False)
         return
-    try:
-        dialog = ui.dialog()
-        with (
-            dialog,
-            ui.card()
-            .props('data-testid="run-log-dialog"')
-            .style("min-width: 480px; max-width: 720px;"),
-        ):
-            ui.label(f"Log: {run_path.name}").style("font-weight: 600;")
-            ui.label(f"State: {payload.current_state}").style("color: var(--color-muted);")
-            with ui.scroll_area().style("max-height: 360px;"):
-                for entry in payload.history:
-                    state_val = entry.get("state", "?") if isinstance(entry, dict) else "?"
-                    at_val = entry.get("at", "") if isinstance(entry, dict) else ""
-                    host_val = entry.get("host", "") if isinstance(entry, dict) else ""
-                    ui.label(f"[{at_val}] {state_val} (host={host_val})").style(
+    state_val = getattr(session.state, "value", str(session.state))
+    dialog = ui.dialog()
+    with (
+        dialog,
+        ui.card().props('data-testid="operation-log-dialog"').style("min-width: 480px;"),
+    ):
+        ui.label(f"Operation {session_id}").style("font-weight: 600;")
+        ui.label(f"State: {state_val}").style("color: var(--color-muted);")
+        pending = getattr(session, "pending_input", None)
+        if pending:
+            ui.label(f"Awaiting input: {pending.get('reason', '')}").style(
+                "font-family: var(--font-mono); font-size: 0.85em;"
+            )
+        error = getattr(session, "error", None)
+        if error:
+            ui.label(f"Error: {error.get('message', error.get('code', ''))}").style(
+                "color: var(--color-danger); font-family: var(--font-mono); font-size: 0.85em;"
+            )
+    dialog.open()
+
+
+def _resume_operation(deps: Any, session_id: str, ui: Any) -> None:
+    """Resume a suspended session by re-opening its §9.1 input dialog (T5).
+
+    Reads the parked ``pending_input`` (plugin / reason / fields) off the
+    session and re-presents the escalation dialog; Submit resumes the
+    pipeline with the answers.
+    """
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    store = getattr(controller, "session_store", None) if controller is not None else None
+    session = store.get(session_id) if store is not None else None
+    pending = getattr(session, "pending_input", None) if session is not None else None
+    if controller is None or not pending:
+        _show_toast(ui, "Nothing to resume: the operation is not awaiting input", positive=False)
+        return
+    _open_input_required_dialog(
+        controller,
+        session_id,
+        ui,
+        plugin=pending.get("plugin", ""),
+        reason=pending.get("reason", ""),
+        fields=pending.get("fields") or [],
+    )
+
+
+def _open_input_required_dialog(
+    controller: Any,
+    session_id: str,
+    ui: Any,
+    *,
+    plugin: str,
+    reason: str,
+    fields: list[Any],
+) -> Any:
+    """Open the §9.1 escalation dialog; Submit resumes, Cancel confirms (T5).
+
+    Submit calls ``controller.resume(session_id, values)`` -- the suspended
+    pipeline wakes with the answers. ``resume`` raises on an unknown session
+    or a stale (non-``INPUT_REQUIRED``) state; a plugin re-rejecting the
+    values simply re-emits ``input_required`` (the consumer re-opens this
+    dialog). Both are surfaced to the operator. Cancel routes through the
+    §9.4 cancel dialog.
+    Returns the dialog so the caller can force-close it on a terminal frame.
+    """
+    from exlab_wizard.ui.components.input_required_dialog import input_required_dialog
+
+    def _on_submit(values: dict[str, Any]) -> None:
+        async def _run() -> None:
+            try:
+                await controller.resume(session_id, values)
+            except Exception as exc:
+                _show_toast(ui, f"Could not submit input: {exc}", positive=False)
+
+        _spawn_background(_run())
+
+    def _on_cancel() -> None:
+        _cancel_session(controller, session_id, ui)
+
+    dialog = input_required_dialog(
+        plugin=plugin,
+        reason=reason,
+        fields=fields,
+        on_submit=_on_submit,
+        on_cancel=_on_cancel,
+    )
+    opener = getattr(dialog, "open", None)
+    if callable(opener):
+        opener()
+    return dialog
+
+
+def _cancel_operation(deps: Any, session_id: str, ui: Any) -> None:
+    """Resolve the controller off ``deps`` and open the §9.4 cancel dialog."""
+    controller = getattr(deps, "controller", None) if deps is not None else None
+    if controller is None:
+        _show_toast(ui, "Cancel unavailable: controller not initialized", positive=False)
+        return
+    _cancel_session(controller, session_id, ui)
+
+
+def _cancel_session(controller: Any, session_id: str, ui: Any) -> None:
+    """Cancel an in-flight session via the §9.4 Discard / Keep dialog (T4).
+
+    The operator chooses whether to discard the partially-created files
+    (``discard_files=True`` -> ``shutil.rmtree`` of the partial dir) or
+    keep them in place as an orphan. ``controller.cancel`` is a no-op on an
+    already-terminal session; any error is surfaced as a toast.
+    """
+    dialog = ui.dialog()
+
+    def _choose(discard_files: bool) -> None:
+        dialog.close()
+
+        async def _run() -> None:
+            try:
+                await controller.cancel(session_id, discard_files=discard_files)
+                _show_toast(ui, "Operation cancelled", positive=True)
+            except Exception as exc:
+                _show_toast(ui, f"Cancel failed: {exc}", positive=False)
+
+        _spawn_background(_run())
+
+    with (
+        dialog,
+        ui.card().props('data-testid="cancel-confirm-dialog"').style("min-width: 420px;"),
+    ):
+        ui.label("Cancel this operation?").style("font-weight: 600;")
+        ui.label("Discard the partially-created files, or keep them in place as an orphan?").style(
+            "color: var(--color-muted);"
+        )
+        with ui.row().classes("justify-end w-full").style("gap: 0.5rem;"):
+            ui.button("Back", on_click=lambda _e: dialog.close()).props("flat")
+            ui.button("Keep files", on_click=lambda _e: _choose(False)).props(
+                'flat data-testid="cancel-keep"'
+            )
+            ui.button("Discard files", on_click=lambda _e: _choose(True)).props(
+                'flat color=negative data-testid="cancel-discard"'
+            )
+    dialog.open()
+
+
+def _open_log_dialog(deps: Any, run_path: Path, ui: Any) -> None:
+    """Open a NiceGUI dialog showing the run's sync-queue job state.
+
+    The operator-free per-file NAS sync redesign (2026-05-21) removed
+    ``ingest.json``; the per-run "log" is now the run's sync-queue job
+    state. Phase 5/6 source this from the ``sync_state.json`` rollup.
+    """
+
+    async def _do_open() -> None:
+        nas_sync = getattr(deps, "nas_sync", None) if deps is not None else None
+        getter = getattr(nas_sync, "get_by_run_path", None) if nas_sync is not None else None
+        row = None
+        if getter is not None:
+            try:
+                row = await getter(run_path)
+            except Exception as exc:  # pragma: no cover -- defensive
+                _log.warning("sync-queue lookup failed for %s: %s", run_path, exc)
+        state = getattr(getattr(row, "state", None), "value", None) or "none"
+        try:
+            dialog = ui.dialog()
+            with (
+                dialog,
+                ui.card()
+                .props('data-testid="run-log-dialog"')
+                .style("min-width: 480px; max-width: 720px;"),
+            ):
+                ui.label(f"Log: {run_path.name}").style("font-weight: 600;")
+                ui.label(f"Sync state: {state}").style("color: var(--color-muted);")
+                if row is None:
+                    ui.label("No sync job recorded for this run yet.").style(
                         "font-family: var(--font-mono); font-size: 0.85em;"
                     )
-            ui.button("Close", on_click=dialog.close).props("flat")
-        dialog.open()
-    except Exception as exc:
-        _log.warning("log dialog render failed: %s", exc)
-        _show_toast(ui, "Log dialog unavailable", positive=False)
+                else:
+                    for field in ("enqueued_at", "verified_at", "attempts", "last_error"):
+                        value = getattr(row, field, None)
+                        if value:
+                            ui.label(f"{field}: {value}").style(
+                                "font-family: var(--font-mono); font-size: 0.85em;"
+                            )
+                ui.button("Close", on_click=dialog.close).props("flat")
+            dialog.open()
+        except Exception as exc:
+            _log.warning("log dialog render failed: %s", exc)
+            _show_toast(ui, "Log dialog unavailable", positive=False)
+
+    _spawn_background(_do_open())
 
 
 def _missing_setup_sections(deps: Any) -> tuple[str, ...]:
@@ -1029,6 +1519,8 @@ def _missing_setup_sections(deps: Any) -> tuple[str, ...]:
     other than READY surfaces at least one section. The Settings page
     uses this to auto-select the first incomplete section.
     """
+    from exlab_wizard.api._dependencies import lims_password_present
+
     if deps is None:
         return ("paths", "lims")
     config = getattr(deps, "config", None)
@@ -1040,9 +1532,15 @@ def _missing_setup_sections(deps: Any) -> tuple[str, ...]:
     missing: list[str] = []
     if not config.paths.local_root or not config.paths.templates_dir:
         missing.append("paths")
+    # rclone.conf NAS-sync migration: surface the NAS-remote section when
+    # nas-mode equipment exist but the configured ``nas.remote`` is absent
+    # from rclone.conf, so the setup-incomplete banner auto-selects it.
+    # This mirrors the §4.9 setup gate (``INCOMPLETE_NO_NAS_REMOTE``).
+    if _nas_remote_missing(deps, config):
+        missing.append("nas_remote")
     if not config.lims.endpoint or not config.lims.email:
         missing.append("lims")
-    if not getattr(deps, "keyring_password_present", False) and "lims" not in missing:
+    if not lims_password_present(deps) and "lims" not in missing:
         missing.append("lims")
     return tuple(missing)
 
@@ -1122,6 +1620,9 @@ def _lims_catalogue_projects(deps: Any) -> list[dict[str, Any]]:
         from exlab_wizard.lims.catalogue import read_catalogue
 
         catalogue = read_catalogue(Path(catalogue_path), expected_endpoint=config.lims.endpoint)
+        if catalogue is None:
+            # schema_version mismatch -> treated as absent (§7.2.9.3).
+            return []
         return [
             {
                 "short_id": project.short_id,
@@ -1191,6 +1692,59 @@ async def _await_session(controller: Any, handle: Any) -> Any:
     return await controller.status(handle.session_id)
 
 
+async def _consume_session_progress(
+    controller: Any, session_id: str, wizard_state: Any, ui: Any
+) -> None:
+    """Fold the controller's WS frames into the wizard's live phase bar (T2)
+    and surface a plugin ``INPUT_REQUIRED`` escalation dialog (T5).
+
+    Runs inside the wizard's submit coroutine (already bound to the page's
+    client context), so re-rendering the ``@ui.refreshable`` progress view
+    and opening dialogs are safe. Subscribing right after ``create_*``
+    returns is race-free: ``_launch`` creates the session's event queue
+    before the pipeline starts, so buffered early phases replay in order.
+    On an ``input_required`` frame the §9.1 dialog opens; the loop keeps
+    awaiting frames (the pipeline only resumes once the operator submits).
+    A terminal ``done`` / ``failed`` frame force-closes any open dialog
+    (e.g. the plugin timed out while suspended) and ends the loop.
+    """
+    from exlab_wizard.ui.components import session_progress
+
+    progress = getattr(wizard_state, "progress", None)
+    refresh = getattr(wizard_state, "progress_refresh", None)
+    if progress is None:
+        return
+    open_dialog: Any = None
+    try:
+        async for frame in controller.subscribe(session_id):
+            kind = frame.get("kind")
+            if session_progress.apply_frame(progress, frame) and refresh is not None:
+                with contextlib.suppress(Exception):
+                    refresh()
+            if kind == "input_required":
+                open_dialog = _open_input_required_dialog(
+                    controller,
+                    session_id,
+                    ui,
+                    plugin=frame.get("plugin", ""),
+                    reason=frame.get("reason", ""),
+                    fields=frame.get("fields") or [],
+                )
+            if kind in ("done", "failed"):
+                _close_dialog(open_dialog)
+                break
+    except Exception:
+        _log.exception("progress consumer failed for session %s", session_id)
+
+
+def _close_dialog(dialog: Any) -> None:
+    """Best-effort close of a NiceGUI dialog (no-op when ``None`` / test mode)."""
+    closer = getattr(dialog, "close", None)
+    if callable(closer):
+        with contextlib.suppress(Exception):
+            closer()
+
+
 async def _submit_project(deps: Any, state: Any, ui: Any) -> None:
     """Build a ProjectCreateRequest from the wizard state and run it."""
     controller = getattr(deps, "controller", None) if deps is not None else None
@@ -1219,7 +1773,9 @@ async def _submit_project(deps: Any, state: Any, ui: Any) -> None:
         operator=readme.get("operator", ""),
         objective=readme.get("objective", ""),
     )
-    await _run_creation(controller, controller.create_project, request, ui, label="Project")
+    await _run_creation(
+        controller, controller.create_project, request, ui, label="Project", wizard_state=state
+    )
 
 
 async def _submit_run(deps: Any, state: Any, run_kind: RunKind, ui: Any) -> None:
@@ -1250,7 +1806,9 @@ async def _submit_run(deps: Any, state: Any, run_kind: RunKind, ui: Any) -> None
         objective=readme.get("objective", ""),
     )
     kind_label = "Test run" if run_kind is RunKind.TEST else "Run"
-    await _run_creation(controller, controller.create_run, request, ui, label=kind_label)
+    await _run_creation(
+        controller, controller.create_run, request, ui, label=kind_label, wizard_state=state
+    )
 
 
 async def _run_creation(
@@ -1260,12 +1818,20 @@ async def _run_creation(
     ui: Any,
     *,
     label: str,
+    wizard_state: Any = None,
 ) -> None:
-    """Drive a create_* call to completion and toast the outcome."""
+    """Drive a create_* call to completion and toast the outcome.
+
+    When ``wizard_state`` is supplied, the controller's phase stream is
+    consumed live so the Confirm & Create step's progress bar advances as
+    the pipeline runs (T2); otherwise the call just awaits the final state.
+    """
     from exlab_wizard.controller import SessionState
 
     try:
         handle = await create_fn(request)
+        if wizard_state is not None:
+            await _consume_session_progress(controller, handle.session_id, wizard_state, ui)
         final = await _await_session(controller, handle)
     except Exception as exc:
         _log.exception("%s creation raised", label)
@@ -1317,9 +1883,10 @@ def _build_staging_state(deps: Any) -> Any:
     # Redesign §3.1: orchestrator pipeline is always active; missing
     # staging_root surfaces as an empty staging dock, not a None panel.
     try:
-        from exlab_wizard.orchestrator.staging_query import list_staged_runs
-
-        rows = list_staged_runs(config=config)
+        rows = list_staged_runs(
+            config=config,
+            sync_state_writer=getattr(deps, "sync_state_writer", None),
+        )
     except Exception as exc:
         _log.warning("staging_query failed: %s", exc)
         return staging_page.StagingDockState(rows=[])

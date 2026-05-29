@@ -17,7 +17,6 @@ import pytest
 from exlab_wizard.api.schemas import (
     CreationJson,
     EquipmentJson,
-    IngestJson,
     LimsProjectBlock,
     OrchestratorBlock,
     OverrideEntry,
@@ -39,9 +38,7 @@ from exlab_wizard.api.schemas import (
 from exlab_wizard.api.schemas import TestRunsJson as RunsTestMarkerJson
 from exlab_wizard.constants import (
     CreationLevel,
-    IngestState,
     LIMSProjectSource,
-    OrchestratorTransportType,
     PluginStatus,
     RunKind,
     RunScope,
@@ -151,31 +148,27 @@ def test_creation_json_orchestrator_block_omitted_when_none() -> None:
     assert '"orchestrator"' not in encoded
 
 
-def test_orchestrator_block_carries_relay_discovery_fields() -> None:
-    """Redesign §3.3: pushed creation.json carries the equipment label +
-    completeness signal so the orchestrator can auto-discover received
-    equipment without a per-equipment registry of its own."""
+def test_orchestrator_block_carries_relay_discovery_field() -> None:
+    """Redesign §3.3: pushed creation.json carries the equipment label so
+    the orchestrator can auto-discover received equipment without a
+    per-equipment registry of its own. The operator-free quiescence-sync
+    redesign (2026-05-21) removed the completeness-signal relay fields."""
     payload = _minimal_creation_json(
         orchestrator=OrchestratorBlock(
             enabled=True,
             host="labpc-04",
             label="Lab Acquisition Station 01",
             equipment_label="Confocal Microscope 1",
-            completeness_signal="sentinel_file",
-            sentinel_filename="acquisition_complete.flag",
         ),
     )
     encoded = msgspec_json.encode(payload)
     decoded = msgspec_json.decode(encoded, type=CreationJson)
     assert decoded.orchestrator is not None
     assert decoded.orchestrator.equipment_label == "Confocal Microscope 1"
-    assert decoded.orchestrator.completeness_signal == "sentinel_file"
-    assert decoded.orchestrator.sentinel_filename == "acquisition_complete.flag"
-    assert decoded.orchestrator.manifest_filename is None
 
 
-def test_orchestrator_block_relay_fields_default_to_empty_or_none() -> None:
-    """Older creation.json files (no relay fields) decode cleanly."""
+def test_orchestrator_block_relay_field_defaults_to_none() -> None:
+    """Older creation.json files (no relay field) decode cleanly."""
     payload = _minimal_creation_json(
         orchestrator=OrchestratorBlock(
             enabled=True, host="labpc-04", label="Lab Acquisition Station 01"
@@ -185,9 +178,6 @@ def test_orchestrator_block_relay_fields_default_to_empty_or_none() -> None:
     decoded = msgspec_json.decode(encoded, type=CreationJson)
     assert decoded.orchestrator is not None
     assert decoded.orchestrator.equipment_label is None
-    assert decoded.orchestrator.completeness_signal is None
-    assert decoded.orchestrator.sentinel_filename is None
-    assert decoded.orchestrator.manifest_filename is None
 
 
 def test_creation_json_default_sync_status_is_pending() -> None:
@@ -485,22 +475,6 @@ def test_test_runs_json_missing_required_field_raises() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _ingest_json_payload(**overrides: object) -> bytes:
-    """Build a minimal valid ingest.json JSON document for round-trip tests."""
-    base: dict[str, object] = {
-        "schema_version": "1.1",
-        "project_name": "PROJ-0042",
-        "equipment_id": "CONFOCAL_01",
-        "run_kind": "experimental",
-        "run_path": "/staging/Run_2026-04-17",
-        "transport": "smb_mount",
-        "current_state": "staging",
-        "history": [],
-    }
-    base.update(overrides)
-    return msgspec_json.encode(base)
-
-
 def _creation_json_payload(**overrides: object) -> bytes:
     """Build a minimal valid creation.json JSON document for round-trip tests."""
     base: dict[str, object] = {
@@ -576,72 +550,6 @@ def _creation_json_payload(**overrides: object) -> bytes:
             "blocked_by_validation",
             SyncStatus.BLOCKED_BY_VALIDATION,
             lambda: _creation_json_payload(sync_status="blocked_by_validation"),
-        ),
-        # IngestJson.run_kind
-        (
-            IngestJson,
-            "run_kind",
-            "experimental",
-            RunKind.EXPERIMENTAL,
-            lambda: _ingest_json_payload(run_kind="experimental"),
-        ),
-        (
-            IngestJson,
-            "run_kind",
-            "test",
-            RunKind.TEST,
-            lambda: _ingest_json_payload(run_kind="test"),
-        ),
-        # IngestJson.transport
-        (
-            IngestJson,
-            "transport",
-            "smb_mount",
-            OrchestratorTransportType.SMB_MOUNT,
-            lambda: _ingest_json_payload(transport="smb_mount"),
-        ),
-        (
-            IngestJson,
-            "transport",
-            "file_transfer",
-            OrchestratorTransportType.FILE_TRANSFER,
-            lambda: _ingest_json_payload(transport="file_transfer"),
-        ),
-        # IngestJson.current_state
-        (
-            IngestJson,
-            "current_state",
-            "staging",
-            IngestState.STAGING,
-            lambda: _ingest_json_payload(current_state="staging"),
-        ),
-        (
-            IngestJson,
-            "current_state",
-            "complete",
-            IngestState.COMPLETE,
-            lambda: _ingest_json_payload(current_state="complete"),
-        ),
-        (
-            IngestJson,
-            "current_state",
-            "sync_queued",
-            IngestState.SYNC_QUEUED,
-            lambda: _ingest_json_payload(current_state="sync_queued"),
-        ),
-        (
-            IngestJson,
-            "current_state",
-            "sync_verified",
-            IngestState.SYNC_VERIFIED,
-            lambda: _ingest_json_payload(current_state="sync_verified"),
-        ),
-        (
-            IngestJson,
-            "current_state",
-            "cleared",
-            IngestState.CLEARED,
-            lambda: _ingest_json_payload(current_state="cleared"),
         ),
     ],
 )

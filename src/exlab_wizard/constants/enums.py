@@ -114,13 +114,23 @@ class LIMSProjectSource(StrEnum):
     OFFLINE_CATALOGUE = "offline_catalogue"
 
 
-class IngestState(StrEnum):
-    """State machine for the NAS-ingest workflow. Backend Spec §13.3."""
+class RunSyncState(StrEnum):
+    """Derived run-level rollup of a run's per-file NAS sync progress.
 
-    STAGING = "staging"
-    COMPLETE = "complete"
-    SYNC_QUEUED = "sync_queued"
-    SYNC_VERIFIED = "sync_verified"
+    Operator-free per-file NAS sync design (2026-05-21). This rollup is
+    *never persisted*: it is computed on read from ``sync_state.json`` by
+    ``SyncStateWriter.rollup_state`` because the ``SYNCING``/``SYNCED``
+    distinction can oscillate (a ``SYNCED`` run whose file is modified
+    again returns to ``SYNCING``).
+
+    * ``SYNCING`` -- at least one tracked file is unverified, or no files are
+      tracked yet.
+    * ``SYNCED`` -- every tracked file has been verified on the NAS.
+    * ``CLEARED`` -- the run's staging copy has been cleaned up.
+    """
+
+    SYNCING = "syncing"
+    SYNCED = "synced"
     CLEARED = "cleared"
 
 
@@ -130,26 +140,20 @@ class SetupState(StrEnum):
     Backend Spec §4.9.1. Values are the same strings as the member names
     (lower case) by convention.
 
-    ``INCOMPLETE_NO_ORCHESTRATOR`` is the GUI/Orchestrator Redesign §3.1
-    addition: ``orchestrator.label`` + ``orchestrator.staging_root`` are
-    always required (no longer gated on a removed ``enabled`` toggle) so
-    they join the setup-incomplete gate.
+    ``INCOMPLETE_NO_ORCHESTRATOR`` (GUI/Orchestrator Redesign §3.1) trips on a
+    missing ``orchestrator.label`` -- the required workstation identity.
+    ``orchestrator.staging_root`` is opt-in and does not gate setup (a blank
+    value just means this device is not a staging PC).
     """
 
     INCOMPLETE_NO_CONFIG = "incomplete_no_config"
     INCOMPLETE_MISSING_PATHS = "incomplete_missing_paths"
     INCOMPLETE_NO_ORCHESTRATOR = "incomplete_no_orchestrator"
     INCOMPLETE_NO_EQUIPMENT = "incomplete_no_equipment"
+    INCOMPLETE_NO_NAS_REMOTE = "incomplete_no_nas_remote"
     INCOMPLETE_NO_LIMS = "incomplete_no_lims"
     INCOMPLETE_LIMS_UNREACHABLE = "incomplete_lims_unreachable"
     READY = "ready"
-
-
-class TransportType(StrEnum):
-    """NAS sync transport. Backend Spec §7.1.3."""
-
-    RCLONE = "rclone"
-    RSYNC_SSH = "rsync_ssh"
 
 
 class SyncMode(StrEnum):
@@ -157,23 +161,13 @@ class SyncMode(StrEnum):
 
     Replaces the device-level orchestrator-mode toggle. Stored under
     ``sync_mode`` on each ``EquipmentConfig`` entry. An equipment is never
-    both: ``nas`` requires ``transport`` and forbids
-    ``orchestrator_staging_transport``; ``stage`` requires
-    ``orchestrator_staging_transport`` and forbids ``transport``.
+    both: ``nas`` syncs runs directly to the NAS remote defined in the
+    ``nas:`` block; ``stage`` pushes to the staging-PC remote defined by
+    ``orchestrator.staging_remote`` / ``staging_base_root`` instead.
     """
 
     NAS = "nas"
     STAGE = "stage"
-
-
-class CompletenessSignal(StrEnum):
-    """How a directory signals that its contents are finalized.
-
-    Backend Spec §9 and §13.5.
-    """
-
-    SENTINEL_FILE = "sentinel_file"
-    MANIFEST = "manifest"
 
 
 class StagingCleanupMode(StrEnum):
@@ -201,17 +195,6 @@ class CreationLevel(StrEnum):
 
     PROJECT = "project"
     RUN = "run"
-
-
-class OrchestratorTransportType(StrEnum):
-    """How the orchestrator delivered run data to the staging area.
-
-    Distinct from :class:`TransportType` (which describes the NAS sync
-    transport). Stored under ``transport`` in ingest.json. Backend Spec §13.3.
-    """
-
-    SMB_MOUNT = "smb_mount"
-    FILE_TRANSFER = "file_transfer"
 
 
 class FieldType(StrEnum):
@@ -302,6 +285,7 @@ class SetupNextAction(StrEnum):
 
     SET_PATHS = "set_paths"
     ADD_EQUIPMENT = "add_equipment"
+    CONFIGURE_RCLONE_REMOTE = "configure_rclone_remote"
     CONFIGURE_LIMS = "configure_lims"
     TEST_LIMS = "test_lims"
 

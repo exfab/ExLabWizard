@@ -10,9 +10,9 @@ from exlab_wizard.api import AppDependencies, create_app
 from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
+    NasConfig,
     OrchestratorConfig,
     PathsConfig,
-    RcloneTransport,
 )
 
 
@@ -29,16 +29,10 @@ def _ready_config() -> Config:
                 label="Equipment 1",
                 local_root="/d",
                 nas_root="/n",
-                completeness_signal="sentinel_file",
-                sentinel_filename="done.flag",
-                transport=RcloneTransport(
-                    type="rclone",
-                    rclone_remote="lab-nas",
-                    rclone_remote_path="lab/EQ1",
-                ),
             )
         ],
         orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
     )
 
 
@@ -69,6 +63,10 @@ def test_put_config_persists_and_reevaluates_state() -> None:
     async def saver(config: Config) -> None:
         captured["saved"] = config
 
+    # ``_ready_config`` configures ``nas.remote`` and the default deps
+    # ``nas_remote_available`` predicate answers "available", so the
+    # NAS-remote gate (which precedes the LIMS gate) passes and this test's
+    # verdict is the LIMS gate.
     deps = AppDependencies(config=_empty_config(), save_config=saver)
     app = create_app(dependencies=deps)
     client = TestClient(app)
@@ -117,13 +115,6 @@ def test_append_equipment_persists_and_re_evaluates_state() -> None:
             "label": "Flow Cytometer 99",
             "local_root": "/data",
             "nas_root": "/srv/nas",
-            "completeness_signal": "sentinel_file",
-            "sentinel_filename": "done.flag",
-            "transport": {
-                "type": "rclone",
-                "rclone_remote": "lab-nas",
-                "rclone_remote_path": "lab/FLOW_99",
-            },
         }
     )
     response = client.post("/api/v1/config/equipment", json=new_eq.model_dump(mode="json"))
@@ -144,13 +135,6 @@ def test_append_equipment_rejects_duplicate_id() -> None:
             "label": "Equipment 1 duplicate",
             "local_root": "/data",
             "nas_root": "/srv/nas",
-            "completeness_signal": "sentinel_file",
-            "sentinel_filename": "done.flag",
-            "transport": {
-                "type": "rclone",
-                "rclone_remote": "lab-nas",
-                "rclone_remote_path": "lab/EQ1",
-            },
         }
     )
     response = client.post("/api/v1/config/equipment", json=duplicate.model_dump(mode="json"))

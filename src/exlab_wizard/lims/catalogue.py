@@ -52,8 +52,9 @@ class OfflineCatalogue:
     """Decoded offline catalogue. Backend Spec §7.2.9.1.
 
     ``schema_version`` is pinned to the constant declared in
-    :mod:`exlab_wizard.constants.schema_versions`; mismatches surface
-    as :class:`exlab_wizard.errors.ConfigError`.
+    :mod:`exlab_wizard.constants.schema_versions`; a mismatch is treated
+    as catalogue-absent (WARN + ``None``) per §7.2.9.3 -- see
+    :func:`read_catalogue`.
 
     ``lims_endpoint`` is verified by :func:`read_catalogue` against the
     consumer's configured LIMS endpoint; mismatches are rejected per
@@ -68,18 +69,25 @@ class OfflineCatalogue:
     projects: list[LIMSProject]
 
 
-def read_catalogue(path: Path, *, expected_endpoint: str) -> OfflineCatalogue:
+def read_catalogue(path: Path, *, expected_endpoint: str) -> OfflineCatalogue | None:
     """Read and validate the catalogue file.
 
-    Raises :class:`exlab_wizard.errors.ConfigError` on any of:
+    Returns ``None`` (and logs a WARN) when the ``schema_version`` does not
+    match :data:`exlab_wizard.constants.OFFLINE_CATALOGUE_VERSION`: per
+    Backend Spec §7.2.9.3 a version mismatch is treated as *catalogue
+    absent* (the consumer falls through to its next picker source), rather
+    than a hard error. (Policy decision, 2026-05-29: the catalogue follows
+    the "treat as absent / WARN" rule of §7.2.9.3; it is deliberately *not*
+    the §11.9.2 major-only cache-file gate.)
+
+    Raises :class:`exlab_wizard.errors.ConfigError` on the genuine-error
+    cases:
 
     - file missing / unreadable
     - JSON parse error
-    - ``schema_version`` is not the constant
-      :data:`exlab_wizard.constants.OFFLINE_CATALOGUE_VERSION`
-    - ``lims_endpoint`` differs from ``expected_endpoint`` (per
-      §7.2.9.3 the producer's LIMS must match the consumer's
-      configuration; cross-lab leakage is rejected, not warned).
+    - ``lims_endpoint`` differs from ``expected_endpoint`` (per §7.2.9.3
+      the producer's LIMS must match the consumer's configuration;
+      cross-lab leakage is rejected, not warned).
     """
     try:
         decoded = read_msgspec_json_raw(Path(path))
@@ -90,17 +98,19 @@ def read_catalogue(path: Path, *, expected_endpoint: str) -> OfflineCatalogue:
         msg = f"offline catalogue at {path} is not valid JSON: {exc}"
         raise ConfigError(msg) from exc
 
-    # TODO(spec): the OFFLINE_CATALOGUE_VERSION check below is an
-    # exact-match (major+minor); this is intentionally stricter than the
-    # §11.9.2 major-only gate used for cache files. Revisit once the spec
-    # clarifies whether offline catalogues should follow the same policy.
+    # §7.2.9.3: a schema_version mismatch is treated as "catalogue absent"
+    # (WARN + fall through), not a hard error -- so a future producer bump
+    # never crashes a consumer; it simply ignores the unreadable catalogue.
     schema_version = decoded.get("schema_version")
     if schema_version != OFFLINE_CATALOGUE_VERSION:
-        msg = (
-            f"offline catalogue at {path} has schema_version "
-            f"{schema_version!r}; expected {OFFLINE_CATALOGUE_VERSION!r}"
+        logger.warning(
+            "offline catalogue at %s has schema_version %r; expected %r -- "
+            "treating as absent (§7.2.9.3)",
+            path,
+            schema_version,
+            OFFLINE_CATALOGUE_VERSION,
         )
-        raise ConfigError(msg)
+        return None
 
     lims_endpoint = decoded.get("lims_endpoint", "")
     if lims_endpoint != expected_endpoint:

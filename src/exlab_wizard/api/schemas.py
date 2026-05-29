@@ -42,12 +42,10 @@ from msgspec import Struct
 from msgspec import json as msgspec_json
 from msgspec import structs as msgspec_structs
 
+from exlab_wizard.cache.sync_state_schema import FileSyncRecord, SyncStateJson
 from exlab_wizard.constants import (
-    CompletenessSignal,
     CreationLevel,
-    IngestState,
     LIMSProjectSource,
-    OrchestratorTransportType,
     PluginStatus,
     RunKind,
     RunScope,
@@ -57,7 +55,7 @@ from exlab_wizard.constants import (
 __all__ = [
     "CreationJson",
     "EquipmentJson",
-    "IngestJson",
+    "FileSyncRecord",
     "LimsProjectBlock",
     "OrchestratorBlock",
     "OverrideEntry",
@@ -65,6 +63,7 @@ __all__ = [
     "PluginApplied",
     "PluginIsolation",
     "ReadmeFieldsJson",
+    "SyncStateJson",
     "TemplateBlock",
     "TestRunsJson",
     "TombstoneEntry",
@@ -169,21 +168,18 @@ class OrchestratorBlock(
     role and the orchestrator block always carries the producing device's
     identity.
 
-    The ``equipment_label`` / ``completeness_signal`` /
-    ``sentinel_filename`` / ``manifest_filename`` fields travel with the
-    push so the receiving orchestrator can auto-discover received
-    equipment (Redesign Spec §3.3) without a per-equipment registry of
-    its own. They are optional for forward-compat with creation.json
-    files written by earlier writers.
+    The ``equipment_label`` field travels with the push so the receiving
+    orchestrator can auto-discover received equipment (Redesign Spec §3.3)
+    without a per-equipment registry of its own. It is optional for
+    forward-compat with creation.json files written by earlier writers.
+    The former completeness-signal relay fields were removed by the
+    operator-free quiescence-sync redesign (2026-05-21).
     """
 
     enabled: bool
     host: str
     label: str
     equipment_label: str | None = None
-    completeness_signal: CompletenessSignal | None = None
-    sentinel_filename: str | None = None
-    manifest_filename: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -371,33 +367,14 @@ class TestRunsJson(
 
 
 # ---------------------------------------------------------------------------
-# ingest.json (§13.4) -- orchestrator-only staging lifecycle record
+# sync_state.json -- per-run, per-file quiescence-driven sync state
+# (operator-free per-file NAS sync design, 2026-05-21).
+#
+# The ``SyncStateJson`` / ``FileSyncRecord`` structs are defined in the
+# dependency-free ``exlab_wizard.cache.sync_state_schema`` module so the
+# ``cache`` / ``sync`` / ``orchestrator`` packages can import them (and the
+# ``SyncStateWriter``) at module scope without forming a circular import
+# back through the ``api`` package. They are re-exported here so the
+# "single source of truth for cache schemas" surface stays intact for API
+# callers.
 # ---------------------------------------------------------------------------
-
-
-class IngestJson(
-    Struct,
-    omit_defaults=True,
-    forbid_unknown_fields=False,
-):
-    """``ingest.json`` orchestrator staging record at schema version 1.1. Spec §13.4.
-
-    Written by the orchestrator only (not by equipment workstations). The
-    ``history`` list is append-only per §13: lifecycle transitions are
-    recorded, never overwritten. ``current_state`` mirrors the most recent
-    history entry's ``state`` for fast read-without-walk access.
-
-    History entries are loose dicts because the optional fields per state
-    (``files_received`` / ``bytes_received`` on ``complete``; ``nas_path`` /
-    ``checksum_file`` on ``sync_verified``) make a strict type a nuisance.
-    The state-machine validation is performed by the writer.
-    """
-
-    schema_version: str
-    project_name: str
-    equipment_id: str
-    run_kind: RunKind
-    run_path: str
-    transport: OrchestratorTransportType
-    current_state: IngestState
-    history: list[dict[str, Any]] = []

@@ -3,8 +3,8 @@
 Verifies that the project / equipment tree (Frontend §3.5) renders the
 correct SVG icon to the left of each run name based on its sync status:
 
-* ``sync_status != "cleaned"`` (or absent) -> ``/assets/sync_local.svg``
-* ``sync_status == "cleaned"``             -> ``/assets/sync_cloud.svg``
+* rollup other than ``cleared`` (or absent) -> ``/assets/sync_local.svg``
+* rollup ``cleared``                        -> ``/assets/sync_cloud.svg``
 
 Also asserts the static asset mount actually serves the SVGs (200 OK)
 so a missing PyInstaller bundle entry would surface here.
@@ -27,7 +27,7 @@ def test_flow_05_sync_icons_render_in_tree(page, server_url) -> None:
 
     # The seeded hierarchy in tests/e2e/_test_app.py contains:
     #   - Run_2026-05-07 (local;   sync_status=None)    -> sync_local.svg
-    #   - Run_2026-05-06 (cleaned; sync_status=cleaned) -> sync_cloud.svg
+    #   - Run_2026-05-06 (cleared; sync_status=cleared) -> sync_cloud.svg
     #   - TestRun_2026-05-07 (local; sync_status=None)  -> sync_local.svg
     local_icons = tree.locator('img[src="/assets/sync_local.svg"]')
     cloud_icons = tree.locator('img[src="/assets/sync_cloud.svg"]')
@@ -39,8 +39,8 @@ def test_flow_05_sync_icons_render_in_tree(page, server_url) -> None:
     # The cleaned-run icon's parent header carries the canonical sync_status
     # marker on the label span (set by the default-header slot template).
     cloud_header = cloud_icons.first.locator("xpath=..")
-    assert cloud_header.locator('span[data-sync-status="cleaned"]').count() == 1, (
-        "cleaned run header missing data-sync-status='cleaned' marker"
+    assert cloud_header.locator('span[data-sync-status="cleared"]').count() == 1, (
+        "cleared run header missing data-sync-status='cleared' marker"
     )
 
 

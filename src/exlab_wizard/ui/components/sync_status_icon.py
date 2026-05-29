@@ -1,14 +1,22 @@
 """Sync-status icon component (Frontend Spec §3.2, §10.5.1).
 
-Seven distinct visual states with a fixed color mapping:
+Distinct visual states with a fixed color mapping:
 
 * ``pending``               -- ``--color-muted``
+* ``acquiring``             -- ``--color-muted``
 * ``retrying`` (with N/M)   -- ``--color-info``
+* ``syncing``               -- ``--color-info``
 * ``synced``                -- ``--color-success``
 * ``cleaned``               -- ``--color-success``
+* ``on_nas``                -- ``--color-muted``
 * ``failed``                -- ``--color-danger``
 * ``blocked_by_validation`` -- ``--color-warning``
 * ``override_active``       -- ``--color-info``
+
+The ``acquiring`` / ``syncing`` / ``on_nas`` states are the per-file GUI
+display states from the operator-free per-file NAS sync design
+(2026-05-21): a file still settling, a file mid-transfer, and an "On
+NAS" tombstone whose local copy has been cleared.
 
 The component returns a dict suitable for a NiceGUI icon factory; the
 layout (icon + optional ``(N/M)`` retry counter) is the caller's concern
@@ -34,6 +42,13 @@ type SyncStatusOrIcon = SyncStatus | SyncStatusIconExtraKind | str
 STATUS_RETRYING: Final[str] = "retrying"
 STATUS_OVERRIDE: Final[str] = "override_active"
 
+# Per-file GUI display states (operator-free per-file NAS sync design,
+# 2026-05-21). These mirror the discriminators emitted by
+# ``api.routers.browse._file_state_from_record``.
+STATUS_ACQUIRING: Final[str] = "acquiring"
+STATUS_SYNCING: Final[str] = "syncing"
+STATUS_ON_NAS: Final[str] = "on_nas"
+
 
 _STATUS_TO_PROPS: dict[str, dict[str, str]] = {
     SyncStatus.PENDING.value: {
@@ -41,10 +56,25 @@ _STATUS_TO_PROPS: dict[str, dict[str, str]] = {
         "color_var": "--color-muted",
         "tooltip": "Queued for sync",
     },
+    STATUS_ACQUIRING: {
+        "icon_name": "edit_note",
+        "color_var": "--color-muted",
+        "tooltip": "Acquiring -- new file, still settling",
+    },
     STATUS_RETRYING: {
         "icon_name": "history",
         "color_var": "--color-info",
         "tooltip": "Retrying with backoff",
+    },
+    STATUS_SYNCING: {
+        "icon_name": "sync",
+        "color_var": "--color-info",
+        "tooltip": "Syncing -- settled, transferring to NAS",
+    },
+    STATUS_ON_NAS: {
+        "icon_name": "cloud",
+        "color_var": "--color-muted",
+        "tooltip": "On NAS -- local copy cleared, data on NAS only",
     },
     SyncStatus.SYNCED.value: {
         "icon_name": "check_circle",

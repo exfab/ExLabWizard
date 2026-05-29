@@ -90,7 +90,7 @@ def test_flow_19_travelling_badge_aggregates_red(page, server_url) -> None:
     # test app reads. Falling back: the test app supports a ?seed=
     # query that the file-explorer view parses for findings.
     page.goto(
-        f"{server_url}/main?view=explorer&seed_finding=EQ1/PROJ-0001/Runs/Run_2026-05-14T09-22:hard",
+        f"{server_url}/main?view=explorer&seed_finding=TEST_EQ1/PROJ-0001/Runs/Run_2026-05-14T09-22:hard",
         wait_until="domcontentloaded",
     )
     page.wait_for_load_state("networkidle")

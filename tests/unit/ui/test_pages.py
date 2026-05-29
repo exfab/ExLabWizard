@@ -91,6 +91,16 @@ def test_main_setup_incomplete_banner_uses_warning() -> None:
     assert props["cta_label"] == "Open Settings"
 
 
+def test_main_setup_banner_subline_tailored_for_rclone_remote() -> None:
+    """The rclone-remote next-action points the operator at the setup docs."""
+
+    props = main.setup_incomplete_banner_props("configure_rclone_remote")
+    assert "rclone remote" in props["subline"]
+    # The generic next-action falls back to the original subline.
+    generic = main.setup_incomplete_banner_props()["subline"]
+    assert props["subline"] != generic
+
+
 # ---------------------------------------------------------------------------
 # wizard_project
 # ---------------------------------------------------------------------------
@@ -242,16 +252,15 @@ def test_wizard_run_readme_blocks_until_core_fields() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_settings_eight_sections() -> None:
-    """Settings has eight sections (Frontend §7.2).
+def test_settings_nine_sections_includes_operators() -> None:
+    """Settings has nine sections (Frontend §7.2 + §7.9 operators).
 
-    The ``operators`` section was removed from the UI pending the chip
-    editor; OperatorsConfig stays in the backend model so the future
-    re-add is a one-line tuple change.
+    The ``operators`` chip editor (T7) backs ``OperatorsConfig.allowlist``;
+    it sits between ``nas_cleanup`` and ``validator`` and is non-gating.
     """
 
-    assert len(settings.SETTINGS_SECTIONS) == 8
-    assert "operators" not in settings.SETTINGS_SECTIONS
+    assert len(settings.SETTINGS_SECTIONS) == 9
+    assert "operators" in settings.SETTINGS_SECTIONS
     assert settings.SETTINGS_SECTIONS[0] == "paths"
     assert settings.SETTINGS_SECTIONS[-1] == "application"
 
@@ -261,6 +270,14 @@ def test_settings_first_incomplete_returns_canonical_first() -> None:
 
     first = settings.first_incomplete_section(("equipment", "lims"))
     assert first == "lims"
+
+
+def test_settings_first_incomplete_resolves_nas_remote() -> None:
+    """The dynamic NAS-remote section is auto-selected when it's the gate."""
+
+    assert settings.first_incomplete_section(("nas_remote",)) == "nas_remote"
+    # It sorts right after equipment in canonical order.
+    assert settings.first_incomplete_section(("nas_remote", "logging")) == "nas_remote"
 
 
 def test_settings_save_button_label_setup_incomplete() -> None:

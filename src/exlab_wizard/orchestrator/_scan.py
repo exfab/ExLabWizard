@@ -1,9 +1,10 @@
 """Shared filesystem helpers for the orchestrator. Backend Spec §13.2.
 
-Both :mod:`staging_query` and :mod:`staging_watcher` need to walk
-``staging_root`` and discover run leaves; both also need to count files
-and bytes under a run directory. Centralising these helpers keeps the
-two modules in sync and avoids subtle drift in path conventions.
+Both :mod:`staging_query` and :mod:`quiescence_poller` need to walk
+``staging_root`` (and the ``nas``-mode equipment trees) to discover run
+leaves; ``staging_query`` also counts files and bytes under a run
+directory. Centralising these helpers keeps the modules in sync and
+avoids subtle drift in path conventions.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from exlab_wizard.paths import is_run_dir, is_test_run_dir
 __all__ = [
     "count_files_and_bytes",
     "iter_subdirs",
+    "walk_equipment_run_leaves",
     "walk_run_leaves",
 ]
 
@@ -50,35 +52,53 @@ def iter_subdirs(parent: Path) -> list[Path]:
     return out
 
 
+def walk_equipment_run_leaves(equipment_dir: Path) -> list[Path]:
+    """Return every ``Run_*`` / ``TestRun_*`` directory under one equipment dir.
+
+    ``equipment_dir`` is a single equipment's subtree
+    (``<root>/<EQUIP>``); runs live at ``<equipment_dir>/<PROJ>/{Runs,
+    TestRuns}/<leaf>`` per §13.2. GUI/Orchestrator Redesign §3.4 makes
+    experimental runs symmetric with test runs (both sit under a marker
+    folder). A misplaced ``Run_*`` directly under the project
+    (pre-redesign layout) is still surfaced so the validator can flag it.
+
+    Distinct from :func:`walk_run_leaves`, which walks an equipment-first
+    *root* containing many equipment subtrees. The quiescence poller uses
+    this per-equipment form so a ``nas``-mode equipment's runs are
+    discovered without sweeping in a co-rooted ``stage``-mode equipment.
+    """
+    leaves: list[Path] = []
+    for project_dir in iter_subdirs(equipment_dir):
+        for child in iter_subdirs(project_dir):
+            if child.name == TEST_RUNS_DIR_NAME:
+                leaves.extend(
+                    run_dir for run_dir in iter_subdirs(child) if is_test_run_dir(run_dir.name)
+                )
+            elif child.name == RUNS_DIR_NAME:
+                leaves.extend(
+                    run_dir for run_dir in iter_subdirs(child) if is_run_dir(run_dir.name)
+                )
+            elif is_run_dir(child.name):
+                # Misplaced Run_* directly under the project — surface
+                # it so the validator's mode_prefix_mismatch rule can
+                # flag it as a hard finding.
+                leaves.append(child)
+    return leaves
+
+
 def walk_run_leaves(staging_root: Path) -> list[Path]:
     """Return every ``Run_*`` / ``TestRun_*`` directory under ``staging_root``.
 
     Per §13.2 the staging layout is
-    ``<staging_root>/<EQUIP>/<PROJ>/{Runs,TestRuns}/<leaf>``;
-    GUI/Orchestrator Redesign §3.4 makes experimental runs symmetric
-    with test runs (both sit under a marker folder). Misplaced
-    ``Run_*`` directly under the project (pre-redesign layout) is still
-    surfaced so the validator can flag it.
+    ``<staging_root>/<EQUIP>/<PROJ>/{Runs,TestRuns}/<leaf>``; this walks
+    an equipment-first *root* (many equipment subtrees). For a single
+    equipment's subtree use :func:`walk_equipment_run_leaves`.
     """
     if not staging_root.exists():
         return []
     leaves: list[Path] = []
     for equipment_dir in iter_subdirs(staging_root):
-        for project_dir in iter_subdirs(equipment_dir):
-            for child in iter_subdirs(project_dir):
-                if child.name == TEST_RUNS_DIR_NAME:
-                    leaves.extend(
-                        run_dir for run_dir in iter_subdirs(child) if is_test_run_dir(run_dir.name)
-                    )
-                elif child.name == RUNS_DIR_NAME:
-                    leaves.extend(
-                        run_dir for run_dir in iter_subdirs(child) if is_run_dir(run_dir.name)
-                    )
-                elif is_run_dir(child.name):
-                    # Misplaced Run_* directly under the project — surface
-                    # it so the validator's mode_prefix_mismatch rule can
-                    # flag it as a hard finding.
-                    leaves.append(child)
+        leaves.extend(walk_equipment_run_leaves(equipment_dir))
     return leaves
 
 

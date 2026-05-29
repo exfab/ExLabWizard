@@ -19,9 +19,14 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
-from exlab_wizard.api._dependencies import require_deps
-from exlab_wizard.config.models import Config, EquipmentConfig
+from exlab_wizard.api._dependencies import (
+    lims_password_present,
+    nas_remote_available,
+    require_deps,
+)
+from exlab_wizard.config.models import Config, EquipmentConfig, config_with_equipment_appended
 from exlab_wizard.constants import SetupState
+from exlab_wizard.errors import ConfigError
 from exlab_wizard.logging import get_logger
 from exlab_wizard.paths import (
     evaluate_setup_state,
@@ -89,12 +94,17 @@ def build_config_router() -> APIRouter:
         saver = getattr(deps, "save_config", None)
         if saver is not None:
             await _await_or_call(saver, body)
-        deps.config = body
+        # Push the new config into the running components (logging, sync,
+        # equipment, validator, LIMS, plugins) so the change takes effect
+        # in-process -- no tray relaunch. Sets ``deps.config`` itself.
+        _apply_live_config(deps, body)
         # Re-evaluate setup state with the new config.
+        remote_lookup = lambda remote: nas_remote_available(deps, remote)  # noqa: E731
         state = evaluate_setup_state(
             deps.config,
             lims_reachable=getattr(deps, "lims_reachable", True),
-            keyring_password_present=getattr(deps, "keyring_password_present", True),
+            keyring_password_present=lims_password_present(deps),
+            nas_remote_available=remote_lookup,
         )
         return ConfigUpdateResponse(
             state=state.value,
@@ -114,29 +124,25 @@ def build_config_router() -> APIRouter:
         Duplicate IDs are rejected with a structured error per §10.
         """
         deps = require_deps(request)
-        config = getattr(deps, "config", None) or Config()
-        for entry in config.equipment:
-            if entry.id == body.id:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "code": "equipment_id_conflict",
-                        "message": (f"equipment id {body.id!r} already exists in config"),
-                    },
-                )
-        new_equipment = [*config.equipment, body]
-        # model_validate re-runs the cross-field invariants (unique-id check
-        # etc.) on the merged config.
-        new_config = config.model_copy(update={"equipment": new_equipment})
-        Config.model_validate(new_config.model_dump(mode="python"))
+        try:
+            new_config = config_with_equipment_appended(getattr(deps, "config", None), body)
+        except ConfigError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "equipment_id_conflict", "message": str(exc)},
+            ) from exc
         saver = getattr(deps, "save_config", None)
         if saver is not None:
             await _await_or_call(saver, new_config)
-        deps.config = new_config
+        # Push into the running components so the new equipment is live
+        # without a tray relaunch. Sets ``deps.config`` itself.
+        _apply_live_config(deps, new_config)
+        remote_lookup = lambda remote: nas_remote_available(deps, remote)  # noqa: E731
         state = evaluate_setup_state(
             deps.config,
             lims_reachable=getattr(deps, "lims_reachable", True),
-            keyring_password_present=getattr(deps, "keyring_password_present", True),
+            keyring_password_present=lims_password_present(deps),
+            nas_remote_available=remote_lookup,
         )
         return EquipmentAppendResponse(
             appended_id=body.id,
@@ -160,3 +166,20 @@ async def _await_or_call(callable_: Any, *args: Any) -> Any:
     if inspect.isawaitable(result):
         return await result
     return result
+
+
+def _apply_live_config(deps: Any, cfg: Any) -> None:
+    """Push ``cfg`` into the running components, then keep it as the live config.
+
+    Imported lazily to avoid the ``tray.dependencies -> api.app ->
+    api.routers.config`` import cycle. ``apply_live_config`` is best-effort
+    per component and assigns ``deps.config`` itself; the fallback covers
+    the unexpected case where the import or coordinator raises wholesale.
+    """
+    try:
+        from exlab_wizard.tray.dependencies import apply_live_config
+
+        apply_live_config(deps, cfg)
+    except Exception:
+        _log.exception("live config reload failed")
+        deps.config = cfg

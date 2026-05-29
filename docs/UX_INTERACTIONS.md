@@ -18,7 +18,6 @@ flow test.
 | `/welcome` | `welcome-get-started` | button | Click 'Get started' | Navigates to /settings to begin configuration. |
 | `/welcome` | `welcome-skip-for-now` | button | Click 'Skip for now' | Navigates straight to /main, bypassing guided setup. |
 | `/welcome` | `welcome-autostart-toggle` | toggle | Toggle 'start at login' | Sets the autostart preference applied on get-started / skip. |
-| `/restart-required` | `restart-required` | screen | Observe the restart-required gate | Terminal screen instructing the operator to relaunch the tray. |
 
 ## Settings
 
@@ -31,7 +30,7 @@ flow test.
 | `/settings` | `settings-nav-lims` | nav row | Click the 'LIMS' sidebar row | Shows the LIMS section. |
 | `/settings` | `settings-lims-endpoint` | input | Type the LIMS endpoint URL | Binds config.lims.endpoint on the draft. |
 | `/settings` | `settings-lims-email` | input | Type the operator email | Binds config.lims.email on the draft. |
-| `/settings` | `settings-save` | button | Click 'Save all' | Persists config.yaml and routes to the restart-required gate. |
+| `/settings` | `settings-save` | button | Click 'Save all' | Persists config.yaml, applies it to the running components in-process, and shows a 'Settings saved' toast (no relaunch). |
 | `/settings` | `settings-discard` | button | Click 'Discard all' | Drops the in-memory draft edits. |
 
 ## Equipment
@@ -43,16 +42,15 @@ flow test.
 | `/settings` | `settings-equipment-label` | input | Type the equipment label | Provides the EquipmentConfig.label for the new entry. |
 | `/settings` | `settings-equipment-local-root` | input | Type the equipment local root | Provides the EquipmentConfig.local_root for the new entry. |
 | `/settings` | `settings-equipment-nas-root` | input | Type the equipment NAS root | Provides the EquipmentConfig.nas_root for the new entry. |
-| `/settings` | `settings-equipment-signal` | radio | Pick the completeness signal (sentinel_file / manifest) | Swaps the filename field between sentinel and manifest. |
-| `/settings` | `settings-equipment-sentinel` | input | Type the sentinel filename | Sets the sentinel_file completeness signal filename. |
-| `/settings` | `settings-equipment-manifest` | input | Type the manifest filename | Sets the manifest completeness signal filename. |
-| `/settings` | `settings-equipment-transport` | radio | Pick the transport (rclone / rsync_ssh) | Swaps the transport fieldset between rclone and rsync_ssh. |
-| `/settings` | `settings-equipment-rclone-remote` | input | Type the rclone remote | Sets the rclone transport remote for the new entry. |
-| `/settings` | `settings-equipment-rclone-path` | input | Type the rclone remote path | Sets the rclone transport remote path for the new entry. |
-| `/settings` | `settings-equipment-ssh-target` | input | Type the rsync_ssh SSH target | Sets the rsync_ssh transport ssh_target for the new entry. |
-| `/settings` | `settings-equipment-ssh-key` | input | Type the rsync_ssh SSH key path | Sets the rsync_ssh transport ssh_key_path for the new entry. |
-| `/settings` | `settings-equipment-rsync-path` | input | Type the rsync_ssh remote path | Sets the rsync_ssh transport remote_path for the new entry. |
 | `/settings` | `settings-equipment-add` | button | Click 'Add equipment' | Validates and appends an EquipmentConfig to the draft; row appears. |
+
+## NAS Remote
+
+| Route | Test ID | Element | Action | Outcome |
+|---|---|---|---|---|
+| `/settings` | `settings-nav-nas_remote` | nav row | Click the 'NAS Remote' sidebar row | Shows the configured rclone remote name, base root, and found/not-found badge. |
+| `/settings` | `settings-nas-remote-name` | label | View the configured rclone remote name | Displays the remote name from config.nas.remote (or '(not configured)'). |
+| `/settings` | `settings-nas-test-connection` | button | Click 'Test connection' | Runs the rclone remote probe and renders the result inline. |
 
 ## New template
 
@@ -109,7 +107,6 @@ flow test.
 | `/wizard/equipment` | `wizard-equipment-label` | input | Type the equipment label | Sets the human-readable equipment label. |
 | `/wizard/equipment` | `wizard-equipment-local-root` | input | Type the equipment's local root path | Sets where this device acquires runs on disk. |
 | `/wizard/equipment` | `wizard-equipment-sync-mode` | radio | Pick 'nas' or 'stage' sync mode | Swaps the transport sub-form between NAS-direct and stage-push. |
-| `/wizard/equipment` | `wizard-equipment-signal` | radio | Pick 'sentinel_file' or 'manifest' completeness signal | Swaps the filename input between sentinel and manifest naming. |
 | `/wizard/equipment` | `wizard-equipment-confirm` | button | Click 'Confirm' on the review step | Posts the assembled EquipmentConfig via POST /config/equipment. |
 | `/wizard/equipment` | `wizard-equipment-cancel` | button | Click 'Cancel' on any wizard step | Discards the wizard and returns to /main. |
 

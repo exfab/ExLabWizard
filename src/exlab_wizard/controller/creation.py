@@ -33,7 +33,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import getpass
+import os
 import shutil
+import socket
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -52,7 +55,6 @@ from exlab_wizard.api.schemas import (
 )
 from exlab_wizard.cache.creation_writer import CreationWriter
 from exlab_wizard.cache.equipment import EquipmentCacheWriter
-from exlab_wizard.cache.ingest_writer import default_host
 from exlab_wizard.cache.log_writer import append_log_line, format_log_line
 from exlab_wizard.config.models import Config
 from exlab_wizard.constants import (
@@ -65,6 +67,7 @@ from exlab_wizard.constants import (
     OBJECTIVE_MAX_LENGTH,
     README_FILE_NAME,
     CreationLevel,
+    FieldType,
     LIMSProjectSource,
     PluginStatus,
     RunKind,
@@ -90,11 +93,19 @@ from exlab_wizard.paths import (
     compose_run_path,
     creation_json_path,
     equipment_json_path,
+    readme_fields_json_path,
     validate_project_name,
 )
 from exlab_wizard.plugins.base import PluginContext
 from exlab_wizard.plugins.host import InputRequiredPayload, PluginHost, PluginPassResult
 from exlab_wizard.plugins.logger import HostPluginLogger
+from exlab_wizard.readme import (
+    CoreFields,
+    CustomField,
+    ReadmeContext,
+    SystemFields,
+    TemplateFieldDecl,
+)
 from exlab_wizard.template.copier_driver import (
     CORE_README_FIELD_IDS,
     RenderResult,
@@ -185,40 +196,31 @@ class SessionHandle:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class ReadmeContext:
-    """Inputs handed to the README generator. Phase 8 owns the canonical type;
-    this lightweight stand-in lets Phase 7 ship before Phase 8 lands."""
-
-    label: str
-    operator: str
-    objective: str
-    equipment_id: str
-    project_short_id: str
-    run_kind: str
-    variables: dict[str, Any]
-    template: ResolvedTemplate
-    extra_fields: dict[str, Any] = field(default_factory=dict)
-
-
 class ReadmeGeneratorProtocol(Protocol):
-    """The README generator surface the controller depends on. Phase 8."""
+    """The README generator surface the controller depends on. Backend §10.
 
-    async def generate(self, dst: Path, ctx: ReadmeContext) -> Path: ...
+    Mirrors :meth:`exlab_wizard.readme.ReadmeGenerator.generate`: validate
+    the composed :class:`~exlab_wizard.readme.ReadmeContext`, write both
+    ``README.md`` and ``readme_fields.json``, and return ``(readme, cache)``.
+    """
+
+    async def generate(self, dst: Path, ctx: ReadmeContext) -> tuple[Path, Path]: ...
 
 
 class NoOpReadmeGenerator:
-    """Minimal README generator used until Phase 8 lands the real one.
+    """Lightweight README generator for tests / headless fixtures.
 
-    Writes a tiny ``README.md`` containing only the core fields so the
-    post-validate pass has something to scan.
+    Writes a tiny ``README.md`` containing only the core fields -- enough
+    for the post-validate pass to scan -- and reports the cache path
+    without performing the full §10 field merge or validation. Production
+    injects the real :class:`~exlab_wizard.readme.ReadmeGenerator`.
     """
 
-    async def generate(self, dst: Path, ctx: ReadmeContext) -> Path:
+    async def generate(self, dst: Path, ctx: ReadmeContext) -> tuple[Path, Path]:
         readme = dst / README_FILE_NAME
-        body = f"# {ctx.label}\n\nOperator: {ctx.operator}\n\n{ctx.objective}\n"
+        body = f"# {ctx.core.label}\n\nOperator: {ctx.core.operator}\n\n{ctx.core.objective}\n"
         readme.write_text(body, encoding="utf-8")
-        return readme
+        return readme, readme_fields_json_path(dst)
 
 
 class NASSyncProtocol(Protocol):
@@ -288,6 +290,19 @@ class CreationController:
     def session_store(self) -> SessionStore:
         """Expose the in-memory session store for the API surface."""
         return self._sessions
+
+    def apply_config(self, config: Config, *, plugin_host: PluginHost | None = None) -> None:
+        """Swap the controller's config (and optionally plugin host) in place.
+
+        Every config read happens at create-time, so reassigning
+        ``self._config`` makes a live settings save take effect on the
+        next ``create_*`` call without a tray relaunch. ``plugin_host`` is
+        re-injected only when the coordinator rebuilt it (a
+        ``paths.plugin_dir`` change); otherwise the existing host is kept.
+        """
+        self._config = config
+        if plugin_host is not None:
+            self._plugin_host = plugin_host
 
     # ------------------------------------------------------------------
     # Public API
@@ -880,6 +895,71 @@ class CreationController:
             on_input_required=on_input_required,
         )
 
+    def _build_readme_context(
+        self,
+        *,
+        req: ProjectCreateRequest | RunCreateRequest,
+        resolved: ResolvedTemplate,
+        dst: Path,
+    ) -> ReadmeContext:
+        """Compose the §10 four-layer :class:`ReadmeContext` for ``req``.
+
+        Maps the template's ``_exlab_readme.fields`` and the config
+        ``readme.defaults`` into typed field declarations, partitions the
+        operator-supplied ``readme_extra`` values across the template /
+        config / custom layers by id, and fills the auto-managed system
+        block (Backend Spec §10.6). Reads ``self._config`` at call time so
+        a live settings reload is reflected on the next creation.
+        """
+        template_decls = _readme_decls_from_template(resolved.extra_readme_fields)
+        config_decls = _readme_decls_from_config(self._config.readme.defaults)
+        template_ids = {decl.id for decl in template_decls}
+        config_ids = {decl.id for decl in config_decls}
+
+        template_fields: dict[str, Any] = {}
+        config_fields: dict[str, Any] = {}
+        custom_fields: list[CustomField] = []
+        for key, value in req.readme_extra.items():
+            if key in template_ids:
+                template_fields[key] = value
+            elif key in config_ids:
+                config_fields[key] = value
+            elif key in CORE_README_FIELD_IDS:
+                # Core fields live in their own layer; never echoed as custom.
+                continue
+            else:
+                custom_fields.append(
+                    CustomField(label=key, value="" if value is None else str(value))
+                )
+
+        is_run = isinstance(req, RunCreateRequest)
+        equipment = next(
+            (entry for entry in self._config.equipment if entry.id == req.equipment_id),
+            None,
+        )
+        system = SystemFields(
+            created=utc_now(),
+            created_by=_os_username(),
+            equipment={"id": req.equipment_id, "label": equipment.label if equipment else ""},
+            template={"name": resolved.name, "version": resolved.exlab_version},
+            # §10.6: ``project`` is the machine-safe LIMS short id recorded in
+            # README metadata (§3.1) -- distinct from the human-readable
+            # ``<project>/`` folder segment. ``run`` is the run directory name.
+            project=self._short_id_for(req),
+            run=dst.name if is_run else None,
+            run_kind=self._run_kind_value_for(req) if is_run else "",
+        )
+        return ReadmeContext(
+            level=CreationLevel.RUN if is_run else CreationLevel.PROJECT,
+            core=CoreFields(label=req.label, operator=req.operator, objective=req.objective),
+            template_fields=template_fields,
+            config_fields=config_fields,
+            custom_fields=custom_fields,
+            system=system,
+            template_field_decls=template_decls,
+            config_field_decls=config_decls,
+        )
+
     async def _write_cache(
         self,
         *,
@@ -891,19 +971,10 @@ class CreationController:
         plugin_result: PluginPassResult,
     ) -> CreationJson:
         """Write README + creation.json into the destination tree."""
-        # Render README via the (Phase 8) generator.
-        readme_ctx = ReadmeContext(
-            label=req.label,
-            operator=req.operator,
-            objective=req.objective,
-            equipment_id=req.equipment_id,
-            project_short_id=self._short_id_for(req),
-            run_kind=(req.run_kind.value if isinstance(req, RunCreateRequest) else "project"),
-            variables=dict(req.variables),
-            template=resolved,
-            extra_fields=dict(req.readme_extra),
-        )
-        await self._readme_generator.generate(dst, readme_ctx)
+        # Render README.md + readme_fields.json via the §10 generator.
+        readme_ctx = self._build_readme_context(req=req, resolved=resolved, dst=dst)
+        readme_path, readme_cache_path = await self._readme_generator.generate(dst, readme_ctx)
+        _log.debug("README written: %s (cache: %s)", readme_path, readme_cache_path)
 
         # Build the CreationJson payload.
         get_cache_dir(dst).mkdir(parents=True, exist_ok=True)
@@ -963,18 +1034,14 @@ class CreationController:
 
         # Redesign §3.1: creation.json always carries the orchestrator
         # block. Redesign §3.3: the block carries the producing equipment's
-        # label + completeness-signal info so a receiving orchestrator
-        # can auto-discover the relayed equipment without a per-equipment
-        # config of its own.
+        # label so a receiving orchestrator can auto-discover the relayed
+        # equipment without a per-equipment config of its own.
         eq = next((e for e in self._config.equipment if e.id == req.equipment_id), None)
         orchestrator_block = OrchestratorBlock(
             enabled=True,
-            host=default_host(),
+            host=socket.gethostname(),
             label=self._config.orchestrator.label,
             equipment_label=eq.label if eq else None,
-            completeness_signal=eq.completeness_signal if eq else None,
-            sentinel_filename=eq.sentinel_filename if eq else None,
-            manifest_filename=eq.manifest_filename if eq else None,
         )
 
         payload = CreationJson(
@@ -1197,6 +1264,76 @@ def _required_field_ids(extra_fields: list[dict[str, Any]]) -> tuple[str, ...]:
             if isinstance(fid, str) and fid:
                 out.append(fid)
     return tuple(out)
+
+
+def _readme_decls_from_template(entries: list[dict[str, Any]]) -> list[TemplateFieldDecl]:
+    """Map a template's ``_exlab_readme.fields`` dicts to typed declarations.
+
+    Entries without a string ``id`` are skipped (mirrors
+    :func:`_required_field_ids`); ``type`` is coerced to
+    :class:`~exlab_wizard.constants.FieldType` so the generator can
+    type-check values against it. An unknown ``type`` raises ``ValueError``,
+    which the pipeline surfaces as a failed creation.
+    """
+    decls: list[TemplateFieldDecl] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        fid = entry.get("id")
+        if not isinstance(fid, str) or not fid:
+            continue
+        options = entry.get("options")
+        hint = entry.get("hint")
+        decls.append(
+            TemplateFieldDecl(
+                id=fid,
+                label=str(entry.get("label", fid)),
+                type=FieldType(str(entry.get("type", FieldType.STRING.value))),
+                required=bool(entry.get("required", False)),
+                default=entry.get("default", ""),
+                options=list(options) if isinstance(options, list) else None,
+                hint=hint if isinstance(hint, str) else None,
+            )
+        )
+    return decls
+
+
+def _readme_decls_from_config(defaults: list[Any]) -> list[TemplateFieldDecl]:
+    """Map ``config.readme.defaults`` entries to typed declarations.
+
+    Core field ids are dropped -- they are backend-managed and live in
+    their own layer (Backend Spec §10.3), matching the required-field gate
+    in :meth:`CreationController._validate_inputs`.
+    """
+    decls: list[TemplateFieldDecl] = []
+    for entry in defaults:
+        if entry.id in CORE_README_FIELD_IDS:
+            continue
+        decls.append(
+            TemplateFieldDecl(
+                id=entry.id,
+                label=entry.label,
+                type=entry.type,
+                required=entry.required,
+                default=entry.default,
+                options=list(entry.options) if entry.options else None,
+                hint=entry.hint,
+            )
+        )
+    return decls
+
+
+def _os_username() -> str:
+    """Return the creating OS user for the README ``system.created_by``.
+
+    Distinct from the experiment ``operator`` (Backend Spec §10.6). Falls
+    back to the ``USER`` / ``USERNAME`` environment variables and finally
+    ``"unknown"`` when the platform cannot report a login name.
+    """
+    try:
+        return getpass.getuser()
+    except Exception:
+        return os.environ.get("USER") or os.environ.get("USERNAME") or "unknown"
 
 
 def _has_hard_finding(findings: list[Finding]) -> bool:

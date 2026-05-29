@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -25,13 +26,13 @@ from exlab_wizard.constants import (
     EQUIPMENT_ID_MAX_LENGTH,
     EQUIPMENT_ID_PATTERN,
     EQUIPMENT_JSON_NAME,
-    INGEST_JSON_NAME,
     PROJECT_NAME_MAX_LENGTH,
     PROJECT_SHORT_ID_PATTERN,
     README_FIELDS_JSON_NAME,
     RUN_DATE_STRFTIME,
     RUN_DIR_PREFIX,
     RUNS_DIR_NAME,
+    TEST_MODE_ENV,
     TEST_RUN_DIR_PREFIX,
     TEST_RUNS_DIR_NAME,
     WINDOWS_ILLEGAL_CHARS,
@@ -53,13 +54,11 @@ __all__ = [
     "compose_project_path",
     "compose_run_path",
     "creation_json_path",
-    "default_orchestrator_staging_root",
     "ensure_central_log_dir",
     "ensure_dir",
     "ensure_state_dir",
     "equipment_json_path",
     "evaluate_setup_state",
-    "ingest_json_path",
     "is_run_dir",
     "is_test_run_dir",
     "os_cache_path",
@@ -70,6 +69,7 @@ __all__ = [
     "run_dir_stem",
     "setup_state_missing",
     "setup_state_next_action",
+    "suggested_staging_root",
     "validate_project_short_id",
 ]
 
@@ -80,11 +80,16 @@ __all__ = [
 # Setting ``EXLAB_WIZARD_TEST_MODE=1`` swaps APP_NAME for ``APP_NAME-test``
 # in every OS-path helper below, redirecting config / state / cache / logs
 # into a parallel ``exlab-wizard-test`` sandbox without touching real user
-# directories. The env var (rather than a CLI arg threaded through every
-# layer) means the window subprocess spawned by WindowLauncher inherits the
-# override automatically. See ``exlab-wizard-tray --test``.
-
-TEST_MODE_ENV = "EXLAB_WIZARD_TEST_MODE"
+# directories. The same env var also drives ``apply_test_mode_prefix`` in
+# ``config.loader`` so on-disk + NAS run directories sort under a
+# ``TEST_<id>/...`` namespace. The env var (rather than a CLI arg threaded
+# through every layer) means the window subprocess spawned by
+# WindowLauncher inherits the override automatically. See
+# ``exlab-wizard-tray --test``.
+#
+# ``TEST_MODE_ENV`` is re-exported here for backward compat with callers
+# that imported it from this module before it was centralized in
+# ``constants/app.py``.
 
 
 def _app_name() -> str:
@@ -180,11 +185,31 @@ def os_central_log_path() -> Path:
             )
 
 
-def default_orchestrator_staging_root() -> Path:
-    """OS-conditional default for ``orchestrator.staging_root``. Backend Spec §9, §13."""
-    if _platform() is Platform.WINDOWS:
-        return _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / _app_name() / "staging"
-    return Path("/staging")
+def suggested_staging_root() -> Path:
+    """Suggested (not default) ``orchestrator.staging_root``. Backend Spec §9, §13.
+
+    ``staging_root`` is opt-in: blank means this device is not a staging PC
+    and nothing is created. This helper only supplies the greyed *placeholder*
+    shown in Settings to guide an operator who chooses to opt in -- it is pure
+    and side-effect-free, never written and never ``mkdir``'d. A directory is
+    created only when the operator saves a non-empty path (see
+    ``ui.mount._persist_config``).
+
+    Staged runs are bulk experiment data relayed through this device on their
+    way to the NAS, so the suggestion lives under an ``exlab-wizard/`` app
+    folder on every platform -- mirroring config / state / cache -- rather than
+    a bare ``/staging`` mount. On Linux it follows ``XDG_DATA_HOME`` (bulk user
+    data, not transient cache) so an un-synced run is never treated as
+    discardable.
+    """
+    name = _app_name()
+    match _platform():
+        case Platform.MACOS:
+            return _home() / "Library" / "Application Support" / name / "staging"
+        case Platform.WINDOWS:
+            return _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / name / "staging"
+        case Platform.LINUX:
+            return _env_path("XDG_DATA_HOME", _home() / ".local" / "share") / name / "staging"
 
 
 # ---------------------------------------------------------------------------
@@ -419,11 +444,31 @@ def _paths_complete(config: Config) -> bool:
     return bool(paths.templates_dir and paths.plugin_dir and paths.local_root)
 
 
+def _nas_in_use(config: Config) -> bool:
+    """True when at least one nas-mode equipment exists (NAS sync is active)."""
+    from exlab_wizard.constants import SyncMode
+
+    return any(eq.sync_mode == SyncMode.NAS for eq in config.equipment)
+
+
+def _nas_remote_satisfied(config: Config, *, nas_remote_available: Callable[[str], bool]) -> bool:
+    """True when the nas: remote is configured AND present in rclone.conf.
+
+    Only gates when NAS sync is actually in use (a stage-only device with no
+    nas-mode equipment does not need a NAS remote).
+    """
+    if not _nas_in_use(config):
+        return True
+    remote = config.nas.remote
+    return bool(remote) and nas_remote_available(remote)
+
+
 def evaluate_setup_state(
     config: Config | None,
     *,
     lims_reachable: bool = True,
     keyring_password_present: bool = True,
+    nas_remote_available: Callable[[str], bool] | None = None,
 ) -> SetupState:
     """Evaluate the §4.9.1 setup state.
 
@@ -433,16 +478,20 @@ def evaluate_setup_state(
     2. ``paths.templates_dir`` / ``plugin_dir`` / ``local_root`` any empty ->
        ``INCOMPLETE_MISSING_PATHS``
     3. equipment list empty -> ``INCOMPLETE_NO_EQUIPMENT``
-    4. lims slot incomplete (no endpoint+email AND no offline_catalogue_path)
+    4. NAS sync is in use but the ``nas:`` remote is unset or absent from
+       rclone.conf -> ``INCOMPLETE_NO_NAS_REMOTE`` (rclone.conf migration)
+    5. lims slot incomplete (no endpoint+email AND no offline_catalogue_path)
        -> ``INCOMPLETE_NO_LIMS``
-    5. ``lims_reachable`` is ``False`` -> ``INCOMPLETE_LIMS_UNREACHABLE``
-    6. otherwise -> ``READY``
+    6. ``lims_reachable`` is ``False`` -> ``INCOMPLETE_LIMS_UNREACHABLE``
+    7. otherwise -> ``READY``
 
     The ``lims_reachable`` flag is supplied by the caller from the
     ``LIMSClient.health_check()`` result. Default True so unit tests can
     skip the network call. The ``keyring_password_present`` flag stubs the
     keyring lookup so unit tests can exercise every branch without a real
-    keyring backend.
+    keyring backend. ``nas_remote_available`` answers "is this rclone
+    remote present in rclone.conf?"; it defaults to "always True" so
+    callers and tests that don't care about the NAS gate behave as before.
     """
     if config is None:
         return SetupState.INCOMPLETE_NO_CONFIG
@@ -452,6 +501,9 @@ def evaluate_setup_state(
         return SetupState.INCOMPLETE_NO_ORCHESTRATOR
     if not config.equipment:
         return SetupState.INCOMPLETE_NO_EQUIPMENT
+    remote_lookup = nas_remote_available if nas_remote_available is not None else (lambda _n: True)
+    if not _nas_remote_satisfied(config, nas_remote_available=remote_lookup):
+        return SetupState.INCOMPLETE_NO_NAS_REMOTE
     if not _lims_slot_satisfied(config, keyring_password_present=keyring_password_present):
         return SetupState.INCOMPLETE_NO_LIMS
     if not lims_reachable:
@@ -460,48 +512,69 @@ def evaluate_setup_state(
 
 
 def _orchestrator_identity_complete(config: Config) -> bool:
-    """Return True when this device has an orchestrator label + staging root.
+    """Return True when this device has an orchestrator label.
 
-    Redesign §3.1: the staging pipeline is always active so both fields
-    are always required (no longer gated on a removed ``enabled`` flag).
+    Only ``label`` is required -- it is stamped into every run's
+    ``creation.json`` as the workstation identity, independent of staging.
+    ``staging_root`` is opt-in (a blank value just means this device is not a
+    staging PC), so it no longer gates setup.
     """
-    return bool(config.orchestrator.label and config.orchestrator.staging_root)
+    return bool(config.orchestrator.label)
 
 
-def setup_state_missing(state: SetupState, config: Config | None) -> list[dict[str, str]]:
+def setup_state_missing(
+    state: SetupState,
+    config: Config | None,
+) -> list[dict[str, str]]:
     """Translate a state into ``{field, reason}`` dicts for ``/api/v1/setup/status``.
 
     Backend Spec §4.9.3. Returns ``[]`` when the state is ``READY`` or
     ``INCOMPLETE_LIMS_UNREACHABLE`` (the soft-block state surfaces a
-    banner, not a missing-field list).
+    banner, not a missing-field list). When ``state`` is
+    ``INCOMPLETE_NO_NAS_REMOTE`` the missing list names ``nas.remote``
+    with a reason describing whether it is unset or absent from
+    rclone.conf (the state itself is enough for the UI to deep-link to
+    the setup docs).
     """
-    if state in (SetupState.READY, SetupState.INCOMPLETE_LIMS_UNREACHABLE):
-        return []
-    if state is SetupState.INCOMPLETE_NO_CONFIG:
-        return [{"field": "config.yaml", "reason": "missing"}]
-    if state is SetupState.INCOMPLETE_NO_EQUIPMENT:
-        return [{"field": "equipment", "reason": "empty"}]
-    if state is SetupState.INCOMPLETE_MISSING_PATHS:
-        return _missing_paths_fields(config)
-    if state is SetupState.INCOMPLETE_NO_ORCHESTRATOR:
-        return _missing_orchestrator_fields(config)
-    if state is SetupState.INCOMPLETE_NO_LIMS:
-        return _missing_lims_fields(config)
+    match state:
+        case SetupState.READY | SetupState.INCOMPLETE_LIMS_UNREACHABLE:
+            return []
+        case SetupState.INCOMPLETE_NO_CONFIG:
+            return [{"field": "config.yaml", "reason": "missing"}]
+        case SetupState.INCOMPLETE_NO_EQUIPMENT:
+            return [{"field": "equipment", "reason": "empty"}]
+        case SetupState.INCOMPLETE_MISSING_PATHS:
+            return _missing_paths_fields(config)
+        case SetupState.INCOMPLETE_NO_ORCHESTRATOR:
+            return _missing_orchestrator_fields(config)
+        case SetupState.INCOMPLETE_NO_NAS_REMOTE:
+            return _missing_nas_fields(config)
+        case SetupState.INCOMPLETE_NO_LIMS:
+            return _missing_lims_fields(config)
+    # Defensive fallback: an unrecognized state (e.g. a future enum member or a
+    # non-SetupState passed by a misbehaving caller) yields no missing-field
+    # rows rather than ``None``, honouring the ``list[...]`` return contract.
     return []
 
 
+def _missing_nas_fields(config: Config | None) -> list[dict[str, str]]:
+    """Missing-``nas.remote`` row for ``INCOMPLETE_NO_NAS_REMOTE``.
+
+    Distinguishes an unset ``nas.remote`` from one that is named but not
+    found in rclone.conf so the UI can tailor its guidance.
+    """
+    if config is None or not config.nas.remote:
+        return [{"field": "nas.remote", "reason": "unset"}]
+    return [{"field": "nas.remote", "reason": "not_found_in_rclone_conf"}]
+
+
 def _missing_orchestrator_fields(config: Config | None) -> list[dict[str, str]]:
-    """Redesign §3.1: ``label`` + ``staging_root`` are required."""
+    """Only ``label`` is required; ``staging_root`` is opt-in (see gate)."""
     if config is None:
-        return [
-            {"field": "orchestrator.label", "reason": "missing"},
-            {"field": "orchestrator.staging_root", "reason": "missing"},
-        ]
+        return [{"field": "orchestrator.label", "reason": "missing"}]
     out: list[dict[str, str]] = []
     if not config.orchestrator.label:
         out.append({"field": "orchestrator.label", "reason": "missing"})
-    if not config.orchestrator.staging_root:
-        out.append({"field": "orchestrator.staging_root", "reason": "missing"})
     return out
 
 
@@ -552,6 +625,8 @@ def setup_state_next_action(state: SetupState) -> SetupNextAction | None:
             return SetupNextAction.SET_PATHS
         case SetupState.INCOMPLETE_NO_EQUIPMENT:
             return SetupNextAction.ADD_EQUIPMENT
+        case SetupState.INCOMPLETE_NO_NAS_REMOTE:
+            return SetupNextAction.CONFIGURE_RCLONE_REMOTE
         case SetupState.INCOMPLETE_NO_LIMS:
             return SetupNextAction.CONFIGURE_LIMS
         case SetupState.INCOMPLETE_LIMS_UNREACHABLE:
@@ -573,11 +648,6 @@ def cache_dir(run_or_project_dir: Path) -> Path:
 def creation_json_path(run_or_project_dir: Path) -> Path:
     """Return the ``creation.json`` path under a run or project directory."""
     return cache_dir(run_or_project_dir) / CREATION_JSON_NAME
-
-
-def ingest_json_path(run_dir: Path) -> Path:
-    """Return the ``ingest.json`` path under a run directory."""
-    return cache_dir(run_dir) / INGEST_JSON_NAME
 
 
 def equipment_json_path(equipment_dir: Path) -> Path:

@@ -11,9 +11,9 @@ from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
     LIMSConfig,
+    NasConfig,
     OrchestratorConfig,
     PathsConfig,
-    RcloneTransport,
 )
 from exlab_wizard.controller.creation import ProjectCreateRequest
 from exlab_wizard.controller.session_store import SessionStore
@@ -29,17 +29,11 @@ def _ready_config() -> Config:
                 label="Equipment 1",
                 local_root="/d",
                 nas_root="/n",
-                completeness_signal="sentinel_file",
-                sentinel_filename="done.flag",
-                transport=RcloneTransport(
-                    type="rclone",
-                    rclone_remote="lab-nas",
-                    rclone_remote_path="lab/EQ1",
-                ),
             )
         ],
         lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),
         orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
     )
 
 

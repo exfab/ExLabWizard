@@ -1,8 +1,8 @@
 """Integration tests for the cross-major-read-fails contract from §11.9.2.
 
 For every cache file written by the wizard (``creation.json``,
-``readme_fields.json``, ``equipment.json``, ``test_runs.json``,
-``ingest.json``), the reader MUST refuse a file whose ``schema_version``
+``readme_fields.json``, ``equipment.json``, ``test_runs.json``), the
+reader MUST refuse a file whose ``schema_version``
 major component is different from the reader's. The error must be a
 ``SchemaMajorMismatchError`` with ``expected_major == 1`` (every cache
 schema is currently major 1) and ``found`` mirroring the on-disk string
@@ -148,22 +148,6 @@ _CASES: tuple[_CacheCase, ...] = (
             "created_at": "2026-04-17T14:00:00Z",
             "project": "PROJ-0042",
             "equipment": "CONFOCAL_01",
-        },
-    ),
-    _CacheCase(
-        label="ingest_json",
-        candidate_modules=("exlab_wizard.cache.ingest_writer",),
-        candidate_classes=("IngestWriter",),
-        candidate_readers=("read_ingest",),
-        payload_v2={
-            "schema_version": "2.0",
-            "project_name": "Cortex Q3 Pilot",
-            "equipment_id": "CONFOCAL_01",
-            "run_kind": "experimental",
-            "run_path": "CONFOCAL_01/PROJ-0042/Run_x",
-            "transport": "smb_mount",
-            "current_state": "staging",
-            "history": [],
         },
     ),
 )

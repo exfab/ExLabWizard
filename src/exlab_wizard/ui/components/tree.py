@@ -11,11 +11,15 @@ Renders the ``<equipment>/<project>/<run>`` hierarchy:
 
 Run rows also carry a small **sync icon** to the left of the label:
 
-* ``sync_local.svg`` -- run data is still on local disk (any sync
-  status other than ``cleaned``).
-* ``sync_cloud.svg`` -- run has been synced, verified, and locally
-  cleaned (``sync_status == "cleaned"``); only the ``.exlab-wizard/``
-  cache subtree remains on disk (§7.1.10).
+* ``sync_local.svg`` -- run data is still on local disk (rollup
+  ``syncing`` / ``synced``, any state other than ``cleared``).
+* ``sync_cloud.svg`` -- the run's staging copy has been cleared
+  (rollup ``cleared``); only the ``.exlab-wizard/`` cache subtree
+  remains on disk (§7.1.10).
+
+The run-node rollup is derived from the run's ``sync_state.json`` by the
+browse router (operator-free per-file NAS sync design, 2026-05-21);
+``RunNode.sync_status`` carries a :class:`RunSyncState` value.
 
 ``.exlab-wizard/`` folders are hidden by default (Frontend §13.1) and
 hidden filtering is the caller's concern.
@@ -31,7 +35,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from exlab_wizard.constants.enums import RunKind, SyncStatus, TreeProjectStatus
+from exlab_wizard.constants.enums import RunKind, RunSyncState, TreeProjectStatus
 from exlab_wizard.logging import get_logger
 
 _log = get_logger(__name__)
@@ -232,13 +236,14 @@ def _sync_icon_url(node: TreeNode) -> str | None:
     """Return the per-row sync-icon URL, or ``None`` for non-run rows.
 
     Run rows get one of the two ``/assets/sync_*.svg`` URLs depending on
-    whether the run has been locally cleaned (``sync_cloud.svg``) or
-    still has data on disk (``sync_local.svg``). Equipment / project
-    rows render unchanged.
+    the derived run rollup: a ``cleared`` run (staging copy cleaned, data
+    on NAS only) gets ``sync_cloud.svg``; a ``syncing`` / ``synced`` run
+    still has data on disk and gets ``sync_local.svg``. Equipment /
+    project rows render unchanged.
     """
     if node.kind not in _RUN_KINDS:
         return None
-    if node.sync_status == SyncStatus.CLEANED.value:
+    if node.sync_status == RunSyncState.CLEARED.value:
         return SYNC_ICON_CLOUD_URL
     return SYNC_ICON_LOCAL_URL
 

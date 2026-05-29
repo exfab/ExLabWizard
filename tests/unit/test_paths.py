@@ -23,13 +23,12 @@ from exlab_wizard.config.models import (
     LIMSConfig,
     PathsConfig,
 )
-from exlab_wizard.constants import RunKind, SetupState
+from exlab_wizard.constants import RunKind, SetupNextAction, SetupState
 from exlab_wizard.errors import ConfigError
 from exlab_wizard.paths import (
     canonicalize_equipment_id,
     compose_project_path,
     compose_run_path,
-    default_orchestrator_staging_root,
     ensure_central_log_dir,
     ensure_dir,
     ensure_state_dir,
@@ -41,6 +40,7 @@ from exlab_wizard.paths import (
     project_name_violations,
     setup_state_missing,
     setup_state_next_action,
+    suggested_staging_root,
     validate_project_name,
 )
 
@@ -57,13 +57,6 @@ def _make_equipment(equipment_id: str = "CONFOCAL_01") -> EquipmentConfig:
             "label": "Confocal Microscope",
             "local_root": "/data/lab",
             "nas_root": "//nas01/lab",
-            "completeness_signal": "sentinel_file",
-            "sentinel_filename": "done.flag",
-            "transport": {
-                "type": "rclone",
-                "rclone_remote": "lab-nas",
-                "rclone_remote_path": "lab/CONFOCAL_01",
-            },
         }
     )
 
@@ -85,7 +78,7 @@ def _ready_config() -> Config:
     now required even in the always-on world; the README field is set
     here so the setup-state evaluator returns READY.
     """
-    from exlab_wizard.config.models import OrchestratorConfig
+    from exlab_wizard.config.models import NasConfig, OrchestratorConfig
 
     return Config(
         paths=PathsConfig(
@@ -99,6 +92,10 @@ def _ready_config() -> Config:
             label="Lab Acquisition Station 01",
             staging_root="/staging",
         ),
+        # rclone.conf NAS-sync migration: nas-mode equipment requires a
+        # configured ``nas.remote`` for the setup gate to read READY (the
+        # default ``nas_remote_available`` answers "always available").
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
     )
 
 
@@ -109,7 +106,14 @@ def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home.mkdir(parents=True)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     # Strip any inherited XDG / APPDATA so each test asserts its own state.
-    for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "APPDATA", "LOCALAPPDATA"):
+    for var in (
+        "XDG_CONFIG_HOME",
+        "XDG_STATE_HOME",
+        "XDG_CACHE_HOME",
+        "XDG_DATA_HOME",
+        "APPDATA",
+        "LOCALAPPDATA",
+    ):
         monkeypatch.delenv(var, raising=False)
     return home
 
@@ -251,32 +255,43 @@ def test_os_central_log_path_linux_without_xdg(
 
 
 # ---------------------------------------------------------------------------
-# default_orchestrator_staging_root
+# suggested_staging_root
 # ---------------------------------------------------------------------------
+#
+# staging_root is opt-in; this helper only supplies the Settings placeholder.
+# It must never return a bare ``/staging`` -- on every platform it nests under
+# an ``exlab-wizard/`` app folder, mirroring config / state / cache.
 
 
-def test_default_orchestrator_staging_root_posix(
+def test_suggested_staging_root_linux_fallback(
     monkeypatch: pytest.MonkeyPatch, fake_home: Path
 ) -> None:
     monkeypatch.setattr("sys.platform", "linux")
-    assert default_orchestrator_staging_root() == Path("/staging")
+    expected = fake_home / ".local" / "share" / "exlab-wizard" / "staging"
+    assert suggested_staging_root() == expected
 
 
-def test_default_orchestrator_staging_root_macos(
+def test_suggested_staging_root_linux_honors_xdg_data_home(
     monkeypatch: pytest.MonkeyPatch, fake_home: Path
 ) -> None:
+    monkeypatch.setattr("sys.platform", "linux")
+    xdg = fake_home / "xdg-data"
+    monkeypatch.setenv("XDG_DATA_HOME", str(xdg))
+    assert suggested_staging_root() == xdg / "exlab-wizard" / "staging"
+
+
+def test_suggested_staging_root_macos(monkeypatch: pytest.MonkeyPatch, fake_home: Path) -> None:
     monkeypatch.setattr("sys.platform", "darwin")
-    assert default_orchestrator_staging_root() == Path("/staging")
+    expected = fake_home / "Library" / "Application Support" / "exlab-wizard" / "staging"
+    assert suggested_staging_root() == expected
 
 
-def test_default_orchestrator_staging_root_windows(
-    monkeypatch: pytest.MonkeyPatch, fake_home: Path
-) -> None:
+def test_suggested_staging_root_windows(monkeypatch: pytest.MonkeyPatch, fake_home: Path) -> None:
     monkeypatch.setattr("sys.platform", "win32")
     local = fake_home / "AppData" / "Local"
     monkeypatch.setenv("LOCALAPPDATA", str(local))
     expected = local / "exlab-wizard" / "staging"
-    assert default_orchestrator_staging_root() == expected
+    assert suggested_staging_root() == expected
 
 
 # ---------------------------------------------------------------------------
@@ -324,15 +339,15 @@ def test_test_mode_suffixes_os_central_log_path(
     assert os_central_log_path() == expected
 
 
-def test_test_mode_suffixes_orchestrator_default_windows(
+def test_test_mode_suffixes_suggested_staging_root(
     monkeypatch: pytest.MonkeyPatch, fake_home: Path
 ) -> None:
-    """POSIX returns the fixed ``/staging``; only Windows weaves APP_NAME in."""
-    monkeypatch.setattr("sys.platform", "win32")
+    """The suggestion now nests under APP_NAME on every platform, so the
+    test-mode suffix applies on POSIX too (not just Windows)."""
+    monkeypatch.setattr("sys.platform", "darwin")
     monkeypatch.setenv("EXLAB_WIZARD_TEST_MODE", "1")
-    local = fake_home / "AppData" / "Local"
-    monkeypatch.setenv("LOCALAPPDATA", str(local))
-    assert default_orchestrator_staging_root() == local / "exlab-wizard-test" / "staging"
+    expected = fake_home / "Library" / "Application Support" / "exlab-wizard-test" / "staging"
+    assert suggested_staging_root() == expected
 
 
 def test_test_mode_off_does_not_suffix(monkeypatch: pytest.MonkeyPatch, fake_home: Path) -> None:
@@ -736,7 +751,7 @@ def test_evaluate_setup_state_no_equipment() -> None:
 
 
 def test_evaluate_setup_state_no_orchestrator() -> None:
-    """Redesign §3.1: orchestrator.label + staging_root are required."""
+    """Only ``label`` gates orchestrator identity; a blank label trips it."""
     config = Config(
         paths=PathsConfig(
             templates_dir="/srv/templates",
@@ -748,7 +763,60 @@ def test_evaluate_setup_state_no_orchestrator() -> None:
     assert evaluate_setup_state(config) is SetupState.INCOMPLETE_NO_ORCHESTRATOR
 
 
+def test_evaluate_setup_state_no_orchestrator_when_only_staging_set() -> None:
+    """A staging root without a label still trips -- staging never substitutes."""
+    from exlab_wizard.config.models import OrchestratorConfig
+
+    config = Config(
+        paths=PathsConfig(
+            templates_dir="/srv/templates",
+            plugin_dir="/srv/plugins",
+            local_root="/data/lab",
+        ),
+        equipment=[_make_equipment()],
+        orchestrator=OrchestratorConfig(label="", staging_root="/srv/staging"),
+    )
+    assert evaluate_setup_state(config) is SetupState.INCOMPLETE_NO_ORCHESTRATOR
+
+
+def test_evaluate_setup_state_blank_staging_root_is_allowed() -> None:
+    """staging_root is opt-in: a blank value does not block READY."""
+    from exlab_wizard.config.models import NasConfig, OrchestratorConfig
+
+    config = Config(
+        paths=PathsConfig(
+            templates_dir="/srv/templates",
+            plugin_dir="/srv/plugins",
+            local_root="/data/lab",
+        ),
+        lims=LIMSConfig(endpoint="https://lims.example/api/v1", email="op@lab.example"),
+        equipment=[_make_equipment()],
+        orchestrator=OrchestratorConfig(label="Lab Acquisition Station 01", staging_root=""),
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
+    )
+    assert evaluate_setup_state(config) is SetupState.READY
+
+
+def test_setup_state_missing_for_no_orchestrator_lists_only_label() -> None:
+    """The orchestrator missing-field rollup no longer mentions staging_root."""
+    from exlab_wizard.config.models import OrchestratorConfig
+
+    config = Config(
+        paths=PathsConfig(
+            templates_dir="/srv/templates",
+            plugin_dir="/srv/plugins",
+            local_root="/data/lab",
+        ),
+        equipment=[_make_equipment()],
+        orchestrator=OrchestratorConfig(label="", staging_root=""),
+    )
+    missing = setup_state_missing(SetupState.INCOMPLETE_NO_ORCHESTRATOR, config)
+    assert missing == [{"field": "orchestrator.label", "reason": "missing"}]
+
+
 def test_evaluate_setup_state_no_lims() -> None:
+    from exlab_wizard.config.models import NasConfig
+
     config = Config(
         paths=PathsConfig(
             templates_dir="/srv/templates",
@@ -758,12 +826,15 @@ def test_evaluate_setup_state_no_lims() -> None:
         lims=LIMSConfig(endpoint="", email="", offline_catalogue_path=""),
         equipment=[_make_equipment()],
         orchestrator=_make_orchestrator(),
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
     )
     assert evaluate_setup_state(config) is SetupState.INCOMPLETE_NO_LIMS
 
 
 def test_evaluate_setup_state_lims_via_offline_catalogue() -> None:
     """Offline catalogue path satisfies the LIMS slot without endpoint+email."""
+    from exlab_wizard.config.models import NasConfig
+
     config = Config(
         paths=PathsConfig(
             templates_dir="/srv/templates",
@@ -777,6 +848,7 @@ def test_evaluate_setup_state_lims_via_offline_catalogue() -> None:
         ),
         equipment=[_make_equipment()],
         orchestrator=_make_orchestrator(),
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
     )
     # Even with keyring missing, offline catalogue path makes the slot complete.
     assert evaluate_setup_state(config, keyring_password_present=False) is SetupState.READY
@@ -802,8 +874,98 @@ def test_evaluate_setup_state_keyring_missing() -> None:
     )
 
 
+def _nas_remote_config(remote: str = "") -> Config:
+    """Build a READY-shaped config with a single nas-mode equipment.
+
+    NAS sync is in use (nas-mode equipment present), so the rclone-remote
+    gate applies. ``remote`` is the configured ``nas.remote`` name.
+    NOTE: nas-mode ``EquipmentConfig`` still requires a ``transport`` block
+    in this phase (removed in Phase 7), hence the transport dict.
+    """
+    from exlab_wizard.config.models import NasConfig
+
+    return Config(
+        paths={"templates_dir": "/t", "plugin_dir": "/p", "local_root": "/l"},
+        orchestrator={"label": "ws-1"},
+        equipment=[
+            EquipmentConfig(
+                id="EQ_01",
+                label="Eq",
+                local_root="/l",
+                nas_root="//n/x",
+            )
+        ],
+        lims={"endpoint": "https://x", "email": "a@b.c"},
+        nas=NasConfig(remote=remote, base_root="/srv"),
+    )
+
+
+def test_setup_incomplete_when_nas_remote_blank() -> None:
+    """NAS sync in use but no remote configured -> INCOMPLETE_NO_NAS_REMOTE."""
+    assert (
+        evaluate_setup_state(_nas_remote_config(remote=""), nas_remote_available=lambda n: True)
+        == SetupState.INCOMPLETE_NO_NAS_REMOTE
+    )
+
+
+def test_setup_incomplete_when_remote_not_in_rclone_conf() -> None:
+    """Remote named but absent from rclone.conf -> INCOMPLETE_NO_NAS_REMOTE."""
+    assert (
+        evaluate_setup_state(
+            _nas_remote_config(remote="nas01"), nas_remote_available=lambda n: False
+        )
+        == SetupState.INCOMPLETE_NO_NAS_REMOTE
+    )
+
+
+def test_setup_ready_when_remote_present() -> None:
+    """Remote named and present in rclone.conf -> READY."""
+    assert (
+        evaluate_setup_state(
+            _nas_remote_config(remote="nas01"), nas_remote_available=lambda n: True
+        )
+        == SetupState.READY
+    )
+
+
+def test_evaluate_setup_state_nas_state_precedes_lims_state() -> None:
+    """A configured LIMS does not mask the missing NAS remote."""
+    config = _nas_remote_config(remote="")
+    state = evaluate_setup_state(
+        config,
+        keyring_password_present=False,
+        nas_remote_available=lambda _n: True,
+    )
+    # NAS slot is checked before LIMS in the gate order.
+    assert state is SetupState.INCOMPLETE_NO_NAS_REMOTE
+
+
+def test_setup_state_missing_for_no_nas_remote_reports_remote_field() -> None:
+    """The missing list names ``nas.remote`` and distinguishes unset vs absent."""
+    from exlab_wizard.paths import setup_state_missing
+
+    unset = setup_state_missing(SetupState.INCOMPLETE_NO_NAS_REMOTE, _nas_remote_config(remote=""))
+    assert unset == [{"field": "nas.remote", "reason": "unset"}]
+
+    absent = setup_state_missing(
+        SetupState.INCOMPLETE_NO_NAS_REMOTE, _nas_remote_config(remote="nas01")
+    )
+    assert absent == [{"field": "nas.remote", "reason": "not_found_in_rclone_conf"}]
+
+
+def test_setup_state_next_action_for_no_nas_remote() -> None:
+    from exlab_wizard.paths import setup_state_next_action
+
+    assert (
+        setup_state_next_action(SetupState.INCOMPLETE_NO_NAS_REMOTE)
+        is SetupNextAction.CONFIGURE_RCLONE_REMOTE
+    )
+
+
 def test_evaluate_setup_state_endpoint_only_missing_email() -> None:
     """endpoint present but email empty -> INCOMPLETE_NO_LIMS (email is required)."""
+    from exlab_wizard.config.models import NasConfig
+
     config = Config(
         paths=PathsConfig(
             templates_dir="/srv/templates",
@@ -813,6 +975,7 @@ def test_evaluate_setup_state_endpoint_only_missing_email() -> None:
         lims=LIMSConfig(endpoint="https://lims.example/api/v1", email=""),
         equipment=[_make_equipment()],
         orchestrator=_make_orchestrator(),
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
     )
     assert evaluate_setup_state(config) is SetupState.INCOMPLETE_NO_LIMS
 

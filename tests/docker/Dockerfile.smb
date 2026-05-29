@@ -1,0 +1,46 @@
+FROM debian:bookworm-slim
+
+# Password-based SMB NAS emulator for the rclone-only sync path's Windows
+# backend (rclone-only migration, 2026-05-26). Mirrors the SFTP container:
+# a single share authenticated by an operator-typed password, no keys.
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        samba \
+        coreutils \
+        iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG NAS_USER=testuser
+ARG NAS_UID=1000
+ARG NAS_GID=1000
+ARG SMB_SHARE=labshare
+ENV NAS_USER=${NAS_USER}
+ENV SMB_SHARE=${SMB_SHARE}
+
+RUN groupadd -g ${NAS_GID} ${NAS_USER} \
+    && useradd -M -u ${NAS_UID} -g ${NAS_GID} -s /usr/sbin/nologin ${NAS_USER} \
+    && mkdir -p /srv/${SMB_SHARE} \
+    && chown -R ${NAS_USER}:${NAS_USER} /srv/${SMB_SHARE}
+
+# Minimal smb.conf: one writable share backed by the bind-mounted data dir,
+# user-level security so the rclone smb backend authenticates by password.
+RUN printf '[global]\n\
+   workgroup = WORKGROUP\n\
+   security = user\n\
+   map to guest = never\n\
+   server min protocol = SMB2\n\
+\n\
+[%s]\n\
+   path = /srv/%s\n\
+   browsable = yes\n\
+   writable = yes\n\
+   valid users = %s\n\
+   force user = %s\n' "${SMB_SHARE}" "${SMB_SHARE}" "${NAS_USER}" "${NAS_USER}" \
+    > /etc/samba/smb.conf
+
+COPY entrypoint.smb.sh /usr/local/bin/entrypoint.smb.sh
+RUN chmod +x /usr/local/bin/entrypoint.smb.sh
+
+EXPOSE 445
+ENTRYPOINT ["/usr/local/bin/entrypoint.smb.sh"]
+CMD ["smbd", "--foreground", "--no-process-group", "--debug-stdout"]

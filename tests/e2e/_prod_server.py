@@ -81,12 +81,14 @@ class ProdServer:
     because the port is fixed at construction.
     """
 
-    def __init__(self, home: Path) -> None:
+    def __init__(self, home: Path, *, extra_env: dict[str, str] | None = None) -> None:
         self.home = home
         self.port = free_port()
         self.base_url = f"http://127.0.0.1:{self.port}"
         self._proc: subprocess.Popen[bytes] | None = None
         self._env = prod_app_env(home)
+        if extra_env:
+            self._env.update(extra_env)
 
     @property
     def config_path(self) -> Path:

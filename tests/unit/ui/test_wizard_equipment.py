@@ -6,10 +6,19 @@ import pytest
 from pydantic import ValidationError
 
 from exlab_wizard.ui.pages.wizard_equipment import (
+    EQUIPMENT_STEP_TITLES,
+    EQUIPMENT_WIZARD_STEPS,
     EquipmentWizardState,
     assemble_equipment_config,
     can_advance,
 )
+
+
+def test_wizard_has_four_steps_without_signal_step() -> None:
+    """The completeness-signal step is removed by the quiescence redesign."""
+    assert EQUIPMENT_WIZARD_STEPS == ("identity", "paths", "sync_mode", "review")
+    assert set(EQUIPMENT_STEP_TITLES) == set(EQUIPMENT_WIZARD_STEPS)
+    assert "signal" not in EQUIPMENT_WIZARD_STEPS
 
 
 def _state_filled_for(step: str) -> EquipmentWizardState:
@@ -19,11 +28,6 @@ def _state_filled_for(step: str) -> EquipmentWizardState:
     s.local_root = "/data/lab"
     s.nas_root = "//nas01/lab"
     s.sync_mode = "nas"
-    s.transport_type = "rclone"
-    s.rclone_remote = "lab-nas"
-    s.rclone_remote_path = "lab/FLOW_99"
-    s.completeness_signal = "sentinel_file"
-    s.sentinel_filename = "done.flag"
     return s
 
 
@@ -50,30 +54,19 @@ def test_can_advance_paths_requires_both_roots() -> None:
     assert can_advance(s) is False
 
 
-def test_can_advance_sync_mode_nas_requires_rclone_fields() -> None:
+def test_can_advance_sync_mode_nas_needs_no_transport_fields() -> None:
+    # rclone.conf migration: nas-mode collects no per-equipment transport
+    # in the wizard, so picking the mode is enough to advance.
     s = _state_filled_for("sync_mode")
     assert can_advance(s) is True
-    s.rclone_remote = ""
-    assert can_advance(s) is False
 
 
-def test_can_advance_sync_mode_stage_requires_staging_fields() -> None:
+def test_can_advance_sync_mode_stage_needs_no_per_equipment_fields() -> None:
+    # rclone.conf migration (Phase 8): stage-mode collects no per-equipment
+    # transport in the wizard either -- the staging hop is the
+    # ``orchestrator.staging_remote`` -- so picking the mode is enough.
     s = _state_filled_for("sync_mode")
     s.sync_mode = "stage"
-    assert can_advance(s) is False
-    s.staging_mount_point = "/mnt/staging"
-    s.staging_subpath = "in/FLOW_99"
-    assert can_advance(s) is True
-
-
-def test_can_advance_signal_requires_matching_filename() -> None:
-    s = _state_filled_for("signal")
-    assert can_advance(s) is True
-    s.completeness_signal = "manifest"
-    s.sentinel_filename = ""
-    s.manifest_filename = ""
-    assert can_advance(s) is False
-    s.manifest_filename = "manifest.json"
     assert can_advance(s) is True
 
 
@@ -82,18 +75,19 @@ def test_assemble_round_trips_to_valid_equipment_config_nas() -> None:
     eq = assemble_equipment_config(s)
     assert eq.id == "FLOW_99"
     assert eq.sync_mode.value == "nas"
-    assert eq.transport is not None
+    # rclone.conf migration: nas-mode carries no per-equipment transport.
+    assert not hasattr(eq, "transport")
 
 
 def test_assemble_round_trips_to_valid_equipment_config_stage() -> None:
     s = _state_filled_for("review")
     s.sync_mode = "stage"
-    s.staging_mount_point = "/mnt/staging"
-    s.staging_subpath = "in/FLOW_99"
     eq = assemble_equipment_config(s)
     assert eq.sync_mode.value == "stage"
-    assert eq.transport is None
-    assert eq.orchestrator_staging_transport is not None
+    # rclone.conf migration (Phase 8): stage-mode carries no per-equipment
+    # transport -- the staging hop is the ``orchestrator.staging_remote``.
+    assert not hasattr(eq, "transport")
+    assert not hasattr(eq, "orchestrator_staging_transport")
 
 
 def test_assemble_rejects_invalid_input() -> None:

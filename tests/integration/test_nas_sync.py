@@ -32,12 +32,11 @@ from exlab_wizard.api.schemas import (
 )
 from exlab_wizard.cache.creation_writer import CreationWriter
 from exlab_wizard.config.models import (
-    BandwidthConfig,
     Config,
     EquipmentConfig,
     NASCleanupConfig,
+    NasConfig,
     PathsConfig,
-    RcloneTransport,
 )
 from exlab_wizard.constants import (
     CACHE_DIR_NAME,
@@ -50,20 +49,35 @@ from exlab_wizard.sync.queue import SyncJobRow, SyncJobState
 from exlab_wizard.validator.engine import Validator
 
 
+class _StubKeyring:
+    """Minimal keyring stub returning a fixed password for every username.
+
+    Retained for additive compatibility: the rclone-named-remote
+    migration moved credentials into the operator's rclone.conf, so
+    ``NASSyncClient`` no longer resolves passwords from the keyring. The
+    ``keyring_store`` constructor arg still exists (it is accepted and
+    ignored); these tests keep passing this stub so the call sites match
+    the not-yet-migrated tray surface.
+    """
+
+    def __init__(self, password: str = "testpw") -> None:
+        self._password = password
+
+    def get_password(self, *, username: str) -> str:
+        del username
+        return self._password
+
+
 @pytest.fixture()
 def stub_binaries_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Install the rclone + rsync stubs onto PATH for the test."""
+    """Install the rclone stub on PATH for the test."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     fixtures = Path(__file__).parent.parent / "fixtures"
-    for src_name, dst_name in (
-        ("stub_rclone.py", "rclone"),
-        ("stub_rsync.py", "rsync"),
-    ):
-        target = bin_dir / dst_name
-        shutil.copy(fixtures / src_name, target)
-        st = target.stat()
-        target.chmod(st.st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    target = bin_dir / "rclone"
+    shutil.copy(fixtures / "stub_rclone.py", target)
+    st = target.stat()
+    target.chmod(st.st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     return bin_dir
 
@@ -77,16 +91,13 @@ def _build_config(local_root: Path) -> Config:
                 label="Equipment 1",
                 local_root=str(local_root),
                 nas_root="/nas",
-                completeness_signal="sentinel_file",
-                sentinel_filename="DONE",
-                transport=RcloneTransport(
-                    type="rclone",
-                    rclone_remote="lab-nas",
-                    rclone_remote_path="/srv/nas",
-                    bandwidth=BandwidthConfig(),
-                ),
             )
         ],
+        # rclone-named-remote migration: the sync target is composed from
+        # the ``nas:`` block (named remote + base root). ``mtime_tolerance_s``
+        # is generous so the size+modtime reconcile credits stub-copied
+        # files (the stub preserves modtime, but filesystems round).
+        nas=NasConfig(remote="nas01", base_root="/srv/nas", mtime_tolerance_s=5),
         nas_cleanup=NASCleanupConfig(
             enabled=True,
             min_verify_passes=1,  # one pass is enough so cleanup runs in test
@@ -173,6 +184,10 @@ async def test_full_happy_path_via_stub_rclone(
     nas_root = tmp_path / "nas"
     monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
     monkeypatch.setenv("STUB_RCLONE_DEST_ROOT", str(nas_root))
+    # rclone-named-remote migration: credentials live in the operator's
+    # rclone.conf named remote, so the production push/lsjson path injects
+    # NO inline backend env -- the previous STUB_RCLONE_REQUIRE_ENV
+    # assertion no longer applies.
 
     cfg = _build_config(local_root)
     run_dir = await _populate_run(local_root)
@@ -183,6 +198,7 @@ async def test_full_happy_path_via_stub_rclone(
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
+        keyring_store=_StubKeyring(),
         worker_poll_interval_s=0.01,
     )
     await client.init()
@@ -241,6 +257,7 @@ async def test_pre_sync_gate_blocks_run_with_placeholder_in_path(
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
+        keyring_store=_StubKeyring(),
         worker_poll_interval_s=0.01,
     )
     await client.init()
@@ -272,6 +289,7 @@ async def test_auth_error_terminates_failed(
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
+        keyring_store=_StubKeyring(),
         worker_poll_interval_s=0.01,
     )
     await client.init()
@@ -284,7 +302,9 @@ async def test_auth_error_terminates_failed(
 
 
 async def test_force_verify_returns_ok_after_compute(
-    stub_binaries_on_path: Path, tmp_path: Path
+    stub_binaries_on_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``force_verify`` runs a manifest pass against the local subtree."""
     local_root = tmp_path / "local"
@@ -298,36 +318,46 @@ async def test_force_verify_returns_ok_after_compute(
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
+        keyring_store=_StubKeyring(),
     )
     await client.init()
+    # force_verify needs an equipment match in the run path; populate
+    # sync_state so the verifier has a file set to scope against.
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+
+    sync_state = SyncStateWriter()
+    await sync_state.upsert_file(run_dir, "data.bin", synced_signature=(7, 7))
+    # Tell stub_rclone to report every files-from entry as ``=`` so the
+    # check pass returns ok=True.
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "check_success")
     try:
         result = await client.force_verify(run_dir)
         assert result.ok is True
-        # The manifest file landed in the cache subtree.
-        assert (run_dir / CACHE_DIR_NAME / "checksums.sha256").exists()
+        # The verifier no longer writes a durable on-disk manifest --
+        # sync_state.json is the audit-trail surface now (Slot A).
+        assert not (run_dir / CACHE_DIR_NAME / "checksums.sha256").exists()
     finally:
         await client.close()
 
 
 # ---------------------------------------------------------------------------
-# Remote-hash mismatch policy (§7.1.4 integrity-in-transit gap)
+# Routine reconcile + cleanup integrity gate (rclone-named-remote migration)
 # ---------------------------------------------------------------------------
 
 
-async def test_remote_hash_mismatch_triggers_retry(
+async def test_routine_reconcile_retries_until_remote_listing_settles(
     stub_binaries_on_path: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A first remote-hash mismatch retries the transport phase once.
+    """A reconcile that initially finds nothing remotely re-queues, then verifies.
 
-    The injected ``hashsum_callable_factory`` returns a closure backed by
-    a counter. On the first invocation it returns a mutated manifest
-    (every digest replaced with ``00...``); on the second it returns a
-    correct manifest computed from the on-disk run subtree. The job
-    reaches VERIFIED and the queue row records exactly one HASH_MISMATCH.
+    The injected ``lsjson_callable_factory`` returns an empty manifest on
+    the first pass (nothing on the remote yet) so the routine reconcile is
+    incomplete and the job re-queues; the second pass returns a perfect
+    manifest and the job reaches VERIFIED.
     """
-    import hashlib
+    from exlab_wizard.sync.manifest import RemoteEntry, RemoteManifest
 
     local_root = tmp_path / "local"
     local_root.mkdir()
@@ -341,42 +371,41 @@ async def test_remote_hash_mismatch_triggers_retry(
 
     counter = [0]
 
-    def _correct_manifest(target: Path) -> dict[str, str]:
-        out: dict[str, str] = {}
-        for f in sorted(target.rglob("*")):
-            if not f.is_file():
-                continue
-            rel = f.relative_to(target).as_posix()
-            if rel.startswith(".exlab-wizard/"):
-                continue
-            out[rel] = hashlib.sha256(f.read_bytes()).hexdigest()
-        return out
-
     def _factory(_equipment):
-        async def _hashsum(target: Path) -> dict[str, str]:
+        async def _lsjson(run: Path) -> RemoteManifest:
             counter[0] += 1
-            real = _correct_manifest(target)
             if counter[0] == 1:
-                # First call: mutate every digest so verify_against_remote
-                # surfaces every key as mismatched.
-                return {k: "0" * 64 for k in real}
-            return real
+                return RemoteManifest(entries={})
+            st = (run / "data.bin").stat()
+            import datetime as _dt
 
-        return _hashsum
+            mod = (
+                _dt.datetime.fromtimestamp(st.st_mtime, tz=_dt.UTC)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+            return RemoteManifest(
+                entries={"data.bin": RemoteEntry(size=st.st_size, mod_time=mod, is_dir=False)}
+            )
+
+        return _lsjson
 
     client = NASSyncClient(
         config=cfg,
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
+        keyring_store=_StubKeyring(),
         worker_poll_interval_s=0.01,
-        hashsum_callable_factory=_factory,
+        lsjson_callable_factory=_factory,
+        # min_verify_passes default (1) + min_age (0) would run cleanup; the
+        # cleanup hash-gate uses the real stub check, which succeeds. Either
+        # VERIFIED or a cleanup state is an acceptable terminal-of-success.
     )
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
         assert handle.state == HandleState.QUEUED
-
         row = await _wait_for_state(
             client._queue.get_by_id,
             handle.job_id,
@@ -387,44 +416,29 @@ async def test_remote_hash_mismatch_triggers_retry(
             SyncJobState.CLEANUP_ELIGIBLE,
             SyncJobState.CLEANED,
         }
-        # The mismatch from the first pass was recorded; the success on
-        # the second pass leaves last_error in place because transition()
-        # only patches columns the caller passes.
-        assert row.last_error == "hash_mismatch"
-        # Counter ran exactly twice: once mismatched, once correct.
-        assert counter[0] == 2
+        # The reconcile ran at least twice: the empty listing forced a
+        # re-queue before the settled listing credited the file.
+        assert counter[0] >= 2
     finally:
         await client.close()
 
 
-async def test_remote_hashsum_probe_failure_does_not_skip_verify(
+async def test_cleanup_hash_gate_defers_on_remote_mismatch(
     stub_binaries_on_path: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Spec §7.1.4 step 2: remote SHA-256 walk is REQUIRED, not optional.
+    """The pre-deletion hash-gate defers cleanup when the stub check differs.
 
-    The spec mandates a remote-side SHA-256 walk after a successful
-    transport push and a pairwise comparison. The only spec-allowed
-    fallback is the rsync-restricted-shell case where the verifier may
-    use streaming download-and-hash bounded by ``verify.max_stream_bytes``.
-    A ``TransportError`` from the hashsum probe (e.g. binary missing)
-    is NOT one of the spec's allowed bypass conditions; the verifier
-    MUST NOT silently fall through to a local-only pass.
-
-    This test injects a hashsum factory whose closure raises
-    :class:`TransportError`. The spec-aligned outcome is that the job
-    does NOT reach ``VERIFIED`` purely on the strength of the local pass:
-    it must either be marked FAILED (because remote verify could not
-    complete) or stay non-terminal pending an operator-resolvable
-    condition. Reaching VERIFIED means the implementation is bypassing
-    the §7.1.4 step-2 contract.
-
-    NOTE: this test is expected to FAIL against the current implementation;
-    the failure flags a real spec drift documented in
-    ``NASSyncClient._verify_pass`` (the "remote check skipped" branch).
+    The routine reconcile uses the real stub ``lsjson`` (a perfect
+    listing) so the job promotes to VERIFIED, but the cleanup integrity
+    gate runs a ``check`` callable that reports every file as differing --
+    so cleanup is deferred (CLEANUP_ELIGIBLE) and the local data survives
+    rather than being deleted. (Push + lsjson use the real stub at
+    ``success``; only the hash-gate check is overridden, because the stub
+    uses one behavior var across all verbs.)
     """
-    from exlab_wizard.sync.transports import TransportError
+    from exlab_wizard.sync.transports.rclone import CheckResult
 
     local_root = tmp_path / "local"
     local_root.mkdir()
@@ -436,54 +450,58 @@ async def test_remote_hashsum_probe_failure_does_not_skip_verify(
     run_dir = await _populate_run(local_root)
     writer = CreationWriter(lock_timeout_seconds=10.0)
 
-    def _factory(_equipment):
-        async def _hashsum(_target: Path) -> dict[str, str]:
-            msg = "rclone binary not found: 'rclone'"
-            raise TransportError(msg)
+    def _check_factory(_equipment):
+        async def _check(local: Path, *, files_from: Path) -> CheckResult:
+            del local
+            files = tuple(
+                line.strip()
+                for line in files_from.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            )
+            return CheckResult(differ=files)
 
-        return _hashsum
+        return _check
 
     client = NASSyncClient(
         config=cfg,
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
+        keyring_store=_StubKeyring(),
         worker_poll_interval_s=0.01,
-        hashsum_callable_factory=_factory,
+        check_callable_factory=_check_factory,
     )
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
-        # If the spec is honored, the job must NOT reach VERIFIED purely
-        # because the local pass succeeded; the remote walk is mandatory.
-        # Allow up to ~3s for the worker to converge on a terminal outcome.
-        terminal = {SyncJobState.FAILED, SyncJobState.VERIFIED, SyncJobState.CLEANED}
         row = await _wait_for_state(
             client._queue.get_by_id,
             handle.job_id,
-            terminal,
-            timeout_s=3.0,
+            {SyncJobState.CLEANUP_ELIGIBLE},
         )
-        # Spec-aligned assertion: a TransportError from the hashsum probe
-        # must be surfaced as a verify failure, not silently swallowed.
-        assert row.state is not SyncJobState.VERIFIED, (
-            "remote hashsum probe raised TransportError but the job reached "
-            "VERIFIED on the strength of the local-only pass; this bypasses "
-            "the §7.1.4 step-2 contract that mandates a remote SHA-256 walk."
-        )
-        assert row.state is not SyncJobState.CLEANED, (
-            "job reached CLEANED without a successful remote verify pass; violates §7.1.4."
-        )
+        assert row.state is SyncJobState.CLEANUP_ELIGIBLE
+        # The integrity gate failed -> local data must survive.
+        assert (run_dir / "data.bin").exists()
     finally:
         await client.close()
 
 
-async def test_remote_hash_mismatch_terminal(
+async def test_poller_per_file_enqueue_drives_to_synced_state(
     stub_binaries_on_path: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A second remote-hash mismatch terminates the job at FAILED."""
+    """Poller sweep -> per-file enqueue -> drive -> verify -> sync_state.json
+    records ``synced_signature`` + ``verified_at`` for the synced files.
+
+    Exercises the full operator-free per-file NAS sync path end-to-end:
+    the :class:`QuiescenceSyncPoller` discovers the run, computes the
+    eligible file list, and feeds it to a real :class:`NASSyncClient` that
+    drives the job through the stub rclone transport + verifier.
+    """
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+    from exlab_wizard.orchestrator.quiescence_poller import QuiescenceSyncPoller
+
     local_root = tmp_path / "local"
     local_root.mkdir()
     nas_root = tmp_path / "nas"
@@ -493,37 +511,141 @@ async def test_remote_hash_mismatch_terminal(
     cfg = _build_config(local_root)
     run_dir = await _populate_run(local_root)
     writer = CreationWriter(lock_timeout_seconds=10.0)
-
-    counter = [0]
-
-    def _factory(_equipment):
-        async def _hashsum(_target: Path) -> dict[str, str]:
-            counter[0] += 1
-            # Always return a mutated single-key manifest so the verifier
-            # sees a mismatch on every pass.
-            return {"data.bin": "0" * 64}
-
-        return _hashsum
+    sync_state = SyncStateWriter()
 
     client = NASSyncClient(
         config=cfg,
         queue_db=tmp_path / "q.db",
         validator=Validator(),
         cache_creation=writer,
+        keyring_store=_StubKeyring(),
+        sync_state_writer=sync_state,
         worker_poll_interval_s=0.01,
-        hashsum_callable_factory=_factory,
     )
     await client.init()
+    poller = QuiescenceSyncPoller(
+        config=cfg,
+        nas_sync=client,
+        sync_state_writer=sync_state,
+    )
     try:
-        handle = await client.enqueue(run_dir)
+        # First sweep observes the file; second sweep (past the settle
+        # window) finds it quiet and enqueues the per-file subset.
+        assert await poller.poll_once(now_monotonic=0.0) == []
+        enqueued = await poller.poll_once(now_monotonic=cfg.sync.quiescence_minutes * 60 + 1.0)
+        assert enqueued == [run_dir]
+
+        # The worker drives the per-file job through to VERIFIED.
+        async def _by_run_path(_ignored: str) -> SyncJobRow | None:
+            return await client._queue.get_by_run_path(run_dir)
+
         row = await _wait_for_state(
-            client._queue.get_by_id,
-            handle.job_id,
-            {SyncJobState.FAILED},
+            _by_run_path,
+            "",
+            {SyncJobState.VERIFIED, SyncJobState.CLEANUP_ELIGIBLE, SyncJobState.CLEANED},
         )
-        assert row.state is SyncJobState.FAILED
-        assert row.last_error == "hash_mismatch"
-        # The factory was invoked twice (the single retry exhausts there).
-        assert counter[0] == 2
+        assert row.state in {
+            SyncJobState.VERIFIED,
+            SyncJobState.CLEANUP_ELIGIBLE,
+            SyncJobState.CLEANED,
+        }
+        assert row.files == ("data.bin",)
+
+        # sync_state.json records the verified file.
+        state = await sync_state.read(run_dir)
+        assert "data.bin" in state.files
+        assert state.files["data.bin"].synced_signature is not None
+        assert state.files["data.bin"].verified_at is not None
+    finally:
+        await client.close()
+
+
+async def test_poller_to_cleanup_honors_keep_local_and_stamps_cleared(
+    stub_binaries_on_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Full Phase 5 path: poller sweep -> enqueue -> verify -> SYNCED rollup
+    -> cleanup runs, keeping a ``keep_local`` file and stamping ``cleared_at``.
+
+    Exercises the operator-free per-file NAS sync cleanup contract
+    end-to-end with a real :class:`NASSyncClient` over the stub rclone
+    transport: the run carries two data files, one flagged ``keep_local``;
+    after cleanup the kept file survives, the other is removed, the
+    ``.exlab-wizard/`` metadata subtree is retained, and the run's
+    ``sync_state.json`` rolls up to ``CLEARED``.
+    """
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+    from exlab_wizard.constants import RunSyncState
+    from exlab_wizard.orchestrator.quiescence_poller import QuiescenceSyncPoller
+
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    nas_root = tmp_path / "nas"
+    monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
+    monkeypatch.setenv("STUB_RCLONE_DEST_ROOT", str(nas_root))
+
+    # ``min_verify_passes=1`` + ``min_age_hours=0`` so cleanup runs in the
+    # same worker pass that promotes the job to VERIFIED.
+    cfg = _build_config(local_root)
+    run_dir = local_root / "EQ1" / "PROJ-0042" / "Runs" / "Run_2026-04-17T14-32-00"
+    run_dir.mkdir(parents=True)
+    (run_dir / "data.bin").write_bytes(b"payload-bytes")
+    (run_dir / "keep.bin").write_bytes(b"keep-me-local")
+    cache = run_dir / CACHE_DIR_NAME
+    cache.mkdir()
+    (cache / CREATION_JSON_NAME).write_bytes(msgspec_json.encode(_make_creation(run_dir)))
+
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+    sync_state = SyncStateWriter()
+    # Operator flags one file keep-local before the sync runs.
+    await sync_state.set_keep_local(run_dir, "keep.bin", True)
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        keyring_store=_StubKeyring(),
+        sync_state_writer=sync_state,
+        worker_poll_interval_s=0.01,
+    )
+    await client.init()
+    poller = QuiescenceSyncPoller(
+        config=cfg,
+        nas_sync=client,
+        sync_state_writer=sync_state,
+    )
+    try:
+        # Poller discovers the run and enqueues its quiet files past the
+        # settle window.
+        assert await poller.poll_once(now_monotonic=0.0) == []
+        enqueued = await poller.poll_once(now_monotonic=cfg.sync.quiescence_minutes * 60 + 1.0)
+        assert enqueued == [run_dir]
+
+        async def _by_run_path(_ignored: str) -> SyncJobRow | None:
+            return await client._queue.get_by_run_path(run_dir)
+
+        # The worker drives the job through verify into the cleanup states.
+        await _wait_for_state(
+            _by_run_path,
+            "",
+            {SyncJobState.CLEANED},
+        )
+
+        # The keep_local file survives; the other data file is removed.
+        assert (run_dir / "keep.bin").exists()
+        assert not (run_dir / "data.bin").exists()
+        # The metadata subtree is retained so tombstones still render.
+        assert cache.exists()
+
+        # sync_state.json rolled up to CLEARED (cleared_at stamped).
+        state = await sync_state.read(run_dir)
+        assert state.cleared_at is not None
+        assert SyncStateWriter.rollup_state(state) is RunSyncState.CLEARED
+        # Both files were credited as verified before cleanup ran.
+        assert state.files["data.bin"].verified_at is not None
+        assert state.files["keep.bin"].verified_at is not None
+        assert state.files["keep.bin"].keep_local is True
     finally:
         await client.close()

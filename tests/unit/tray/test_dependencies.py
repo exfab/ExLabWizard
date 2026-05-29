@@ -17,13 +17,21 @@ from pathlib import Path
 
 import keyring
 import keyring.backend
+import pytest
 
-from exlab_wizard.config.models import Config
-from exlab_wizard.constants import KEYRING_USERNAME_LIMS
+from exlab_wizard.config.models import (
+    Config,
+    EquipmentConfig,
+    PathsConfig,
+)
+from exlab_wizard.constants import KEYRING_USERNAME_LIMS, SyncMode
 from exlab_wizard.lims.keyring_store import KeyringStore
+from exlab_wizard.sync.nas_client import NASSyncClient
+from exlab_wizard.tray import dependencies as deps_module
 from exlab_wizard.tray.dependencies import (
     _build_lims_client,
     _check_keyring_present,
+    _make_equipment_probe,
     build_production_dependencies,
 )
 
@@ -64,6 +72,39 @@ def test_build_production_dependencies_exposes_keyring_store(tmp_path: Path) -> 
     assert isinstance(deps.keyring_store, KeyringStore)
 
 
+def test_build_production_dependencies_nas_sync_is_a_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``deps.nas_sync`` must be a :class:`NASSyncClient`, not a bare queue.
+
+    Regression: ``_build_nas_sync`` once returned a ``SyncQueue``, which
+    has neither ``enqueue`` nor ``status`` -- the poller sweep and the
+    force-sync route call both, so the bug surfaced only as a silent dead
+    sync loop in production. This is the test that catches it.
+    """
+    local_root = tmp_path / "lab-data"
+    local_root.mkdir()
+    config = Config(
+        paths=PathsConfig(local_root=str(local_root)),
+        equipment=[
+            EquipmentConfig(
+                id="EQNAS",
+                label="Nas Equipment",
+                local_root=str(local_root),
+                nas_root="/nas",
+                sync_mode=SyncMode.NAS,
+            ),
+        ],
+    )
+    monkeypatch.setattr(deps_module, "_load_config_safely", lambda: config)
+
+    deps = build_production_dependencies(tmp_path)
+
+    assert isinstance(deps.nas_sync, NASSyncClient)
+    assert callable(deps.nas_sync.enqueue)
+    assert callable(deps.nas_sync.status)
+
+
 def test_check_keyring_present_true_when_lims_password_stored(tmp_path: Path) -> None:
     """The probe must look up the password under KEYRING_USERNAME_LIMS.
 
@@ -96,3 +137,145 @@ def test_lims_client_password_provider_reads_keyring_under_lims_username(
         client = _build_lims_client(config, store)
 
         assert client._password_provider() == "hunter2"
+
+
+# ---------------------------------------------------------------------------
+# Equipment probe (rclone NAS remote)
+# ---------------------------------------------------------------------------
+
+
+def _nas_config_with_two_equipment() -> Config:
+    """Build a two-equipment nas-mode config for the NAS-presence tests."""
+    return Config(
+        paths=PathsConfig(local_root="/data"),
+        equipment=[
+            EquipmentConfig(
+                id="EQ1",
+                label="One",
+                local_root="/data",
+                nas_root="/srv/nas",
+                sync_mode=SyncMode.NAS,
+            ),
+            EquipmentConfig(
+                id="EQ2",
+                label="Two",
+                local_root="/data",
+                nas_root="/srv/nas",
+                sync_mode=SyncMode.NAS,
+            ),
+        ],
+    )
+
+
+def _nas_config_with_remote(remote: str = "nas01") -> Config:
+    """``_nas_config_with_two_equipment`` plus a configured ``nas:`` block."""
+    from exlab_wizard.config.models import NasConfig
+
+    config = _nas_config_with_two_equipment()
+    return config.model_copy(update={"nas": NasConfig(remote=remote, base_root="/srv/nas")})
+
+
+class _StubAbout:
+    def __init__(self, *, ok: bool, reason: str | None = None) -> None:
+        self.ok = ok
+        self.reason = reason
+        self.info: dict[str, int] = {}
+
+
+def test_make_equipment_probe_targets_nas_remote_not_keyring(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The probe must call ``rclone about <nas.remote>:`` and ignore the keyring."""
+    import asyncio
+
+    from exlab_wizard.sync.transports import rclone as rclone_module
+
+    calls: list[str] = []
+
+    class _StubDriver:
+        def __init__(self, *, config_path: str | None = None) -> None:
+            self.config_path = config_path
+
+        async def about(self, remote: str, **_kwargs: object) -> _StubAbout:
+            calls.append(remote)
+            return _StubAbout(ok=True)
+
+    monkeypatch.setattr(rclone_module, "RcloneDriver", _StubDriver)
+
+    deps = build_production_dependencies(tmp_path)
+    # No keyring password is set; the new probe must not consult it.
+    deps.keyring_store = None
+    deps.config = _nas_config_with_remote("nas01")
+
+    probe = _make_equipment_probe(deps)
+    result = asyncio.run(probe(deps.config.equipment[0]))
+
+    assert result["ok"] is True, result
+    assert calls == ["nas01:"]
+
+
+def test_make_equipment_probe_short_circuits_without_remote(tmp_path: Path) -> None:
+    """No configured ``nas.remote`` must not spawn rclone."""
+    import asyncio
+
+    deps = build_production_dependencies(tmp_path)
+    deps.config = _nas_config_with_two_equipment()  # default NasConfig() -> blank remote
+
+    probe = _make_equipment_probe(deps)
+    result = asyncio.run(probe(deps.config.equipment[0]))
+
+    assert result["ok"] is False
+    assert "no NAS remote configured" in (result["reason"] or "")
+
+
+def test_make_equipment_probe_surfaces_about_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failing ``rclone about`` surfaces as ``ok=False`` with the reason."""
+    import asyncio
+
+    from exlab_wizard.sync.transports import rclone as rclone_module
+
+    class _StubDriver:
+        def __init__(self, *, config_path: str | None = None) -> None:
+            self.config_path = config_path
+
+        async def about(self, remote: str, **_kwargs: object) -> _StubAbout:
+            return _StubAbout(ok=False, reason="auth_error: 401 Unauthorized")
+
+    monkeypatch.setattr(rclone_module, "RcloneDriver", _StubDriver)
+
+    deps = build_production_dependencies(tmp_path)
+    deps.config = _nas_config_with_remote("nas01")
+
+    probe = _make_equipment_probe(deps)
+    result = asyncio.run(probe(deps.config.equipment[0]))
+
+    assert result["ok"] is False
+    assert "401" in (result["reason"] or "")
+
+
+def test_nas_remote_available_reflects_listremotes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Boot-time hydration drives ``deps.nas_remote_available`` from listremotes."""
+    from exlab_wizard.sync.transports import rclone as rclone_module
+    from exlab_wizard.tray import dependencies as deps_mod
+
+    class _StubDriver:
+        def __init__(self, *, config_path: str | None = None) -> None:
+            self.config_path = config_path
+
+        async def listremotes(self) -> tuple[str, ...]:
+            return ("nas01:", "archive:")
+
+    monkeypatch.setattr(rclone_module, "RcloneDriver", _StubDriver)
+
+    config = _nas_config_with_remote("nas01")
+    remotes = deps_mod._hydrate_nas_remotes(config)
+    assert remotes == ("nas01:", "archive:")
+
+    # The predicate the API setup gate reads matches on ``<remote>:``.
+    available = lambda remote: f"{remote}:" in remotes  # noqa: E731
+    assert available("nas01") is True
+    assert available("missing") is False
