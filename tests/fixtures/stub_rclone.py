@@ -203,6 +203,15 @@ def main() -> int:
         sys.stdout.write(json.dumps(rows))
         return 0
 
+    # ---- listremotes ------------------------------------------------------
+    if verb == "listremotes":
+        remotes_env = os.environ.get("STUB_RCLONE_LISTREMOTES", "nas01:")
+        for remote in remotes_env.split(","):
+            remote = remote.strip()
+            if remote:
+                sys.stdout.write(remote + "\n")
+        return 0
+
     # ---- copy (default verb) ---------------------------------------------
     if behavior == "network_error":
         sys.stderr.write("network timeout\n")
