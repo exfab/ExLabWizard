@@ -14,9 +14,7 @@ from exlab_wizard.validator.engine import Validator
 
 
 def test_reconfigure_refreshes_scan_limits_and_roots() -> None:
-    validator = Validator(
-        ValidatorConfig(content_scan_max_mib=1, content_scan_extensions=[".txt"])
-    )
+    validator = Validator(ValidatorConfig(content_scan_max_mib=1, content_scan_extensions=[".txt"]))
     assert validator._content_scan_max_bytes == 1 * 1024 * 1024
     assert validator._equipment_roots == {}
     assert validator._staging_root is None

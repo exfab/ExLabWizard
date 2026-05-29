@@ -179,9 +179,7 @@ def test_list_problems_unknown_scope_returns_422(tmp_path: Path) -> None:
 
 def test_refresh_runs_audit(tmp_path: Path) -> None:
     stub = _StubValidator(_findings())
-    deps = AppDependencies(
-        config=_ready_config(tmp_path), validator=stub
-    )
+    deps = AppDependencies(config=_ready_config(tmp_path), validator=stub)
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.post("/api/v1/problems/refresh")

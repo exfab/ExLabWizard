@@ -112,11 +112,7 @@ def test_load_config_validation_error_raises_config_error(tmp_path: Path) -> Non
     # the original error chained as __cause__.
     bad = tmp_path / "validation.yaml"
     bad.write_text(
-        "equipment:\n"
-        "  - id: lowercase\n"
-        "    label: x\n"
-        "    local_root: /tmp\n"
-        "    nas_root: /mnt\n",
+        "equipment:\n  - id: lowercase\n    label: x\n    local_root: /tmp\n    nas_root: /mnt\n",
         encoding="utf-8",
     )
     with pytest.raises(ConfigError) as info:

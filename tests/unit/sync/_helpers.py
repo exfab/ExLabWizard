@@ -71,14 +71,8 @@ def _walk_local(run: Path) -> dict[str, RemoteEntry]:
         if CACHE_DIR_NAME in rel.parts:
             continue
         stat = path.stat()
-        mod_time = (
-            datetime.fromtimestamp(stat.st_mtime, tz=UTC)
-            .isoformat()
-            .replace("+00:00", "Z")
-        )
-        entries[rel.as_posix()] = RemoteEntry(
-            size=stat.st_size, mod_time=mod_time, is_dir=False
-        )
+        mod_time = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat().replace("+00:00", "Z")
+        entries[rel.as_posix()] = RemoteEntry(size=stat.st_size, mod_time=mod_time, is_dir=False)
     return entries
 
 

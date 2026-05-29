@@ -22,8 +22,10 @@ from exlab_wizard.sync.transports import (
     TransportErrorKind,
 )
 from exlab_wizard.sync.transports.rclone import (
+    AboutResult,
     CheckResult,
     RcloneDriver,
+    _classify_failure,
     _parse_combined,
 )
 
@@ -288,7 +290,11 @@ async def test_lsjson_argv_is_recursive_readonly(monkeypatch):
 
     async def fake_run(cmd):
         captured["cmd"] = cmd
-        return 0, '[{"Path":"a.txt","Name":"a.txt","Size":3,"ModTime":"2026-05-28T00:00:00Z","IsDir":false}]', ""
+        return (
+            0,
+            '[{"Path":"a.txt","Name":"a.txt","Size":3,"ModTime":"2026-05-28T00:00:00Z","IsDir":false}]',
+            "",
+        )
 
     monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
     out = await RcloneDriver().lsjson("nas01:/srv/lab/EQ/run")
@@ -331,3 +337,101 @@ async def test_listremotes_empty_on_failure(monkeypatch):
 
     monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
     assert await RcloneDriver().listremotes() == ()
+
+
+# ---------------------------------------------------------------------------
+# _classify_failure -- the UNKNOWN fallback (rc == 0, no markers)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_failure_unknown_when_rc_zero_and_no_markers() -> None:
+    assert _classify_failure("everything fine", 0) is TransportErrorKind.UNKNOWN
+
+
+# ---------------------------------------------------------------------------
+# check -- error paths (missing binary / auth failure / unreadable combined)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_check_missing_binary_raises(monkeypatch, tmp_path) -> None:
+    async def fake_run(cmd):
+        raise FileNotFoundError("rclone")
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    files_from = tmp_path / "files.txt"
+    files_from.write_text("a.txt\n")
+    with pytest.raises(TransportError):
+        await RcloneDriver().check(tmp_path, "nas01:/x", files_from=files_from)
+
+
+@pytest.mark.asyncio
+async def test_check_auth_failure_with_no_combined_output_raises(monkeypatch, tmp_path) -> None:
+    async def fake_run(cmd):
+        # Non-zero exit, auth marker, and the --combined file is left empty.
+        return 1, "", "403 Forbidden"
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    files_from = tmp_path / "files.txt"
+    files_from.write_text("a.txt\n")
+    with pytest.raises(TransportError) as exc:
+        await RcloneDriver().check(tmp_path, "nas01:/x", files_from=files_from)
+    assert exc.value.error_kind is TransportErrorKind.AUTH
+
+
+@pytest.mark.asyncio
+async def test_check_unreadable_combined_file_is_tolerated(monkeypatch, tmp_path) -> None:
+    """If the --combined tempfile cannot be read, treat it as empty output."""
+
+    async def fake_run(cmd):
+        # Delete the --combined target so read_text raises OSError; exit clean.
+        combined = Path(cmd[cmd.index("--combined") + 1])
+        combined.unlink(missing_ok=True)
+        return 0, "", ""
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    files_from = tmp_path / "files.txt"
+    files_from.write_text("a.txt\n")
+    result = await RcloneDriver().check(tmp_path, "nas01:/x", files_from=files_from)
+    assert result == CheckResult()
+
+
+# ---------------------------------------------------------------------------
+# about -- error paths (missing binary / malformed JSON)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_about_missing_binary_returns_not_ok(monkeypatch) -> None:
+    async def fake_run(cmd):
+        raise FileNotFoundError("rclone")
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    result = await RcloneDriver().about("nas01:")
+    assert result == AboutResult(ok=False, reason="rclone binary not found")
+
+
+@pytest.mark.asyncio
+async def test_about_malformed_json_is_ok_with_empty_info(monkeypatch) -> None:
+    async def fake_run(cmd):
+        return 0, "this is not json", ""
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    result = await RcloneDriver().about("nas01:")
+    assert result.ok is True
+    assert result.info == {}
+
+
+# ---------------------------------------------------------------------------
+# lsjson -- missing binary
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_lsjson_missing_binary_raises(monkeypatch) -> None:
+    async def fake_run(cmd):
+        raise FileNotFoundError("rclone")
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    with pytest.raises(TransportError):
+        await RcloneDriver().lsjson("nas01:/x")

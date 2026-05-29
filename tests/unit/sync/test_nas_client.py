@@ -900,12 +900,10 @@ def test_driver_for_stage_mode_uses_staging_perf(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_recording_push_factory() -> (
-    tuple[
-        Callable[[EquipmentConfig], Callable[..., Any]],
-        list[int | None],
-    ]
-):
+def _make_recording_push_factory() -> tuple[
+    Callable[[EquipmentConfig], Callable[..., Any]],
+    list[int | None],
+]:
     """Return ``(factory, recorded_bwlimits)`` where the factory's push
     callable appends the received ``bwlimit_kibps`` value to the list on
     every invocation.

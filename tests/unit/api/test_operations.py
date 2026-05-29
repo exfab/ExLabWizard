@@ -65,9 +65,7 @@ def test_get_operations_lists_in_flight_sessions() -> None:
     controller.session_store.transition(s1.session_id, SessionState.VALIDATING)
     s2 = controller.session_store.open("project", _make_project_request("PROJ-0002"))
     controller.session_store.transition(s2.session_id, SessionState.VALIDATING)
-    deps = AppDependencies(
-        config=_ready_config(), controller=controller
-    )
+    deps = AppDependencies(config=_ready_config(), controller=controller)
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.get("/api/v1/operations")
@@ -91,9 +89,7 @@ def test_get_operations_excludes_done_and_aborted() -> None:
     s2 = controller.session_store.open("project", _make_project_request())
     controller.session_store.transition(s2.session_id, SessionState.VALIDATING)
     controller.session_store.transition(s2.session_id, SessionState.ABORTED)
-    deps = AppDependencies(
-        config=_ready_config(), controller=controller
-    )
+    deps = AppDependencies(config=_ready_config(), controller=controller)
     app = create_app(dependencies=deps)
     client = TestClient(app)
     body = client.get("/api/v1/operations").json()
@@ -108,9 +104,7 @@ def test_get_operations_emits_plugin_name_when_input_required() -> None:
     controller.session_store.transition(s.session_id, SessionState.PLUGIN_PASS)
     controller.session_store.transition(s.session_id, SessionState.INPUT_REQUIRED)
     s.pending_input = {"plugin": "xlsx_field_filler", "reason": "need a value"}
-    deps = AppDependencies(
-        config=_ready_config(), controller=controller
-    )
+    deps = AppDependencies(config=_ready_config(), controller=controller)
     app = create_app(dependencies=deps)
     client = TestClient(app)
     body = client.get("/api/v1/operations").json()

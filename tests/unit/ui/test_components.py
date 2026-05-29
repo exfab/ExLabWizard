@@ -558,7 +558,12 @@ def test_operation_row_from_session_maps_state_buckets_and_fields() -> None:
     )
     row = operations_modal.OperationRow.from_session("s1", suspended)
     assert row.state == operations_modal.STATE_SUSPENDED
-    assert (row.operation_id, row.equipment, row.project, row.run) == ("s1", "EQ1", "PROJ-0042", "My Run")
+    assert (row.operation_id, row.equipment, row.project, row.run) == (
+        "s1",
+        "EQ1",
+        "PROJ-0042",
+        "My Run",
+    )
     assert row.plugin == "demo"
 
     running = SimpleNamespace(

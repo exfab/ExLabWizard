@@ -197,9 +197,7 @@ def main() -> int:
                         .isoformat()
                         .replace("+00:00", "Z")
                     )
-                    rows.append(
-                        {"Path": rel, "Size": st.st_size, "ModTime": mod, "IsDir": False}
-                    )
+                    rows.append({"Path": rel, "Size": st.st_size, "ModTime": mod, "IsDir": False})
         sys.stdout.write(json.dumps(rows))
         return 0
 

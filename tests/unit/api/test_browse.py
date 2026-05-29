@@ -258,9 +258,7 @@ def test_get_folder_returns_immediate_contents(tmp_path: Path) -> None:
 
 
 def test_get_folder_404_on_vanished_path(tmp_path: Path) -> None:
-    deps = AppDependencies(
-        config=_config_with_local_root(tmp_path / "data")
-    )
+    deps = AppDependencies(config=_config_with_local_root(tmp_path / "data"))
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.get(f"/api/v1/folder/{tmp_path / 'does-not-exist'}")

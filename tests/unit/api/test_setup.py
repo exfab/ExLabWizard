@@ -69,9 +69,7 @@ def _ready_config_without_lims() -> Config:
 
 
 def test_compute_setup_state_returns_ready_for_complete_config() -> None:
-    deps = AppDependencies(
-        config=_ready_config(), lims_reachable=True
-    )
+    deps = AppDependencies(config=_ready_config(), lims_reachable=True)
     assert compute_setup_state(deps) is SetupState.READY
 
 
@@ -213,9 +211,7 @@ def test_setup_state_gate_no_op_without_dependencies() -> None:
 
 
 def test_get_setup_status_ready() -> None:
-    deps = AppDependencies(
-        config=_ready_config(), lims_reachable=True
-    )
+    deps = AppDependencies(config=_ready_config(), lims_reachable=True)
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.get("/api/v1/setup/status")
@@ -255,9 +251,7 @@ def test_post_test_lims_probe_raises_returns_reason() -> None:
     async def bad_probe(_body: LIMSTestRequest | None) -> ProbeResult:
         raise RuntimeError("network down")
 
-    deps = AppDependencies(
-        config=_ready_config(), lims_probe=bad_probe
-    )
+    deps = AppDependencies(config=_ready_config(), lims_probe=bad_probe)
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.post("/api/v1/setup/test-lims", json={})
@@ -294,9 +288,7 @@ def test_post_test_equipment_with_explicit_equipment_id() -> None:
         captured["id"] = equipment.id
         return True
 
-    deps = AppDependencies(
-        config=_ready_config(), equipment_probe=probe
-    )
+    deps = AppDependencies(config=_ready_config(), equipment_probe=probe)
     app = create_app(dependencies=deps)
     client = TestClient(app)
     body = {"equipment_id": "EQ1"}
@@ -324,9 +316,7 @@ def test_post_autostart_calls_toggle() -> None:
         captured["value"] = enabled
         return enabled
 
-    deps = AppDependencies(
-        config=_ready_config(), autostart_toggle=toggle
-    )
+    deps = AppDependencies(config=_ready_config(), autostart_toggle=toggle)
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.post("/api/v1/setup/autostart", json={"enabled": True})

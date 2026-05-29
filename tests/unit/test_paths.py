@@ -280,17 +280,13 @@ def test_suggested_staging_root_linux_honors_xdg_data_home(
     assert suggested_staging_root() == xdg / "exlab-wizard" / "staging"
 
 
-def test_suggested_staging_root_macos(
-    monkeypatch: pytest.MonkeyPatch, fake_home: Path
-) -> None:
+def test_suggested_staging_root_macos(monkeypatch: pytest.MonkeyPatch, fake_home: Path) -> None:
     monkeypatch.setattr("sys.platform", "darwin")
     expected = fake_home / "Library" / "Application Support" / "exlab-wizard" / "staging"
     assert suggested_staging_root() == expected
 
 
-def test_suggested_staging_root_windows(
-    monkeypatch: pytest.MonkeyPatch, fake_home: Path
-) -> None:
+def test_suggested_staging_root_windows(monkeypatch: pytest.MonkeyPatch, fake_home: Path) -> None:
     monkeypatch.setattr("sys.platform", "win32")
     local = fake_home / "AppData" / "Local"
     monkeypatch.setenv("LOCALAPPDATA", str(local))
@@ -925,7 +921,9 @@ def test_setup_incomplete_when_remote_not_in_rclone_conf() -> None:
 def test_setup_ready_when_remote_present() -> None:
     """Remote named and present in rclone.conf -> READY."""
     assert (
-        evaluate_setup_state(_nas_remote_config(remote="nas01"), nas_remote_available=lambda n: True)
+        evaluate_setup_state(
+            _nas_remote_config(remote="nas01"), nas_remote_available=lambda n: True
+        )
         == SetupState.READY
     )
 

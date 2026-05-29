@@ -189,9 +189,7 @@ def test_nas_remote_gate_configure_and_test(browser, nas_prod_server) -> None:
         page.get_by_test_id("settings-dialog").wait_for(state="visible", timeout=10_000)
         page.get_by_test_id("settings-nav-nas_remote").click()
         # The section shows the remote name label and status badge.
-        page.get_by_test_id("settings-nas-remote-name").wait_for(
-            state="visible", timeout=5_000
-        )
+        page.get_by_test_id("settings-nas-remote-name").wait_for(state="visible", timeout=5_000)
 
         # TODO (Phase 9B): seed a config with nas.remote="nas01", set
         # STUB_RCLONE_LISTREMOTES=nas01: in the fixture env so the availability
