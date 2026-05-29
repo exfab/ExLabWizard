@@ -162,62 +162,10 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
         action="Type the equipment NAS root",
         outcome="Provides the EquipmentConfig.nas_root for the new entry.",
     ),
-    UXInteraction(
-        flow="Equipment",
-        route="/settings",
-        testid="settings-equipment-transport",
-        element="radio",
-        action="Pick the transport (rclone_sftp / rclone_smb)",
-        outcome="Swaps the transport fieldset between the SFTP and SMB backends.",
-    ),
-    UXInteraction(
-        flow="Equipment",
-        route="/settings",
-        testid="settings-equipment-sftp-host",
-        element="input",
-        action="Type the SFTP host",
-        outcome="Sets the rclone_sftp transport host for the new entry.",
-    ),
-    UXInteraction(
-        flow="Equipment",
-        route="/settings",
-        testid="settings-equipment-sftp-user",
-        element="input",
-        action="Type the SFTP user",
-        outcome="Sets the rclone_sftp transport user for the new entry.",
-    ),
-    UXInteraction(
-        flow="Equipment",
-        route="/settings",
-        testid="settings-equipment-sftp-remote-path",
-        element="input",
-        action="Type the SFTP remote path",
-        outcome="Sets the rclone_sftp transport remote_path for the new entry.",
-    ),
-    UXInteraction(
-        flow="Equipment",
-        route="/settings",
-        testid="settings-equipment-smb-host",
-        element="input",
-        action="Type the SMB host",
-        outcome="Sets the rclone_smb transport host for the new entry.",
-    ),
-    UXInteraction(
-        flow="Equipment",
-        route="/settings",
-        testid="settings-equipment-smb-share",
-        element="input",
-        action="Type the SMB share",
-        outcome="Sets the rclone_smb transport share for the new entry.",
-    ),
-    UXInteraction(
-        flow="Equipment",
-        route="/settings",
-        testid="settings-equipment-smb-user",
-        element="input",
-        action="Type the SMB user",
-        outcome="Sets the rclone_smb transport user for the new entry.",
-    ),
+    # rclone.conf migration (Phase 8): the per-equipment SFTP/SMB transport
+    # radio + connection fields were removed from the Settings equipment form.
+    # A nas-mode device now carries only id/label/local_root/nas_root; the NAS
+    # connection is the single nas: remote configured in Settings -> NAS Remote.
     # -- Settings: NAS Remote (rclone.conf migration) ----------------------
     UXInteraction(
         flow="NAS Remote",

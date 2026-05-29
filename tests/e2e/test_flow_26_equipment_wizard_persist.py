@@ -73,12 +73,13 @@ def test_equipment_wizard_confirm_persists_to_config(browser, prod_server) -> No
         wiz.nas_root.fill("/srv/nas/MICROSCOPE_01")
         wiz.next_button.click()
 
-        # 3. Sync mode -- nas / rclone_sftp are the defaults; fill the
-        #    SFTP transport fields (the password is set later in Settings).
-        wiz.sftp_host.wait_for(state="visible", timeout=10_000)
-        wiz.sftp_host.fill("nas.lab.example")
-        wiz.sftp_user.fill("testuser")
-        wiz.sftp_remote_path.fill("lab/MICROSCOPE_01")
+        # 3. Sync mode -- nas is the default. rclone.conf migration (Phase 8)
+        #    removed the per-equipment SFTP/SMB transport fields: nas-mode now
+        #    just shows a note that the connection is the single nas: remote
+        #    (configured in Settings -> NAS Remote). Picking the mode is the
+        #    only choice, so advancing is immediate.
+        wiz.sync_mode.wait_for(state="visible", timeout=10_000)
+        wiz.nas_note.wait_for(state="visible", timeout=10_000)
         wiz.next_button.click()
 
         # 4. Review -> Confirm.

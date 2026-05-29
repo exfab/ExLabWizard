@@ -83,13 +83,6 @@ def _select(
     option.click()
 
 
-def _pick_radio(page, group_testid: str, option_label: str, *, timeout: int = 8_000) -> None:
-    """Select a Quasar ``ui.radio`` option by its label within the group."""
-    group = page.get_by_test_id(group_testid)
-    group.wait_for(state="attached", timeout=timeout)
-    group.get_by_text(option_label, exact=True).click()
-
-
 def _step_button(
     page,
     step_testid: str,
@@ -231,30 +224,23 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         _fill(page, "settings-lims-offline-path", str(catalogue_path))
 
         # ---- Phase 4: add equipment ------------------------------------
-        # 4a. rclone_sftp transport (the default radio). The per-equipment
-        #     NAS password is entered later in the NAS-credentials section,
-        #     not here (rclone-only migration, 2026-05-26).
+        # rclone.conf migration (Phase 8): the Settings equipment form no
+        # longer collects a per-equipment SFTP/SMB transport. A nas-mode
+        # device is created with just id/label/local_root/nas_root; the NAS
+        # connection is the single nas: remote (configured in rclone.conf).
         page.get_by_test_id("settings-nav-equipment").click()
         _fill(page, "settings-equipment-id", "MICROSCOPE1")
         _fill(page, "settings-equipment-label", "Confocal Microscope 1")
         _fill(page, "settings-equipment-local-root", str(data_root))
         _fill(page, "settings-equipment-nas-root", "/srv/nas/microscope1")
-        _fill(page, "settings-equipment-sftp-host", "nas.lab.example")
-        _fill(page, "settings-equipment-sftp-user", "operator")
-        _fill(page, "settings-equipment-sftp-remote-path", "lab/microscope1")
         page.get_by_test_id("settings-equipment-add").click()
         page.get_by_test_id("settings-equipment-row").first.wait_for(state="visible", timeout=8_000)
 
-        # 4b. rclone_smb transport -- exercises the transport radio
-        #     swapping the transport fieldset.
+        # 4b. a second nas-mode device -- same no-transport form.
         _fill(page, "settings-equipment-id", "SPECTROMETER1")
         _fill(page, "settings-equipment-label", "Mass Spectrometer 1")
         _fill(page, "settings-equipment-local-root", str(data_root))
         _fill(page, "settings-equipment-nas-root", "/srv/nas/spectrometer1")
-        _pick_radio(page, "settings-equipment-transport", "rclone_smb")
-        _fill(page, "settings-equipment-smb-host", "nas.lab.example")
-        _fill(page, "settings-equipment-smb-share", "spectrometer1")
-        _fill(page, "settings-equipment-smb-user", "operator")
         page.get_by_test_id("settings-equipment-add").click()
         # Two equipment rows now present.
         page.wait_for_function(
@@ -272,7 +258,6 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         config_text = config_path.read_text(encoding="utf-8")
         assert "MICROSCOPE1" in config_text
         assert "SPECTROMETER1" in config_text
-        assert "rclone_smb" in config_text
         assert str(data_root) in config_text
 
         # ---- Phase 6: verify NAS Remote section is present ---------------

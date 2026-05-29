@@ -42,13 +42,6 @@ flow test.
 | `/settings` | `settings-equipment-label` | input | Type the equipment label | Provides the EquipmentConfig.label for the new entry. |
 | `/settings` | `settings-equipment-local-root` | input | Type the equipment local root | Provides the EquipmentConfig.local_root for the new entry. |
 | `/settings` | `settings-equipment-nas-root` | input | Type the equipment NAS root | Provides the EquipmentConfig.nas_root for the new entry. |
-| `/settings` | `settings-equipment-transport` | radio | Pick the transport (rclone_sftp / rclone_smb) | Swaps the transport fieldset between the SFTP and SMB backends. |
-| `/settings` | `settings-equipment-sftp-host` | input | Type the SFTP host | Sets the rclone_sftp transport host for the new entry. |
-| `/settings` | `settings-equipment-sftp-user` | input | Type the SFTP user | Sets the rclone_sftp transport user for the new entry. |
-| `/settings` | `settings-equipment-sftp-remote-path` | input | Type the SFTP remote path | Sets the rclone_sftp transport remote_path for the new entry. |
-| `/settings` | `settings-equipment-smb-host` | input | Type the SMB host | Sets the rclone_smb transport host for the new entry. |
-| `/settings` | `settings-equipment-smb-share` | input | Type the SMB share | Sets the rclone_smb transport share for the new entry. |
-| `/settings` | `settings-equipment-smb-user` | input | Type the SMB user | Sets the rclone_smb transport user for the new entry. |
 | `/settings` | `settings-equipment-add` | button | Click 'Add equipment' | Validates and appends an EquipmentConfig to the draft; row appears. |
 
 ## NAS Remote

@@ -35,40 +35,20 @@ class WizardEquipmentPage:
     def nas_root(self) -> Any:
         return self._page.locator('[data-testid="wizard-equipment-nas-root"]')
 
-    # Sync mode
+    # Sync mode -- rclone.conf migration (Phase 8) removed the per-equipment
+    # SFTP/SMB transport fieldsets; the radio selects nas/stage only and the
+    # connection is the single nas: remote / orchestrator.staging_remote.
     @property
     def sync_mode(self) -> Any:
         return self._page.locator('[data-testid="wizard-equipment-sync-mode"]')
 
     @property
-    def transport_type(self) -> Any:
-        return self._page.locator('[data-testid="wizard-equipment-transport-type"]')
-
-    # SFTP transport fields (rclone_sftp)
-    @property
-    def sftp_host(self) -> Any:
-        return self._page.locator('[data-testid="wizard-equipment-sftp-host"]')
+    def nas_note(self) -> Any:
+        return self._page.locator('[data-testid="wizard-equipment-nas-note"]')
 
     @property
-    def sftp_user(self) -> Any:
-        return self._page.locator('[data-testid="wizard-equipment-sftp-user"]')
-
-    @property
-    def sftp_remote_path(self) -> Any:
-        return self._page.locator('[data-testid="wizard-equipment-sftp-remote-path"]')
-
-    # SMB transport fields (rclone_smb)
-    @property
-    def smb_host(self) -> Any:
-        return self._page.locator('[data-testid="wizard-equipment-smb-host"]')
-
-    @property
-    def smb_share(self) -> Any:
-        return self._page.locator('[data-testid="wizard-equipment-smb-share"]')
-
-    @property
-    def smb_user(self) -> Any:
-        return self._page.locator('[data-testid="wizard-equipment-smb-user"]')
+    def stage_note(self) -> Any:
+        return self._page.locator('[data-testid="wizard-equipment-stage-note"]')
 
     # Review / confirm
     @property
