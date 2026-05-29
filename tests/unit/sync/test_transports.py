@@ -307,3 +307,26 @@ def test_parse_combined_tolerates_blank_lines_and_unknown_prefix() -> None:
     result = _parse_combined(text)
     assert result.equal == ("a.txt",)
     assert result.differ == ("b.txt",)
+
+
+# ---------------------------------------------------------------------------
+# Task 2.1 — --config / --transfers / --checkers plumbing
+# ---------------------------------------------------------------------------
+
+import asyncio  # noqa: E402 — appended section; asyncio.run() used in plain-def tests
+
+
+def test_push_argv_includes_config_and_perf(monkeypatch, tmp_path):
+    captured = {}
+
+    async def fake_run(cmd, *, env=None, stdin=None, mask_for_log=()):
+        captured["cmd"] = cmd
+        return 0, "", ""
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
+    drv = RcloneDriver(config_path="/etc/rclone.conf", transfers=2, checkers=3)
+    asyncio.run(drv.push(tmp_path, "nas01:/srv/lab/EQ/run", bwlimit_kibps=None))
+    cmd = captured["cmd"]
+    assert "--config" in cmd and "/etc/rclone.conf" in cmd
+    assert cmd[cmd.index("--transfers") + 1] == "2"
+    assert cmd[cmd.index("--checkers") + 1] == "3"

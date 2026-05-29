@@ -220,8 +220,25 @@ async def obscure(password: str, *, binary: str = "rclone") -> str:
 class RcloneDriver:
     """rclone transport driver. Backend Spec §7.1.3."""
 
-    def __init__(self, *, binary: str = "rclone") -> None:
+    def __init__(
+        self,
+        *,
+        binary: str = "rclone",
+        config_path: str | None = None,
+        transfers: int | None = None,
+        checkers: int | None = None,
+    ) -> None:
         self._binary = binary
+        self._config_path = config_path or None
+        self._transfers = transfers
+        self._checkers = checkers
+
+    def _global_flags(self) -> list[str]:
+        """Flags valid on every rclone subcommand we invoke."""
+        flags: list[str] = []
+        if self._config_path:
+            flags.extend(["--config", self._config_path])
+        return flags
 
     async def push(
         self,
@@ -248,6 +265,11 @@ class RcloneDriver:
         looping on a missing binary.
         """
         cmd: list[str] = [self._binary, "copy", "--checksum"]
+        cmd.extend(self._global_flags())
+        if self._transfers is not None:
+            cmd.extend(["--transfers", str(self._transfers)])
+        if self._checkers is not None:
+            cmd.extend(["--checkers", str(self._checkers)])
         if bwlimit_kibps is not None and bwlimit_kibps > 0:
             cmd.extend(["--bwlimit", f"{bwlimit_kibps}K"])
         if files_from is not None:
@@ -320,6 +342,9 @@ class RcloneDriver:
             str(local),
             remote,
         ]
+        cmd[1:1] = self._global_flags()
+        if self._checkers is not None:
+            cmd.extend(["--checkers", str(self._checkers)])
         _log.debug("rclone check cmd: %s", shlex.join(cmd))
 
         try:
@@ -373,6 +398,7 @@ class RcloneDriver:
         import json as _json
 
         cmd: list[str] = [self._binary, "about", remote, "--json"]
+        cmd[1:1] = self._global_flags()
         _log.debug("rclone about cmd: %s", shlex.join(cmd))
 
         try:
