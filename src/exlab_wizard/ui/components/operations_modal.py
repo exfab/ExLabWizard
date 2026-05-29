@@ -20,11 +20,13 @@ _log = get_logger(__name__)
 STATE_RUNNING = "running"
 STATE_SUSPENDED = "suspended"
 STATE_COMPLETED = "completed"
+STATE_FAILED = "failed"
 
 _STATE_GLYPH: dict[str, str] = {
     STATE_RUNNING: "play_arrow",
     STATE_SUSPENDED: "pause",
     STATE_COMPLETED: "check",
+    STATE_FAILED: "error",
 }
 
 
@@ -58,6 +60,8 @@ class OperationRow:
             row_state = STATE_SUSPENDED
         elif session.state is SessionState.DONE:
             row_state = STATE_COMPLETED
+        elif session.state is SessionState.FAILED:
+            row_state = STATE_FAILED
         else:
             row_state = STATE_RUNNING
         request = session.request
@@ -93,7 +97,7 @@ def sort_rows(rows: list[OperationRow]) -> list[OperationRow]:
     first so the operator clears the longest-pending input first.
     """
 
-    state_priority = {STATE_SUSPENDED: 0, STATE_RUNNING: 1, STATE_COMPLETED: 2}
+    state_priority = {STATE_SUSPENDED: 0, STATE_RUNNING: 1, STATE_FAILED: 2, STATE_COMPLETED: 3}
     return sorted(
         rows,
         key=lambda r: (state_priority.get(r.state, 99), r.started_at),

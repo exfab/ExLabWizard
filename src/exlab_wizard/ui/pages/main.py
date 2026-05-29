@@ -385,10 +385,12 @@ def render_file_explorer_page(
                     on_click=on_open_operations,
                 )
             else:
+                # Only clickable when there is something to show, so a click
+                # never opens an empty Operations panel.
                 status_bar_segment.status_bar_segment(
                     label="Sync",
                     state=status_bar_segment.SEGMENT_NORMAL,
-                    on_click=on_open_operations,
+                    on_click=on_open_operations if s.operations_count > 0 else None,
                 )
             status_bar_segment.status_bar_segment(
                 label="Validator",

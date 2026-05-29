@@ -576,6 +576,14 @@ def test_operation_row_from_session_maps_state_buckets_and_fields() -> None:
         operations_modal.STATE_COMPLETED
     )
 
+    failed = SimpleNamespace(
+        state=SessionState.FAILED, created_at=None, request=request, pending_input=None
+    )
+    # A failed op stays in the panel but is labelled distinctly (not "running").
+    assert operations_modal.OperationRow.from_session("s4", failed).state == (
+        operations_modal.STATE_FAILED
+    )
+
 
 # ---------------------------------------------------------------------------
 # input_required_dialog (T5)

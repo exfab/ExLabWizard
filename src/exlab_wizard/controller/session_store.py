@@ -241,10 +241,15 @@ class SessionStore:
                 continue
             with suppress(ValueError):
                 self.transition(session_id, SessionState.ABORTED)
-            self.close(
-                session_id,
-                {"code": "session_abandoned", "reason": "no client heartbeat for >1h"},
-            )
+            outcome = {"code": "session_abandoned", "reason": "no client heartbeat for >1h"}
+            self.close(session_id, outcome)
+            # Publish a terminal frame so any live ``subscribe()`` consumer
+            # (the in-process wizard progress loop) wakes and exits instead
+            # of parking forever on ``queue.get()`` -- this GC path bypasses
+            # the controller's ``_publish``, so nothing else closes the queue.
+            if session.event_queue is not None:
+                with suppress(Exception):
+                    session.event_queue.put_nowait({"kind": "failed", "error": outcome})
             _log.info(
                 "session GC closed abandoned INPUT_REQUIRED session",
                 extra={"context": {"session_id": session_id}},

@@ -1395,10 +1395,11 @@ def _open_input_required_dialog(
     """Open the §9.1 escalation dialog; Submit resumes, Cancel confirms (T5).
 
     Submit calls ``controller.resume(session_id, values)`` -- the suspended
-    pipeline wakes with the answers. ``resume`` raises on an empty / invalid
-    payload or a stale state, and the plugin re-rejecting bad values simply
-    re-emits ``input_required`` (the consumer re-opens this dialog); both are
-    surfaced to the operator. Cancel routes through the §9.4 cancel dialog.
+    pipeline wakes with the answers. ``resume`` raises on an unknown session
+    or a stale (non-``INPUT_REQUIRED``) state; a plugin re-rejecting the
+    values simply re-emits ``input_required`` (the consumer re-opens this
+    dialog). Both are surfaced to the operator. Cancel routes through the
+    §9.4 cancel dialog.
     Returns the dialog so the caller can force-close it on a terminal frame.
     """
     from exlab_wizard.ui.components.input_required_dialog import input_required_dialog
