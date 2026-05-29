@@ -1,10 +1,8 @@
 # NAS Emulator — Docker Compose Stack
 
 Local NAS stand-in for testing the ExLab-Wizard sync pipeline without
-touching the real NAS. Two containers cover both rclone backends, each
-authenticated with an **operator-typed password** (the rclone-only
-migration, 2026-05-26): an OpenSSH server for `rclone_sftp` and a Samba
-server for `rclone_smb`.
+touching the real NAS. Two containers cover both rclone backends: an
+OpenSSH server for SFTP and a Samba server for SMB.
 
 ## Purpose & Scope
 
@@ -14,14 +12,12 @@ bind-mounted data volume for inspection, teardown/reset between runs.
 **Out of scope:** Google Cloud bucket sync, NAS quota / snapshot
 behaviour, real host-key trust (the emulator disables host-key checking).
 
-> **Why password auth, not SSH keys?**
-> IT policy forbids SSH keys, so the wizard's only NAS transports are
-> `rclone_sftp` and `rclone_smb`, both password-based. The wizard injects
-> the password through `RCLONE_CONFIG_<remote>_PASS` at push time (see
-> `exlab_wizard.sync.transports.rclone.build_rclone_env`); rclone obscures
-> it via `rclone obscure -`. This stack mirrors that: `sshd` runs with
-> `PasswordAuthentication yes` and `smbd` with `security = user`, and each
-> container sets the test user's password from `${NAS_PASSWORD}` at boot.
+> **How the app connects:** ExLab-Wizard uses operator-managed rclone named
+> remotes. You configure the remote in `rclone.conf` once with `rclone config`
+> (or by editing the file directly), point `nas.remote` in `config.yaml` at
+> the remote name, and the app calls `rclone copy`/`rclone lsjson`/`rclone check`
+> with that named remote. The app injects **no credentials** at subprocess time.
+> See `docs/setup/rclone-remote-setup.md` for the full walkthrough.
 
 ## Requirements
 
@@ -46,7 +42,8 @@ tests/docker/
 ├── .env                    # actual values incl. NAS_PASSWORD (gitignored)
 ├── nas-data/               # bind-mounted NAS state (gitignored except .gitkeep)
 │   └── .gitkeep
-├── rclone.conf.example     # ad-hoc rclone CLI reference (the app uses env vars)
+├── rclone.conf             # test rclone.conf pointing at the compose containers
+├── rclone.conf.example     # annotated example for ad-hoc shell use
 └── README.md
 ```
 
@@ -61,17 +58,15 @@ cp tests/docker/.env.example tests/docker/.env
 # 2. build + start both backends
 docker compose -f tests/docker/docker-compose.yml up -d --build
 
-# 3. confirm SFTP answers (uses the password from .env)
-RCLONE_CONFIG_T_TYPE=sftp RCLONE_CONFIG_T_HOST=localhost \
-RCLONE_CONFIG_T_PORT=2222 RCLONE_CONFIG_T_USER=testuser \
-RCLONE_CONFIG_T_PASS=$(rclone obscure 'changeme') \
-    rclone lsd t:
+# 3. fill in the password in tests/docker/rclone.conf (see that file's comments)
+#    or run rclone config to add the remotes interactively:
+rclone --config tests/docker/rclone.conf config
 
-# 4. confirm SMB answers
-RCLONE_CONFIG_T_TYPE=smb RCLONE_CONFIG_T_HOST=localhost \
-RCLONE_CONFIG_T_PORT=1445 RCLONE_CONFIG_T_USER=testuser \
-RCLONE_CONFIG_T_PASS=$(rclone obscure 'changeme') \
-    rclone lsd t:labshare
+# 4. confirm SFTP answers
+rclone --config tests/docker/rclone.conf lsd nas01-sftp:
+
+# 5. confirm SMB answers
+rclone --config tests/docker/rclone.conf lsd nas01-smb:labshare
 ```
 
 The password lives only in `tests/docker/.env`; the entrypoints set it on
@@ -80,45 +75,31 @@ the container user at boot, so rotating it is just an `.env` edit + a
 
 ## Wiring Into ExLab Config
 
-Register one equipment block per backend, then set its password in the app
-under **Settings → NAS Credentials** (the password is *never* written to
-`config.yaml` — it goes to the OS keyring).
+1. Add the test remotes to your `rclone.conf` (edit `tests/docker/rclone.conf`
+   and uncomment/fill the `pass =` lines, or run `rclone config` as above).
 
-### `rclone_sftp` transport
+2. Set `nas.remote` and optionally `nas.rclone_config_path` in your `config.yaml`:
+
+```yaml
+nas:
+  remote: "nas01-sftp"                          # or nas01-smb
+  base_root: ""                                 # runs land at nas01-sftp:/<equipment_id>/<run>
+  rclone_config_path: "/path/to/tests/docker/rclone.conf"
+```
+
+3. Add equipment entries (no transport block needed):
 
 ```yaml
 equipment:
   - id: EQ1
     label: Equipment 1
     local_root: /tmp/exlab-local
-    nas_root: /home/testuser/data
-    transport:
-      type: rclone_sftp
-      host: localhost
-      port: 2222
-      user: testuser
-      remote_path: data        # relative to the SFTP user's home
+    nas_root: /home/testuser/data    # display value only
+    sync_mode: nas
 ```
 
-### `rclone_smb` transport
-
-```yaml
-equipment:
-  - id: EQ2
-    label: Equipment 2
-    local_root: /tmp/exlab-local
-    nas_root: /srv/labshare
-    transport:
-      type: rclone_smb
-      host: localhost
-      share: labshare
-      user: testuser
-      remote_path: ""          # subpath within the share
-```
-
-Then start the app, open **Settings → NAS Credentials**, and set the
-password (`changeme` from your `.env`) for each equipment. The **Test
-connection** button runs `rclone about` against the container.
+4. Open Settings → **NAS Remote** → **Test connection** to verify the remote
+   is reachable before starting a sync.
 
 ### TEST_-prefix mode
 
@@ -179,11 +160,8 @@ def nas_emulator():
     )
     try:
         yield {
-            "sftp": {"host": "localhost", "port": 2222, "user": "testuser",
-                     "remote_path": "data"},
-            "smb": {"host": "localhost", "port": 1445, "user": "testuser",
-                    "share": "labshare"},
-            "password": "changeme",
+            "sftp": {"remote": "nas01-sftp", "rclone_conf": str(EMULATOR / "rclone.conf")},
+            "smb":  {"remote": "nas01-smb",  "rclone_conf": str(EMULATOR / "rclone.conf")},
         }
     finally:
         subprocess.run(["docker", "compose", "down", "-v"], cwd=EMULATOR, check=False)
@@ -215,10 +193,11 @@ docker load < nas-emulator.tar.gz
 
 ## Troubleshooting
 
-| Symptom                                                                | Likely cause / fix                                                                                   |
-|------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|
-| Container exits immediately with `NAS_PASSWORD is empty`               | Set `NAS_PASSWORD` in `tests/docker/.env`                                                             |
-| `Permission denied` / auth fails                                       | The app password (Settings → NAS Credentials) must match `NAS_PASSWORD`; bounce after editing `.env` |
-| `Connection refused` on 2222 / 1445                                    | Port already bound; pick free ports via `SFTP_HOST_PORT` / `SMB_HOST_PORT` and update the equipment   |
-| rclone reports `auth_error` and the ExLab queue terminates at FAILED   | Working as designed — the transport classifies auth failures as terminal (no retries)                |
-| Files appear under `nas-data/` but `sync_state.json` never flips       | Check `sync.quiescence_minutes` — the per-file rollup needs a settled window before crediting files  |
+| Symptom                                                                | Likely cause / fix                                                                                         |
+|------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------|
+| Container exits immediately with `NAS_PASSWORD is empty`               | Set `NAS_PASSWORD` in `tests/docker/.env`                                                                   |
+| `Permission denied` / auth fails from rclone                           | The `pass =` line in `rclone.conf` must be the `rclone obscure`-encoded form of `NAS_PASSWORD`             |
+| `Connection refused` on 2222 / 1445                                    | Port already bound; pick free ports via `SFTP_HOST_PORT` / `SMB_HOST_PORT` and update the rclone.conf host/port |
+| rclone reports `auth_error` and the ExLab queue terminates at FAILED   | Working as designed — the transport classifies auth failures as terminal (no retries)                      |
+| Files appear under `nas-data/` but `sync_state.json` never flips       | Check `sync.quiescence_minutes` — the per-file rollup needs a settled window before crediting files        |
+| `nas.remote` shows as `not_found_in_rclone_conf` in Settings           | The remote name in `config.yaml` must match the stanza name in `rclone.conf` exactly                      |

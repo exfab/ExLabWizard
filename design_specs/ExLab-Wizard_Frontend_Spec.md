@@ -817,7 +817,7 @@ When the operator tries to advance with an empty core field, the error message m
 
 The Settings dialog is the operator's surface for configuring everything in `config.yaml` and the OS-keyring credentials it references. User capability: "Configure Equipment, Paths, and Integrations" (User Interaction Spec Section 3.6); backend-side schemas live in Design Spec §9.
 
-**Important: no plaintext credentials anywhere in this dialog.** All secrets (LIMS password, the rare per-equipment NAS HTTP-basic password) are managed via the OS keyring (Design Spec §7.4); the dialog never displays a stored secret.
+**Important: no plaintext credentials anywhere in this dialog.** The only secret the app manages is the LIMS password, stored in the OS keyring (Design Spec §7.4); the dialog never displays a stored secret. NAS credentials live entirely in the operator's `rclone.conf` (Design Spec §7.1.8); the app only stores and displays the remote name.
 
 ### 7.1 Modality
 
@@ -852,7 +852,7 @@ Switching sections does NOT discard a section's edits — the working copy persi
 
 #### 7.4.1 Credential field
 
-Used for the LIMS password (§7.6) and per-equipment HTTP-basic NAS passwords where the configured transport requires one (§7.7.2). Never displays a stored value.
+Used for the LIMS password (§7.6). Never displays a stored value.
 
 A credential row has two resting states and one transient state:
 
@@ -941,27 +941,16 @@ Modal-on-modal sub-dialog. Scrollable single-column form. Primary button: **Done
 **Storage group**
 
 - **Local root.** Directory picker; backs `local_root`.
-- **NAS root** (display value). Text input; backs `nas_root`. Helper: *"Display path shown in the UI. The actual transport target is configured below."*
-
-**Transport group**
-
-- **Transport type.** Radio: `rclone` / `rsync_ssh`. Switching this resets the conditional fields below to their defaults and dirties the form.
-- For `rclone`:
-  - **Remote name.** Single-line input. Helper: *"Remote name from `rclone.conf`. To set up a new remote, run `rclone config` from a terminal — this app does not edit `rclone.conf`."*
-  - **Remote path.** Single-line input.
-- For `rsync_ssh`:
-  - **SSH target.** Single-line input (e.g. `labuser@nas01.lab.example`).
-  - **SSH key path.** File picker, default `~/.ssh/id_ed25519`. Helper: *"Password authentication is not supported. The key file must be present and have safe permissions."*
-  - **Remote path.** Single-line input.
-- **(Optional) NAS HTTP-basic password.** Credential field (§7.4.1), suppressed by default and shown only when the configured transport requires one.
+- **NAS root** (display value). Text input; backs `nas_root`. Helper: *"Display path shown in the browse view. The actual sync target is composed from `nas.remote` + `nas.base_root` + equipment ID (see the NAS Remote section)."*
+- **Sync mode.** Radio: `nas` / `stage`. `nas` syncs runs directly to the NAS remote; `stage` pushes to the orchestrator staging remote.
 
 **Bandwidth group.** See §7.7.3.
 
-**[Test connection]** button at the bottom of the sub-dialog. For `rclone`, runs `rclone lsd <remote>:<path>` against the working-copy values. For `rsync_ssh`, opens an SSH connection and runs `ls <remote_path>`. Result panel per §7.4.2.
+**[Test connection]** is in the top-level **NAS Remote** section (not per-equipment). It runs `rclone about <remote>:` against the global `nas.remote` value and displays the result per §7.4.2.
 
 #### 7.7.3 Bandwidth schedule editor
 
-Inside the equipment sub-dialog, in the Bandwidth group. Backs `transport.bandwidth` (Design Spec §9).
+Inside the Settings NAS Remote section. Backs `nas.bandwidth` (Design Spec §9).
 
 **Mode selector** (radio):
 

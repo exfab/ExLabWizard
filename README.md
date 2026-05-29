@@ -111,6 +111,24 @@ workflow additionally verifies the LIMS client against a live upstream
 [`mcnaughtonadm/exlab`](https://gitlab.com/mcnaughtonadm/exlab)
 container weekly and on every merge to `main`.
 
+## NAS sync setup
+
+ExLab-Wizard syncs runs to your NAS via [rclone](https://rclone.org/) named
+remotes. The app never stores NAS passwords — you configure the remote once
+with `rclone config` and wire the remote name into `config.yaml`:
+
+```yaml
+nas:
+  remote: "lab-nas"      # name you gave the remote in rclone config
+  base_root: "lab"       # path on the remote under which equipment folders live
+```
+
+Step-by-step instructions (SFTP and SMB walkthroughs, performance tuning,
+tray-service caveats): **[`docs/setup/rclone-remote-setup.md`](docs/setup/rclone-remote-setup.md)**.
+
+Settings → **NAS Remote** → **Test connection** verifies the remote is
+reachable before you start syncing.
+
 ## Documentation
 
 The published Sphinx site is at
@@ -120,5 +138,6 @@ Local sources:
 - Operator-facing user guide: `docs/source/user_guide/` (rendered via
   Sphinx; `make -C docs html` writes the site to `docs/build/html/`).
 - Plugin authoring guide: `docs/source/plugin_guide/`.
+- Setup guides: `docs/setup/` (rclone remote setup, etc.).
 - Design specs: `design_specs/` (the authoritative source for
   capability scope, interfaces, and wire contracts).

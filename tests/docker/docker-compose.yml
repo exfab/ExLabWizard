@@ -1,15 +1,13 @@
-# Local password-based NAS emulator for ExLab-Wizard sync tests
-# (rclone-only migration, 2026-05-26). IT policy forbids SSH keys, so both
-# backends authenticate by an operator-typed password:
+# Local password-based NAS emulator for ExLab-Wizard sync tests.
+# Two backends for both rclone transport types:
 #
-#   - rclone_sftp:  host=localhost port=${SFTP_HOST_PORT} user=${NAS_USER}
-#                   remote_path=data; password = ${NAS_PASSWORD}
-#   - rclone_smb:   host=localhost port=${SMB_HOST_PORT} user=${NAS_USER}
-#                   share=${SMB_SHARE}; password = ${NAS_PASSWORD}
+#   - SFTP:  host=localhost port=${SFTP_HOST_PORT} user=${NAS_USER} password=${NAS_PASSWORD}
+#   - SMB:   host=localhost port=${SMB_HOST_PORT}  user=${NAS_USER} share=${SMB_SHARE}
 #
-# The wizard injects the password through RCLONE_CONFIG_<remote>_PASS at
-# push time (see build_rclone_env); for an ad-hoc rclone CLI smoke test
-# see rclone.conf.example. See README.md for the full walkthrough.
+# ExLab-Wizard uses operator-managed rclone named remotes (rclone.conf).
+# Configure the remotes in tests/docker/rclone.conf, point nas.remote and
+# nas.rclone_config_path in config.yaml at them, and run normally.
+# See README.md for the full walkthrough.
 
 services:
 

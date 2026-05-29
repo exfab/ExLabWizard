@@ -12,7 +12,7 @@ App-level config lives in a single `config.yaml` in the user's app data director
 | Windows | `%APPDATA%\exlab-wizard\config.yaml` |
 | Linux | `$XDG_CONFIG_HOME/exlab-wizard/config.yaml` (falls back to `~/.config/exlab-wizard/config.yaml`) |
 
-`config.yaml` contains **no secrets**. Every credential the app needs is stored in the OS keyring (§7.4); `config.yaml` references credentials by their keyring service+username pair only.
+`config.yaml` contains **no secrets**. NAS connection details and credentials live entirely in the operator's `rclone.conf` (set up separately with `rclone config`; see `docs/setup/rclone-remote-setup.md`). The only secret the app manages is the LIMS password, which is stored in the OS keyring (§7.4); `config.yaml` references it by keyring service+username pair only.
 
 **YAML library.** `config.yaml` is read AND written by the app (the Settings UI's Save action; Frontend §7.3). To preserve operator-readable comments and key order across save/reload cycles, the loader uses [`ruamel.yaml`](https://yaml.dev/doc/ruamel.yaml/) (round-trip mode). Read-only YAML files elsewhere in the codebase (`copier.yml`, `manifest.yml`, README front matter) use PyYAML's `yaml.safe_load` because round-trip preservation isn't needed and PyYAML is faster. Both libraries are committed in `pyproject.toml`.
 
@@ -51,54 +51,44 @@ readme:
       required: false
       default: ""
 
+# rclone.conf NAS-sync migration (Phase 8): per-equipment transport: blocks and
+# NAS keyring entries are GONE. The NAS connection is defined once by the nas:
+# block (a single rclone named remote). Equipment entries carry only the fields
+# below. See docs/setup/rclone-remote-setup.md for the rclone config walkthrough.
 equipment:
   # local_root and nas_root below are equipment-scoped anchor paths. The full
   # destination is composed at creation time as
   #   <*_root>/<equipment>/<lims_short_id>/Runs/Run_<DATE>/   (experimental)
   #   <*_root>/<equipment>/<lims_short_id>/TestRuns/TestRun_<DATE>/ (test)
-  # The <lims_short_id> segment is the LIMS project's short_id (e.g. PROJ-0042),
-  # not the human-readable project name. The human name is sourced from the LIMS
-  # at display time. For example, a run on CONFOCAL_01 under LIMS project
-  # PROJ-0042 (named "Cortex Q3 Pilot" in LIMS) resolves to:
-  #   local: /data/lab/CONFOCAL_01/PROJ-0042/Runs/Run_<DATE>/
-  #   nas:   //nas01/lab/CONFOCAL_01/PROJ-0042/Runs/Run_<DATE>/
-  # The equipment ID is the first path segment beneath the shared storage root,
-  # matching the equipment-first convention introduced in v0.6 (Section 3).
+  # The actual NAS target is composed from nas.remote + nas.base_root + equipment_id
+  # + run leaf at sync time (not from nas_root). nas_root is a human-readable
+  # display value only (shown in the browse view).
   - id: "CONFOCAL_01"
     label: "Confocal Microscope 1"
-    local_root: "/data/lab"             # shared equipment-first root on this workstation
-    nas_root: "//nas01/lab"             # shared equipment-first root on NAS (display value; rclone / rsync use their own remote spec below)
-    completeness_signal: "sentinel_file"
-    sentinel_filename: "acquisition_complete.flag"
-    transport:
-      type: "rclone"                    # local-to-NAS transport for NASSync (§7.1)
-      rclone_remote: "lab-nas"          # remote name from rclone.conf
-      rclone_remote_path: "lab/CONFOCAL_01"  # path under the rclone remote root
-      bandwidth:
-        upload_mbps: 50                 # null/absent = unlimited
-        schedule:                        # optional time windows; outside windows = unlimited
-          - { days: ["mon","tue","wed","thu","fri"], from: "08:00", to: "18:00" }
+    local_root: "/data/lab"             # equipment-first root on this workstation
+    nas_root: "//nas01/lab"             # display value only; the rclone target uses nas.remote
+    sync_mode: "nas"                    # "nas" = sync directly to NAS; "stage" = push to orchestrator staging
   - id: "FLOW_01"
     label: "Flow Cytometer 1"
     local_root: "/data/lab"
     nas_root: "/mnt/nas/lab"
-    completeness_signal: "manifest"
-    manifest_filename: "run_manifest.json"
-    transport:
-      type: "rsync_ssh"                 # local-to-NAS transport for NASSync (§7.1)
-      ssh_target: "labuser@nas01.lab.example"
-      ssh_key_path: "~/.ssh/id_ed25519"   # SSH key auth only; password auth rejected at config validation
-      remote_path: "/srv/lab/FLOW_01"
-      bandwidth:
-        upload_mbps: null                # unlimited
+    sync_mode: "nas"
 
-# Orchestrator-mode equipment may declare a separate STAGING transport (how data
-# lands in /staging/ from the equipment machine, distinct from the NAS hop):
-#     orchestrator_staging_transport:
-#       type: "smb_mount" | "file_transfer"   # legacy values, staging hop only
-#       mount_point: ...
-#       staging_subpath: "CONFOCAL_01"        # under /staging/
-# See [[13_Equipment_to_Orchestrator_Data_Flow|§13]].
+# Top-level NAS sync configuration. A single named rclone remote covers all
+# nas-mode equipment. Credentials live entirely in rclone.conf.
+nas:
+  remote: "lab-nas"                     # remote name from rclone.conf (set up with rclone config)
+  base_root: "lab"                      # path on the remote under which equipment folders live
+                                        # run target: lab-nas:/lab/<EQUIPMENT_ID>/<run-leaf>
+  rclone_config_path: ""                # optional: pin --config <path> (blank = rclone default discovery)
+  mtime_tolerance_s: 2                  # reconcile tolerance (s); absorbs SFTP/SMB modtime rounding
+  perf:
+    transfers: 4                        # rclone --transfers; also the RAM dial on constrained machines
+    checkers: 8                         # rclone --checkers
+  bandwidth:
+    upload_mbps: null                   # null/absent = unlimited
+    schedule:                           # optional time windows; outside windows = unlimited
+      - { days: ["mon","tue","wed","thu","fri"], from: "08:00", to: "18:00" }
 
 nas_cleanup:
   enabled: true                         # disable to keep all local copies; operator deletes manually
@@ -161,14 +151,27 @@ plugins:
 sync:
   enabled: true
   retry_attempts: 3
+  quiescence_minutes: 10              # files must be stable for this long before sync eligibility
+  poll_interval_seconds: 120          # how often the sync worker polls for newly eligible runs
+  ignore_globs:                       # patterns skipped by the sync worker
+    - "*.partial"
+    - "*.tmp"
 
 orchestrator:
-  enabled: false
-  label: "Lab Acquisition Station 01"
-  staging_root: "/staging"        # POSIX example. Windows orchestrators use a Windows-style path (e.g. C:\staging or \\nas01\staging). The default value is OS-conditional at first-launch (§3.1.5): /staging on macOS/Linux, %LOCALAPPDATA%\exlab-wizard\staging on Windows. The operator can override in Settings.
+  label: "Lab Acquisition Station 01"  # required; stamped into every run's creation.json
+  staging_root: ""                     # opt-in: blank = this device is not a staging PC; no directory created
+                                       # when non-empty, the suggested path is OS-conditional (see paths.py)
+  # Stage-mode hop (rclone.conf NAS-sync migration): stage-mode equipment push
+  # runs to <staging_remote>:<staging_base_root>/<equipment_id>/<run-leaf> using
+  # the same RcloneDriver as the NAS leg. Both remotes live in the same rclone.conf.
+  staging_remote: "lab-staging"        # second remote in rclone.conf for the staging hop (blank if unused)
+  staging_base_root: "staging"         # path on the staging remote under which equipment folders land
+  staging_perf:
+    transfers: 4
+    checkers: 8
   staging_cleanup:
     mode: "manual"          # or "scheduled"
     retain_hours: 24        # only used if mode is "scheduled"
 ```
 
-Single-equipment workstations use a one-entry `equipment` list with `orchestrator.enabled: false`. No migration is required between modes.
+Single-equipment workstations use a one-entry `equipment` list with `sync_mode: nas`. No migration is required between modes.

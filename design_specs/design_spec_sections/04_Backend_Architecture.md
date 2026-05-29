@@ -397,7 +397,7 @@ The HTTP API and WebSocket channels are the only contract between the frontend (
 | `PUT` | `/api/v1/config` | Validate + persist new config. Returns 422 on validation failure with per-field errors. |
 | `GET` | `/api/v1/setup/status` | Setup-state and what's missing. Always available. See §4.9.3. |
 | `POST` | `/api/v1/setup/test-lims` | Probes LIMS reachability with the currently-configured (or supplied) credentials. |
-| `POST` | `/api/v1/setup/test-equipment` | Probes the per-equipment NAS transport (rclone or rsync_ssh). |
+| `POST` | `/api/v1/setup/test-nas-remote` | Probes the configured `nas.remote` via `rclone about <remote>:`. |
 | `POST` | `/api/v1/setup/autostart` | Register or unregister the platform autostart entry. Body: `{ "enabled": <bool> }`. Calls `tray/autostart.py`; see §4.9.5 step 0 and §15.7. |
 | `GET` | `/api/v1/health` | Component-health rollup. Always available. See §4.6.3. |
 
@@ -617,6 +617,7 @@ The app maintains a single computed enum at startup (and after every `PUT /api/v
 | `INCOMPLETE_NO_CONFIG` | `config.yaml` does not exist at the OS-appropriate path ([[09_Configuration_File|§9]]). |
 | `INCOMPLETE_MISSING_PATHS` | `config.yaml` exists but `paths.local_root`, `paths.templates_dir`, or `paths.plugin_dir` is unset, missing, or unreadable. |
 | `INCOMPLETE_NO_EQUIPMENT` | Paths are valid but the `equipment` list is empty. |
+| `INCOMPLETE_NO_NAS_REMOTE` | Equipment is configured and at least one entry uses `sync_mode: nas`, but `nas.remote` is blank or not present in `rclone listremotes` output. Next action: `configure_rclone_remote`. See `docs/setup/rclone-remote-setup.md`. |
 | `INCOMPLETE_NO_LIMS` | Equipment is configured but `lims.endpoint` or `lims.email` is unset, OR the keyring/encrypted-store has no password under `(service="exlab-wizard", username="lims")`. |
 | `INCOMPLETE_LIMS_UNREACHABLE` | LIMS configuration is complete but `LIMSClient.health_check()` fails on startup. (This is a soft block; setup proceeds, but operator sees a banner. See §4.9.4.) |
 | `READY` | Every preceding gate passes. |
@@ -633,7 +634,7 @@ While in any `INCOMPLETE_*` state:
 | `GET /api/v1/config` | Returns current `config.yaml` (sanitized — secrets never returned). Always available. |
 | `PUT /api/v1/config` | Validates and persists. On success, re-evaluates setup state and returns the new state. Always available. |
 | `POST /api/v1/setup/test-lims` | Triggers `LIMSClient.health_check()` against the currently-configured (but possibly not-yet-saved) LIMS settings. Used by the Settings dialog's "Test connection" affordance. |
-| `POST /api/v1/setup/test-equipment` | Triggers a transport probe (`rclone lsd <remote>:` or `ssh -o BatchMode=yes <target> true`) against an equipment configuration. |
+| `POST /api/v1/setup/test-nas-remote` | Triggers `rclone about <remote>:` against the configured `nas.remote`. |
 | `GET /api/v1/health` | Always available. See §4.6.3. |
 | `POST /api/v1/sessions` (creation flow) | Returns `503 Service Unavailable` with `error.code: "setup_incomplete"`, `error.state: <enum>`, `error.missing: [...]`. The Wizard UI is expected to consult `/setup/status` first and surface the onboarding flow. |
 | `GET /api/v1/problems`, `GET /api/v1/tree`, etc. | Same: 503 with `setup_incomplete`. |
@@ -654,7 +655,7 @@ Once `READY`, all endpoints work as specified elsewhere. No endpoint behavior de
 }
 ```
 
-When `ready: true`, the response is `{ "state": "READY", "missing": [], "next_action": null, "ready": true }`. The `next_action` is one of `set_paths`, `add_equipment`, `configure_lims`, `test_lims`, or `null`; the onboarding UI uses it to decide which step to render.
+When `ready: true`, the response is `{ "state": "READY", "missing": [], "next_action": null, "ready": true }`. The `next_action` is one of `set_paths`, `add_equipment`, `configure_rclone_remote`, `configure_lims`, `test_lims`, or `null`; the onboarding UI uses it to decide which step to render.
 
 ### 4.9.4 LIMS unreachability is a soft block
 
@@ -668,7 +669,7 @@ The onboarding flow is a frontend concern (Frontend Spec §3.1), but the backend
 
 0. **(First-launch only) Autostart prompt.** The welcome card (Frontend §3.1.3) asks the operator whether to register ExLab-Wizard to start at user login. The operator's answer is persisted via `POST /api/v1/setup/autostart` (body: `{ "enabled": <bool> }`), which calls `tray/autostart.py` to register or unregister the platform-specific autostart entry (§4.3.2, §15.7). The toggle defaults to **on**; both the welcome card's primary "Get started" button and the secondary "Skip for now" link send the operator's current toggle state to the endpoint, so there is no path that dismisses the prompt without sending. Reversible from `Settings → Application` at any time.
 1. Set `paths.local_root`, `paths.templates_dir`, `paths.plugin_dir`. Bundled starter templates are copied into `paths.templates_dir` if the operator agrees ([[15_Distribution#15.4 Bundled Starter Content|§15.4]]).
-2. Add at least one equipment with a transport configuration. The "Test connection" button verifies the transport works before saving.
+2. Add at least one equipment entry. Configure the `nas.remote` field in `config.yaml` to point at a named remote in `rclone.conf` (see `docs/setup/rclone-remote-setup.md`). Settings → "NAS Remote" → "Test connection" runs `rclone about <remote>:` to verify the remote is reachable before saving.
 3. Set LIMS endpoint and operator email. Set the LIMS password via the keyring affordance (Settings dialog or onboarding equivalent). Alternatively, set `lims.offline_catalogue_path` for an offline workstation (§7.2.9).
 4. (Optional) Test LIMS connection. Even on failure, setup is complete; the LIMS-unreachable banner appears in the main UI.
 

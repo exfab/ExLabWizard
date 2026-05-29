@@ -1,37 +1,37 @@
-# Ad-hoc rclone CLI smoke test against the local password-based NAS
-# emulator (rclone-only migration, 2026-05-26).
+# rclone.conf for the dockerised SFTP/SMB NAS integration fixture.
 #
-# NOTE: the ExLab-Wizard app no longer reads rclone.conf at all -- it
-# builds an inline backend from RCLONE_CONFIG_<remote>_* env vars at push
-# time (see exlab_wizard.sync.transports.rclone.build_rclone_env). This
-# file exists only so you can reproduce what the app does from a shell.
+# Points at the two compose services (nas-sftp / nas-smb).
 #
-# rclone refuses a cleartext password in config / env, so obscure it:
-#     RCLONE_PASS=$(rclone obscure 'changeme')
+# Usage:
 #
-# Either drop the obscured stanzas below into your rclone config, or point
-# rclone at this file for an isolated run:
-#     RCLONE_CONFIG=$PWD/tests/docker/rclone.conf rclone lsd nas-sftp:
+#   1. Bring up the compose stack:
+#        docker compose -f tests/docker/docker-compose.yml up -d
 #
-# Equivalent env-only form (mirrors the app's injection, no conf file):
-#     RCLONE_CONFIG_NAS_SFTP_TYPE=sftp \
-#     RCLONE_CONFIG_NAS_SFTP_HOST=localhost \
-#     RCLONE_CONFIG_NAS_SFTP_PORT=2222 \
-#     RCLONE_CONFIG_NAS_SFTP_USER=testuser \
-#     RCLONE_CONFIG_NAS_SFTP_PASS=$(rclone obscure 'changeme') \
-#     rclone lsd nas_sftp:
+#   2. Obtain the obscured form of the container password (default: changeme):
+#        rclone obscure changeme
+#
+#   3. Fill in the pass = lines below with the output of step 2, then verify:
+#        rclone --config tests/docker/rclone.conf.example lsd nas01-sftp:
+#        rclone --config tests/docker/rclone.conf.example lsd nas01-smb:labshare
+#
+# For the wizard: set nas.remote = "nas01-sftp" (or "nas01-smb") and
+# nas.rclone_config_path = "<absolute path to this file>" in config.yaml.
+# The app uses the named remote; it injects no credentials at run time.
+#
+# NEVER commit a real obscured password — leave the pass lines as shown
+# (commented out) so the file is safe to track in git.
 
-[nas-sftp]
+[nas01-sftp]
 type = sftp
 host = localhost
 port = 2222
 user = testuser
 # pass = <output of: rclone obscure 'changeme'>
-# Disable host-key checking against an ephemeral container.
+# Disable host-key verification against the ephemeral container.
 known_hosts_file = /dev/null
 shell_type = unix
 
-[nas-smb]
+[nas01-smb]
 type = smb
 host = localhost
 port = 1445
