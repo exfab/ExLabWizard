@@ -668,11 +668,11 @@ def _apply_live_config(deps: Any, updated: Any) -> None:
 def _nas_credential_missing(deps: Any, config: Any) -> bool:
     """True when a password-requiring nas-mode equipment lacks its keyring entry.
 
-    Rclone-only NAS sync migration (2026-05-26). Shared by
-    :func:`_is_setup_ready` (so the §4.9 ``INCOMPLETE_NO_NAS_CREDENTIAL``
-    hard block keeps the operator on the welcome/banner path) and
-    :func:`_missing_setup_sections` (so the Settings page surfaces the
-    section). Mirrors the gate in ``paths._nas_slot_satisfied``.
+    Rclone-only NAS sync migration (2026-05-26). Drives the Settings
+    page's NAS-credentials section visibility via
+    :func:`_missing_setup_sections`. Retained as Phase-6 plumbing while
+    the credentials UI is migrated; the §4.9 setup gate itself now keys
+    on rclone-remote availability (``INCOMPLETE_NO_NAS_REMOTE``).
     """
     from exlab_wizard.api._dependencies import nas_password_present
     from exlab_wizard.config.models import transport_requires_keyring_password
@@ -1589,7 +1589,8 @@ def _missing_setup_sections(deps: Any) -> tuple[str, ...]:
     # Rclone-only NAS sync migration (2026-05-26): surface the
     # NAS-credentials section when any password-requiring nas-mode
     # equipment lacks its keyring entry, so the setup-incomplete banner
-    # auto-selects it (matching the §4.9 INCOMPLETE_NO_NAS_CREDENTIAL gate).
+    # auto-selects it (Phase-6 Settings plumbing; the setup gate proper
+    # now keys on rclone-remote availability, not the keyring password).
     if _nas_credential_missing(deps, config):
         missing.append("nas_credentials")
     if not config.lims.endpoint or not config.lims.email:

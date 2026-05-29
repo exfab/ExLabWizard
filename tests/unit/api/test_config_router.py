@@ -10,6 +10,7 @@ from exlab_wizard.api import AppDependencies, create_app
 from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
+    NasConfig,
     OrchestratorConfig,
     PathsConfig,
     RcloneSftpTransport,
@@ -38,6 +39,7 @@ def _ready_config() -> Config:
             )
         ],
         orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
     )
 
 
@@ -68,10 +70,11 @@ def test_put_config_persists_and_reevaluates_state() -> None:
     async def saver(config: Config) -> None:
         captured["saved"] = config
 
-    # Pre-stamp the NAS presence for the equipment id the new config
-    # introduces so the NAS-credential gate (which now precedes the
-    # LIMS gate) does not steal this test's verdict.
-    deps = AppDependencies(config=_empty_config(), save_config=saver, nas_password_present={"EQ1"})
+    # ``_ready_config`` configures ``nas.remote`` and the default deps
+    # ``nas_remote_available`` predicate answers "available", so the
+    # NAS-remote gate (which precedes the LIMS gate) passes and this test's
+    # verdict is the LIMS gate.
+    deps = AppDependencies(config=_empty_config(), save_config=saver)
     app = create_app(dependencies=deps)
     client = TestClient(app)
     new_config = _ready_config()

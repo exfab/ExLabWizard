@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict
 
 from exlab_wizard.api._dependencies import (
     lims_password_present,
-    nas_password_present,
+    nas_remote_available,
     require_deps,
 )
 from exlab_wizard.config.models import Config, EquipmentConfig, config_with_equipment_appended
@@ -99,16 +99,16 @@ def build_config_router() -> APIRouter:
         # in-process -- no tray relaunch. Sets ``deps.config`` itself.
         _apply_live_config(deps, body)
         # Re-evaluate setup state with the new config.
-        nas_lookup = lambda equipment_id: nas_password_present(deps, equipment_id)  # noqa: E731
+        remote_lookup = lambda remote: nas_remote_available(deps, remote)  # noqa: E731
         state = evaluate_setup_state(
             deps.config,
             lims_reachable=getattr(deps, "lims_reachable", True),
             keyring_password_present=lims_password_present(deps),
-            nas_password_present_for=nas_lookup,
+            nas_remote_available=remote_lookup,
         )
         return ConfigUpdateResponse(
             state=state.value,
-            missing=setup_state_missing(state, deps.config, nas_password_present_for=nas_lookup),
+            missing=setup_state_missing(state, deps.config),
             next_action=setup_state_next_action(state),
             ready=state is SetupState.READY,
         )
@@ -137,17 +137,17 @@ def build_config_router() -> APIRouter:
         # Push into the running components so the new equipment is live
         # without a tray relaunch. Sets ``deps.config`` itself.
         _apply_live_config(deps, new_config)
-        nas_lookup = lambda equipment_id: nas_password_present(deps, equipment_id)  # noqa: E731
+        remote_lookup = lambda remote: nas_remote_available(deps, remote)  # noqa: E731
         state = evaluate_setup_state(
             deps.config,
             lims_reachable=getattr(deps, "lims_reachable", True),
             keyring_password_present=lims_password_present(deps),
-            nas_password_present_for=nas_lookup,
+            nas_remote_available=remote_lookup,
         )
         return EquipmentAppendResponse(
             appended_id=body.id,
             state=state.value,
-            missing=setup_state_missing(state, deps.config, nas_password_present_for=nas_lookup),
+            missing=setup_state_missing(state, deps.config),
             next_action=setup_state_next_action(state),
             ready=state is SetupState.READY,
         )

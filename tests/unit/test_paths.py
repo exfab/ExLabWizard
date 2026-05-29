@@ -84,7 +84,7 @@ def _ready_config() -> Config:
     now required even in the always-on world; the README field is set
     here so the setup-state evaluator returns READY.
     """
-    from exlab_wizard.config.models import OrchestratorConfig
+    from exlab_wizard.config.models import NasConfig, OrchestratorConfig
 
     return Config(
         paths=PathsConfig(
@@ -98,6 +98,10 @@ def _ready_config() -> Config:
             label="Lab Acquisition Station 01",
             staging_root="/staging",
         ),
+        # rclone.conf NAS-sync migration: nas-mode equipment requires a
+        # configured ``nas.remote`` for the setup gate to read READY (the
+        # default ``nas_remote_available`` answers "always available").
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
     )
 
 
@@ -787,7 +791,7 @@ def test_evaluate_setup_state_no_orchestrator_when_only_staging_set() -> None:
 
 def test_evaluate_setup_state_blank_staging_root_is_allowed() -> None:
     """staging_root is opt-in: a blank value does not block READY."""
-    from exlab_wizard.config.models import OrchestratorConfig
+    from exlab_wizard.config.models import NasConfig, OrchestratorConfig
 
     config = Config(
         paths=PathsConfig(
@@ -798,6 +802,7 @@ def test_evaluate_setup_state_blank_staging_root_is_allowed() -> None:
         lims=LIMSConfig(endpoint="https://lims.example/api/v1", email="op@lab.example"),
         equipment=[_make_equipment()],
         orchestrator=OrchestratorConfig(label="Lab Acquisition Station 01", staging_root=""),
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
     )
     assert evaluate_setup_state(config) is SetupState.READY
 
@@ -820,6 +825,8 @@ def test_setup_state_missing_for_no_orchestrator_lists_only_label() -> None:
 
 
 def test_evaluate_setup_state_no_lims() -> None:
+    from exlab_wizard.config.models import NasConfig
+
     config = Config(
         paths=PathsConfig(
             templates_dir="/srv/templates",
@@ -829,12 +836,15 @@ def test_evaluate_setup_state_no_lims() -> None:
         lims=LIMSConfig(endpoint="", email="", offline_catalogue_path=""),
         equipment=[_make_equipment()],
         orchestrator=_make_orchestrator(),
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
     )
     assert evaluate_setup_state(config) is SetupState.INCOMPLETE_NO_LIMS
 
 
 def test_evaluate_setup_state_lims_via_offline_catalogue() -> None:
     """Offline catalogue path satisfies the LIMS slot without endpoint+email."""
+    from exlab_wizard.config.models import NasConfig
+
     config = Config(
         paths=PathsConfig(
             templates_dir="/srv/templates",
@@ -848,6 +858,7 @@ def test_evaluate_setup_state_lims_via_offline_catalogue() -> None:
         ),
         equipment=[_make_equipment()],
         orchestrator=_make_orchestrator(),
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
     )
     # Even with keyring missing, offline catalogue path makes the slot complete.
     assert evaluate_setup_state(config, keyring_password_present=False) is SetupState.READY
@@ -873,60 +884,102 @@ def test_evaluate_setup_state_keyring_missing() -> None:
     )
 
 
-def test_evaluate_setup_state_nas_keyring_missing() -> None:
-    """Nas-mode equipment without its keyring entry gates with the new state."""
-    config = _ready_config()
-    state = evaluate_setup_state(config, nas_password_present_for=lambda _id: False)
-    assert state is SetupState.INCOMPLETE_NO_NAS_CREDENTIAL
+def _nas_remote_config(remote: str = "") -> Config:
+    """Build a READY-shaped config with a single nas-mode equipment.
+
+    NAS sync is in use (nas-mode equipment present), so the rclone-remote
+    gate applies. ``remote`` is the configured ``nas.remote`` name.
+    NOTE: nas-mode ``EquipmentConfig`` still requires a ``transport`` block
+    in this phase (removed in Phase 7), hence the transport dict.
+    """
+    from exlab_wizard.config.models import NasConfig
+
+    return Config(
+        paths={"templates_dir": "/t", "plugin_dir": "/p", "local_root": "/l"},
+        orchestrator={"label": "ws-1"},
+        equipment=[
+            EquipmentConfig(
+                id="EQ_01",
+                label="Eq",
+                local_root="/l",
+                nas_root="//n/x",
+                transport={
+                    "type": "rclone_sftp",
+                    "host": "h",
+                    "user": "u",
+                    "remote_path": "/p",
+                },
+            )
+        ],
+        lims={"endpoint": "https://x", "email": "a@b.c"},
+        nas=NasConfig(remote=remote, base_root="/srv"),
+    )
+
+
+def test_setup_incomplete_when_nas_remote_blank() -> None:
+    """NAS sync in use but no remote configured -> INCOMPLETE_NO_NAS_REMOTE."""
+    assert (
+        evaluate_setup_state(_nas_remote_config(remote=""), nas_remote_available=lambda n: True)
+        == SetupState.INCOMPLETE_NO_NAS_REMOTE
+    )
+
+
+def test_setup_incomplete_when_remote_not_in_rclone_conf() -> None:
+    """Remote named but absent from rclone.conf -> INCOMPLETE_NO_NAS_REMOTE."""
+    assert (
+        evaluate_setup_state(
+            _nas_remote_config(remote="nas01"), nas_remote_available=lambda n: False
+        )
+        == SetupState.INCOMPLETE_NO_NAS_REMOTE
+    )
+
+
+def test_setup_ready_when_remote_present() -> None:
+    """Remote named and present in rclone.conf -> READY."""
+    assert (
+        evaluate_setup_state(_nas_remote_config(remote="nas01"), nas_remote_available=lambda n: True)
+        == SetupState.READY
+    )
 
 
 def test_evaluate_setup_state_nas_state_precedes_lims_state() -> None:
-    """A configured LIMS does not mask the missing NAS credential."""
-    config = _ready_config()
+    """A configured LIMS does not mask the missing NAS remote."""
+    config = _nas_remote_config(remote="")
     state = evaluate_setup_state(
         config,
         keyring_password_present=False,
-        nas_password_present_for=lambda _id: False,
+        nas_remote_available=lambda _n: True,
     )
     # NAS slot is checked before LIMS in the gate order.
-    assert state is SetupState.INCOMPLETE_NO_NAS_CREDENTIAL
+    assert state is SetupState.INCOMPLETE_NO_NAS_REMOTE
 
 
-def test_evaluate_setup_state_nas_state_resolves_once_password_added() -> None:
-    """Adding the keyring entry advances the state to the next gate."""
-    config = _ready_config()
-    state = evaluate_setup_state(
-        config,
-        nas_password_present_for=lambda equipment_id: equipment_id == "CONFOCAL_01",
-    )
-    assert state is SetupState.READY
-
-
-def test_setup_state_missing_for_no_nas_credential_lists_per_equipment() -> None:
-    """The missing list names each equipment id whose keyring entry is absent."""
+def test_setup_state_missing_for_no_nas_remote_reports_remote_field() -> None:
+    """The missing list names ``nas.remote`` and distinguishes unset vs absent."""
     from exlab_wizard.paths import setup_state_missing
 
-    config = _ready_config()
-    missing = setup_state_missing(
-        SetupState.INCOMPLETE_NO_NAS_CREDENTIAL,
-        config,
-        nas_password_present_for=lambda _id: False,
+    unset = setup_state_missing(SetupState.INCOMPLETE_NO_NAS_REMOTE, _nas_remote_config(remote=""))
+    assert unset == [{"field": "nas.remote", "reason": "unset"}]
+
+    absent = setup_state_missing(
+        SetupState.INCOMPLETE_NO_NAS_REMOTE, _nas_remote_config(remote="nas01")
     )
-    fields = {entry["field"] for entry in missing}
-    assert fields == {"equipment.CONFOCAL_01.nas_password"}
+    assert absent == [{"field": "nas.remote", "reason": "not_found_in_rclone_conf"}]
 
 
-def test_setup_state_next_action_for_no_nas_credential() -> None:
+def test_setup_state_next_action_for_no_nas_remote() -> None:
     from exlab_wizard.paths import setup_state_next_action
 
     assert (
-        setup_state_next_action(SetupState.INCOMPLETE_NO_NAS_CREDENTIAL)
-        is SetupNextAction.SET_NAS_CREDENTIALS
+        setup_state_next_action(SetupState.INCOMPLETE_NO_NAS_REMOTE)
+        is SetupNextAction.CONFIGURE_RCLONE_REMOTE
     )
 
 
 def test_evaluate_setup_state_endpoint_only_missing_email() -> None:
     """endpoint present but email empty -> INCOMPLETE_NO_LIMS (email is required)."""
+    from exlab_wizard.config.models import NasConfig
+
     config = Config(
         paths=PathsConfig(
             templates_dir="/srv/templates",
@@ -936,6 +989,7 @@ def test_evaluate_setup_state_endpoint_only_missing_email() -> None:
         lims=LIMSConfig(endpoint="https://lims.example/api/v1", email=""),
         equipment=[_make_equipment()],
         orchestrator=_make_orchestrator(),
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
     )
     assert evaluate_setup_state(config) is SetupState.INCOMPLETE_NO_LIMS
 

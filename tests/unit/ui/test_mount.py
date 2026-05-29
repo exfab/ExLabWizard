@@ -211,13 +211,23 @@ def test_is_setup_ready_true_when_all_satisfied() -> None:
     assert mount._is_setup_ready(deps) is True
 
 
-def test_is_setup_ready_false_when_nas_credential_missing() -> None:
-    """A registered nas-mode equipment without its keyring password blocks ready."""
+def test_is_setup_ready_false_when_nas_remote_unset() -> None:
+    """A nas-mode device whose ``nas.remote`` is unset blocks ready."""
+    deps = _deps(
+        config=_nas_config(nas_remote=""),
+        keyring_password_present=True,
+        lims_reachable=True,
+    )
+    assert mount._is_setup_ready(deps) is False
+
+
+def test_is_setup_ready_false_when_nas_remote_unavailable() -> None:
+    """A configured nas remote absent from rclone.conf blocks ready."""
     deps = _deps(
         config=_nas_config(),
         keyring_password_present=True,
         lims_reachable=True,
-        nas_password_present=set(),
+        nas_remote_available=lambda _remote: False,
     )
     assert mount._is_setup_ready(deps) is False
 
@@ -338,19 +348,24 @@ def test_missing_sections_empty_when_fully_configured() -> None:
     assert mount._missing_setup_sections(deps) == ()
 
 
-def _nas_config(*, offline_catalogue: bool = False) -> Any:
-    """Real Config with one password-requiring nas-mode equipment.
+def _nas_config(*, offline_catalogue: bool = False, nas_remote: str = "nas01") -> Any:
+    """Real Config with one nas-mode equipment.
 
     ``offline_catalogue`` swaps the live-LIMS slot (endpoint + email +
     keyring password) for the offline-catalogue branch
     (``offline_catalogue_path`` set, no endpoint / email / keyring) --
     the disconnected-workstation setup that exposed the main-page banner
     staying up despite a ``READY`` ``/setup/status``.
+
+    ``nas_remote`` is the configured ``nas.remote`` name (rclone.conf
+    NAS-sync migration: the setup gate keys on it). Pass ``""`` to model
+    a device whose NAS sync is in use but whose remote is unset.
     """
     from exlab_wizard.config.models import (
         Config,
         EquipmentConfig,
         LIMSConfig,
+        NasConfig,
         OrchestratorConfig,
         PathsConfig,
         RcloneSftpTransport,
@@ -379,6 +394,7 @@ def _nas_config(*, offline_catalogue: bool = False) -> Any:
             )
         ],
         orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
+        nas=NasConfig(remote=nas_remote, base_root="/srv/nas"),
     )
 
 

@@ -23,6 +23,7 @@ from fastapi import HTTPException, Request, status
 __all__ = [
     "lims_password_present",
     "nas_password_present",
+    "nas_remote_available",
     "require_controller",
     "require_deps",
 ]
@@ -70,6 +71,29 @@ def nas_password_present(deps: Any, equipment_id: str) -> bool:
     if present is None:
         return False
     return equipment_id in present
+
+
+def nas_remote_available(deps: Any, remote: str) -> bool:
+    """Return whether ``remote`` is present in the operator's rclone.conf.
+
+    rclone.conf NAS-sync migration. Mirrors :func:`lims_password_present`:
+    every surface that asks "is this rclone remote configured?" -- the
+    setup-state evaluator, the live config-reload re-evaluation -- routes
+    through here so the default and the ``deps is None`` handling stay
+    consistent.
+
+    The predicate is hydrated once at tray boot
+    (``deps.nas_remote_available`` from ``RcloneDriver.listremotes()``); a
+    missing attribute defaults to "available" so callers and tests that
+    have not wired the rclone probe (and therefore are not gating on NAS)
+    are not blocked.
+    """
+    if deps is None:
+        return True
+    predicate = getattr(deps, "nas_remote_available", None)
+    if predicate is None:
+        return True
+    return bool(predicate(remote))
 
 
 def require_deps(request: Request) -> Any:

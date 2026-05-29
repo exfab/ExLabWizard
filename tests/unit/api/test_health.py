@@ -12,6 +12,7 @@ from exlab_wizard.config.models import (
     Config,
     EquipmentConfig,
     LIMSConfig,
+    NasConfig,
     OrchestratorConfig,
     PathsConfig,
     RcloneSftpTransport,
@@ -37,6 +38,7 @@ def _ready_config() -> Config:
         ],
         lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),
         orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
     )
 
 

@@ -186,6 +186,16 @@ class AppDependencies:
     # ``nas_password_present`` reader in ``api/_dependencies.py`` is
     # the only allowed read path.
     nas_password_present: set[str] = field(default_factory=set)
+    # rclone.conf NAS-sync migration. The setup gate now depends on whether
+    # the configured ``nas.remote`` is present in rclone.conf rather than on
+    # a per-equipment keyring password. ``nas_remotes`` is the raw
+    # ``listremotes`` snapshot (each name incl. trailing ``:``) hydrated once
+    # at tray boot; ``nas_remote_available`` is the derived predicate read by
+    # ``api/_dependencies.py::nas_remote_available``. The default predicate
+    # answers "always available" so headless/test apps that have not wired
+    # the rclone probe do not gate on NAS.
+    nas_remotes: tuple[str, ...] = ()
+    nas_remote_available: Callable[[str], bool] = field(default=lambda _n: True)
     lims_reason: str | None = None
 
     # State directory the tray was launched with. Stored so the live

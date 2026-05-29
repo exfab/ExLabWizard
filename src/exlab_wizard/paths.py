@@ -16,7 +16,7 @@ import sys
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from exlab_wizard.constants import (
     APP_NAME,
@@ -444,40 +444,23 @@ def _paths_complete(config: Config) -> bool:
     return bool(paths.templates_dir and paths.plugin_dir and paths.local_root)
 
 
-def _password_required_equipment(config: Config) -> list[Any]:
-    """Return nas-mode equipment whose transport sources a keyring password.
-
-    Internal helper -- both ``_nas_slot_satisfied`` and
-    ``_missing_nas_fields`` iterate the same subset, so the
-    ``transport_requires_keyring_password`` predicate is applied once and
-    shared.
-    """
-    # Local import: keeps ``paths.py`` a leaf of the import graph.
-    from exlab_wizard.config.models import transport_requires_keyring_password
+def _nas_in_use(config: Config) -> bool:
+    """True when at least one nas-mode equipment exists (NAS sync is active)."""
     from exlab_wizard.constants import SyncMode
 
-    return [
-        eq
-        for eq in config.equipment
-        if eq.sync_mode == SyncMode.NAS and transport_requires_keyring_password(eq.transport)
-    ]
+    return any(eq.sync_mode == SyncMode.NAS for eq in config.equipment)
 
 
-def _nas_slot_satisfied(
-    config: Config,
-    *,
-    nas_password_present_for: Callable[[str], bool],
-) -> bool:
-    """Return True when every nas-mode equipment has its keyring password.
+def _nas_remote_satisfied(config: Config, *, nas_remote_available: Callable[[str], bool]) -> bool:
+    """True when the nas: remote is configured AND present in rclone.conf.
 
-    Rclone-only NAS sync migration (2026-05-26). Every nas-mode
-    equipment whose transport requires a keyring-stored password
-    (currently both SFTP and SMB) must have a populated keyring entry
-    or the slot is incomplete. Equipment without a password-sourcing
-    transport (``stage`` mode, or a hypothetical future password-less
-    backend) do not gate.
+    Only gates when NAS sync is actually in use (a stage-only device with no
+    nas-mode equipment does not need a NAS remote).
     """
-    return all(nas_password_present_for(eq.id) for eq in _password_required_equipment(config))
+    if not _nas_in_use(config):
+        return True
+    remote = config.nas.remote
+    return bool(remote) and nas_remote_available(remote)
 
 
 def evaluate_setup_state(
@@ -485,7 +468,7 @@ def evaluate_setup_state(
     *,
     lims_reachable: bool = True,
     keyring_password_present: bool = True,
-    nas_password_present_for: Callable[[str], bool] | None = None,
+    nas_remote_available: Callable[[str], bool] | None = None,
 ) -> SetupState:
     """Evaluate the §4.9.1 setup state.
 
@@ -495,8 +478,8 @@ def evaluate_setup_state(
     2. ``paths.templates_dir`` / ``plugin_dir`` / ``local_root`` any empty ->
        ``INCOMPLETE_MISSING_PATHS``
     3. equipment list empty -> ``INCOMPLETE_NO_EQUIPMENT``
-    4. any nas-mode equipment lacks its keyring password ->
-       ``INCOMPLETE_NO_NAS_CREDENTIAL`` (rclone-only migration, 2026-05-26)
+    4. NAS sync is in use but the ``nas:`` remote is unset or absent from
+       rclone.conf -> ``INCOMPLETE_NO_NAS_REMOTE`` (rclone.conf migration)
     5. lims slot incomplete (no endpoint+email AND no offline_catalogue_path)
        -> ``INCOMPLETE_NO_LIMS``
     6. ``lims_reachable`` is ``False`` -> ``INCOMPLETE_LIMS_UNREACHABLE``
@@ -506,9 +489,9 @@ def evaluate_setup_state(
     ``LIMSClient.health_check()`` result. Default True so unit tests can
     skip the network call. The ``keyring_password_present`` flag stubs the
     keyring lookup so unit tests can exercise every branch without a real
-    keyring backend. ``nas_password_present_for`` defaults to "always
-    True" so legacy callers and tests that don't care about the NAS
-    gate behave as before.
+    keyring backend. ``nas_remote_available`` answers "is this rclone
+    remote present in rclone.conf?"; it defaults to "always True" so
+    callers and tests that don't care about the NAS gate behave as before.
     """
     if config is None:
         return SetupState.INCOMPLETE_NO_CONFIG
@@ -518,11 +501,9 @@ def evaluate_setup_state(
         return SetupState.INCOMPLETE_NO_ORCHESTRATOR
     if not config.equipment:
         return SetupState.INCOMPLETE_NO_EQUIPMENT
-    nas_lookup = (
-        nas_password_present_for if nas_password_present_for is not None else (lambda _id: True)
-    )
-    if not _nas_slot_satisfied(config, nas_password_present_for=nas_lookup):
-        return SetupState.INCOMPLETE_NO_NAS_CREDENTIAL
+    remote_lookup = nas_remote_available if nas_remote_available is not None else (lambda _n: True)
+    if not _nas_remote_satisfied(config, nas_remote_available=remote_lookup):
+        return SetupState.INCOMPLETE_NO_NAS_REMOTE
     if not _lims_slot_satisfied(config, keyring_password_present=keyring_password_present):
         return SetupState.INCOMPLETE_NO_LIMS
     if not lims_reachable:
@@ -544,19 +525,16 @@ def _orchestrator_identity_complete(config: Config) -> bool:
 def setup_state_missing(
     state: SetupState,
     config: Config | None,
-    *,
-    nas_password_present_for: Callable[[str], bool] | None = None,
 ) -> list[dict[str, str]]:
     """Translate a state into ``{field, reason}`` dicts for ``/api/v1/setup/status``.
 
     Backend Spec §4.9.3. Returns ``[]`` when the state is ``READY`` or
     ``INCOMPLETE_LIMS_UNREACHABLE`` (the soft-block state surfaces a
     banner, not a missing-field list). When ``state`` is
-    ``INCOMPLETE_NO_NAS_CREDENTIAL`` and ``nas_password_present_for`` is
-    supplied, the missing list names the specific equipment ids whose
-    keyring entries are absent; without the callable the rollup degrades
-    to a single ``equipment.nas_password`` row (the state itself is
-    enough for the UI to deep-link to Settings).
+    ``INCOMPLETE_NO_NAS_REMOTE`` the missing list names ``nas.remote``
+    with a reason describing whether it is unset or absent from
+    rclone.conf (the state itself is enough for the UI to deep-link to
+    the setup docs).
     """
     if state in (SetupState.READY, SetupState.INCOMPLETE_LIMS_UNREACHABLE):
         return []
@@ -568,34 +546,22 @@ def setup_state_missing(
         return _missing_paths_fields(config)
     if state is SetupState.INCOMPLETE_NO_ORCHESTRATOR:
         return _missing_orchestrator_fields(config)
-    if state is SetupState.INCOMPLETE_NO_NAS_CREDENTIAL:
-        return _missing_nas_fields(config, nas_password_present_for=nas_password_present_for)
+    if state is SetupState.INCOMPLETE_NO_NAS_REMOTE:
+        return _missing_nas_fields(config)
     if state is SetupState.INCOMPLETE_NO_LIMS:
         return _missing_lims_fields(config)
     return []
 
 
-def _missing_nas_fields(
-    config: Config | None,
-    *,
-    nas_password_present_for: Callable[[str], bool] | None,
-) -> list[dict[str, str]]:
-    """Per-equipment missing-keyring rows for ``INCOMPLETE_NO_NAS_CREDENTIAL``.
+def _missing_nas_fields(config: Config | None) -> list[dict[str, str]]:
+    """Missing-``nas.remote`` row for ``INCOMPLETE_NO_NAS_REMOTE``.
 
-    Returns one row per nas-mode equipment whose transport requires a
-    keyring password but whose entry is absent. With ``config is None``
-    or no ``nas_password_present_for`` callable, falls back to a single
-    bulk row so the UI still has something to render.
+    Distinguishes an unset ``nas.remote`` from one that is named but not
+    found in rclone.conf so the UI can tailor its guidance.
     """
-    if config is None:
-        return [{"field": "equipment.nas_password", "reason": "missing_in_keyring"}]
-    if nas_password_present_for is None:
-        return [{"field": "equipment.nas_password", "reason": "missing_in_keyring"}]
-    return [
-        {"field": f"equipment.{eq.id}.nas_password", "reason": "missing_in_keyring"}
-        for eq in _password_required_equipment(config)
-        if not nas_password_present_for(eq.id)
-    ]
+    if config is None or not config.nas.remote:
+        return [{"field": "nas.remote", "reason": "unset"}]
+    return [{"field": "nas.remote", "reason": "not_found_in_rclone_conf"}]
 
 
 def _missing_orchestrator_fields(config: Config | None) -> list[dict[str, str]]:
@@ -655,8 +621,8 @@ def setup_state_next_action(state: SetupState) -> SetupNextAction | None:
             return SetupNextAction.SET_PATHS
         case SetupState.INCOMPLETE_NO_EQUIPMENT:
             return SetupNextAction.ADD_EQUIPMENT
-        case SetupState.INCOMPLETE_NO_NAS_CREDENTIAL:
-            return SetupNextAction.SET_NAS_CREDENTIALS
+        case SetupState.INCOMPLETE_NO_NAS_REMOTE:
+            return SetupNextAction.CONFIGURE_RCLONE_REMOTE
         case SetupState.INCOMPLETE_NO_LIMS:
             return SetupNextAction.CONFIGURE_LIMS
         case SetupState.INCOMPLETE_LIMS_UNREACHABLE:

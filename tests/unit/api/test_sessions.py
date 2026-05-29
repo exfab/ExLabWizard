@@ -27,7 +27,7 @@ from exlab_wizard.controller.state_machine import Phase, SessionState
 
 
 def _ready_config() -> Config:
-    from exlab_wizard.config.models import OrchestratorConfig
+    from exlab_wizard.config.models import NasConfig, OrchestratorConfig
 
     return Config(
         paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
@@ -47,6 +47,7 @@ def _ready_config() -> Config:
         ],
         lims=LIMSConfig(endpoint="https://lims.example", email="op@example"),
         orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
+        nas=NasConfig(remote="nas01", base_root="/srv/nas"),
     )
 
 

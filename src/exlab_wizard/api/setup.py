@@ -30,7 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from exlab_wizard.api._dependencies import (
     lims_password_present,
-    nas_password_present,
+    nas_remote_available,
     require_deps,
 )
 from exlab_wizard.config.models import (
@@ -157,15 +157,15 @@ def compute_setup_state(deps: Any) -> SetupState:
 
     The dependency object exposes ``config``, a ``lims_reachable``
     boolean (cached at startup; the ``POST /setup/test-lims`` endpoint
-    refreshes it), and (rclone-only NAS sync migration, 2026-05-26)
-    the ``nas_password_present`` set of equipment ids with stored
-    keyring passwords.
+    refreshes it), and (rclone.conf NAS-sync migration) a
+    ``nas_remote_available`` predicate that answers whether a named
+    rclone remote is present in rclone.conf.
     """
     return evaluate_setup_state(
         deps.config,
         lims_reachable=getattr(deps, "lims_reachable", True),
         keyring_password_present=lims_password_present(deps),
-        nas_password_present_for=lambda equipment_id: nas_password_present(deps, equipment_id),
+        nas_remote_available=lambda remote: nas_remote_available(deps, remote),
     )
 
 
@@ -197,11 +197,7 @@ def setup_state_gate(request: Request) -> None:
     state = compute_setup_state(deps)
     if not is_creation_blocked(state):
         return
-    missing = setup_state_missing(
-        state,
-        deps.config,
-        nas_password_present_for=lambda equipment_id: nas_password_present(deps, equipment_id),
-    )
+    missing = setup_state_missing(state, deps.config)
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail={
@@ -228,13 +224,7 @@ def build_setup_router() -> APIRouter:
         state = compute_setup_state(deps)
         return SetupStatusResponse(
             state=state.value,
-            missing=setup_state_missing(
-                state,
-                deps.config,
-                nas_password_present_for=lambda equipment_id: nas_password_present(
-                    deps, equipment_id
-                ),
-            ),
+            missing=setup_state_missing(state, deps.config),
             next_action=setup_state_next_action(state),
             ready=state is SetupState.READY,
         )
