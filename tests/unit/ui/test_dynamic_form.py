@@ -6,8 +6,8 @@ Covers the pure logic behind the three polish features:
   wizard's dynamic Variables step.
 * ``render_question_field`` -- seeds the answers dict with each
   question's default (the only headlessly-assertable behaviour).
-* ``build_equipment_config`` -- the equipment-editor builder, across
-  both transports.
+* ``build_equipment_config`` -- the equipment-editor builder. rclone.conf
+  migration: nas-mode no longer carries a per-equipment transport.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from pydantic import ValidationError
 
 # Prime the api package before importing ui.pages (import-cycle workaround).
 import exlab_wizard.api.app  # noqa: F401
-from exlab_wizard.config.models import RcloneSftpTransport, RcloneSmbTransport
 from exlab_wizard.ui.pages.settings import build_equipment_config
 from exlab_wizard.ui.pages.templates import (
     TemplateQuestion,
@@ -122,47 +121,34 @@ def _equipment_kwargs(**overrides: object) -> dict[str, object]:
         "label": "Confocal 1",
         "local_root": "/data/microscope1",
         "nas_root": "/nas/microscope1",
-        "transport_type": "rclone_sftp",
-        "sftp_host": "nas.lab.example",
-        "sftp_port": 22,
-        "sftp_user": "testuser",
-        "sftp_remote_path": "lab/microscope1",
-        "smb_host": "",
-        "smb_share": "",
-        "smb_user": "",
-        "smb_domain": "",
-        "smb_remote_path": "",
+        "sync_mode": "nas",
     }
     base.update(overrides)
     return base
 
 
-def test_build_equipment_sftp() -> None:
+def test_build_equipment_nas_has_no_transport() -> None:
+    # rclone.conf migration: nas-mode carries no per-equipment transport;
+    # the ``nas:`` remote defines the connection.
     entry = build_equipment_config(**_equipment_kwargs())  # type: ignore[arg-type]
     assert entry.id == "MICROSCOPE1"
-    assert isinstance(entry.transport, RcloneSftpTransport)
-    assert entry.transport.host == "nas.lab.example"
+    assert entry.sync_mode.value == "nas"
+    assert entry.transport is None
 
 
-def test_build_equipment_smb() -> None:
+def test_build_equipment_stage_has_staging_transport() -> None:
     entry = build_equipment_config(
         **_equipment_kwargs(  # type: ignore[arg-type]
-            transport_type="rclone_smb",
-            sftp_host="",
-            sftp_user="",
-            sftp_remote_path="",
-            smb_host="nas.lab.example",
-            smb_share="lab",
-            smb_user="operator",
-            smb_domain="LAB",
-            smb_remote_path="microscope1",
+            sync_mode="stage",
+            staging_transport_type="smb_mount",
+            staging_mount_point="/mnt/staging",
+            staging_subpath="in/microscope1",
         )
     )
-    assert isinstance(entry.transport, RcloneSmbTransport)
-    assert entry.transport.host == "nas.lab.example"
-    assert entry.transport.share == "lab"
-    assert entry.transport.user == "operator"
-    assert entry.transport.domain == "LAB"
+    assert entry.sync_mode.value == "stage"
+    assert entry.transport is None
+    assert entry.orchestrator_staging_transport is not None
+    assert entry.orchestrator_staging_transport.mount_point == "/mnt/staging"
 
 
 def test_build_equipment_rejects_bad_id() -> None:

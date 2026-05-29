@@ -97,7 +97,6 @@ def app_with_real_controller(ready_config: Config, tmp_path: Path) -> Any:
     )
     deps = AppDependencies(
         config=ready_config,
-        nas_password_present={"EQ1"},
         validator=validator,
         cache_creation=cache_creation,
         controller=controller,
@@ -168,7 +167,7 @@ async def test_health_returns_ready_when_setup_complete(app_with_real_controller
 
 @pytest.mark.asyncio
 async def test_health_warns_when_lims_unreachable(ready_config: Config) -> None:
-    deps = AppDependencies(config=ready_config, nas_password_present={"EQ1"}, lims_reachable=False)
+    deps = AppDependencies(config=ready_config, lims_reachable=False)
     app = create_app(dependencies=deps)
     async with await _client(app) as ac:
         body = (await ac.get("/api/v1/health")).json()
@@ -253,7 +252,6 @@ async def test_lims_unreachable_does_not_block_creation(ready_config: Config) ->
     )
     deps = AppDependencies(
         config=ready_config,
-        nas_password_present={"EQ1"},
         validator=validator,
         cache_creation=cache_creation,
         controller=controller,
@@ -294,7 +292,6 @@ async def test_problems_refresh_returns_audit_count(ready_config: Config) -> Non
     controller = _build_minimal_controller(ready_config, cache_creation)
     deps = AppDependencies(
         config=ready_config,
-        nas_password_present={"EQ1"},
         validator=validator,
         cache_creation=cache_creation,
         controller=controller,
@@ -318,7 +315,6 @@ async def test_get_problems_returns_findings_and_filters(
     controller = _build_minimal_controller(ready_config, cache_creation)
     deps = AppDependencies(
         config=ready_config,
-        nas_password_present={"EQ1"},
         validator=validator,
         cache_creation=cache_creation,
         controller=controller,
@@ -351,7 +347,7 @@ async def test_put_config_validates_and_updates_state(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_get_tree_in_ready_state(ready_config: Config) -> None:
-    deps = AppDependencies(config=ready_config, nas_password_present={"EQ1"})
+    deps = AppDependencies(config=ready_config)
     app = create_app(dependencies=deps)
     async with await _client(app) as ac:
         response = await ac.get("/api/v1/tree")
@@ -389,7 +385,6 @@ def test_websocket_streams_session_events_sync(ready_config: Config, tmp_path: P
     )
     deps = AppDependencies(
         config=ready_config,
-        nas_password_present={"EQ1"},
         validator=validator,
         cache_creation=cache_creation,
         controller=controller,

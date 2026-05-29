@@ -272,12 +272,12 @@ def test_settings_first_incomplete_returns_canonical_first() -> None:
     assert first == "lims"
 
 
-def test_settings_first_incomplete_resolves_nas_credentials() -> None:
-    """The dynamic NAS-credentials section is auto-selected when it's the gate."""
+def test_settings_first_incomplete_resolves_nas_remote() -> None:
+    """The dynamic NAS-remote section is auto-selected when it's the gate."""
 
-    assert settings.first_incomplete_section(("nas_credentials",)) == "nas_credentials"
+    assert settings.first_incomplete_section(("nas_remote",)) == "nas_remote"
     # It sorts right after equipment in canonical order.
-    assert settings.first_incomplete_section(("nas_credentials", "logging")) == "nas_credentials"
+    assert settings.first_incomplete_section(("nas_remote", "logging")) == "nas_remote"
 
 
 def test_settings_save_button_label_setup_incomplete() -> None:

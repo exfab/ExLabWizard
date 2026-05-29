@@ -28,11 +28,6 @@ def _state_filled_for(step: str) -> EquipmentWizardState:
     s.local_root = "/data/lab"
     s.nas_root = "//nas01/lab"
     s.sync_mode = "nas"
-    s.transport_type = "rclone_sftp"
-    s.sftp_host = "nas.lab.example"
-    s.sftp_port = 22
-    s.sftp_user = "labuser"
-    s.sftp_remote_path = "lab/FLOW_99"
     return s
 
 
@@ -59,11 +54,11 @@ def test_can_advance_paths_requires_both_roots() -> None:
     assert can_advance(s) is False
 
 
-def test_can_advance_sync_mode_nas_requires_rclone_fields() -> None:
+def test_can_advance_sync_mode_nas_needs_no_transport_fields() -> None:
+    # rclone.conf migration: nas-mode collects no per-equipment transport
+    # in the wizard, so picking the mode is enough to advance.
     s = _state_filled_for("sync_mode")
     assert can_advance(s) is True
-    s.sftp_host = ""
-    assert can_advance(s) is False
 
 
 def test_can_advance_sync_mode_stage_requires_staging_fields() -> None:
@@ -80,7 +75,8 @@ def test_assemble_round_trips_to_valid_equipment_config_nas() -> None:
     eq = assemble_equipment_config(s)
     assert eq.id == "FLOW_99"
     assert eq.sync_mode.value == "nas"
-    assert eq.transport is not None
+    # rclone.conf migration: nas-mode carries no per-equipment transport.
+    assert eq.transport is None
 
 
 def test_assemble_round_trips_to_valid_equipment_config_stage() -> None:

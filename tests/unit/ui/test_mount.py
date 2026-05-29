@@ -186,7 +186,6 @@ def test_is_setup_ready_false_when_keyring_missing() -> None:
         config=_nas_config(),
         keyring_password_present=False,
         lims_reachable=True,
-        nas_password_present={"EQ1"},
     )
     assert mount._is_setup_ready(deps) is False
 
@@ -196,7 +195,6 @@ def test_is_setup_ready_false_when_lims_unreachable() -> None:
         config=_nas_config(),
         keyring_password_present=True,
         lims_reachable=False,
-        nas_password_present={"EQ1"},
     )
     assert mount._is_setup_ready(deps) is False
 
@@ -206,7 +204,6 @@ def test_is_setup_ready_true_when_all_satisfied() -> None:
         config=_nas_config(),
         keyring_password_present=True,
         lims_reachable=True,
-        nas_password_present={"EQ1"},
     )
     assert mount._is_setup_ready(deps) is True
 
@@ -243,7 +240,6 @@ def test_is_setup_ready_true_with_offline_catalogue_lims() -> None:
         config=_nas_config(offline_catalogue=True),
         keyring_password_present=False,
         lims_reachable=True,
-        nas_password_present={"EQ1"},
     )
     assert mount._is_setup_ready(deps) is True
 
@@ -398,22 +394,31 @@ def _nas_config(*, offline_catalogue: bool = False, nas_remote: str = "nas01") -
     )
 
 
-def test_missing_sections_includes_nas_credentials_when_password_absent() -> None:
+def test_missing_sections_includes_nas_remote_when_remote_unavailable() -> None:
     deps = _deps(
         config=_nas_config(),
         keyring_password_present=True,
-        nas_password_present=set(),
+        nas_remote_available=lambda _remote: False,
     )
-    assert "nas_credentials" in mount._missing_setup_sections(deps)
+    assert "nas_remote" in mount._missing_setup_sections(deps)
 
 
-def test_missing_sections_excludes_nas_credentials_when_password_present() -> None:
+def test_missing_sections_includes_nas_remote_when_remote_unset() -> None:
+    deps = _deps(
+        config=_nas_config(nas_remote=""),
+        keyring_password_present=True,
+    )
+    assert "nas_remote" in mount._missing_setup_sections(deps)
+
+
+def test_missing_sections_excludes_nas_remote_when_remote_available() -> None:
+    # No ``nas_remote_available`` override -> the _dependencies reader's
+    # default ("available") applies, so a configured remote is usable.
     deps = _deps(
         config=_nas_config(),
         keyring_password_present=True,
-        nas_password_present={"EQ1"},
     )
-    assert "nas_credentials" not in mount._missing_setup_sections(deps)
+    assert "nas_remote" not in mount._missing_setup_sections(deps)
 
 
 # ---------------------------------------------------------------------------
@@ -768,62 +773,6 @@ def test_lims_credential_handlers_swallow_backend_errors() -> None:
     on_save, on_clear = mount._lims_credential_handlers(_deps(keyring_store=store), None)
 
     on_save("hunter2")
-    on_clear()
-
-
-# ---------------------------------------------------------------------------
-# _nas_credential_handlers
-# ---------------------------------------------------------------------------
-
-
-def test_nas_credential_handlers_save_writes_under_nas_username() -> None:
-    from exlab_wizard.constants.keyring import keyring_nas_username
-
-    store = _RecordingKeyringStore()
-    present: set[str] = set()
-    deps = _deps(keyring_store=store, nas_password_present=present)
-    on_save, _on_clear = mount._nas_credential_handlers(deps, None, "EQ1")
-
-    on_save("hunter2")
-
-    assert store.set_calls == [(keyring_nas_username("EQ1"), "hunter2")]
-    # Save must add the id to the live presence set so the gate flips
-    # without a relaunch.
-    assert present == {"EQ1"}
-
-
-def test_nas_credential_handlers_clear_deletes_and_discards() -> None:
-    from exlab_wizard.constants.keyring import keyring_nas_username
-
-    store = _RecordingKeyringStore()
-    present: set[str] = {"EQ1"}
-    deps = _deps(keyring_store=store, nas_password_present=present)
-    _on_save, on_clear = mount._nas_credential_handlers(deps, None, "EQ1")
-
-    on_clear()
-
-    assert store.delete_calls == [keyring_nas_username("EQ1")]
-    assert present == set()
-
-
-def test_nas_credential_handlers_isolate_per_equipment_id() -> None:
-    store = _RecordingKeyringStore()
-    present: set[str] = set()
-    deps = _deps(keyring_store=store, nas_password_present=present)
-
-    save_one, _ = mount._nas_credential_handlers(deps, None, "EQ1")
-    save_two, _ = mount._nas_credential_handlers(deps, None, "EQ2")
-    save_one("a")
-    save_two("b")
-
-    assert present == {"EQ1", "EQ2"}
-
-
-def test_nas_credential_handlers_tolerate_missing_keyring_store() -> None:
-    on_save, on_clear = mount._nas_credential_handlers(
-        _deps(keyring_store=None, nas_password_present=set()), None, "EQ1"
-    )
-    on_save("hunter2")  # must not raise
     on_clear()
 
 

@@ -139,7 +139,7 @@ def test_append_equipment_persists_and_re_evaluates_state() -> None:
 
 
 def test_append_equipment_rejects_duplicate_id() -> None:
-    deps = AppDependencies(config=_ready_config(), nas_password_present={"EQ1"})
+    deps = AppDependencies(config=_ready_config())
     app = create_app(dependencies=deps)
     client = TestClient(app)
     duplicate = EquipmentConfig.model_validate(

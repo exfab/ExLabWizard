@@ -27,14 +27,12 @@ from exlab_wizard.config.models import (
     RcloneSftpTransport,
 )
 from exlab_wizard.constants import KEYRING_USERNAME_LIMS, SyncMode
-from exlab_wizard.constants.keyring import keyring_nas_username
 from exlab_wizard.lims.keyring_store import KeyringStore
 from exlab_wizard.sync.nas_client import NASSyncClient
 from exlab_wizard.tray import dependencies as deps_module
 from exlab_wizard.tray.dependencies import (
     _build_lims_client,
     _check_keyring_present,
-    _check_nas_passwords_present,
     _make_equipment_probe,
     build_production_dependencies,
 )
@@ -151,7 +149,7 @@ def test_lims_client_password_provider_reads_keyring_under_lims_username(
 
 
 # ---------------------------------------------------------------------------
-# NAS password presence + equipment probe
+# Equipment probe (rclone NAS remote)
 # ---------------------------------------------------------------------------
 
 
@@ -188,26 +186,6 @@ def _nas_config_with_two_equipment() -> Config:
             ),
         ],
     )
-
-
-def test_check_nas_passwords_present_returns_only_populated_ids(
-    tmp_path: Path,
-) -> None:
-    with _swap_keyring(_InMemoryKeyring()):
-        store = KeyringStore(state_dir=tmp_path)
-        # Only EQ1 has its keyring entry; EQ2 must not appear.
-        store.set_password(username=keyring_nas_username("EQ1"), password="hunter2")
-        config = _nas_config_with_two_equipment()
-
-        present = _check_nas_passwords_present(store, config)
-
-        assert present == {"EQ1"}
-
-
-def test_check_nas_passwords_present_handles_none_store_and_config() -> None:
-    config = _nas_config_with_two_equipment()
-    assert _check_nas_passwords_present(None, config) == set()
-    assert _check_nas_passwords_present(object(), None) == set()
 
 
 def _nas_config_with_remote(remote: str = "nas01") -> Config:

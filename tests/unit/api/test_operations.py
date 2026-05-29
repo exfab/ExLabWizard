@@ -73,7 +73,7 @@ def test_get_operations_lists_in_flight_sessions() -> None:
     s2 = controller.session_store.open("project", _make_project_request("PROJ-0002"))
     controller.session_store.transition(s2.session_id, SessionState.VALIDATING)
     deps = AppDependencies(
-        config=_ready_config(), nas_password_present={"EQ1"}, controller=controller
+        config=_ready_config(), controller=controller
     )
     app = create_app(dependencies=deps)
     client = TestClient(app)
@@ -99,7 +99,7 @@ def test_get_operations_excludes_done_and_aborted() -> None:
     controller.session_store.transition(s2.session_id, SessionState.VALIDATING)
     controller.session_store.transition(s2.session_id, SessionState.ABORTED)
     deps = AppDependencies(
-        config=_ready_config(), nas_password_present={"EQ1"}, controller=controller
+        config=_ready_config(), controller=controller
     )
     app = create_app(dependencies=deps)
     client = TestClient(app)
@@ -116,7 +116,7 @@ def test_get_operations_emits_plugin_name_when_input_required() -> None:
     controller.session_store.transition(s.session_id, SessionState.INPUT_REQUIRED)
     s.pending_input = {"plugin": "xlsx_field_filler", "reason": "need a value"}
     deps = AppDependencies(
-        config=_ready_config(), nas_password_present={"EQ1"}, controller=controller
+        config=_ready_config(), controller=controller
     )
     app = create_app(dependencies=deps)
     client = TestClient(app)
@@ -127,7 +127,7 @@ def test_get_operations_emits_plugin_name_when_input_required() -> None:
 
 
 def test_get_operations_503_when_controller_missing() -> None:
-    deps = AppDependencies(config=_ready_config(), nas_password_present={"EQ1"})
+    deps = AppDependencies(config=_ready_config())
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.get("/api/v1/operations")

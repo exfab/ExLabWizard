@@ -83,7 +83,7 @@ def _ready_config_without_lims() -> Config:
 
 def test_compute_setup_state_returns_ready_for_complete_config() -> None:
     deps = AppDependencies(
-        config=_ready_config(), lims_reachable=True, nas_password_present={"EQ1"}
+        config=_ready_config(), lims_reachable=True
     )
     assert compute_setup_state(deps) is SetupState.READY
 
@@ -196,7 +196,7 @@ def test_setup_state_gate_returns_503_in_incomplete_states() -> None:
 
 def test_setup_state_gate_lims_unreachable_does_not_block() -> None:
     config = _ready_config()
-    deps = AppDependencies(config=config, lims_reachable=False, nas_password_present={"EQ1"})
+    deps = AppDependencies(config=config, lims_reachable=False)
     app = FastAPI()
     app.state.dependencies = deps
 
@@ -227,7 +227,7 @@ def test_setup_state_gate_no_op_without_dependencies() -> None:
 
 def test_get_setup_status_ready() -> None:
     deps = AppDependencies(
-        config=_ready_config(), lims_reachable=True, nas_password_present={"EQ1"}
+        config=_ready_config(), lims_reachable=True
     )
     app = create_app(dependencies=deps)
     client = TestClient(app)
@@ -256,7 +256,7 @@ def test_post_test_lims_invokes_probe() -> None:
     async def probe(_body: LIMSTestRequest | None) -> ProbeResult:
         return ProbeResult(ok=True, latency_ms=42)
 
-    deps = AppDependencies(config=_ready_config(), lims_probe=probe, nas_password_present={"EQ1"})
+    deps = AppDependencies(config=_ready_config(), lims_probe=probe)
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.post("/api/v1/setup/test-lims", json={})
@@ -269,7 +269,7 @@ def test_post_test_lims_probe_raises_returns_reason() -> None:
         raise RuntimeError("network down")
 
     deps = AppDependencies(
-        config=_ready_config(), lims_probe=bad_probe, nas_password_present={"EQ1"}
+        config=_ready_config(), lims_probe=bad_probe
     )
     app = create_app(dependencies=deps)
     client = TestClient(app)
@@ -280,7 +280,7 @@ def test_post_test_lims_probe_raises_returns_reason() -> None:
 
 
 def test_post_test_lims_without_probe_reports_not_wired() -> None:
-    deps = AppDependencies(config=_ready_config(), nas_password_present={"EQ1"})
+    deps = AppDependencies(config=_ready_config())
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.post("/api/v1/setup/test-lims", json={})
@@ -291,7 +291,6 @@ def test_post_test_equipment_requires_equipment_id() -> None:
     deps = AppDependencies(
         config=_ready_config(),
         equipment_probe=lambda _e: True,
-        nas_password_present={"EQ1"},
     )
     app = create_app(dependencies=deps)
     client = TestClient(app)
@@ -309,7 +308,7 @@ def test_post_test_equipment_with_explicit_equipment_id() -> None:
         return True
 
     deps = AppDependencies(
-        config=_ready_config(), equipment_probe=probe, nas_password_present={"EQ1"}
+        config=_ready_config(), equipment_probe=probe
     )
     app = create_app(dependencies=deps)
     client = TestClient(app)
@@ -323,7 +322,6 @@ def test_post_test_equipment_unknown_id_returns_404() -> None:
     deps = AppDependencies(
         config=_ready_config(),
         equipment_probe=lambda _e: True,
-        nas_password_present={"EQ1"},
     )
     app = create_app(dependencies=deps)
     client = TestClient(app)
@@ -340,7 +338,7 @@ def test_post_autostart_calls_toggle() -> None:
         return enabled
 
     deps = AppDependencies(
-        config=_ready_config(), autostart_toggle=toggle, nas_password_present={"EQ1"}
+        config=_ready_config(), autostart_toggle=toggle
     )
     app = create_app(dependencies=deps)
     client = TestClient(app)
@@ -353,7 +351,7 @@ def test_post_autostart_calls_toggle() -> None:
 
 
 def test_post_autostart_without_toggle_echoes_state() -> None:
-    deps = AppDependencies(config=_ready_config(), nas_password_present={"EQ1"})
+    deps = AppDependencies(config=_ready_config())
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.post("/api/v1/setup/autostart", json={"enabled": False})
