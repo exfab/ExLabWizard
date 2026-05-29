@@ -1504,9 +1504,9 @@ def _cancel_session(controller: Any, session_id: str, ui: Any) -> None:
         ui.card().props('data-testid="cancel-confirm-dialog"').style("min-width: 420px;"),
     ):
         ui.label("Cancel this operation?").style("font-weight: 600;")
-        ui.label(
-            "Discard the partially-created files, or keep them in place as an orphan?"
-        ).style("color: var(--color-muted);")
+        ui.label("Discard the partially-created files, or keep them in place as an orphan?").style(
+            "color: var(--color-muted);"
+        )
         with ui.row().classes("justify-end w-full").style("gap: 0.5rem;"):
             ui.button("Back", on_click=lambda _e: dialog.close()).props("flat")
             ui.button("Keep files", on_click=lambda _e: _choose(False)).props(

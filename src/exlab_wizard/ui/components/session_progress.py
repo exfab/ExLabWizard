@@ -191,6 +191,7 @@ def apply_frame(state: SessionProgressState, frame: dict[str, Any]) -> bool:
     terminal ``done``; ``failed`` and ``input_required`` are left to the
     caller (the wizard surfaces those out-of-band).
     """
+
     def _complete_through(upto: int) -> None:
         # Mark the first ``upto`` phases complete (idempotent) -- buffered
         # frames may have been coalesced, so a phase becoming active (or the

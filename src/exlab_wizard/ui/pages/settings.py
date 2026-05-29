@@ -1,7 +1,6 @@
 """Settings dialog (Frontend Spec §7).
 
-Two-pane modal with a left vertical-nav and a right content area. Eight
-sections (``operators`` is deferred pending the chip editor);
+Two-pane modal with a left vertical-nav and a right content area;
 setup-incomplete mode auto-selects the first incomplete one.
 """
 
@@ -673,9 +672,7 @@ def _render_section_body(
 
             # "Quit ExLab-Wizard now" (T9): graceful shutdown behind a confirm,
             # scheduled non-blocking by the host. Disabled when no hook wired.
-            quit_btn = ui.button("Quit ExLab-Wizard now").props(
-                'flat data-testid="settings-quit"'
-            )
+            quit_btn = ui.button("Quit ExLab-Wizard now").props('flat data-testid="settings-quit"')
             if on_quit is None:
                 quit_btn.props("disable")
             else:
@@ -687,9 +684,9 @@ def _render_section_body(
                         ui.card().props('data-testid="settings-quit-dialog"'),
                     ):
                         ui.label("Quit ExLab-Wizard?").style("font-weight: 600;")
-                        ui.label(
-                            "In-flight operations are allowed to finish first."
-                        ).style("color: var(--color-muted);")
+                        ui.label("In-flight operations are allowed to finish first.").style(
+                            "color: var(--color-muted);"
+                        )
 
                         def _do_quit() -> None:
                             confirm.close()

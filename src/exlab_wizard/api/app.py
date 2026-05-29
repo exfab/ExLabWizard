@@ -359,8 +359,12 @@ async def _audit_loop(deps: AppDependencies, interval_seconds: float) -> None:
             # right-pane summary) reads them straight off deps -- a single
             # source, refreshed on the 30 s cadence -- without re-running a
             # full O(tree) audit on every page render (T6 / §B5).
-            deps.last_audit_hard = sum(1 for f in findings if getattr(f, "tier", "") == Tier.HARD.value)
-            deps.last_audit_soft = sum(1 for f in findings if getattr(f, "tier", "") == Tier.SOFT.value)
+            deps.last_audit_hard = sum(
+                1 for f in findings if getattr(f, "tier", "") == Tier.HARD.value
+            )
+            deps.last_audit_soft = sum(
+                1 for f in findings if getattr(f, "tier", "") == Tier.SOFT.value
+            )
             added, removed, changed = _diff_findings(last, findings)
             if deps.audit_channel is not None:
                 if not last:

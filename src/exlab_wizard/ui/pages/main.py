@@ -287,8 +287,11 @@ def render_file_explorer_page(
         # tab landed at a different Y per state -- that vertical shift was
         # the up/down "jump". Pinning to the top ties the tab's Y to the
         # constant panel top, so it holds its line on toggle.
-        with outer_split.after, ui.element("div").classes("w-full h-full").style(
-            "display: flex; flex-direction: row; flex-wrap: nowrap; align-items: stretch;"
+        with (
+            outer_split.after,
+            ui.element("div")
+            .classes("w-full h-full")
+            .style("display: flex; flex-direction: row; flex-wrap: nowrap; align-items: stretch;"),
         ):
             with ui.element("div").style(
                 "flex: 1 1 auto; min-width: 0; height: 100%; overflow: auto;"
@@ -330,14 +333,17 @@ def render_file_explorer_page(
                         "color: var(--color-muted, #8892a4);"
                     )
                 )
-                with toggle, ui.column().style(
-                    "align-items: center; gap: 6px; flex-wrap: nowrap; "
-                    "height: 100%; width: 100%; padding: 8px 2px; "
-                    # Surface fill + border + soft shadow so the chevron and
-                    # label read as a distinct raised tab against the page.
-                    "background: var(--color-surface, #ffffff); "
-                    "border: 1px solid var(--color-border, #dde3ed); border-radius: 6px; "
-                    "box-shadow: 0 1px 3px rgba(0, 54, 96, 0.12);"
+                with (
+                    toggle,
+                    ui.column().style(
+                        "align-items: center; gap: 6px; flex-wrap: nowrap; "
+                        "height: 100%; width: 100%; padding: 8px 2px; "
+                        # Surface fill + border + soft shadow so the chevron and
+                        # label read as a distinct raised tab against the page.
+                        "background: var(--color-surface, #ffffff); "
+                        "border: 1px solid var(--color-border, #dde3ed); border-radius: 6px; "
+                        "box-shadow: 0 1px 3px rgba(0, 54, 96, 0.12);"
+                    ),
                 ):
                     ui.label(chevron).style(
                         "flex: 0 0 auto; font-size: 12px; line-height: 1; "
