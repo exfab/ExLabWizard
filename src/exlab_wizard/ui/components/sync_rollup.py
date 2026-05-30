@@ -1,61 +1,50 @@
-"""Folder-level sync-status rollup (GUI/Orchestrator Redesign §4.6).
+"""Folder/run-level sync-status rollup (two-icon presence model, 2026-05-30).
 
-When a folder is selected in the centre file list, the metadata sub-card
-shows a single "worst-of" rollup of its children's per-file sync states.
-This module owns that reduction as a pure, NiceGUI-free function so the
-ordering is testable in isolation.
+When a run row (left tree) or a folder (metadata pane) is summarised, it carries
+a single "worst-of" rollup icon reduced from its children's per-file sync
+discriminators. This module owns that reduction as a pure, NiceGUI-free function
+so the severity ordering is testable in isolation.
 
-**Why a UI-only ordering.** The per-file states are :class:`SyncStatus`
-values (``pending`` / ``synced`` / ``cleaned`` / ``failed`` /
-``blocked_by_validation``). ``SyncStatus`` is a schema-committed
-``StrEnum`` that deliberately carries *no* severity order -- the enum
-module forbids reordering without a coordinated schema-version bump
-(constants/enums.py). The rollup is a presentation concern, so the
-severity ranking lives here, beside its only consumer, rather than on the
-enum. If a second consumer ever needs the same order, promoting it onto
-``SyncStatus`` becomes a separate, coordinated change (spec §11).
+The reduction is over :class:`FileSyncView` (the UI presentation view), not the
+schema-committed ``SyncStatus`` enum: severity is a presentation concern, so it
+lives here beside its only consumer rather than on the wire enum.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 
-from exlab_wizard.constants import SyncStatus
+from exlab_wizard.ui.components.sync_status_icon import FileSyncView, file_sync_view
 
-# Most-attention-worthy first. A folder is summarised by the highest-ranked
-# state any child carries: a single failed file dominates a folder of
-# otherwise-synced files. ``cleaned`` (data on NAS, local copy gone) ranks
-# lowest -- it is the quiet terminal "done" state.
-_SEVERITY_ORDER: tuple[str, ...] = (
-    SyncStatus.FAILED.value,
-    SyncStatus.BLOCKED_BY_VALIDATION.value,
-    SyncStatus.PENDING.value,
-    SyncStatus.SYNCED.value,
-    SyncStatus.CLEANED.value,
+# Most-attention-worthy first. A folder/run is summarised by the highest-ranked
+# view any child carries.
+_SEVERITY_ORDER: tuple[FileSyncView, ...] = (
+    FileSyncView.MISSING,
+    FileSyncView.UPLOAD_FAILED,
+    FileSyncView.BLOCKED,
+    FileSyncView.LOCAL_ONLY,
+    FileSyncView.SYNCED,
+    FileSyncView.ON_NAS,
 )
-_SEVERITY_RANK: dict[str, int] = {value: rank for rank, value in enumerate(_SEVERITY_ORDER)}
+_SEVERITY_RANK: dict[FileSyncView, int] = {v: i for i, v in enumerate(_SEVERITY_ORDER)}
 
 
 def sync_rollup(statuses: Iterable[str | None]) -> str | None:
-    """Reduce per-file sync statuses to a single worst-of rollup value.
+    """Reduce per-file sync discriminators to a single worst-of view value.
 
-    Returns the highest-severity recognised status among ``statuses``
-    (``failed > blocked_by_validation > pending > synced > cleaned``), or
-    ``None`` when there is nothing to roll up -- an empty input, or one
-    holding only ``None`` / unrecognised values. ``None`` and unknown
-    values are ignored rather than raising: a folder of unstatused files
-    has no meaningful rollup, and the metadata card renders that as a
-    neutral dash via the tolerant icon path (sync_status_icon, §4.5).
+    Returns the highest-severity recognised view's value string
+    (``missing > upload_failed > blocked > local_only > synced > on_nas``),
+    or ``None`` when there is nothing to roll up (empty, or only ``None`` /
+    unrecognised values map to :attr:`FileSyncView.NONE`, which is ignored).
     """
-    best: str | None = None
-    best_rank = len(_SEVERITY_ORDER)  # worse-than-any sentinel
+    best: FileSyncView | None = None
+    best_rank = len(_SEVERITY_ORDER)
     for status in statuses:
-        if status is None:
-            continue
-        rank = _SEVERITY_RANK.get(status)
-        if rank is None:
+        view = file_sync_view(status)
+        rank = _SEVERITY_RANK.get(view)
+        if rank is None:  # NONE
             continue
         if rank < best_rank:
             best_rank = rank
-            best = status
-    return best
+            best = view
+    return best.value if best is not None else None
