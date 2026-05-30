@@ -170,7 +170,17 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ steps.package.outputs.version }}"
-          iscc "/DAppVersion=${version}" packaging/windows/exlab-wizard.iss
+          # choco installs ISCC.exe but does not add it to the current shell's
+          # PATH, so resolve it explicitly (known install dir, then a search).
+          iscc="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          if [ ! -f "$iscc" ]; then
+            iscc="$(find "/c/Program Files (x86)" "/c/Program Files" -name ISCC.exe 2>/dev/null | head -n 1)"
+          fi
+          if [ -z "${iscc:-}" ] || [ ! -f "$iscc" ]; then
+            echo "ISCC.exe not found after choco install innosetup" >&2
+            exit 1
+          fi
+          "$iscc" "/DAppVersion=${version}" packaging/windows/exlab-wizard.iss
           ls -lh "ExLab-Wizard-${version}-win-x64-setup.exe"
 
       # --- Installer: macOS (.dmg) -------------------------------------------
