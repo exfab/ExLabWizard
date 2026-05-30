@@ -92,6 +92,7 @@ def framed_pane(
     testid: str,
     header_extra: Callable[[], None] | None = None,
     count_left: bool = False,
+    card_classes: str = "",
 ) -> Iterator[Any]:
     """Context manager rendering a framed, titled pane; yields the body element.
 
@@ -110,6 +111,11 @@ def framed_pane(
     controls (e.g. the Files pane's per-folder refresh button) without this
     helper knowing their semantics. It is skipped outside a NiceGUI context.
 
+    ``card_classes`` is an optional space-separated class string added to the
+    card root -- used to scope descendant CSS (e.g. ``exlab-density-compact``,
+    which the theme rule keys on to tighten the file-list row padding). Empty
+    by default, in which case no class is added.
+
     The manager opens the body div last and yields *it*, so children of the
     ``with`` block become DOM descendants of the body (not the card root or
     the header) -- they therefore sit below the title strip and inside the
@@ -125,7 +131,10 @@ def framed_pane(
         yield None
         return
 
-    with ui.element("div").props(f'data-testid="{testid}"').style(_CARD_STYLE):
+    card = ui.element("div").props(f'data-testid="{testid}"').style(_CARD_STYLE)
+    if card_classes:
+        card.classes(card_classes)
+    with card:
         with ui.element("div").props(f'data-testid="{testid}-header"').style(_HEADER_STYLE):
             ui.label(title).style(_TITLE_STYLE)
             if count is not None:

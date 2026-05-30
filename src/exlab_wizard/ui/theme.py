@@ -106,6 +106,22 @@ def build_root_css() -> str:
         "font-weight: 600; "
         "}\n"
         "code, kbd, samp, pre, .mono { font-family: var(--font-mono); }\n"
+        # Compact file-list density (Phase 5 / §4.8): the Files card carries the
+        # .exlab-density-compact class when ?density=compact; this tightens only
+        # the file-row vertical padding (sp-1 vs the default sp-2 from Tailwind
+        # .p-2). The descendant selector (0,1,1) outranks .p-2 (0,1,0) so no
+        # !important is needed; left/right padding is left to .p-2.
+        ".exlab-density-compact td { "
+        "padding-top: var(--sp-1); padding-bottom: var(--sp-1); }\n"
+        # Unified selection (Phase 5 / OQ-6): the selected tree node gets the
+        # same fill + 3px inset accent bar as a selected file row
+        # (file_list.row_background). Depends on Quasar tagging the selected
+        # node header with .q-tree__node--selected (seeded from the URL's
+        # ?selected= via build_tree).
+        ".q-tree__node-header.q-tree__node--selected { "
+        "background: var(--color-row-selected); "
+        "box-shadow: inset 3px 0 0 var(--color-row-selected-bar); "
+        "border-radius: var(--radius-sm); }\n"
     )
 
 

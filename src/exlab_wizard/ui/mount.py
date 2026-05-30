@@ -222,6 +222,15 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
                 + _build_main_query(selected, right_pane, file=file, q=query, density=density)
             )
 
+        def _on_toggle_density() -> None:
+            # Files-pane row density (§4.8): flip compact <-> comfortable,
+            # keep everything else, swap only ?density=.
+            new_density = "" if density == "compact" else "compact"
+            ui.navigate.to(
+                "/main"
+                + _build_main_query(selected, right_pane, file=file, q=q, density=new_density)
+            )
+
         def _on_run_staging_action(path: str, action: str) -> None:
             _run_staging_action(deps, path, action, ui)
 
@@ -255,6 +264,7 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             on_select_file=_on_select_file,
             on_refresh_folder=_on_refresh_folder,
             on_search=_on_search,
+            on_toggle_density=_on_toggle_density,
             state=state,
             hierarchy=hierarchy,
             file_list_entries=feed_entries,

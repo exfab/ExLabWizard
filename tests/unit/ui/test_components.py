@@ -175,6 +175,23 @@ def test_sync_status_unknown_raises() -> None:
         sync_status_icon.sync_status_props("invalid")
 
 
+def test_sync_legend_entries_cover_every_state() -> None:
+    """The legend lists one row per known state, each with icon + meaning,
+    sourced from _STATUS_TO_PROPS (single source of truth, Phase 5)."""
+
+    entries = sync_status_icon.sync_legend_entries()
+    # One row per documented state; each carries the keys the legend renders.
+    assert len(entries) == len(sync_status_icon._STATUS_TO_PROPS)
+    for entry in entries:
+        assert entry["status"]
+        assert entry["icon_name"]
+        assert entry["color_var"].startswith("--color-")
+        assert entry["tooltip"]
+    # The mapping agrees with sync_status_props for a known state.
+    synced = next(e for e in entries if e["status"] == "synced")
+    assert synced["icon_name"] == "check_circle"
+
+
 # ---------------------------------------------------------------------------
 # session_progress
 # ---------------------------------------------------------------------------
@@ -866,6 +883,61 @@ def test_to_nicegui_nodes_equipment_and_project_have_no_sync_icon() -> None:
     assert "sync_icon" not in payload[0]
     assert "sync_icon" not in payload[0]["children"][0]
     assert "sync_icon" in payload[0]["children"][0]["children"][0]
+
+
+def test_to_nicegui_nodes_carries_sync_title() -> None:
+    """Run rows carry a friendly ``sync_title`` hover tooltip mirroring the
+    icon: cleared -> "on NAS only", anything else -> "data on local disk"
+    (Phase 5 sync tooltips)."""
+
+    equipment = tree.EquipmentNode(equipment_id="CONFOCAL_01")
+    project = tree.ProjectNode(short_id="PROJ-1", name="Cortex Q3")
+    cleared = tree.RunNode(
+        directory_name="Run_2026-05-06", run_kind="experimental", sync_status="cleared"
+    )
+    local = tree.RunNode(
+        directory_name="Run_2026-05-07", run_kind="experimental", sync_status="synced"
+    )
+    payload = tree.to_nicegui_nodes(
+        tree.build_nodes(
+            hierarchy={equipment: {project: [cleared, local]}},
+            filters=tree.TreeFilters(),
+        )
+    )
+    run_dicts = payload[0]["children"][0]["children"]
+    assert "NAS" in run_dicts[0]["sync_title"]
+    assert "local" in run_dicts[1]["sync_title"].lower()
+
+
+def test_build_tree_seeds_selected_node() -> None:
+    """``selected_node`` seeds Quasar's v-model:selected so the current node
+    renders with the selected fill + accent bar (OQ-6). The id (spaces /
+    slashes) is set on the prop dict directly, not via the props string."""
+
+    equipment = tree.EquipmentNode(equipment_id="CONFOCAL_01")
+    project = tree.ProjectNode(short_id="PROJ-1", name="Cortex Q3")
+    run = tree.RunNode(directory_name="Run_2026-05-07", run_kind="experimental")
+    node_id = "CONFOCAL_01/Cortex Q3/Run_2026-05-07"
+    built = tree.build_tree(
+        hierarchy={equipment: {project: [run]}},
+        filters=tree.TreeFilters(),
+        selected_node=node_id,
+    )
+    # In a NiceGUI context build_tree returns the ui.tree element.
+    assert built._props.get("selected") == node_id
+
+
+def test_build_tree_no_selection_leaves_selected_unset() -> None:
+    """Without ``selected_node`` the tree carries no seeded selection."""
+
+    equipment = tree.EquipmentNode(equipment_id="CONFOCAL_01")
+    project = tree.ProjectNode(short_id="PROJ-1", name="Cortex Q3")
+    run = tree.RunNode(directory_name="Run_2026-05-07", run_kind="experimental")
+    built = tree.build_tree(
+        hierarchy={equipment: {project: [run]}},
+        filters=tree.TreeFilters(),
+    )
+    assert built._props.get("selected") in (None, "")
 
 
 # ---------------------------------------------------------------------------

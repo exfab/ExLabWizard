@@ -163,6 +163,15 @@ def test_main_count_search_results_zero_on_no_match() -> None:
     assert main.count_search_results(nodes) == 0
 
 
+def test_main_density_card_class_maps_compact() -> None:
+    """`?density=compact` -> the Files-card class the theme rule keys on; any
+    other value -> no class (comfortable default)."""
+
+    assert main.density_card_class("compact") == "exlab-density-compact"
+    assert main.density_card_class("") == ""
+    assert main.density_card_class("comfortable") == ""
+
+
 # ---------------------------------------------------------------------------
 # wizard_project
 # ---------------------------------------------------------------------------

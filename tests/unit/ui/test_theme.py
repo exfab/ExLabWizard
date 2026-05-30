@@ -10,6 +10,25 @@ from __future__ import annotations
 from exlab_wizard.ui import design, theme
 
 
+def test_root_css_includes_compact_density_rule() -> None:
+    """Phase 5 / §4.8: the compact-density rule scopes file-row padding to
+    the .exlab-density-compact card class (sp-1 vs the default sp-2)."""
+
+    css = theme.build_root_css()
+    assert ".exlab-density-compact td" in css
+    assert "var(--sp-1)" in css
+
+
+def test_root_css_includes_tree_selection_rule() -> None:
+    """Phase 5 / OQ-6: the selected tree node gets the same fill + accent bar
+    as a selected file row, keyed on Quasar's .q-tree__node--selected."""
+
+    css = theme.build_root_css()
+    assert ".q-tree__node--selected" in css
+    assert "var(--color-row-selected)" in css
+    assert "var(--color-row-selected-bar)" in css
+
+
 def test_root_css_contains_primary_palette() -> None:
     css = theme.build_root_css()
     for value in (

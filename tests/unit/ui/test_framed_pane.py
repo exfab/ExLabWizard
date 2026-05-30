@@ -74,6 +74,27 @@ def test_framed_pane_card_carries_testid() -> None:
     assert card._props.get("data-testid") == "explorer-pane"
 
 
+def test_framed_pane_applies_card_classes() -> None:
+    """``card_classes`` lands on the card root so descendant CSS (e.g. the
+    compact-density rule) can scope off it (Phase 5 / §4.8)."""
+    with framed_pane(
+        "Files", count="2 items", testid="files-pane", card_classes="exlab-density-compact"
+    ) as body:
+        assert body is not None
+    card = body.parent_slot.parent if body.parent_slot else None
+    assert card is not None
+    assert "exlab-density-compact" in card._classes
+
+
+def test_framed_pane_no_card_classes_by_default() -> None:
+    """Omitting ``card_classes`` adds no extra class to the card root."""
+    with framed_pane("Files", testid="files-pane") as body:
+        assert body is not None
+    card = body.parent_slot.parent if body.parent_slot else None
+    assert card is not None
+    assert "exlab-density-compact" not in card._classes
+
+
 def test_framed_pane_renders_header_extra_in_strip() -> None:
     """``header_extra`` renders its controls inside the title strip (Phase 4).
 

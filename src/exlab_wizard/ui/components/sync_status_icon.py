@@ -115,6 +115,19 @@ _NEUTRAL_PROPS: Final[dict[str, str]] = {
 }
 
 
+def sync_legend_entries() -> list[dict[str, str]]:
+    """Return the sync-status legend rows, in declaration order (Phase 5).
+
+    One dict per state in ``_STATUS_TO_PROPS`` -- ``{"status", "icon_name",
+    "color_var", "tooltip"}`` -- so the Files-header legend popover lists
+    exactly the icons + meanings the file list / metadata pane render and can't
+    drift from them (``_STATUS_TO_PROPS`` is the single source of truth). Pure
+    so it is testable without NiceGUI.
+    """
+
+    return [{"status": status, **props} for status, props in _STATUS_TO_PROPS.items()]
+
+
 def sync_status_props(
     status: SyncStatusOrIcon | None,
     *,

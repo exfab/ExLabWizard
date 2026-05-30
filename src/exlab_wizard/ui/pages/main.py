@@ -131,6 +131,22 @@ def count_search_results(nodes: list[TreeNode]) -> int:
     return total
 
 
+DENSITY_COMPACT = "compact"
+_DENSITY_COMPACT_CLASS = "exlab-density-compact"
+
+
+def density_card_class(density: str) -> str:
+    """Return the Files-card CSS class for the current row density (§4.8).
+
+    ``"compact"`` -> ``"exlab-density-compact"`` (the theme rule tightens the
+    file-row vertical padding to ``--sp-1``); anything else -> ``""`` (the
+    default comfortable ``--sp-2`` inherited from Tailwind ``.p-2``). Pure so
+    it is testable without NiceGUI.
+    """
+
+    return _DENSITY_COMPACT_CLASS if density == DENSITY_COMPACT else ""
+
+
 def problems_badge_text(state: MainPageState) -> str:
     """Return the count text shown on the Problems tab.
 
@@ -189,6 +205,7 @@ def render_file_explorer_page(
     on_select_file: Callable[[Any], None] | None = None,
     on_refresh_folder: Callable[[], None] | None = None,
     on_search: Callable[[str], None] | None = None,
+    on_toggle_density: Callable[[], None] | None = None,
     state: MainPageState | None = None,
     hierarchy: dict | None = None,
     file_list_entries: list[Any] | None = None,
@@ -377,6 +394,7 @@ def render_file_explorer_page(
                     _route_run_context if on_run_staging_action is not None else None
                 ),
                 expand_all=tree_expand_all,
+                selected_node=s.selected_node,
             )
         # The Files pane fills the splitter's right side; the metadata pane
         # floats over its right edge as an overlay popover (no permanent docked
@@ -395,17 +413,30 @@ def render_file_explorer_page(
                 files_count = f"{len(file_list_entries)} items" if file_list_entries else None
 
                 def _files_header_extra() -> None:
-                    # OQ-1/A mitigation: a per-folder refresh, distinct from the
-                    # toolbar's "Refresh everything" -- it re-scans only the open
-                    # folder then re-renders (mount._refresh_selected_folder).
-                    # Grouped on the left beside the count pill (count_left=True).
+                    # Files-header controls, grouped left beside the count pill
+                    # (count_left=True): per-folder refresh, the row-density
+                    # toggle, and the sync-status legend.
                     refresh = on_refresh_folder
-                    if refresh is None:
-                        return
-                    ui.button(icon="refresh", on_click=lambda _evt: refresh()).props(
-                        'flat dense round size=sm data-testid="files-refresh" '
-                        'title="Refresh this folder"'
-                    ).style("color: var(--color-muted, #8892a4);")
+                    if refresh is not None:
+                        # OQ-1/A mitigation: re-scans only the open folder then
+                        # re-renders (mount._refresh_selected_folder) -- distinct
+                        # from the toolbar's "Refresh everything".
+                        ui.button(icon="refresh", on_click=lambda _evt: refresh()).props(
+                            'flat dense round size=sm data-testid="files-refresh" '
+                            'title="Refresh this folder"'
+                        ).style("color: var(--color-muted, #8892a4);")
+                    toggle_density = on_toggle_density
+                    if toggle_density is not None:
+                        # Row density (§4.8): compact <-> comfortable, rides ?density=.
+                        is_compact = s.density == DENSITY_COMPACT
+                        ui.button(
+                            icon="density_large" if is_compact else "density_small",
+                            on_click=lambda _evt, cb=toggle_density: cb(),
+                        ).props(
+                            'flat dense round size=sm data-testid="files-density-toggle" '
+                            f'title="{"Comfortable rows" if is_compact else "Compact rows"}"'
+                        ).style("color: var(--color-muted, #8892a4);")
+                    _render_sync_legend()
 
                 with framed_pane(
                     "Files",
@@ -413,6 +444,7 @@ def render_file_explorer_page(
                     testid="files-pane",
                     header_extra=_files_header_extra,
                     count_left=True,
+                    card_classes=density_card_class(s.density),
                 ):
                     _render_centre_file_list(
                         s,
@@ -554,6 +586,46 @@ def render_file_explorer_page(
                 ui.button("Clear verified runs", on_click=lambda _evt: on_clear_verified()).props(
                     'flat data-testid="footer-clear-verified"'
                 )
+
+
+def _render_sync_legend() -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
+    """Render the Files-header sync-status legend ("?") popover.
+
+    Lists each sync state's icon + meaning, sourced from
+    :func:`sync_status_icon.sync_legend_entries` (which reads ``_STATUS_TO_PROPS``,
+    the single source of truth) so the legend can't drift from the icons the
+    file list / metadata pane actually render.
+    """
+    try:
+        from nicegui import ui
+    except Exception:
+        return
+    from exlab_wizard.ui.components.sync_status_icon import sync_legend_entries
+
+    with (
+        ui.button(icon="help_outline")
+        .props('flat dense round size=sm data-testid="files-legend" title="Sync status legend"')
+        .style("color: var(--color-muted, #8892a4);"),
+        ui.menu()
+        .props('data-testid="files-legend-menu"')
+        .style("padding: var(--sp-1, 0.25rem) 0;"),
+    ):
+        ui.label("Sync status").style(
+            "font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; "
+            "color: var(--color-muted); font-weight: 600; padding: var(--sp-1) var(--sp-3);"
+        )
+        for entry in sync_legend_entries():
+            with (
+                ui.row()
+                .classes("items-center")
+                .style(
+                    "gap: var(--sp-2, 0.5rem); padding: var(--sp-1) var(--sp-3); flex-wrap: nowrap;"
+                )
+            ):
+                ui.icon(entry["icon_name"]).style(
+                    f"color: var({entry['color_var']}); font-size: 1rem;"
+                )
+                ui.label(entry["tooltip"]).style("font-size: var(--text-sm); white-space: nowrap;")
 
 
 def _render_centre_file_list(

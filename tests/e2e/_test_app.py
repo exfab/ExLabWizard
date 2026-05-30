@@ -474,6 +474,16 @@ def build_test_app() -> FastAPI:
                 )
             )
 
+        def _on_toggle_density() -> None:
+            new_density = "" if density == "compact" else "compact"
+            test_state.last_action = f"toggle_density:{new_density or 'comfortable'}"
+            ui.navigate.to(
+                "/main"
+                + _mount._build_main_query(
+                    selected, right_pane, file=file, q=q, density=new_density
+                )
+            )
+
         main_page.render_file_explorer_page(
             on_open_new_project=_on_open_new_project,
             on_open_new_run=_on_open_new_run,
@@ -491,6 +501,7 @@ def build_test_app() -> FastAPI:
             on_select_file=_on_select_file,
             on_refresh_folder=_on_refresh_folder,
             on_search=_on_search,
+            on_toggle_density=_on_toggle_density,
             state=state,
             hierarchy=hierarchy,
             file_list_entries=feed_entries,
