@@ -24,9 +24,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from exlab_wizard.logging import get_logger
+from exlab_wizard.template.resolution import TemplateChoices, reconcile_selection
 from exlab_wizard.ui.components import session_progress
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from exlab_wizard.ui.pages.templates import TemplateQuestion
 
 _log = get_logger(__name__)
@@ -66,6 +69,11 @@ class ProjectWizardState:
     lims_project_name: str = ""
     selected_lims_source: str = "manual"
     selected_template: str | None = None
+    # Absolute path of the resolved template the operator picked, so
+    # ``on_submit`` renders the exact file the wizard listed -- a
+    # per-equipment project template wins over a same-named global one and
+    # the pipeline must not re-pick (Backend Spec §5.0; design §4.3).
+    selected_template_path: Path | None = None
     selected_equipment: str | None = None
     template_variables: dict[str, Any] = field(default_factory=dict)
     readme_fields: dict[str, str] = field(default_factory=dict)
@@ -134,6 +142,8 @@ def render_project_wizard(
     templates: list[str] | None = None,
     equipment_ids: list[str] | None = None,
     template_questions: dict[str, list[TemplateQuestion]] | None = None,
+    template_paths: dict[str, Path] | None = None,
+    on_resolve: Callable[[str | None], TemplateChoices] | None = None,
     lims_projects: list[dict[str, Any]] | None = None,
     on_submit: Callable[[ProjectWizardState], Any] | None = None,
     on_cancel: Callable[[], None] | None = None,
@@ -144,28 +154,44 @@ def render_project_wizard(
     operator can pick from; ``equipment_ids`` is the configured
     equipment list; ``template_questions`` maps each template name to
     its parsed ``copier.yml`` questions (drives the dynamic Variables
-    step); ``lims_projects`` is the cache / offline-catalogue project
+    step); ``template_paths`` maps each name to the resolved absolute
+    source path; ``lims_projects`` is the cache / offline-catalogue project
     list backing the LIMS project picker. Each step binds real inputs
     into ``state`` so the confirm step's ``on_submit`` sees a fully
     populated :class:`ProjectWizardState`.
+
+    ``on_resolve`` enables per-instance template resolution: when supplied,
+    the template step re-resolves the offered project templates from the
+    operator's chosen equipment, so a per-equipment project template
+    shadows a same-named global one. It is called with ``(equipment_id)``
+    and returns a :class:`TemplateChoices`. Because the equipment step
+    (step 3) follows the template step (step 2), the template panel
+    re-resolves whenever equipment changes (and reflects it on a step-back).
+    When ``on_resolve`` is ``None`` the static ``templates`` list is used
+    unchanged (the pre-resolver behaviour).
 
     Returns the NiceGUI dialog (or, in tests, a payload describing the
     rendered steps).
     """
 
     s = state or ProjectWizardState()
-    template_choices = list(templates or [])
+    initial = TemplateChoices(
+        names=list(templates or []),
+        questions=dict(template_questions or {}),
+        paths=dict(template_paths or {}),
+    )
     equipment_choices = list(equipment_ids or [])
-    questions_map = template_questions or {}
     project_rows = list(lims_projects or [])
+    # Mutable holder so the refreshable panels read the latest resolution.
+    choices = {"current": initial}
     payload = {
         "steps": PROJECT_WIZARD_STEPS,
         "active": s.active_step,
         "can_advance": can_advance(s),
-        "templates": template_choices,
+        "templates": initial.names,
         "equipment_ids": equipment_choices,
         "lims_projects": [row.get("short_id") for row in project_rows],
-        "template_questions": {k: [q.key for q in v] for k, v in questions_map.items()},
+        "template_questions": {k: [q.key for q in v] for k, v in initial.questions.items()},
     }
 
     try:
@@ -175,10 +201,30 @@ def render_project_wizard(
 
     from exlab_wizard.ui.pages.templates import render_question_field
 
+    def _reresolve() -> None:
+        """Refresh the offered templates from the current equipment.
+
+        A surviving selection has its resolved path **re-derived** from the
+        new context: a same-named per-equipment template shadows the global
+        one at a *different* path, and the rebuilt ``ui.select`` keeps the
+        value without re-firing ``on_value_change`` -- so without this the
+        stored path (and thus what submit renders) would go stale. A
+        selection whose name no longer appears is cleared outright, along
+        with its now-orphaned variables.
+        """
+        if on_resolve is None:
+            return
+        choices["current"] = on_resolve(s.selected_equipment)
+        name, path, dropped = reconcile_selection(choices["current"], s.selected_template)
+        s.selected_template = name
+        s.selected_template_path = path
+        if dropped:
+            s.template_variables.clear()
+
     @ui.refreshable
     def _variables_panel() -> None:
         """Dynamic Copier-variable form for the currently-picked template."""
-        questions = questions_map.get(s.selected_template or "", [])
+        questions = choices["current"].questions.get(s.selected_template or "", [])
         if not questions:
             ui.label("This template declares no variables; Copier defaults are used.").props(
                 'data-testid="wizard-project-variables-empty"'
@@ -188,6 +234,25 @@ def render_project_wizard(
             render_question_field(
                 question, s.template_variables, testid_prefix="wizard-project-var"
             )
+
+    @ui.refreshable
+    def _template_panel() -> None:
+        """Project-template select, re-resolved from the chosen equipment."""
+        _reresolve()
+        names = choices["current"].names
+
+        def _on_template(event: Any) -> None:
+            s.selected_template = event.value or None
+            s.selected_template_path = (
+                choices["current"].paths.get(event.value) if event.value else None
+            )
+            _variables_panel.refresh()
+
+        ui.select(
+            names,
+            value=s.selected_template if s.selected_template in names else None,
+            label="Project template",
+        ).props('data-testid="wizard-project-template"').on_value_change(_on_template)
 
     card = (
         ui.card()
@@ -218,14 +283,15 @@ def render_project_wizard(
                     ui.label(_step_helper_text(step_id, s)).style("color: var(--color-body);")
                     if step_id == "variables":
                         _variables_panel()
+                    elif step_id == "template":
+                        _template_panel()
                     else:
                         _render_project_step_fields(
                             step_id,
                             s,
-                            template_choices,
                             equipment_choices,
                             project_rows,
-                            on_template_change=_variables_panel.refresh,
+                            on_equipment_change=_template_panel.refresh,
                         )
                     if step_id == "confirm":
 
@@ -285,18 +351,19 @@ def render_project_wizard(
 def _render_project_step_fields(
     step_id: str,
     state: ProjectWizardState,
-    templates: list[str],
     equipment_ids: list[str],
     lims_projects: list[dict[str, Any]],
     *,
-    on_template_change: Callable[..., Any],
+    on_equipment_change: Callable[..., Any],
 ) -> None:
     """Render the bound input fields for one project-wizard step.
 
     Each widget two-way binds into ``state`` so values entered on an
     earlier step survive while the operator moves through the stepper.
-    The "variables" step is rendered by the caller's refreshable panel,
-    not here.
+    The "variables" and "template" steps are rendered by the caller's
+    refreshable panels, not here. ``on_equipment_change`` is called when the
+    operator changes equipment so the template panel re-resolves its
+    per-equipment chain.
     """
     from nicegui import ui
 
@@ -361,24 +428,16 @@ def _render_project_step_fields(
                 gate.set_visibility(False)
 
             gate.on_click(_reveal_manual)
-    elif step_id == "template":
-
-        def _on_template(event: Any) -> None:
-            state.selected_template = event.value or None
-            on_template_change()
-
-        ui.select(
-            templates,
-            value=state.selected_template if state.selected_template in templates else None,
-            label="Project template",
-        ).props('data-testid="wizard-project-template"').on_value_change(_on_template)
     elif step_id == "equipment":
         ui.select(
             equipment_ids,
             value=(state.selected_equipment if state.selected_equipment in equipment_ids else None),
             label="Equipment",
         ).props('data-testid="wizard-project-equipment"').on_value_change(
-            lambda e: setattr(state, "selected_equipment", e.value or None)
+            lambda e: (
+                setattr(state, "selected_equipment", e.value or None),
+                on_equipment_change(),
+            )
         )
     elif step_id == "readme":
         for field_id, label in (

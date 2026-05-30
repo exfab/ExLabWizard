@@ -149,61 +149,58 @@ class TemplateEngine:
                 f"failed to parse {manifest_path}: {exc}",
             ) from exc
 
-        # _exlab_type: must be present, valid, and match the caller scope.
-        raw_type = manifest.get("_exlab_type")
-        if not isinstance(raw_type, str) or not raw_type:
-            raise TemplateLoadError(
-                f"{manifest_path}: _exlab_type missing or empty",
-            )
-        try:
-            parsed_type = TemplateType(raw_type)
-        except ValueError as exc:
-            raise TemplateLoadError(
-                f"{manifest_path}: _exlab_type must be one of "
-                f"{sorted(t.value for t in TemplateType)}, got {raw_type!r}",
-            ) from exc
+        # Manifest validation is delegated to ``template.lint`` so the
+        # resolve-time and author-time rule sets never drift (§5.1). Imported
+        # lazily to avoid a circular import (``lint`` imports this module's
+        # :data:`CORE_README_FIELD_IDS`). ``lint_manifest_dict`` produces the
+        # same ERROR messages this method used to raise inline; we re-raise
+        # each as the historical exception type.
+        from exlab_wizard.template import lint as _lint
+
+        findings = _lint.lint_manifest_dict(manifest, manifest_path)
+        errors = [f for f in findings if f.severity == "error"]
+
+        # Raise the type ERRORs (missing / invalid) first -- the scope-match
+        # check below cannot run without a valid type, matching the original
+        # raise order.
+        for finding in errors:
+            if finding.code in {"template_type_missing", "template_type_invalid"}:
+                raise TemplateLoadError(finding.message)
+
+        # _exlab_type matches the caller scope. This is resolve-specific (the
+        # author-time lint has no caller scope) so it is not a lint finding.
+        parsed_type = TemplateType(manifest["_exlab_type"])
         if parsed_type is not scope:
             raise TemplateLoadError(
                 f"{manifest_path}: _exlab_type {parsed_type.value!r} does not "
                 f"match requested scope {scope.value!r}",
             )
 
-        # _exlab_version: required non-empty string per §5.7.
-        exlab_version = manifest.get("_exlab_version")
-        if not isinstance(exlab_version, str) or not exlab_version.strip():
-            raise TemplateLoadError(
-                f"{manifest_path}: _exlab_version is required and must be a "
-                f"non-empty string (§5.7)",
-            )
+        # Remaining ERRORs (version / run_scope / core-field redeclaration).
+        for finding in errors:
+            if finding.code == "core_field_redeclared":
+                raise TemplateCoreFieldRedeclaredError(finding.message)
+            if finding.code in {"template_type_missing", "template_type_invalid"}:
+                continue  # already raised above
+            raise TemplateLoadError(finding.message)
 
-        # _exlab_run_scope: required for run templates, optional otherwise.
-        run_scope: RunScope | None = None
-        if parsed_type is TemplateType.RUN:
-            raw_scope = manifest.get("_exlab_run_scope")
-            if not isinstance(raw_scope, str) or not raw_scope:
-                raise TemplateLoadError(
-                    f"{manifest_path}: _exlab_run_scope is required for run "
-                    f"templates and must be one of "
-                    f"{sorted(s.value for s in RunScope)}",
-                )
-            try:
-                run_scope = RunScope(raw_scope)
-            except ValueError as exc:
-                raise TemplateLoadError(
-                    f"{manifest_path}: _exlab_run_scope must be one of "
-                    f"{sorted(s.value for s in RunScope)}, got {raw_scope!r}",
-                ) from exc
-
-        # _exlab_readme.fields: reject redeclaration of core fields.
-        extra_fields = self._extract_readme_fields(manifest, manifest_path)
-
-        # _tasks: silently ignored per §5.5; warn so authors know.
-        if "_tasks" in manifest:
+        # _tasks: silently ignored per §5.5; warn so authors know. The lint
+        # surfaces this as a WARN finding; we keep the resolve-time log.
+        if any(f.code == "tasks_present" for f in findings):
             _log.warning(
                 "template %s declares _tasks; silently ignored "
                 "(unsafe=False, see Backend Spec §5.5)",
                 template_path,
             )
+
+        # All ERROR gates passed -- build the resolved view.
+        exlab_version = manifest["_exlab_version"]
+        run_scope: RunScope | None = None
+        if parsed_type is TemplateType.RUN:
+            run_scope = RunScope(manifest["_exlab_run_scope"])
+
+        # _exlab_readme.fields: tolerated/normalised the same way as before.
+        extra_fields = self._extract_readme_fields(manifest, manifest_path)
 
         # _exlab_plugins: optional ordered list (§6.2.3).
         raw_plugins = manifest.get("_exlab_plugins")

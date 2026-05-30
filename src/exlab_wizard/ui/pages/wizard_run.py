@@ -24,9 +24,12 @@ from typing import TYPE_CHECKING, Any
 from exlab_wizard.constants import RunKind
 from exlab_wizard.logging import get_logger
 from exlab_wizard.paths import run_dir_stem
+from exlab_wizard.template.resolution import TemplateChoices, reconcile_selection
 from exlab_wizard.ui.components import mode_badge, session_progress
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from exlab_wizard.ui.pages.templates import TemplateQuestion
 
 _log = get_logger(__name__)
@@ -60,6 +63,13 @@ class RunWizardState:
     selected_project_name: str | None = None
     selected_equipment: str | None = None
     selected_template: str | None = None
+    # Absolute path of the resolved template the operator picked. The
+    # template select stores it here so ``on_submit`` renders the exact
+    # file the wizard listed -- a per-instance (per-project / per-equipment)
+    # template wins over a same-named global one, and the pipeline must not
+    # re-pick (Backend Spec §5.0; design §4.3). ``None`` until a template
+    # is chosen.
+    selected_template_path: Path | None = None
     template_variables: dict[str, Any] = field(default_factory=dict)
     readme_fields: dict[str, str] = field(default_factory=dict)
     validator_findings: list[dict[str, Any]] = field(default_factory=list)
@@ -145,6 +155,8 @@ def render_run_wizard(
     templates: list[str] | None = None,
     equipment_ids: list[str] | None = None,
     template_questions: dict[str, list[TemplateQuestion]] | None = None,
+    template_paths: dict[str, Path] | None = None,
+    on_resolve: Callable[[str | None, str | None], TemplateChoices] | None = None,
     on_submit: Callable[[RunWizardState], Any] | None = None,
     on_cancel: Callable[[], None] | None = None,
 ) -> Any:
@@ -153,14 +165,32 @@ def render_run_wizard(
     ``templates`` lists run-scope template names appropriate to the
     run kind; ``equipment_ids`` is the configured equipment list;
     ``template_questions`` maps each template name to its parsed
-    ``copier.yml`` questions (drives the dynamic Variables step). Each
-    step binds real inputs into ``state`` so the confirm step's
-    ``on_submit`` sees a fully-populated :class:`RunWizardState`.
+    ``copier.yml`` questions (drives the dynamic Variables step);
+    ``template_paths`` maps each template name to the absolute path of the
+    resolved source. Each step binds real inputs into ``state`` so the
+    confirm step's ``on_submit`` sees a fully-populated
+    :class:`RunWizardState`.
+
+    ``on_resolve`` enables per-instance template resolution: when supplied,
+    the template step re-resolves the offered templates from the operator's
+    current project + equipment selection (step 1 precedes the template
+    step, so both are known). It is called with
+    ``(equipment_id, project_name)`` and returns a :class:`TemplateChoices`
+    of the names / questions / absolute paths for that context, so a
+    per-project or per-equipment run template shadows a same-named global
+    one. When ``on_resolve`` is ``None`` the static ``templates`` list is
+    used unchanged (the pre-resolver behaviour).
     """
 
-    template_choices = list(templates or [])
+    initial = TemplateChoices(
+        names=list(templates or []),
+        questions=dict(template_questions or {}),
+        paths=dict(template_paths or {}),
+    )
     equipment_choices = list(equipment_ids or [])
-    questions_map = template_questions or {}
+    # Mutable holder so the refreshable template / variables panels read the
+    # latest resolution after the operator changes project / equipment.
+    choices = {"current": initial}
     payload = {
         "title": title_text(state),
         "mode_badge": mode_badge.mode_badge_props(state.run_kind),
@@ -168,9 +198,9 @@ def render_run_wizard(
         "active": state.active_step,
         "primary_label": primary_button_label(state),
         "primary_color": primary_button_color(state),
-        "templates": template_choices,
+        "templates": initial.names,
         "equipment_ids": equipment_choices,
-        "template_questions": {k: [q.key for q in v] for k, v in questions_map.items()},
+        "template_questions": {k: [q.key for q in v] for k, v in initial.questions.items()},
     }
 
     try:
@@ -180,10 +210,30 @@ def render_run_wizard(
 
     from exlab_wizard.ui.pages.templates import render_question_field
 
+    def _reresolve() -> None:
+        """Refresh the offered templates from the current project/equipment.
+
+        A surviving selection has its resolved path **re-derived** from the
+        new context: a same-named per-project/per-equipment template shadows
+        the global one at a *different* path, and the rebuilt ``ui.select``
+        keeps the value without re-firing ``on_value_change`` -- so without
+        this the stored path (and thus what submit renders) would go stale.
+        A selection whose name no longer appears is cleared outright, along
+        with its now-orphaned variables.
+        """
+        if on_resolve is None:
+            return
+        choices["current"] = on_resolve(state.selected_equipment, state.selected_project_name)
+        name, path, dropped = reconcile_selection(choices["current"], state.selected_template)
+        state.selected_template = name
+        state.selected_template_path = path
+        if dropped:
+            state.template_variables.clear()
+
     @ui.refreshable
     def _variables_panel() -> None:
         """Dynamic Copier-variable form for the currently-picked template."""
-        questions = questions_map.get(state.selected_template or "", [])
+        questions = choices["current"].questions.get(state.selected_template or "", [])
         if not questions:
             ui.label("This template declares no variables; Copier defaults are used.").props(
                 'data-testid="wizard-run-variables-empty"'
@@ -193,6 +243,31 @@ def render_run_wizard(
             render_question_field(
                 question, state.template_variables, testid_prefix="wizard-run-var"
             )
+
+    @ui.refreshable
+    def _template_panel() -> None:
+        """Run-template select, re-resolved from the current project/equipment.
+
+        Refreshed when the operator changes project or equipment on step 1
+        so a per-project / per-equipment run template appears (and shadows a
+        same-named global one). Picking a template stores its absolute
+        resolved path on the state so submit renders the exact file listed.
+        """
+        _reresolve()
+        names = choices["current"].names
+
+        def _on_template(event: Any) -> None:
+            state.selected_template = event.value or None
+            state.selected_template_path = (
+                choices["current"].paths.get(event.value) if event.value else None
+            )
+            _variables_panel.refresh()
+
+        ui.select(
+            names,
+            value=state.selected_template if state.selected_template in names else None,
+            label="Run template",
+        ).props('data-testid="wizard-run-template"').on_value_change(_on_template)
 
     card = (
         ui.card()
@@ -224,13 +299,14 @@ def render_run_wizard(
                     ui.label(_step_helper_text(step_id, state)).style("color: var(--color-body);")
                     if step_id == "variables":
                         _variables_panel()
+                    elif step_id == "template":
+                        _template_panel()
                     else:
                         _render_run_step_fields(
                             step_id,
                             state,
-                            template_choices,
                             equipment_choices,
-                            on_template_change=_variables_panel.refresh,
+                            on_project_equipment_change=_template_panel.refresh,
                         )
                     if step_id == "confirm":
 
@@ -294,15 +370,16 @@ def render_run_wizard(
 def _render_run_step_fields(
     step_id: str,
     state: RunWizardState,
-    templates: list[str],
     equipment_ids: list[str],
     *,
-    on_template_change: Callable[..., Any],
+    on_project_equipment_change: Callable[..., Any],
 ) -> None:
     """Render the bound input fields for one run-wizard step.
 
-    The "variables" step is rendered by the caller's refreshable panel,
-    not here.
+    The "variables" and "template" steps are rendered by the caller's
+    refreshable panels, not here. ``on_project_equipment_change`` is called
+    when the operator changes the parent project or equipment so the
+    template panel re-resolves its per-instance chain.
     """
     from nicegui import ui
 
@@ -311,26 +388,21 @@ def _render_run_step_fields(
             label="Parent project name",
             value=state.selected_project_name or "",
         ).props('data-testid="wizard-run-project-name"').on_value_change(
-            lambda e: setattr(state, "selected_project_name", e.value or None)
+            lambda e: (
+                setattr(state, "selected_project_name", e.value or None),
+                on_project_equipment_change(),
+            )
         )
         ui.select(
             equipment_ids,
             value=(state.selected_equipment if state.selected_equipment in equipment_ids else None),
             label="Equipment",
         ).props('data-testid="wizard-run-equipment"').on_value_change(
-            lambda e: setattr(state, "selected_equipment", e.value or None)
+            lambda e: (
+                setattr(state, "selected_equipment", e.value or None),
+                on_project_equipment_change(),
+            )
         )
-    elif step_id == "template":
-
-        def _on_template(event: Any) -> None:
-            state.selected_template = event.value or None
-            on_template_change()
-
-        ui.select(
-            templates,
-            value=state.selected_template if state.selected_template in templates else None,
-            label="Run template",
-        ).props('data-testid="wizard-run-template"').on_value_change(_on_template)
     elif step_id == "readme":
         for field_id, label in (
             ("label", "Label"),

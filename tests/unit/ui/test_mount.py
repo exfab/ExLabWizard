@@ -773,8 +773,8 @@ def test_template_names_lists_summary_names(monkeypatch: pytest.MonkeyPatch) -> 
     from exlab_wizard.ui.pages import templates as templates_page
 
     summaries = [
-        SimpleNamespace(name="proj_a", path=Path("/tmp/tpl/proj_a")),
-        SimpleNamespace(name="proj_b", path=Path("/tmp/tpl/proj_b")),
+        SimpleNamespace(name="proj_a", path=Path("/tmp/tpl/proj_a"), run_scope=None),
+        SimpleNamespace(name="proj_b", path=Path("/tmp/tpl/proj_b"), run_scope=None),
     ]
     monkeypatch.setattr(templates_page, "list_templates", lambda _d, template_type=None: summaries)
     deps = _deps(config=_config())
@@ -934,7 +934,9 @@ def test_template_questions_map_resolves_questions(
     from exlab_wizard.template import copier_driver
     from exlab_wizard.ui.pages import templates as templates_page
 
-    summaries = [SimpleNamespace(name="proj_basic", path=Path("/tmp/tpl/proj_basic"))]
+    summaries = [
+        SimpleNamespace(name="proj_basic", path=Path("/tmp/tpl/proj_basic"), run_scope=None)
+    ]
     monkeypatch.setattr(templates_page, "list_templates", lambda _d, template_type=None: summaries)
 
     class _Engine:
@@ -955,7 +957,7 @@ def test_template_questions_map_skips_unresolvable_template(
     from exlab_wizard.template import copier_driver
     from exlab_wizard.ui.pages import templates as templates_page
 
-    summaries = [SimpleNamespace(name="broken", path=Path("/tmp/tpl/broken"))]
+    summaries = [SimpleNamespace(name="broken", path=Path("/tmp/tpl/broken"), run_scope=None)]
     monkeypatch.setattr(templates_page, "list_templates", lambda _d, template_type=None: summaries)
 
     class _Engine:
@@ -967,6 +969,98 @@ def test_template_questions_map_skips_unresolvable_template(
     with caplog.at_level("WARNING"):
         assert mount._template_questions_map(_deps(config=_config()), "run") == {}
     assert any("failed to resolve" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# _resolve_template_choices -- per-instance resolution (Phase 5)
+# ---------------------------------------------------------------------------
+
+
+def _write_min_template(
+    parent: Path, *, name: str, template_type: str, run_scope: str | None = None
+) -> Path:
+    """Write a minimal valid copier.yml template under ``parent/<name>``."""
+    import yaml
+
+    from exlab_wizard.constants import COPIER_MANIFEST_NAME
+
+    root = parent / name
+    root.mkdir(parents=True, exist_ok=True)
+    manifest: dict[str, Any] = {"_exlab_type": template_type, "_exlab_version": "1.0"}
+    if run_scope is not None:
+        manifest["_exlab_run_scope"] = run_scope
+    (root / COPIER_MANIFEST_NAME).write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    return root
+
+
+def test_resolve_template_choices_prefers_per_equipment_and_captures_path(
+    tmp_path: Path,
+) -> None:
+    """A per-equipment project template shadows a same-named global one.
+
+    Proves Phase 5 end to end at the mount layer: the resolver merges the
+    per-equipment store over the global store nearest-wins, and the returned
+    ``paths`` point at the *resolved* (per-equipment) source -- which is what
+    the wizard stores on the state and submits, so the pipeline renders the
+    override rather than ``templates_dir / name``.
+    """
+    from exlab_wizard.constants import CACHE_DIR_NAME
+
+    global_dir = tmp_path / "global"
+    local_root = tmp_path / "local"
+    equipment_id = "MICROSCOPE_01"
+    # Same template name in both scopes; the per-equipment copy must win.
+    _write_min_template(global_dir, name="lab_default", template_type="project")
+    per_eq_dir = local_root / equipment_id / CACHE_DIR_NAME / "templates" / "project"
+    per_eq_template = _write_min_template(per_eq_dir, name="lab_default", template_type="project")
+    # A global-only template still surfaces, ranked after the per-equipment one.
+    _write_min_template(global_dir, name="global_only", template_type="project")
+
+    deps = _deps(
+        config=_config(
+            templates_dir=str(global_dir),
+            local_root=str(local_root),
+            equipment=(SimpleNamespace(id=equipment_id),),
+        )
+    )
+
+    # No equipment context -> global only (degrades gracefully, prior behaviour).
+    bare = mount._resolve_template_choices(deps, "project")
+    assert set(bare.names) == {"lab_default", "global_only"}
+    assert bare.paths["lab_default"] == global_dir / "lab_default"
+
+    # With the equipment context the per-equipment copy shadows the global one.
+    scoped = mount._resolve_template_choices(deps, "project", equipment_id=equipment_id)
+    assert scoped.names[0] == "lab_default"
+    assert "global_only" in scoped.names
+    assert scoped.paths["lab_default"] == per_eq_template
+
+
+async def test_submit_run_uses_resolved_template_path(tmp_path: Path) -> None:
+    """``_submit_run`` renders the resolved path the wizard stored, not name-join.
+
+    The fix that makes per-instance selection real: when the wizard state
+    carries ``selected_template_path`` (the absolute resolved source), submit
+    must use it verbatim rather than ``templates_dir / selected_template``.
+    """
+    nav = _NavSpy()
+    controller = _FakeController(final_state=SessionState.DONE)
+    deps = _deps(controller=controller, config=_config(templates_dir=str(tmp_path / "global")))
+    resolved = (
+        tmp_path / "local" / "MICROSCOPE_01" / "ProjA" / ".exlab-wizard" / "templates" / "run"
+    )
+    resolved.mkdir(parents=True)
+    state = SimpleNamespace(
+        selected_template="confocal",
+        selected_template_path=resolved,
+        selected_equipment="MICROSCOPE_01",
+        selected_project_name="ProjA",
+        template_variables={},
+        readme_fields={"label": "L", "operator": "op", "objective": "obj"},
+    )
+    await mount._submit_run(deps, state, RunKind.EXPERIMENTAL, nav)
+    assert len(controller.created) == 1
+    assert controller.created[0].template_path == resolved
 
 
 # ---------------------------------------------------------------------------
@@ -2652,26 +2746,37 @@ async def test_submit_run_toasts_without_template() -> None:
 
 
 def test_render_run_wizard_builds_page(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``_render_run_wizard`` wires templates/equipment into the run-wizard page."""
+    """``_render_run_wizard`` wires resolved templates/equipment + ``on_resolve``."""
+    from exlab_wizard.template.resolution import TemplateChoices
     from exlab_wizard.ui.pages import wizard_run as wizard_run_page
 
     captured: dict[str, Any] = {}
 
-    def _fake_render(*, state: Any, templates: Any, equipment_ids: Any, **kwargs: Any) -> Any:
+    def _fake_render(
+        *, state: Any, templates: Any, equipment_ids: Any, on_resolve: Any = None, **kwargs: Any
+    ) -> Any:
         captured["run_kind"] = state.run_kind
         captured["templates"] = templates
         captured["equipment_ids"] = equipment_ids
+        captured["on_resolve"] = on_resolve
         return "PAGE"
 
+    # The run wizard resolves its templates through ``_resolve_template_choices``
+    # (names + questions + absolute paths) rather than the legacy producers.
     monkeypatch.setattr(wizard_run_page, "render_run_wizard", _fake_render)
-    monkeypatch.setattr(mount, "_template_names", lambda _deps, _t: ["run_basic"])
-    monkeypatch.setattr(mount, "_template_questions_map", lambda _deps, _t: {})
+    monkeypatch.setattr(
+        mount,
+        "_resolve_template_choices",
+        lambda _deps, _t, **_kw: TemplateChoices(names=["run_basic"]),
+    )
     deps = _deps(config=_config(equipment=(SimpleNamespace(id="EQ1"),)))
     out = mount._render_run_wizard(deps, RunKind.TEST, _UiSpy())
     assert out == "PAGE"
     assert captured["run_kind"] is RunKind.TEST
     assert captured["templates"] == ["run_basic"]
     assert captured["equipment_ids"] == ["EQ1"]
+    # ``on_resolve`` is wired so the template step re-resolves per-instance.
+    assert callable(captured["on_resolve"])
 
 
 # ---------------------------------------------------------------------------

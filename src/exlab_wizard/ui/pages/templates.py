@@ -27,6 +27,13 @@ import yaml
 from exlab_wizard.constants import COPIER_MANIFEST_NAME, RunScope, TemplateType
 from exlab_wizard.logging import get_logger
 
+# ``TemplateQuestion`` / ``template_questions`` live in ``template.manifest``
+# (a non-UI module) so the typed manifest model can reuse them without
+# importing this NiceGUI page. Re-exported here so existing callers
+# (``from exlab_wizard.ui.pages.templates import TemplateQuestion``) keep
+# working unchanged.
+from exlab_wizard.template.manifest import TemplateQuestion, template_questions
+
 __all__ = [
     "TemplateQuestion",
     "TemplateSummary",
@@ -60,86 +67,6 @@ class TemplateSummary:
     template_type: str
     run_scope: str | None
     description: str
-
-
-@dataclass(frozen=True)
-class TemplateQuestion:
-    """One Copier question parsed from a template's ``copier.yml``.
-
-    ``kind`` is normalised to the widget family the wizard renders:
-    ``str`` / ``int`` / ``float`` / ``bool`` / ``choice``. ``choices``
-    is populated only for ``choice`` questions. ``secret`` flags a
-    password-style ``str`` input.
-    """
-
-    key: str
-    kind: str
-    default: Any = None
-    choices: tuple[Any, ...] = ()
-    help: str = ""
-    secret: bool = False
-
-
-# Copier reserves ``_``-prefixed manifest keys for itself; everything
-# else under the top level is an operator-answerable question.
-_COPIER_TYPE_TO_KIND: dict[str, str] = {
-    "str": "str",
-    "int": "int",
-    "float": "float",
-    "bool": "bool",
-    "yaml": "str",
-    "json": "str",
-}
-
-
-def template_questions(raw_manifest: dict[str, Any]) -> list[TemplateQuestion]:
-    """Parse the operator-answerable questions out of a ``copier.yml`` body.
-
-    Handles both Copier question forms:
-
-    * **long form** -- ``key: {type: ..., default: ..., choices: ...}``
-    * **short form** -- ``key: <scalar>`` (the scalar is the default;
-      the type is inferred from it)
-
-    ``_``-prefixed keys (Copier / ``_exlab_*`` metadata) are skipped.
-    Questions carrying a ``when`` clause are still returned -- the
-    wizard renders them unconditionally for v1.
-    """
-    questions: list[TemplateQuestion] = []
-    for key, spec in raw_manifest.items():
-        if key.startswith("_"):
-            continue
-        if isinstance(spec, dict):
-            raw_type = str(spec.get("type", "str"))
-            raw_choices = spec.get("choices")
-            choices: tuple[Any, ...] = ()
-            if isinstance(raw_choices, dict):
-                choices = tuple(raw_choices.values())
-            elif isinstance(raw_choices, list):
-                choices = tuple(raw_choices)
-            kind = "choice" if choices else _COPIER_TYPE_TO_KIND.get(raw_type, "str")
-            questions.append(
-                TemplateQuestion(
-                    key=key,
-                    kind=kind,
-                    default=spec.get("default"),
-                    choices=choices,
-                    help=str(spec.get("help", "")),
-                    secret=bool(spec.get("secret", False)),
-                )
-            )
-        else:
-            # Short form: the scalar is the default; infer the kind.
-            if isinstance(spec, bool):
-                kind = "bool"
-            elif isinstance(spec, int):
-                kind = "int"
-            elif isinstance(spec, float):
-                kind = "float"
-            else:
-                kind = "str"
-            questions.append(TemplateQuestion(key=key, kind=kind, default=spec))
-    return questions
 
 
 def list_templates(
@@ -202,43 +129,23 @@ def create_template(
     Returns the new template's root directory. Raises ``ValueError`` on
     an empty / duplicate name, an unknown ``template_type``, or a run
     template missing its ``run_scope``.
+
+    The scaffold logic lives in
+    :func:`exlab_wizard.template.authoring.create_template_dir` (the
+    non-UI authoring service); this thin wrapper preserves the historical
+    page-level signature and is imported lazily to avoid an import cycle.
     """
-    clean_name = name.strip()
-    if not clean_name:
-        msg = "template name must not be empty"
-        raise ValueError(msg)
-    if template_type not in {t.value for t in TemplateType}:
-        msg = f"unknown template type {template_type!r}"
-        raise ValueError(msg)
-    if template_type == TemplateType.RUN.value:
-        if run_scope is None:
-            msg = "run templates require a run_scope"
-            raise ValueError(msg)
-        if run_scope not in {s.value for s in RunScope}:
-            msg = f"unknown run_scope {run_scope!r}"
-            raise ValueError(msg)
+    # Imported lazily so this NiceGUI page module does not pull in the
+    # authoring service (and its deps) at import time.
+    from exlab_wizard.template.authoring import create_template_dir
 
-    root = Path(templates_dir) / clean_name
-    if root.exists():
-        msg = f"a template named {clean_name!r} already exists"
-        raise ValueError(msg)
-    root.mkdir(parents=True)
-
-    manifest: dict[str, Any] = {
-        "_min_copier_version": "9.0",
-        "_exlab_type": template_type,
-        "_exlab_version": "1.0",
-        "_exlab_description": description.strip(),
-    }
-    if template_type == TemplateType.RUN.value:
-        manifest["_exlab_run_scope"] = run_scope
-    (root / COPIER_MANIFEST_NAME).write_text(
-        yaml.safe_dump(manifest, sort_keys=False),
-        encoding="utf-8",
+    return create_template_dir(
+        Path(templates_dir),
+        name=name,
+        template_type=template_type,
+        description=description,
+        run_scope=run_scope,
     )
-    (root / _SCAFFOLD_CONTENT_NAME).write_text(_SCAFFOLD_CONTENT_BODY, encoding="utf-8")
-    _log.info("scaffolded %s template %r at %s", template_type, clean_name, root)
-    return root
 
 
 def render_question_field(
@@ -298,17 +205,34 @@ def render_template_manager(
     templates: list[TemplateSummary],
     on_create: Callable[[str, str, str, str | None], None] | None = None,
     on_back: Callable[[], None] | None = None,
+    on_edit: Callable[[str], None] | None = None,
+    locations: list[tuple[str, str]] | None = None,
+    on_location_change: Callable[[str], None] | None = None,
 ) -> Any:
     """Render the template manager: existing-template list + create form.
 
     ``on_create`` is invoked with ``(name, template_type, description,
     run_scope)`` when the operator submits the create form;
     ``run_scope`` is ``None`` for non-run templates.
+
+    ``on_edit`` (optional) is invoked with a template name when the
+    operator clicks that row's Edit button -- the caller routes it to the
+    template editor page.
+
+    ``locations`` (optional) is a ``[(label, value), ...]`` scope list (at
+    minimum ``("Global", ...)`` plus one entry per configured equipment /
+    project); when given, a selector is rendered at the top and
+    ``on_location_change(value)`` is invoked when the operator switches
+    scope (the caller re-renders the manager scoped to that location). All
+    three new parameters are optional and default ``None`` so existing
+    callers keep working unchanged.
     """
     payload = {
         "templates": [t.name for t in templates],
         "count": len(templates),
     }
+    if locations is not None:
+        payload["locations"] = list(locations)
     try:
         from nicegui import ui
     except Exception:
@@ -328,13 +252,37 @@ def render_template_manager(
             "font-weight: 600; color: var(--color-heading);"
         )
 
+        # Scope / location selector -----------------------------------------
+        if locations:
+            label_by_value = {value: label for label, value in locations}
+            location_select = ui.select(
+                {value: label for label, value in locations},
+                value=locations[0][1],
+                label="Location",
+            ).props('data-testid="templates-location"')
+            if on_location_change is not None:
+                location_select.on_value_change(
+                    lambda e: on_location_change(e.value) if e.value in label_by_value else None
+                )
+
         # Existing templates ------------------------------------------------
         if templates:
             for summary in templates:
                 scope = f" [{summary.run_scope}]" if summary.run_scope else ""
-                ui.label(f"{summary.name} -- {summary.template_type}{scope}").props(
-                    'data-testid="template-row"'
-                ).style("color: var(--color-body);")
+                with (
+                    ui.row()
+                    .classes("items-center w-full")
+                    .props('data-testid="template-row"')
+                    .style("gap: var(--sp-2);")
+                ):
+                    ui.label(f"{summary.name} -- {summary.template_type}{scope}").style(
+                        "color: var(--color-body); flex: 1;"
+                    )
+                    if on_edit is not None:
+                        ui.button(
+                            "Edit",
+                            on_click=lambda _evt, n=summary.name: on_edit(n),
+                        ).props(f'flat dense data-testid="template-edit-{summary.name}"')
         else:
             ui.label("No templates yet. Create one below.").props(
                 'data-testid="templates-empty"'
