@@ -22,7 +22,9 @@ from typing import Any
 from exlab_wizard.logging import get_logger
 from exlab_wizard.ui import notifications
 from exlab_wizard.ui.components import banner_stack, filter_chips, status_bar_segment
-from exlab_wizard.ui.components.tree import TreeFilters, build_tree
+from exlab_wizard.ui.components.empty_state import empty_state
+from exlab_wizard.ui.components.framed_pane import card_style, framed_pane
+from exlab_wizard.ui.components.tree import TreeFilters, TreeNode, build_nodes, build_tree
 from exlab_wizard.ui.pages.staging import StagingDockState
 
 _log = get_logger(__name__)
@@ -70,6 +72,25 @@ class MainPageState:
     """True when the selected tree node is received equipment (decision 1):
     the three creation buttons (New Project / New Run / New Test Run) are
     disabled while this is True."""
+    # Redesign §4.3/§4.4 (Phase 4, Option B): a file or folder selected in the
+    # centre list. ``selected_file_path`` highlights the row; ``selected_file``
+    # is a render-ready payload assembled by the mount layer (no new fetch for
+    # files -- resolved from the in-memory feed; a one-level scan for folders).
+    # Shape: {"kind": "file"|"folder", "name", "path", ...}; see
+    # metadata_pane.render_selected_file_card.
+    selected_file_path: str | None = None
+    selected_file: dict[str, Any] | None = None
+    # §4.9 search box -> tree filter; §4.8 file-list row density ("" =
+    # comfortable, "compact"). Both ride the URL (?q=, ?density=) per OQ-1/A.
+    search_query: str = ""
+    density: str = ""
+    # Footer status-segment states (Phase 5 / §3.5.5), derived from live
+    # backend signals by the mount layer
+    # (status_bar_segment.derive_footer_segment_states). Default to NORMAL so a
+    # half-wired backend (or a direct render in tests) shows a calm footer.
+    validator_state: str = status_bar_segment.SEGMENT_NORMAL
+    lims_state: str = status_bar_segment.SEGMENT_NORMAL
+    staging_state: str = status_bar_segment.SEGMENT_NORMAL
 
 
 def _default_chips() -> tuple[filter_chips.ChipDefinition, ...]:
@@ -91,6 +112,39 @@ def chip_state_to_tree_filters(state: filter_chips.ChipState, search: str = "") 
         test_runs=filter_chips.is_active(state, "test_runs"),
         search=search,
     )
+
+
+def count_search_results(nodes: list[TreeNode]) -> int:
+    """Count the project + run rows surfaced under the equipment roots.
+
+    :func:`build_nodes` always emits every equipment row -- even one with no
+    matching children -- so the equipment tally is not a useful "did the
+    search find anything" signal. This sums the project + run rows instead:
+    the number the search-result pill shows, and whose ``0`` value drives the
+    no-matches state (Phase 5 / OQ-2). Pure so it is testable without NiceGUI.
+    """
+
+    total = 0
+    for equipment in nodes:
+        for project in equipment.children:
+            total += 1 + len(project.children)
+    return total
+
+
+DENSITY_COMPACT = "compact"
+_DENSITY_COMPACT_CLASS = "exlab-density-compact"
+
+
+def density_card_class(density: str) -> str:
+    """Return the Files-card CSS class for the current row density (§4.8).
+
+    ``"compact"`` -> ``"exlab-density-compact"`` (the theme rule tightens the
+    file-row vertical padding to ``--sp-1``); anything else -> ``""`` (the
+    default comfortable ``--sp-2`` inherited from Tailwind ``.p-2``). Pure so
+    it is testable without NiceGUI.
+    """
+
+    return _DENSITY_COMPACT_CLASS if density == DENSITY_COMPACT else ""
 
 
 def problems_badge_text(state: MainPageState) -> str:
@@ -145,9 +199,12 @@ def render_file_explorer_page(
     on_navigate_breadcrumb: Callable[[str], None] | None = None,
     on_toggle_right_pane: Callable[[], None] | None = None,
     on_run_staging_action: Callable[[str, str], None] | None = None,
-    on_clear_verified: Callable[[], None] | None = None,
     on_tree_context_action: Callable[[str, str], None] | None = None,
     on_file_context_action: Callable[[Any, str], None] | None = None,
+    on_select_file: Callable[[Any], None] | None = None,
+    on_refresh_folder: Callable[[], None] | None = None,
+    on_search: Callable[[str], None] | None = None,
+    on_toggle_density: Callable[[], None] | None = None,
     state: MainPageState | None = None,
     hierarchy: dict | None = None,
     file_list_entries: list[Any] | None = None,
@@ -179,6 +236,18 @@ def render_file_explorer_page(
         return {"state": s}
 
     from exlab_wizard.ui.components.breadcrumb import render_breadcrumb
+
+    # Pin the page to the viewport so the three panes fill the height between
+    # the fixed header and footer and scroll *internally* rather than growing
+    # the page. NiceGUI's q-layout / q-page chain is min-height-driven (content-
+    # sized) by default; these page-scoped overrides give it a definite height
+    # and flex-fill down to the splitter, whose panes then scroll within their
+    # own overflow:auto bodies.
+    ui.query(".q-page-container").style(
+        "height: 100vh; display: flex; flex-direction: column; overflow: hidden;"
+    )
+    ui.query(".q-page").style("flex: 1 1 0; min-height: 0; display: flex; flex-direction: column;")
+    ui.query(".nicegui-content").style("flex: 1 1 0; min-height: 0;")
 
     with (
         ui.header()
@@ -213,6 +282,14 @@ def render_file_explorer_page(
                 np_btn.tooltip("A creation is already in progress")
         ui.button("Add Equipment", on_click=lambda _evt: on_open_add_equipment()).props(
             'color=primary data-testid="toolbar-add-equipment"'
+        )
+        # Group divider: the creation actions (New Project / New Run / New Test
+        # Run / Add Equipment) sit left of this rule; the utility actions
+        # (Operations / Refresh / Settings) sit right of it, so the toolbar
+        # reads as two groups. Every button's order + testid is unchanged; the
+        # margin supplies the inter-group gap.
+        ui.separator().props('vertical data-testid="toolbar-group-divider"').style(
+            "height: 1.5rem; margin: 0 var(--sp-2, 0.5rem); background: var(--color-rule, #e8ecf2);"
         )
         # [Operations…] surfaces only while ≥1 operation is in flight
         # (Frontend §9.5). Label carries the count; a warning color flags
@@ -260,67 +337,134 @@ def render_file_explorer_page(
 
     # Splitter holds tree | (file list + metadata pane). The right-pane
     # collapse toggle is wired by the caller via on_toggle_right_pane.
-    with ui.splitter(value=20).classes("w-full h-full") as outer_split:
-        with outer_split.before, ui.column().classes("w-full p-3").style("gap: 0.5rem;"):
-            ui.input(label="Search").props('data-testid="main-search"').style("width: 100%;")
+    with (
+        ui.splitter(value=20)
+        .classes("w-full")
+        .style("flex: 1 1 0; min-height: 0; gap: var(--sp-3, 0.75rem);")
+    ) as outer_split:
+        with (
+            outer_split.before,
+            framed_pane("Explorer", testid="explorer-pane"),
+            ui.column().classes("w-full").style("gap: 0.5rem;"),
+        ):
+            tree_filters = chip_state_to_tree_filters(s.chip_state, search=s.search_query)
+            # Search box (§4.9 / OQ-2): the clear affordance (clearable) wipes
+            # it; Quasar's `debounce` coalesces keystrokes so the page re-navigates
+            # (?q=) once the operator pauses -- the same URL/navigate model the
+            # filter chips and row selection already use. The narrowed local
+            # keeps mypy happy about the optional callback inside the closure.
+            search_cb = on_search
+
+            def _on_search_change(event: Any) -> None:
+                if search_cb is None:
+                    return
+                search_cb((event.value or "").strip())
+
+            ui.input(
+                label="Search",
+                value=s.search_query,
+                on_change=_on_search_change if on_search is not None else None,
+            ).props('data-testid="main-search" clearable debounce=300').style("width: 100%;")
+            # Result count / no-matches affordance -- shown only while a query
+            # is active, sourced from the same build_nodes the tree renders so
+            # the tally can't drift from what's on screen.
+            if s.search_query:
+                _matches = count_search_results(
+                    build_nodes(hierarchy=hierarchy or {}, filters=tree_filters)
+                )
+                _search_hint_style = (
+                    "color: var(--color-muted); font-size: var(--text-xs); padding: 0 var(--sp-1);"
+                )
+                if _matches == 0:
+                    ui.label("No matches.").props('data-testid="main-search-no-matches"').style(
+                        _search_hint_style
+                    )
+                else:
+                    ui.label(f"{_matches} result{'s' if _matches != 1 else ''}").props(
+                        'data-testid="main-search-count"'
+                    ).style(_search_hint_style)
             filter_chips.filter_chips(_default_chips(), state=s.chip_state)
             build_tree(
                 hierarchy=hierarchy or {},
-                filters=chip_state_to_tree_filters(s.chip_state),
+                filters=tree_filters,
                 on_select=on_select_node,
                 on_equipment_context_action=on_tree_context_action,
                 on_run_context_action=(
                     _route_run_context if on_run_staging_action is not None else None
                 ),
                 expand_all=tree_expand_all,
+                selected_node=s.selected_node,
             )
-        # Flex row: the centre file list grows to fill, a tall vertical
-        # toggle tab sits on the metadata pane's left edge, then the
-        # metadata pane itself. The tab lives *between* the two panes, so
-        # it travels horizontally with the pane -- open, it hugs the pane's
-        # left border; collapsed (pane unrendered) the growing file list
-        # pushes it to the right screen edge.
-        #
-        # The tab is TOP-aligned (align-self:flex-start), not centred. The
-        # splitter panel's top is identical in both states, but its height
-        # differs (the metadata pane adds height when open), so a centred
-        # tab landed at a different Y per state -- that vertical shift was
-        # the up/down "jump". Pinning to the top ties the tab's Y to the
-        # constant panel top, so it holds its line on toggle.
+        # The Files pane fills the splitter's right side; the metadata pane
+        # floats over its right edge as an overlay popover (no permanent docked
+        # column). The vertical "Metadata" tab toggles it via the right_pane URL
+        # param. position:relative anchors the absolutely-positioned popover+tab.
         with (
             outer_split.after,
             ui.element("div")
             .classes("w-full h-full")
-            .style("display: flex; flex-direction: row; flex-wrap: nowrap; align-items: stretch;"),
+            .style(
+                "position: relative; display: flex; flex-direction: row; "
+                "flex-wrap: nowrap; align-items: stretch;"
+            ),
         ):
-            with ui.element("div").style(
-                "flex: 1 1 auto; min-width: 0; height: 100%; overflow: auto;"
-            ):
-                _render_centre_file_list(
-                    s,
-                    file_list_entries=file_list_entries,
-                    on_file_context_action=on_file_context_action,
-                )
-            # Vertical collapse/expand tab: a chevron stacked above a rotated
-            # text label, inside one tall box with a raised-surface background
-            # so it reads as a distinct tab. The glyph points the way the pane
-            # will move -- right-chevron collapses it away, left-chevron pulls
-            # it back; the label names the action. Callback wired by the mount
-            # layer.
+            with ui.element("div").style("flex: 1 1 auto; min-width: 0; height: 100%;"):
+                files_count = f"{len(file_list_entries)} items" if file_list_entries else None
+
+                def _files_header_extra() -> None:
+                    # Files-header controls, grouped left beside the count pill
+                    # (count_left=True): per-folder refresh, the row-density
+                    # toggle, and the sync-status legend.
+                    refresh = on_refresh_folder
+                    if refresh is not None:
+                        # OQ-1/A mitigation: re-scans only the open folder then
+                        # re-renders (mount._refresh_selected_folder) -- distinct
+                        # from the toolbar's "Refresh everything".
+                        ui.button(icon="refresh", on_click=lambda _evt: refresh()).props(
+                            'flat dense round size=sm data-testid="files-refresh" '
+                            'title="Refresh this folder"'
+                        ).style("color: var(--color-muted, #8892a4);")
+                    toggle_density = on_toggle_density
+                    if toggle_density is not None:
+                        # Row density (§4.8): compact <-> comfortable, rides ?density=.
+                        is_compact = s.density == DENSITY_COMPACT
+                        ui.button(
+                            icon="density_large" if is_compact else "density_small",
+                            on_click=lambda _evt, cb=toggle_density: cb(),
+                        ).props(
+                            'flat dense round size=sm data-testid="files-density-toggle" '
+                            f'title="{"Comfortable rows" if is_compact else "Compact rows"}"'
+                        ).style("color: var(--color-muted, #8892a4);")
+                    _render_sync_legend()
+
+                with framed_pane(
+                    "Files",
+                    count=files_count,
+                    testid="files-pane",
+                    header_extra=_files_header_extra,
+                    count_left=True,
+                    card_classes=density_card_class(s.density),
+                ):
+                    _render_centre_file_list(
+                        s,
+                        file_list_entries=file_list_entries,
+                        on_file_context_action=on_file_context_action,
+                        on_select_file=on_select_file,
+                    )
+            # Vertical "Metadata" tab: a chevron above a vertical label in a
+            # raised box. Absolutely positioned -- on the popover's left edge
+            # when open (overlapping it, painted just behind so the right half
+            # tucks under the panel), or parked at the container's right edge
+            # when the popover is closed.
             if on_toggle_right_pane is not None:
                 collapsed = s.right_pane_collapsed
                 chevron = "◀" if collapsed else "▶"
-                tab_label = "Expand metadata" if collapsed else "Collapse metadata"
-                # The button stays `flat` (Quasar forces its own background to
-                # transparent !important on flat buttons, so the tab fill must
-                # live on an inner element, not the button). The button is just
-                # the sized, padding-free click target; the inner column paints
-                # the raised-surface tab.
-                #
-                # Every theme var carries a literal fallback: register_theme()
-                # is not injected on every route, so a bare var(--color-surface)
-                # resolves to empty and the whole declaration is dropped (no
-                # fill). The fallbacks make the tab render regardless.
+                tab_label = "Metadata"
+                tab_pos = (
+                    "right: 0; z-index: 21;"
+                    if collapsed
+                    else "right: calc(40% - 16px); z-index: 19;"
+                )
                 toggle = (
                     ui.button(on_click=lambda _evt: on_toggle_right_pane())
                     .props(
@@ -328,7 +472,10 @@ def render_file_explorer_page(
                         'aria-label="Toggle metadata pane" title="Toggle metadata pane"'
                     )
                     .style(
-                        "align-self: flex-start; flex: 0 0 auto; margin: 8px 2px 0 2px; "
+                        # Absolute so it anchors to the popover's left edge (open)
+                        # or the container's right edge (closed). Theme vars keep
+                        # literal fallbacks for robustness.
+                        f"position: absolute; top: 64px; {tab_pos} "
                         "min-width: 0; width: 40px; height: 190px; padding: 0; "
                         "color: var(--color-muted, #8892a4);"
                     )
@@ -336,12 +483,16 @@ def render_file_explorer_page(
                 with (
                     toggle,
                     ui.column().style(
-                        "align-items: center; gap: 6px; flex-wrap: nowrap; "
-                        "height: 100%; width: 100%; padding: 8px 2px; "
-                        # Surface fill + border + soft shadow so the chevron and
-                        # label read as a distinct raised tab against the page.
+                        # Content hugs the left edge so the chevron + vertical
+                        # label stay on the visible left half (the right half is
+                        # tucked behind the metadata pane). Only the left corners
+                        # are rounded so the right edge reads as merging into the
+                        # pane.
+                        "align-items: flex-start; gap: 4px; flex-wrap: nowrap; "
+                        "height: 100%; width: 100%; padding: 8px 3px; "
                         "background: var(--color-surface, #ffffff); "
-                        "border: 1px solid var(--color-border, #dde3ed); border-radius: 6px; "
+                        "border: 1px solid var(--color-border, #dde3ed); "
+                        "border-radius: 6px 0 0 6px; "
                         "box-shadow: 0 1px 3px rgba(0, 54, 96, 0.12);"
                     ),
                 ):
@@ -349,22 +500,30 @@ def render_file_explorer_page(
                         "flex: 0 0 auto; font-size: 12px; line-height: 1; "
                         "color: var(--color-muted, #8892a4);"
                     )
-                    # The label is rotated 270deg (reads bottom-to-top). A
-                    # transform keeps the element's layout box horizontal, so
-                    # this flex-grow wrapper supplies the vertical room and
-                    # centres the rotated text within it.
-                    with ui.element("div").style(
-                        "flex: 1 1 auto; width: 100%; display: flex; "
-                        "align-items: center; justify-content: center; overflow: hidden;"
-                    ):
-                        ui.label(tab_label).style(
-                            "transform: rotate(270deg); white-space: nowrap; "
-                            "font-size: 11px; letter-spacing: 0.05em; text-transform: none; "
-                            "color: var(--color-muted, #8892a4);"
-                        )
+                    # Vertical label via writing-mode (robust -- no transform-box
+                    # clipping): vertical-rl + rotate(180deg) reads bottom-to-top,
+                    # matching the prior orientation. The column's
+                    # align-items:flex-start keeps it on the visible left half.
+                    ui.label(tab_label).style(
+                        "writing-mode: vertical-rl; transform: rotate(180deg); "
+                        "white-space: nowrap; font-size: 11px; letter-spacing: 0.05em; "
+                        "text-transform: none; color: var(--color-muted, #8892a4);"
+                    )
             if not s.right_pane_collapsed:
-                with ui.element("div").style(
-                    "flex: 0 0 40%; min-width: 0; height: 100%; overflow: auto;"
+                # Metadata floats as an overlay popover over the right of the
+                # Files pane (z-index above it, strong left shadow so it reads as
+                # raised). It keeps its own tabs in place of a title strip;
+                # card_style() ends with ';' so the appended overrides
+                # concatenate to valid CSS.
+                with (
+                    ui.element("div")
+                    .props('data-testid="metadata-pane-card"')
+                    .style(
+                        "position: absolute; top: 0; right: 0; height: 100%; "
+                        "width: 40%; z-index: 20; min-width: 0; "
+                        f"{card_style()} overflow: auto; "
+                        "box-shadow: -4px 0 16px rgba(0, 54, 96, 0.15);"
+                    )
                 ):
                     _render_right_pane(
                         s,
@@ -374,10 +533,16 @@ def render_file_explorer_page(
 
     if not s.setup_incomplete:
         with (
+            # Footer reads as a framed bar to match the panes: surface fill,
+            # hairline border, soft shadow, small margins so it sits as a
+            # distinct card rather than bleeding to the window edges.
             ui.footer().style(
-                "background: var(--color-bg); "
-                "border-top: 1px solid var(--color-rule); "
-                "padding: 0 var(--sp-4); min-height: 24px;"
+                "background: var(--color-surface, #ffffff); "
+                "border: 1px solid var(--color-border, #dde3ed); "
+                "border-radius: var(--radius-md, 10px); "
+                "box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,54,96,0.07)); "
+                "margin: var(--sp-2, 0.5rem); "
+                "padding: 0 var(--sp-4, 1rem); min-height: 24px;"
             ),
             ui.row().classes("items-center w-full"),
         ):
@@ -398,24 +563,62 @@ def render_file_explorer_page(
                     state=status_bar_segment.SEGMENT_NORMAL,
                     on_click=on_open_operations if s.operations_count > 0 else None,
                 )
+            # Validator / LIMS / Staging states are derived from live backend
+            # signals by the mount (derive_footer_segment_states): Validator
+            # warns on a hard finding, LIMS goes danger when the endpoint is
+            # unreachable. They default to NORMAL on a half-wired backend.
             status_bar_segment.status_bar_segment(
                 label="Validator",
-                state=status_bar_segment.SEGMENT_NORMAL,
+                state=s.validator_state,
             )
             status_bar_segment.status_bar_segment(
                 label="LIMS",
-                state=status_bar_segment.SEGMENT_NORMAL,
+                state=s.lims_state,
             )
-            # Footer Staging segment with bulk-clear-verified popover
-            # (§4.6: the bottom dock's bulk action relocates here).
-            status_bar_segment.status_bar_segment(
-                label="Staging",
-                state=status_bar_segment.SEGMENT_NORMAL,
-            ).props('data-testid="footer-staging-segment"')
-            if on_clear_verified is not None:
-                ui.button("Clear verified runs", on_click=lambda _evt: on_clear_verified()).props(
-                    'flat data-testid="footer-clear-verified"'
+            # Footer "Staging" segment + bulk clear-verified are intentionally
+            # omitted: orchestrator/staging is hidden at the UI layer (see
+            # docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md).
+            # ``MainPageState.staging_state`` stays as an inert field.
+
+
+def _render_sync_legend() -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
+    """Render the Files-header sync-status legend ("?") popover.
+
+    Lists each sync state's icon + meaning, sourced from
+    :func:`sync_status_icon.sync_legend_entries` (which reads ``_STATUS_TO_PROPS``,
+    the single source of truth) so the legend can't drift from the icons the
+    file list / metadata pane actually render.
+    """
+    try:
+        from nicegui import ui
+    except Exception:
+        return
+    from exlab_wizard.ui.components.sync_status_icon import sync_legend_entries
+
+    with (
+        ui.button(icon="help_outline")
+        .props('flat dense round size=sm data-testid="files-legend" title="Sync status legend"')
+        .style("color: var(--color-muted, #8892a4);"),
+        ui.menu()
+        .props('data-testid="files-legend-menu"')
+        .style("padding: var(--sp-1, 0.25rem) 0;"),
+    ):
+        ui.label("Sync status").style(
+            "font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; "
+            "color: var(--color-muted); font-weight: 600; padding: var(--sp-1) var(--sp-3);"
+        )
+        for entry in sync_legend_entries():
+            with (
+                ui.row()
+                .classes("items-center")
+                .style(
+                    "gap: var(--sp-2, 0.5rem); padding: var(--sp-1) var(--sp-3); flex-wrap: nowrap;"
                 )
+            ):
+                ui.icon(entry["icon_name"]).style(
+                    f"color: var({entry['color_var']}); font-size: 1rem;"
+                )
+                ui.label(entry["tooltip"]).style("font-size: var(--text-sm); white-space: nowrap;")
 
 
 def _render_centre_file_list(
@@ -423,31 +626,40 @@ def _render_centre_file_list(
     *,
     file_list_entries: list[Any] | None = None,
     on_file_context_action: Callable[[Any, str], None] | None = None,
+    on_select_file: Callable[[Any], None] | None = None,
 ) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     """Render the centre-pane file list (Redesign §4.3).
 
     Each row carries a right-click context menu (*Open in OS* /
-    *Copy path*) when ``on_file_context_action`` is wired.
+    *Copy path*) when ``on_file_context_action`` is wired. Single-click
+    selection (``on_select_file``) drives the right-pane metadata sub-card
+    and highlights the selected row (Phase 4 / Option B).
     """
     from exlab_wizard.ui.components.file_list import (
         FileListState,
         render_file_list,
     )
 
-    try:
-        from nicegui import ui
-    except Exception:
-        return
+    # No NiceGUI guard here: empty_state() and render_file_list() each no-op
+    # outside an app context, and FileListState is a plain dataclass, so the
+    # function degrades safely without an explicit ``ui`` import.
     if state.folder_feed_path is None:
-        ui.label("Select a folder in the tree to see its contents.").style(
-            "color: var(--color-muted); padding: var(--sp-3);"
-        ).props('data-testid="file-list-empty"')
+        empty_state(
+            icon="account_tree",
+            message="Select a folder in the tree to see its contents.",
+            testid="file-list-empty",
+        )
         return
     fl_state = FileListState(
         path=state.folder_feed_path,
         entries=list(file_list_entries or []),
+        selected_path=state.selected_file_path,
     )
-    render_file_list(state=fl_state, on_context_menu=on_file_context_action)
+    render_file_list(
+        state=fl_state,
+        on_context_menu=on_file_context_action,
+        on_select=on_select_file,
+    )
 
 
 def _render_right_pane(
@@ -478,6 +690,7 @@ def _render_right_pane(
                 selected_node=state.selected_node,
                 node_kind=state.selected_node_kind,
                 payload=dict(metadata_payload or {}),
+                selected_file=state.selected_file,
             )
             render_metadata_pane(
                 state=mp_state,

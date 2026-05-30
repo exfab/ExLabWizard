@@ -9,7 +9,7 @@
 #     interaction that breaks aiosqlite-backed unit tests when both run
 #     in the same pytest invocation as the e2e flows.
 #
-# Triggers: pull requests targeting ``main`` and direct pushes to
+# Triggers: every pull request (any base branch) and direct pushes to
 # ``main``. Runs are auto-cancelled on the same ref when a newer commit
 # arrives, mirroring the convention in ``build.yml``.
 #
@@ -19,7 +19,6 @@ name: qc
 
 on:
   pull_request:
-    branches: ["main"]
   push:
     branches: ["main"]
 

@@ -227,8 +227,11 @@ def _parse_argv(argv: list[str] | None) -> argparse.Namespace:
       so the operator still wires that integration through Settings.
       Persistent across launches; ``rm -rf`` the sandbox to reset.
     - ``--add-test-samples`` -- only meaningful with ``--test``.
-      Seeds the bootstrap config with one sample equipment entry so
-      the wizard is runnable end-to-end without manual setup.
+      On first launch, seeds the full declarative sample dataset
+      (multiple equipment, projects, and runs, each folder carrying
+      production-shaped metadata) so the browse / validate / sync UIs
+      have realistic data. Non-destructive: a repeat boot never
+      re-seeds or wipes an existing sandbox.
     """
     parser = argparse.ArgumentParser(prog="exlab-wizard-tray", add_help=True)
     parser.add_argument(
@@ -259,92 +262,15 @@ def _parse_argv(argv: list[str] | None) -> argparse.Namespace:
         "--add-test-samples",
         action="store_true",
         help=(
-            "Only meaningful with --test: seed the starter config with one "
-            "sample equipment entry so the wizard is runnable end-to-end."
+            "Only meaningful with --test: on first launch, seed the full "
+            "declarative sample dataset (equipment, projects, runs) so the "
+            "browse / validate / sync UIs have realistic data."
         ),
     )
     args = parser.parse_args(argv)
     if args.add_test_samples and not args.test:
         parser.error("--add-test-samples requires --test")
     return args
-
-
-def _bootstrap_test_config(config_path: Path, *, include_samples: bool) -> None:
-    """Write a starter test ``config.yaml`` if one does not already exist.
-
-    Called from ``main()`` only when ``--test`` is passed. Preseeds every
-    path-typed field under the test sandbox so the wizard runs without
-    manual Settings entry; LIMS endpoint and email are intentionally left
-    blank so the operator still wires that integration through the live
-    Settings UI. With ``include_samples=True`` (``--add-test-samples``),
-    one minimal valid equipment entry is added so the wizard can complete
-    end-to-end without further setup.
-
-    Existing test configs are never overwritten -- the sandbox is
-    persistent across launches and the user resets it by deleting the
-    suffixed directory.
-    """
-    if config_path.exists():
-        return
-
-    # Lazy imports to keep the tray module's import graph light. These
-    # only land when --test is actually used.
-    from exlab_wizard.config.loader import save_config
-    from exlab_wizard.config.models import (
-        Config,
-        EquipmentConfig,
-        OrchestratorConfig,
-        PathsConfig,
-    )
-    from exlab_wizard.paths import ensure_dir
-
-    sandbox = config_path.parent  # e.g. ~/Library/Application Support/exlab-wizard-test
-    paths_cfg = PathsConfig(
-        templates_dir=str(sandbox / "templates"),
-        plugin_dir=str(sandbox / "plugins"),
-        local_root=str(sandbox / "local"),
-    )
-    orchestrator_cfg = OrchestratorConfig(
-        label="test-workstation",
-        staging_root=str(sandbox / "staging"),
-    )
-    equipment: list[EquipmentConfig] = []
-    if include_samples:
-        equipment.append(
-            EquipmentConfig.model_validate(
-                {
-                    "id": "TESTRIG",
-                    "label": "Test Rig",
-                    "local_root": str(sandbox / "local" / "TESTRIG"),
-                    "nas_root": str(sandbox / "nas" / "TESTRIG"),
-                    "sync_mode": "nas",
-                }
-            )
-        )
-
-    cfg = Config(
-        paths=paths_cfg,
-        orchestrator=orchestrator_cfg,
-        equipment=equipment,
-    )
-    save_config(config_path, cfg)
-
-    # Pre-create the preseeded sub-directories so first-launch path lookups
-    # (template scans, plugin discovery) do not fail on a missing tree.
-    # ``if sub`` guards against an empty-string slipping through: ``Path("")``
-    # resolves to CWD and ``mkdir`` would silently succeed there. The current
-    # code populates every field explicitly from ``sandbox / <subdir>``, so
-    # this is defensive against a future refactor of the field defaults.
-    for sub in (
-        paths_cfg.templates_dir,
-        paths_cfg.plugin_dir,
-        paths_cfg.local_root,
-        orchestrator_cfg.staging_root,
-    ):
-        if sub:
-            ensure_dir(Path(sub))
-
-    _log.info("test mode: wrote starter config [path=%s]", str(config_path))
 
 
 def _run_smoke(state_dir: Path) -> int:
@@ -409,7 +335,9 @@ def main(argv: list[str] | None = None) -> int:
 
     state_dir = ensure_state_dir()
     if args.test:
-        _bootstrap_test_config(
+        from exlab_wizard.config.test_bootstrap import bootstrap_test_config
+
+        bootstrap_test_config(
             os_config_path(),
             include_samples=args.add_test_samples,
         )

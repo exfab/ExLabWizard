@@ -30,12 +30,15 @@ from exlab_wizard.constants import (
     KEYRING_USERNAME_LIMS,
     AuditScopeKind,
     RunKind,
-    RunSyncState,
     SetupState,
 )
 from exlab_wizard.logging import get_logger
+
+# clear_run_dir backs the per-run tree context-menu "clear" action (force-sync /
+# clear / view-log), which applies to nas-mode runs too — kept after the staging
+# dock was hidden. See
+# docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md.
 from exlab_wizard.orchestrator.staging_clear import clear_run_dir
-from exlab_wizard.orchestrator.staging_query import list_staged_runs
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -74,9 +77,14 @@ def mount_ui(app: FastAPI, *, storage_secret: str) -> None:
     """
     from nicegui import ui
 
-    from exlab_wizard.ui.theme import register_static_assets
+    from exlab_wizard.ui.theme import register_static_assets, register_theme
 
     register_static_assets()
+    # Inject the canonical :root design-token block app-wide (shared=True) so
+    # every page's components resolve var(--color-*)/var(--sp-*)/... to real
+    # values rather than falling back to scattered literals (the block was
+    # previously never wired into the running app).
+    register_theme()
     _register_pages(app, ui)
     ui.run_with(
         app,
@@ -97,9 +105,6 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
     )
     from exlab_wizard.ui.pages import (
         settings as settings_page,
-    )
-    from exlab_wizard.ui.pages import (
-        staging as staging_page,
     )
     from exlab_wizard.ui.pages import (
         templates as templates_page,
@@ -141,7 +146,13 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         )
 
     @ui.page("/main")
-    def _main(selected: str = "", right_pane: str = "") -> Any:
+    def _main(
+        selected: str = "",
+        right_pane: str = "",
+        file: str = "",
+        q: str = "",
+        density: str = "",
+    ) -> Any:
         deps = _deps()
         from exlab_wizard.api.routers import browse as _browse
 
@@ -150,34 +161,78 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         selected_path = selected or None
         node_kind, is_received = _classify_node(selected_path, hierarchy)
         right_pane_collapsed = right_pane == "collapsed"
+        # Kick off / rebind the folder feed for the selected path and
+        # gather the most recent payload (empty list on first render or if
+        # the feed hasn't ticked yet). Resolved before the state build so a
+        # ?file= selection can be matched against the in-memory feed.
+        feed_entries = _drive_folder_feed(app, deps, selected_path)
+        selected_file = _build_selected_file(file or None, feed_entries, deps)
         state = _build_main_state(
             deps,
             selected_node=selected_path,
             node_kind=node_kind,
             is_received=is_received,
             right_pane_collapsed=right_pane_collapsed,
+            selected_file_path=file or None,
+            selected_file=selected_file,
+            search_query=q,
+            density=density,
         )
         metadata_payload = _build_metadata_payload(selected_path, node_kind, deps)
-        # Kick off / rebind the folder feed for the selected path and
-        # gather the most recent payload (empty list on first render or
-        # if the feed hasn't ticked yet).
-        feed_entries = _drive_folder_feed(app, deps, selected_path)
 
         def _refresh() -> None:
-            ui.navigate.to("/main" + _build_main_query(selected, right_pane))
+            ui.navigate.to(
+                "/main" + _build_main_query(selected, right_pane, file=file, q=q, density=density)
+            )
 
         def _on_select_node(node_id: str) -> None:
-            ui.navigate.to("/main" + _build_main_query(node_id, right_pane))
+            # Selecting a new tree node repaints the centre list for the new
+            # folder, so any ?file= selection (a path under the *previous*
+            # folder) is dropped; search query + density carry over.
+            ui.navigate.to("/main" + _build_main_query(node_id, right_pane, q=q, density=density))
 
         def _on_toggle_right_pane() -> None:
             new_pane = "" if right_pane == "collapsed" else "collapsed"
-            ui.navigate.to("/main" + _build_main_query(selected, new_pane))
+            ui.navigate.to(
+                "/main" + _build_main_query(selected, new_pane, file=file, q=q, density=density)
+            )
+
+        def _on_select_file(entry: Any) -> None:
+            # Single-click on a file/folder row -> carry its path on ?file=.
+            ui.navigate.to(
+                "/main"
+                + _build_main_query(
+                    selected, right_pane, file=getattr(entry, "path", ""), q=q, density=density
+                )
+            )
+
+        def _on_refresh_folder() -> None:
+            # Files-pane refresh: re-scan the open folder now, then re-render.
+            _refresh_selected_folder(app, deps, selected_path)
+            ui.navigate.to(
+                "/main" + _build_main_query(selected, right_pane, file=file, q=q, density=density)
+            )
+
+        def _on_search(query: str) -> None:
+            # Typing in the search box re-filters the tree only; keep the
+            # selected node, file selection, pane state and density and swap
+            # just ?q= (debounced render-side so this fires once per pause).
+            ui.navigate.to(
+                "/main"
+                + _build_main_query(selected, right_pane, file=file, q=query, density=density)
+            )
+
+        def _on_toggle_density() -> None:
+            # Files-pane row density (§4.8): flip compact <-> comfortable,
+            # keep everything else, swap only ?density=.
+            new_density = "" if density == "compact" else "compact"
+            ui.navigate.to(
+                "/main"
+                + _build_main_query(selected, right_pane, file=file, q=q, density=new_density)
+            )
 
         def _on_run_staging_action(path: str, action: str) -> None:
             _run_staging_action(deps, path, action, ui)
-
-        def _on_clear_verified() -> None:
-            _bulk_clear_verified(deps, ui)
 
         def _on_tree_context_action(node_id: str, action: str) -> None:
             # Either edit or remove deep-links into Settings with the
@@ -200,9 +255,12 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             on_navigate_breadcrumb=_on_select_node,
             on_toggle_right_pane=_on_toggle_right_pane,
             on_run_staging_action=_on_run_staging_action,
-            on_clear_verified=_on_clear_verified,
             on_tree_context_action=_on_tree_context_action,
             on_file_context_action=_on_file_context_action,
+            on_select_file=_on_select_file,
+            on_refresh_folder=_on_refresh_folder,
+            on_search=_on_search,
+            on_toggle_density=_on_toggle_density,
             state=state,
             hierarchy=hierarchy,
             file_list_entries=feed_entries,
@@ -401,19 +459,6 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             findings=findings,
             last_audit_at=getattr(deps, "last_audit_at", None),
         )
-
-    @ui.page("/staging")
-    def _staging() -> Any:
-        deps = _deps()
-        state = _build_staging_state(deps)
-        if state is None:
-            _render_unavailable(
-                ui,
-                "Staging unavailable",
-                "No config is wired on this app instance.",
-            )
-            return None
-        return staging_page.render_staging_dock(state)
 
 
 # ---------------------------------------------------------------------------
@@ -690,7 +735,12 @@ def _build_main_state(
     node_kind: str | None = None,
     is_received: bool = False,
     right_pane_collapsed: bool = False,
+    selected_file_path: str | None = None,
+    selected_file: dict[str, Any] | None = None,
+    search_query: str = "",
+    density: str = "",
 ) -> Any:
+    from exlab_wizard.ui.components.status_bar_segment import derive_footer_segment_states
     from exlab_wizard.ui.pages import main as main_page
 
     # Redesign §3.1: orchestrator pipeline is always active; the staging
@@ -698,6 +748,18 @@ def _build_main_state(
     # its True default. Folder-feed path mirrors the selected node so the
     # centre pane shows the right folder.
     ops_count, ops_input_required, ops_active = _operation_counts(deps)
+    # Real Problems counts from the 30 s background audit (T6 / §B5).
+    problems_hard = int(getattr(deps, "last_audit_hard", 0) or 0)
+    # Footer status segments (Phase 5 / §3.5.5): Validator warns on a hard
+    # finding; LIMS goes danger when the endpoint is unreachable. ``lims_reachable``
+    # defaults True so a half-wired backend doesn't false-alarm; Staging has no
+    # cheap cached count yet (a per-render list_staged_runs scan would be I/O on
+    # the render path) so it stays NORMAL.
+    lims_reachable = bool(getattr(deps, "lims_reachable", True)) if deps is not None else False
+    footer_segments = derive_footer_segment_states(
+        problems_count_hard=problems_hard,
+        lims_reachable=lims_reachable,
+    )
     return main_page.MainPageState(
         setup_incomplete=not _is_setup_ready(deps),
         setup_next_action=_setup_next_action(deps),
@@ -706,12 +768,18 @@ def _build_main_state(
         selected_node_is_received=is_received,
         right_pane_collapsed=right_pane_collapsed,
         folder_feed_path=selected_node,
+        selected_file_path=selected_file_path,
+        selected_file=selected_file,
+        search_query=search_query,
+        density=density,
         operations_count=ops_count,
         operations_input_required=ops_input_required,
         creation_in_flight=ops_active > 0,
-        # Real Problems counts from the 30 s background audit (T6 / §B5).
-        problems_count_hard=int(getattr(deps, "last_audit_hard", 0) or 0),
+        problems_count_hard=problems_hard,
         problems_count_soft=int(getattr(deps, "last_audit_soft", 0) or 0),
+        validator_state=footer_segments.validator,
+        lims_state=footer_segments.lims,
+        staging_state=footer_segments.staging,
     )
 
 
@@ -772,7 +840,14 @@ def _setup_next_action(deps: Any) -> str | None:
         return None
 
 
-def _build_main_query(selected: str, right_pane: str) -> str:
+def _build_main_query(
+    selected: str,
+    right_pane: str,
+    *,
+    file: str = "",
+    q: str = "",
+    density: str = "",
+) -> str:
     """Compose the ``?selected=...&right_pane=...`` query string for /main.
 
     Omits each param when empty so the URL stays clean for default state.
@@ -782,6 +857,12 @@ def _build_main_query(selected: str, right_pane: str) -> str:
     trip back through the FastAPI query parser. The path separator
     ``/`` is intentionally preserved (``safe="/"``) so the encoded id
     stays human-readable in the address bar.
+
+    Phase 4 (Option B / OQ-1/A) adds three optional params carried on the
+    same URL/navigate model rather than a second (refreshable) paradigm:
+    ``file`` (selected file/folder path in the centre list), ``q`` (search
+    query), and ``density`` (file-list row density). Filesystem paths in
+    ``file`` are URL-encoded (spaces / unicode) like ``selected``.
     """
     from urllib.parse import quote
 
@@ -790,6 +871,12 @@ def _build_main_query(selected: str, right_pane: str) -> str:
         parts.append(f"selected={quote(selected, safe='/')}")
     if right_pane:
         parts.append(f"right_pane={quote(right_pane, safe='/')}")
+    if file:
+        parts.append(f"file={quote(file, safe='/')}")
+    if q:
+        parts.append(f"q={quote(q, safe='')}")
+    if density:
+        parts.append(f"density={quote(density, safe='')}")
     return ("?" + "&".join(parts)) if parts else ""
 
 
@@ -976,6 +1063,105 @@ def _metadata_for_run(node_id: str) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Selection -> metadata payload (Phase 4, Option B / spec §4.3)
+# ---------------------------------------------------------------------------
+
+
+def _build_selected_file(
+    file_path: str | None,
+    feed_entries: list[Any],
+    deps: Any,
+) -> dict[str, Any] | None:
+    """Resolve a centre-list selection (file or folder) to a render payload.
+
+    Phase 4 / Option B (spec §4.3). ``file_path`` is the ``?file=`` query
+    param -- the path the operator single-clicked in the Files pane. It is
+    matched by path against the in-memory folder-feed entries (already
+    fetched for the current node, so a file needs no extra I/O). A match
+    that is a directory delegates to :func:`_build_selected_folder` for the
+    one-level aggregate scan; a file match projects the feed entry's fields
+    into a file-card payload.
+
+    Returns ``None`` when ``file_path`` is empty or matches no current
+    entry -- e.g. the file was removed since the click -- so the metadata
+    pane shows no sub-card rather than an error (spec §7).
+
+    File payload shape::
+
+        {"kind": "file", "name", "path", "size", "modified",
+         "sync_status", "tombstone"}
+
+    ``size`` is pre-formatted via :func:`format_bytes`; a tombstone ("On
+    NAS") row has no on-disk copy, so its ``size`` is ``None`` (spec §4.5).
+    """
+    if not file_path:
+        return None
+    match = next((e for e in feed_entries if getattr(e, "path", None) == file_path), None)
+    if match is None:
+        return None
+    if getattr(match, "is_dir", False):
+        return _build_selected_folder(match.name, match.path, deps)
+    from exlab_wizard.ui.pages.staging import format_bytes
+
+    size_bytes = getattr(match, "size_bytes", None)
+    tombstone = bool(getattr(match, "tombstone", False))
+    return {
+        "kind": "file",
+        "name": match.name,
+        "path": match.path,
+        "size": (None if tombstone or size_bytes is None else format_bytes(int(size_bytes))),
+        "modified": getattr(match, "modified_iso", None),
+        "sync_status": getattr(match, "sync_status", None),
+        "tombstone": tombstone,
+    }
+
+
+def _build_selected_folder(
+    name: str,
+    path: str,
+    deps: Any,
+) -> dict[str, Any]:
+    """Aggregate a one-level folder scan into a folder-card payload (OQ-4/B).
+
+    Phase 4 / Option B (spec §4.3, §4.6). A folder selected in the centre
+    list is summarised by a single-level :func:`scan_folder_sync`: its
+    immediate ``item_count`` and a worst-of ``sync_rollup`` over the
+    children's per-file sync states. No total size is computed -- the
+    recursive walk is deferred (spec §11).
+
+    A scan failure degrades to ``item_count=None`` + a neutral (``None``)
+    rollup rather than raising, so a transient permission / vanished-folder
+    error still renders a usable card (spec §7).
+
+    Folder payload shape::
+
+        {"kind": "folder", "name", "path", "item_count", "rollup"}
+    """
+    from exlab_wizard.api.routers import browse as _browse
+    from exlab_wizard.ui.components.sync_rollup import sync_rollup
+
+    config = getattr(deps, "config", None) if deps is not None else None
+    item_count: int | None
+    rollup: str | None
+    try:
+        response = _browse.scan_folder_sync(path, config)
+        entries = list(getattr(response, "entries", []) or [])
+        item_count = len(entries)
+        rollup = sync_rollup(getattr(entry, "sync_status", None) for entry in entries)
+    except Exception as exc:
+        _log.warning("folder aggregate scan failed for %s: %s", path, exc)
+        item_count = None
+        rollup = None
+    return {
+        "kind": "folder",
+        "name": name,
+        "path": path,
+        "item_count": item_count,
+        "rollup": rollup,
+    }
+
+
 def _drive_folder_feed(app: Any, deps: Any, selected_path: str | None) -> list[Any]:
     """Mount / rebind the per-tab FolderFeed and return current entries.
 
@@ -1061,6 +1247,46 @@ async def _fetch_folder_async(deps: Any, path: str, coord: Any) -> Any:
     return result
 
 
+def _refresh_selected_folder(app: Any, deps: Any, selected_path: str | None) -> None:
+    """Force a fresh single-folder scan and prime the feed payload (OQ-1/A).
+
+    The Files-pane refresh button's mitigation for the navigate-per-click
+    model (spec §4.6 / OQ-1/A): rather than wait for the folder feed's next
+    poll tick, scan the current folder synchronously now and write the
+    result onto the per-tab feed's ``last_payload`` so the immediate
+    re-navigation renders fresh contents. Distinct from the toolbar's
+    "Refresh everything" -- this re-scans only the open folder.
+
+    A scan failure is swallowed to a WARN: the existing payload simply
+    stays until the next poll (spec §7). A no-op when nothing is selected
+    or the per-tab feed hasn't been mounted yet.
+    """
+    if selected_path is None:
+        return
+    from exlab_wizard.api.routers import browse as _browse
+
+    config = getattr(deps, "config", None) if deps is not None else None
+    try:
+        payload = _browse.scan_folder_sync(selected_path, config)
+    except Exception as exc:
+        _log.warning("per-folder refresh scan failed for %s: %s", selected_path, exc)
+        return
+    try:
+        tab_storage: Any = app.storage.tab
+    except Exception:
+        tab_storage = None
+    feed = tab_storage.get("folder_feed") if tab_storage is not None else None
+    if feed is not None and getattr(feed, "state", None) is not None:
+        feed.state.last_payload = payload
+        # A folder walk just happened, so record it on the coordinator -- the
+        # same bookkeeping _fetch_folder_async does after its scan. This keeps
+        # the manual refresh inside the coalescing window (should_skip_tree),
+        # so an immediately-following tree poll won't redundantly re-walk.
+        coord = tab_storage.get("folder_feed_coord") if tab_storage is not None else None
+        if coord is not None:
+            coord.record_folder_refresh()
+
+
 def _run_staging_action(deps: Any, path: str, action: str, ui: Any) -> None:
     """Dispatch a per-run context action to its backend surface.
 
@@ -1077,7 +1303,7 @@ def _run_staging_action(deps: Any, path: str, action: str, ui: Any) -> None:
 
     config = getattr(deps, "config", None) if deps is not None else None
     if config is None:
-        _show_toast(ui, "Staging action unavailable: no config", positive=False)
+        _show_toast(ui, "Run action unavailable: no config", positive=False)
         return
     run_path = Path(path)
     if action == RUN_CONTEXT_FORCE_SYNC:
@@ -1116,45 +1342,7 @@ def _run_staging_action(deps: Any, path: str, action: str, ui: Any) -> None:
     if action == RUN_CONTEXT_VIEW_LOG:
         _open_log_dialog(deps, run_path, ui)
         return
-    _show_toast(ui, f"Unknown staging action: {action}", positive=False)
-
-
-def _bulk_clear_verified(deps: Any, ui: Any) -> None:
-    """Bulk-clear every staged run whose sync job is verified.
-
-    Wired from the file-explorer footer's *Clear verified runs* button.
-    Same in-process dispatch pattern as the per-run actions. The
-    operator-free per-file NAS sync redesign (2026-05-21) keys the
-    "clearable" set off the sync-queue job state; Phase 5 swaps this to
-    the ``sync_state.json`` ``SYNCED`` rollup.
-    """
-    config = getattr(deps, "config", None) if deps is not None else None
-    if config is None:
-        _show_toast(ui, "Clear-verified unavailable: no config", positive=False)
-        return
-
-    async def _do_bulk() -> None:
-        try:
-            cleared: list[str] = []
-            sync_state_writer = getattr(deps, "sync_state_writer", None)
-            for summary in list_staged_runs(config=config, sync_state_writer=sync_state_writer):
-                # Only a fully-SYNCED run is clearable; ``cleared`` runs
-                # have no staging copy left and ``syncing`` runs are unproven.
-                if summary.current_state != RunSyncState.SYNCED.value:
-                    continue
-                files, _bytes = await asyncio.to_thread(clear_run_dir, Path(summary.path))
-                if files > 0:
-                    cleared.append(summary.path)
-        except Exception as exc:
-            _log.exception("bulk clear-verified failed")
-            _show_toast(ui, f"Clear-verified failed: {exc}", positive=False)
-            return
-        if cleared:
-            _show_toast(ui, f"Cleared {len(cleared)} verified run(s)", positive=True)
-        else:
-            _show_toast(ui, "No verified runs to clear", positive=True)
-
-    _spawn_background(_do_bulk())
+    _show_toast(ui, f"Unknown run action: {action}", positive=False)
 
 
 def _file_context_action(
@@ -1874,25 +2062,6 @@ def _safe_audit(deps: Any) -> list[Any]:
         return []
 
 
-def _build_staging_state(deps: Any) -> Any:
-    from exlab_wizard.ui.pages import staging as staging_page
-
-    config = getattr(deps, "config", None) if deps is not None else None
-    if config is None:
-        return None
-    # Redesign §3.1: orchestrator pipeline is always active; missing
-    # staging_root surfaces as an empty staging dock, not a None panel.
-    try:
-        rows = list_staged_runs(
-            config=config,
-            sync_state_writer=getattr(deps, "sync_state_writer", None),
-        )
-    except Exception as exc:
-        _log.warning("staging_query failed: %s", exc)
-        return staging_page.StagingDockState(rows=[])
-    return staging_page.StagingDockState(rows=list(rows))
-
-
 def _show_toast(ui: Any, message: str, *, positive: bool) -> None:
     del ui  # toasts route through the notifications helper, not raw ui
     try:
@@ -1904,12 +2073,3 @@ def _show_toast(ui: Any, message: str, *, positive: bool) -> None:
             notifications.notify_error(message)
     except Exception as exc:
         _log.debug("toast notify failed: %s", exc)
-
-
-def _render_unavailable(ui: Any, headline: str, subline: str) -> None:
-    try:
-        with ui.card().style("max-width: 480px; padding: var(--sp-6);"):
-            ui.label(headline).style("font-weight: 600;")
-            ui.label(subline).style("color: var(--color-muted);")
-    except Exception as exc:
-        _log.warning("render_unavailable failed: %s", exc)

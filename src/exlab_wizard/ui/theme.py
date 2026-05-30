@@ -45,6 +45,18 @@ def build_root_css() -> str:
         f"  --color-muted:   {design.COLOR_MUTED};\n"
         f"  --color-body:    {design.COLOR_BODY};\n"
         f"  --color-heading: {design.COLOR_HEADING};\n"
+        # Main-window UI-refresh surface tokens + three vars components already
+        # referenced but the block never emitted (latent dead styling): without
+        # these, the new-file highlight, breadcrumb link/bar tint, and relay-
+        # badge text colour silently resolved to empty and were dropped.
+        f"  --color-bg-subtle:        {design.COLOR_BG_SUBTLE};\n"
+        f"  --color-pane-header:      {design.COLOR_PANE_HEADER};\n"
+        f"  --color-highlight:        {design.COLOR_HIGHLIGHT};\n"
+        f"  --color-zebra:            {design.COLOR_ZEBRA};\n"
+        f"  --color-row-selected:     {design.COLOR_ROW_SELECTED};\n"
+        f"  --color-row-selected-bar: {design.COLOR_ROW_SELECTED_BAR};\n"
+        f"  --color-link:             {design.COLOR_LINK};\n"
+        f"  --color-on-info:          {design.COLOR_ON_INFO};\n"
         f"  --oi-orange:    {design.OI_ORANGE};\n"
         f"  --oi-sky:       {design.OI_SKY};\n"
         f"  --oi-green:     {design.OI_GREEN};\n"
@@ -94,6 +106,22 @@ def build_root_css() -> str:
         "font-weight: 600; "
         "}\n"
         "code, kbd, samp, pre, .mono { font-family: var(--font-mono); }\n"
+        # Compact file-list density (Phase 5 / §4.8): the Files card carries the
+        # .exlab-density-compact class when ?density=compact; this tightens only
+        # the file-row vertical padding (sp-1 vs the default sp-2 from Tailwind
+        # .p-2). The descendant selector (0,1,1) outranks .p-2 (0,1,0) so no
+        # !important is needed; left/right padding is left to .p-2.
+        ".exlab-density-compact td { "
+        "padding-top: var(--sp-1); padding-bottom: var(--sp-1); }\n"
+        # Unified selection (Phase 5 / OQ-6): the selected tree node gets the
+        # same fill + 3px inset accent bar as a selected file row
+        # (file_list.row_background). Depends on Quasar tagging the selected
+        # node header with .q-tree__node--selected (seeded from the URL's
+        # ?selected= via build_tree).
+        ".q-tree__node-header.q-tree__node--selected { "
+        "background: var(--color-row-selected); "
+        "box-shadow: inset 3px 0 0 var(--color-row-selected-bar); "
+        "border-radius: var(--radius-sm); }\n"
     )
 
 
@@ -104,6 +132,13 @@ def register_theme() -> str:
     NiceGUI's import side effects (the package opens browser channels at
     import time in some configurations).
 
+    The ``:root`` block is injected with ``shared=True`` so it lands in the
+    document head of *every* page rather than only the page being rendered
+    at call time -- this is invoked once at app setup (from ``mount_ui``),
+    before any client connects, so a per-client (``shared=False``) head
+    injection would have nothing to attach to and the design tokens would
+    never reach the browser.
+
     Returns the CSS string that was registered (handy for tests and for
     the static-asset bundler).
     """
@@ -111,7 +146,7 @@ def register_theme() -> str:
     from nicegui import ui
 
     css = build_root_css()
-    ui.add_head_html(f"<style>{css}</style>")
+    ui.add_head_html(f"<style>{css}</style>", shared=True)
     _log.debug(
         "registered_theme_css",
         extra={"event": "ui.theme.registered", "bytes": len(css)},

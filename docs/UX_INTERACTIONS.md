@@ -121,3 +121,8 @@ flow test.
 | `/main?view=explorer` | `run-context-view-log` | menu item | Right-click a run tree node and choose 'View log' | Opens the per-run log viewer. |
 | `/main?view=explorer` | `file-context-open-in-os` | menu item | Right-click a file-list row and choose 'Open in OS' | Asks the OS to open the file in its default application. |
 | `/main?view=explorer` | `file-context-copy-path` | menu item | Right-click a file-list row and choose 'Copy path' | Copies the file's absolute path to the system clipboard. |
+| `/main` | `file-list-row` | table row | Single-click a file row in the centre list | Selects the row (highlight + accent bar) and threads ?file= so the metadata popover shows the file's sub-card (Phase 4 / Option B). |
+| `/main` | `toggle-right-pane` | button | Click the vertical 'Metadata' tab | Opens / collapses the metadata popover over the Files pane via ?right_pane=. |
+| `/main` | `main-search` | input | Type in the Explorer search box | Filters the tree (debounced ?q=) and shows a result-count / no-matches pill below the box (OQ-2). |
+| `/main` | `files-density-toggle` | button | Click the Files-header density toggle | Flips the file list between comfortable and compact row padding via ?density= (§4.8). |
+| `/main` | `files-legend` | button | Click the Files-header '?' legend button | Opens a popover listing every sync-status icon and its meaning. |

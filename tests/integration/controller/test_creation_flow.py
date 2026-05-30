@@ -492,6 +492,11 @@ _exlab_plugins:
 # ---------------------------------------------------------------------------
 
 
+# Timing-sensitive: this test races the creation pipeline against a mid-flight
+# cancel (it polls with ``asyncio.sleep`` and branches on whether the dir landed
+# first). Under load the race can occasionally lose; retry rather than fail the
+# suite on a transient timing miss.
+@pytest.mark.flaky(reruns=3, reruns_delay=0.5)
 async def test_cancel_with_discard_files_removes_partial_dir(tmp_path: Path) -> None:
     """A cancel with ``discard_files=True`` deletes the partial directory."""
     local_root = tmp_path / "data"

@@ -26,6 +26,25 @@ def test_primary_palette_matches_designmd() -> None:
     assert design.COLOR_HEADING == design.COLOR_NAVY
 
 
+def test_ui_refresh_surface_tokens_match_designmd() -> None:
+    """Main-window refresh surface tokens (DESIGN.md §02 UI Chrome Palette).
+
+    Several are intentional aliases of existing chrome tokens, kept named so
+    component CSS reads intent-first; the test pins both the literals and the
+    alias relationships.
+    """
+
+    assert design.COLOR_BG_SUBTLE == "#f4f6f9"
+    assert design.COLOR_HIGHLIGHT == "#fff6e0"
+    assert design.COLOR_ZEBRA == "#f7f9fb"
+    assert design.COLOR_ROW_SELECTED == "#dceaff"
+    # Aliases of existing chrome tokens.
+    assert design.COLOR_PANE_HEADER == design.COLOR_BG_SUBTLE
+    assert design.COLOR_ROW_SELECTED_BAR == design.COLOR_BLUE
+    assert design.COLOR_LINK == design.COLOR_BLUE
+    assert design.COLOR_ON_INFO == design.COLOR_NAVY
+
+
 def test_okabe_ito_palette_matches_designmd() -> None:
     """Okabe-Ito hexes are verbatim from DESIGN.md §01."""
 

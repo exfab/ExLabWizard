@@ -28,9 +28,9 @@ def test_flow_05_browse_view(page, server_url) -> None:
     # Right-pane tabs (Metadata replaces the legacy Details tab).
     main.tab_metadata.wait_for(state="visible")
     main.tab_problems.wait_for(state="visible")
-    # Footer (Redesign §4.6): Staging segment + bulk Clear-verified button.
-    main.footer_staging_segment.wait_for(state="visible")
-    main.footer_clear_verified.wait_for(state="visible")
+    # The footer "Staging" segment + bulk Clear-verified are intentionally
+    # absent — orchestrator/staging hidden (see
+    # docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md).
 
     # Tree contains the seeded equipment label.
     assert page.locator('[data-testid="main-tree"]').inner_text().find("TEST_EQ1") >= 0

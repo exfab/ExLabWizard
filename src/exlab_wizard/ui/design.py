@@ -28,6 +28,19 @@ COLOR_MUTED: str = "#8892a4"
 COLOR_BODY: str = "#2e3a4e"
 COLOR_HEADING: str = COLOR_NAVY
 
+# Main-window UI-refresh surface tokens (2026-05-29 refresh; DESIGN.md §02).
+# Framed panes, zebra striping, and row selection draw from these. Several are
+# aliases of existing chrome tokens, kept named so component CSS reads
+# intent-first (e.g. ``var(--color-row-selected-bar)`` rather than a bare blue).
+COLOR_BG_SUBTLE: str = "#f4f6f9"  # breadcrumb bar + pane title strips
+COLOR_PANE_HEADER: str = COLOR_BG_SUBTLE  # framed-pane title-strip background
+COLOR_HIGHLIGHT: str = "#fff6e0"  # new-file row highlight; "kept local" badge
+COLOR_ZEBRA: str = "#f7f9fb"  # file-list even-row stripe
+COLOR_ROW_SELECTED: str = "#dceaff"  # selected file / tree row fill
+COLOR_ROW_SELECTED_BAR: str = COLOR_BLUE  # selected-row left accent bar
+COLOR_LINK: str = COLOR_BLUE  # hyperlink text (breadcrumb segments)
+COLOR_ON_INFO: str = COLOR_NAVY  # readable text on a solid --color-info fill
+
 # Okabe-Ito palette -- data visualization only (DESIGN.md §01).
 # Never used for buttons, navigation, headings, links, or input borders.
 OI_ORANGE: str = "#E69F00"

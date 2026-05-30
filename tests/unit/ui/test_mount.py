@@ -24,6 +24,7 @@ import exlab_wizard.api.app  # noqa: F401  -- import order matters
 from exlab_wizard.constants import KEYRING_USERNAME_LIMS, RunKind
 from exlab_wizard.controller import SessionState
 from exlab_wizard.ui import mount
+from exlab_wizard.ui.components.file_list import FileListEntry
 
 
 def _deps(**overrides: Any) -> SimpleNamespace:
@@ -93,36 +94,6 @@ class _Fluent:
 
     def __exit__(self, *_args: Any) -> bool:
         return False
-
-
-class _FakeUI:
-    """Records cards / labels and exposes a ``navigate.to`` spy."""
-
-    def __init__(self) -> None:
-        self.cards = 0
-        self.labels: list[str] = []
-        self.navigated: list[str] = []
-        self.navigate = SimpleNamespace(to=self.navigated.append)
-
-    def card(self, *_args: Any, **_kwargs: Any) -> _Fluent:
-        self.cards += 1
-        return _Fluent()
-
-    def label(self, text: str = "", *_args: Any, **_kwargs: Any) -> _Fluent:
-        self.labels.append(text)
-        return _Fluent()
-
-
-class _BoomUI:
-    """A ``ui`` whose element factories raise -- exercises render except paths."""
-
-    def card(self, *_args: Any, **_kwargs: Any) -> Any:
-        msg = "no ui slot"
-        raise RuntimeError(msg)
-
-    def label(self, *_args: Any, **_kwargs: Any) -> Any:
-        msg = "no ui slot"
-        raise RuntimeError(msg)
 
 
 class _FakeController:
@@ -451,51 +422,11 @@ def test_safe_audit_forwards_validator_output() -> None:
     assert mount._safe_audit(deps) == expected
 
 
-# ---------------------------------------------------------------------------
-# _build_staging_state
-# ---------------------------------------------------------------------------
-
-
-def test_staging_state_when_staging_root_missing(tmp_path: Path) -> None:
-    """Redesign §3.1: orchestrator pipeline is always on, but a missing
-    staging_root on disk surfaces as empty rows, not a None panel."""
-    deps = _deps(
-        config=_config(
-            orchestrator_label="LAB",
-            orchestrator_staging_root=str(tmp_path / "does-not-exist"),
-        ),
-    )
-    state = mount._build_staging_state(deps)
-    # State may be None when staging is empty or not built; either way the
-    # always-on contract doesn't promise rows when there are none.
-    assert state is None or state.rows == []
-
-
-def test_staging_state_none_when_no_config() -> None:
-    assert mount._build_staging_state(_deps()) is None
-
-
-def test_staging_state_returns_empty_rows_on_query_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    deps = _deps(
-        config=_config(
-            orchestrator_label="LAB",
-            orchestrator_staging_root="/staging",
-        ),
-    )
-
-    def _raise(*_args: Any, **_kwargs: Any) -> None:
-        msg = "no staging root"
-        raise RuntimeError(msg)
-
-    monkeypatch.setattr(
-        "exlab_wizard.orchestrator.staging_query.list_staged_runs",
-        _raise,
-    )
-    state = mount._build_staging_state(deps)
-    assert state is not None
-    assert state.rows == []
+# NOTE: _build_staging_state was removed when the /staging route was hidden
+# (orchestrator/staging hidden — see
+# docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md). The
+# staging read-side itself (orchestrator.staging_query.list_staged_runs) stays
+# and is covered by test_staging_query.
 
 
 # ---------------------------------------------------------------------------
@@ -662,22 +593,8 @@ def test_apply_live_config_falls_back_to_setting_config(
     assert any("live config reload failed" in r.message for r in caplog.records)
 
 
-# ---------------------------------------------------------------------------
-# _render_unavailable
-# ---------------------------------------------------------------------------
-
-
-def test_render_unavailable_renders_headline_and_subline() -> None:
-    ui = _FakeUI()
-    mount._render_unavailable(ui, "Staging unavailable", "Orchestrator disabled")
-    assert "Staging unavailable" in ui.labels
-    assert "Orchestrator disabled" in ui.labels
-
-
-def test_render_unavailable_swallows_failure(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level("WARNING"):
-        mount._render_unavailable(_BoomUI(), "headline", "subline")
-    assert any("render_unavailable" in r.message for r in caplog.records)
+# NOTE: _render_unavailable was removed with the /staging route (its only
+# caller) — orchestrator/staging hidden; see the design spec referenced above.
 
 
 # ---------------------------------------------------------------------------
@@ -1201,6 +1118,29 @@ def test_build_main_query_url_encodes_special_chars() -> None:
     assert "?" not in mount._build_main_query("with?q", "")[len("?selected=") :]
 
 
+def test_build_main_query_includes_file_q_density() -> None:
+    """Phase 4 adds optional file / q / density params to the same URL model."""
+    out = mount._build_main_query("EQ1", "", file="/d/EQ1/scan.tif", q="cortex", density="compact")
+    assert out.startswith("?selected=EQ1")
+    assert "file=/d/EQ1/scan.tif" in out
+    assert "q=cortex" in out
+    assert "density=compact" in out
+
+
+def test_build_main_query_omits_empty_phase4_params() -> None:
+    """The Phase 4 params default empty and drop out of the URL entirely."""
+    assert mount._build_main_query("EQ1", "collapsed") == "?selected=EQ1&right_pane=collapsed"
+
+
+def test_build_main_query_encodes_file_path_and_search() -> None:
+    """``file`` keeps '/' readable but encodes spaces; ``q`` encodes everything."""
+    out = mount._build_main_query("", "", file="/d/My Run/a b.tif", q="a&b c")
+    assert "file=/d/My%20Run/a%20b.tif" in out
+    # The search query is fully encoded (safe='') so '&' and ' ' can't break
+    # the query parser.
+    assert "q=a%26b%20c" in out
+
+
 def test_classify_node_returns_none_for_empty_selection() -> None:
     assert mount._classify_node(None, {}) == (None, False)
     assert mount._classify_node("", {}) == (None, False)
@@ -1363,6 +1303,181 @@ def test_build_main_state_threads_selection_into_state() -> None:
     assert state.folder_feed_path == "EQ1/Cortex"
 
 
+def test_build_main_state_threads_file_search_density() -> None:
+    """Phase 4 selection / search / density fields reach MainPageState."""
+    selected = {"kind": "file", "name": "scan.tif", "path": "/d/scan.tif"}
+    state = mount._build_main_state(
+        _deps(),
+        selected_file_path="/d/scan.tif",
+        selected_file=selected,
+        search_query="cortex",
+        density="compact",
+    )
+    assert state.selected_file_path == "/d/scan.tif"
+    assert state.selected_file == selected
+    assert state.search_query == "cortex"
+    assert state.density == "compact"
+
+
+# ---------------------------------------------------------------------------
+# _build_selected_file / _build_selected_folder (Phase 4, Option B)
+# ---------------------------------------------------------------------------
+
+
+def test_build_selected_file_resolves_file_by_path_match() -> None:
+    """A clicked path is resolved from the in-memory feed into a file payload."""
+    from exlab_wizard.ui.pages.staging import format_bytes
+
+    entries = [
+        FileListEntry(
+            name="scan.tif",
+            path="/d/EQ1/scan.tif",
+            is_dir=False,
+            size_bytes=2048,
+            modified_iso="2026-05-20T10:00:00Z",
+            sync_status="synced",
+        ),
+        FileListEntry(name="meta.json", path="/d/EQ1/meta.json", is_dir=False),
+    ]
+    payload = mount._build_selected_file("/d/EQ1/scan.tif", entries, _deps())
+    assert payload is not None
+    assert payload["kind"] == "file"
+    assert payload["name"] == "scan.tif"
+    assert payload["path"] == "/d/EQ1/scan.tif"
+    assert payload["size"] == format_bytes(2048)  # pre-formatted, not raw bytes
+    assert payload["modified"] == "2026-05-20T10:00:00Z"
+    assert payload["sync_status"] == "synced"
+    assert payload["tombstone"] is False
+
+
+def test_build_selected_file_none_for_empty_or_missing_path() -> None:
+    """Empty path or a path matching no current entry resolves to None."""
+    entries = [FileListEntry(name="a", path="/d/a", is_dir=False)]
+    assert mount._build_selected_file(None, entries, _deps()) is None
+    assert mount._build_selected_file("", entries, _deps()) is None
+    # Removed since the click -> no match -> None (no sub-card, no error).
+    assert mount._build_selected_file("/d/removed", entries, _deps()) is None
+
+
+def test_build_selected_file_tombstone_omits_size() -> None:
+    """A tombstone ("On NAS") file has no on-disk copy, so size is None."""
+    entries = [
+        FileListEntry(
+            name="old.tif",
+            path="/d/old.tif",
+            is_dir=False,
+            size_bytes=999,
+            sync_status="on_nas",
+            tombstone=True,
+        )
+    ]
+    payload = mount._build_selected_file("/d/old.tif", entries, _deps())
+    assert payload is not None
+    assert payload["tombstone"] is True
+    assert payload["size"] is None
+    assert payload["sync_status"] == "on_nas"
+
+
+def test_build_selected_file_folder_delegates_to_aggregate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A directory match delegates to the one-level folder aggregate scan."""
+    from exlab_wizard.api.routers import browse as browse_mod
+
+    fake_entries = [
+        SimpleNamespace(sync_status="synced"),
+        SimpleNamespace(sync_status="failed"),
+        SimpleNamespace(sync_status=None),
+    ]
+    monkeypatch.setattr(
+        browse_mod,
+        "scan_folder_sync",
+        lambda _path, _config: SimpleNamespace(entries=fake_entries),
+    )
+    entries = [FileListEntry(name="Runs", path="/d/EQ1/Runs", is_dir=True)]
+    payload = mount._build_selected_file("/d/EQ1/Runs", entries, _deps(config=_config()))
+    assert payload is not None
+    assert payload["kind"] == "folder"
+    assert payload["name"] == "Runs"
+    assert payload["path"] == "/d/EQ1/Runs"
+    assert payload["item_count"] == 3
+    # Worst-of rollup: a single failed child dominates.
+    assert payload["rollup"] == "failed"
+
+
+def test_build_selected_folder_degrades_on_scan_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A scan failure yields item_count=None + neutral rollup, no raise."""
+    from exlab_wizard.api.routers import browse as browse_mod
+
+    def _boom(_path: Any, _config: Any) -> Any:
+        msg = "folder vanished"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(browse_mod, "scan_folder_sync", _boom)
+    with caplog.at_level("WARNING"):
+        payload = mount._build_selected_folder("Runs", "/d/EQ1/Runs", _deps(config=_config()))
+    assert payload == {
+        "kind": "folder",
+        "name": "Runs",
+        "path": "/d/EQ1/Runs",
+        "item_count": None,
+        "rollup": None,
+    }
+    assert any("folder aggregate scan failed" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# _refresh_selected_folder (Phase 4, OQ-1/A)
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_selected_folder_primes_feed_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A force-refresh writes the fresh scan onto the per-tab feed payload and
+    records a folder walk on the coordinator (coalescing bookkeeping)."""
+    from exlab_wizard.api.routers import browse as browse_mod
+
+    sentinel = SimpleNamespace(path="/d/EQ1/Runs", entries=[])
+    monkeypatch.setattr(browse_mod, "scan_folder_sync", lambda _path, _config: sentinel)
+    recorded: list[bool] = []
+    coord = SimpleNamespace(record_folder_refresh=lambda: recorded.append(True))
+    feed = SimpleNamespace(state=SimpleNamespace(last_payload=None))
+    app = SimpleNamespace(
+        storage=SimpleNamespace(tab={"folder_feed": feed, "folder_feed_coord": coord})
+    )
+    mount._refresh_selected_folder(app, _deps(config=_config()), "/d/EQ1/Runs")
+    assert feed.state.last_payload is sentinel
+    assert recorded == [True]
+
+
+def test_refresh_selected_folder_noop_when_path_none() -> None:
+    """Nothing selected -> no scan, no write, no raise."""
+    app = SimpleNamespace(storage=SimpleNamespace(tab={}))
+    mount._refresh_selected_folder(app, _deps(), None)
+
+
+def test_refresh_selected_folder_swallows_scan_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A failed scan keeps the existing payload and warns."""
+    from exlab_wizard.api.routers import browse as browse_mod
+
+    def _boom(_path: Any, _config: Any) -> Any:
+        msg = "gone"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(browse_mod, "scan_folder_sync", _boom)
+    feed = SimpleNamespace(state=SimpleNamespace(last_payload="keep"))
+    app = SimpleNamespace(storage=SimpleNamespace(tab={"folder_feed": feed}))
+    with caplog.at_level("WARNING"):
+        mount._refresh_selected_folder(app, _deps(config=_config()), "/d/EQ1/Runs")
+    assert feed.state.last_payload == "keep"
+    assert any("per-folder refresh scan failed" in r.message for r in caplog.records)
+
+
 def test_open_in_os_returns_false_on_unhandled_platform(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1499,21 +1614,6 @@ class _StubNasSync:
         return SimpleNamespace(state="queued", job_id="j-1")
 
 
-def _drain_background() -> None:
-    """Run any pending mount background tasks to completion."""
-    import asyncio as _aio
-
-    loop = _aio.new_event_loop()
-    try:
-        loop.run_until_complete(_aio.sleep(0))
-        # Drain the mount's strong-ref set; each task is in the same loop.
-        pending = [t for t in mount._BACKGROUND_TASKS if not t.done()]
-        if pending:
-            loop.run_until_complete(_aio.gather(*pending, return_exceptions=True))
-    finally:
-        loop.close()
-
-
 async def test_run_staging_action_force_sync_invokes_nas_sync_enqueue() -> None:
     """Force-sync routes to ``deps.nas_sync.enqueue`` with the run path."""
     nas_sync = _StubNasSync()
@@ -1580,62 +1680,10 @@ async def test_run_staging_action_clear_verified_invokes_clear(
     assert captured == [Path("EQ1/proj/Run_x")]
 
 
-# ---------------------------------------------------------------------------
-# _bulk_clear_verified: success / no config / error
-# ---------------------------------------------------------------------------
-
-
-async def test_bulk_clear_verified_clears_verified_rows(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The bulk action clears every ``synced`` row and toasts the count."""
-    cleared: list[Path] = []
-
-    def _summary(path: str, state: str) -> SimpleNamespace:
-        return SimpleNamespace(path=path, current_state=state)
-
-    monkeypatch.setattr(
-        mount,
-        "list_staged_runs",
-        lambda **_kw: [
-            _summary("/staging/EQ1/proj/Run_a", "synced"),
-            _summary("/staging/EQ1/proj/Run_b", "synced"),
-            _summary("/staging/EQ1/proj/Run_c", "syncing"),
-        ],
-    )
-    monkeypatch.setattr(mount, "clear_run_dir", lambda p: cleared.append(p) or (1, 10))
-    deps = _deps(config=_config())
-    ui = _UiSpy()
-    mount._bulk_clear_verified(deps, ui)
-    pending = [t for t in mount._BACKGROUND_TASKS if not t.done()]
-    for task in pending:
-        await task
-    # Only the two verified rows were cleared.
-    assert cleared == [Path("/staging/EQ1/proj/Run_a"), Path("/staging/EQ1/proj/Run_b")]
-
-
-def test_bulk_clear_verified_no_config_toasts_and_returns() -> None:
-    """The early-exit when config is missing produces a toast, no task."""
-    deps = _deps(config=None)
-    ui = _UiSpy()
-    mount._bulk_clear_verified(deps, ui)
-
-
-async def test_bulk_clear_verified_logs_helper_exception(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An exception from the clear sweep is caught + toasted."""
-
-    def _raise(**_kw: Any) -> list[Any]:
-        raise RuntimeError("staging walker exploded")
-
-    monkeypatch.setattr(mount, "list_staged_runs", _raise)
-    deps = _deps(config=_config())
-    ui = _UiSpy()
-    mount._bulk_clear_verified(deps, ui)
-    pending = [t for t in mount._BACKGROUND_TASKS if not t.done()]
-    for task in pending:
-        await task
+# NOTE: _bulk_clear_verified was removed with the footer "Clear verified runs"
+# button (its only caller) — orchestrator/staging hidden; see the design spec.
+# Per-run clear (the kept tree context-menu action) is still covered by
+# test_run_staging_action_clear_verified_invokes_clear above.
 
 
 # ---------------------------------------------------------------------------
@@ -2732,23 +2780,6 @@ def test_metadata_for_owned_equipment_no_match_returns_empty() -> None:
     assert mount._metadata_for_owned_equipment("EQ1", config) == {}
 
 
-async def test_bulk_clear_verified_no_verified_rows_toasts(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """With no SYNCED rows the sweep clears nothing and toasts 'none'."""
-    monkeypatch.setattr(
-        mount,
-        "list_staged_runs",
-        lambda **_kw: [SimpleNamespace(path="/staging/EQ1/Run_a", current_state="syncing")],
-    )
-    cleared: list[Any] = []
-    monkeypatch.setattr(mount, "clear_run_dir", lambda p: cleared.append(p) or (0, 0))
-    mount._bulk_clear_verified(_deps(config=_config()), _UiSpy())
-    for task in [t for t in mount._BACKGROUND_TASKS if not t.done()]:
-        await task
-    assert cleared == []  # syncing rows are never cleared
-
-
 async def test_toggle_keep_local_unresolvable_relative_path_toasts(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2810,22 +2841,3 @@ def test_template_questions_map_swallows_outer_failure(
     with caplog.at_level("WARNING"):
         assert mount._template_questions_map(_deps(config=_config()), "project") == {}
     assert any("template question scan" in r.message for r in caplog.records)
-
-
-def test_build_staging_state_query_failure_returns_empty_rows(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    """A staging-query failure degrades to an empty dock, not a crash."""
-
-    def _raise(**_kw: Any) -> Any:
-        msg = "no staging root"
-        raise RuntimeError(msg)
-
-    # mount imports ``list_staged_runs`` into its own namespace, so patch there.
-    monkeypatch.setattr(mount, "list_staged_runs", _raise)
-    deps = _deps(config=_config(orchestrator_label="LAB", orchestrator_staging_root="/staging"))
-    with caplog.at_level("WARNING"):
-        state = mount._build_staging_state(deps)
-    assert state is not None
-    assert state.rows == []
-    assert any("staging_query failed" in r.message for r in caplog.records)

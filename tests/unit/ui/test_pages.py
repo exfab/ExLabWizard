@@ -8,6 +8,13 @@ tests.
 
 from __future__ import annotations
 
+from exlab_wizard.constants.enums import RunKind
+from exlab_wizard.ui.components.tree import (
+    EquipmentNode,
+    ProjectNode,
+    RunNode,
+    build_nodes,
+)
 from exlab_wizard.ui.pages import (
     main,
     problems,
@@ -99,6 +106,70 @@ def test_main_setup_banner_subline_tailored_for_rclone_remote() -> None:
     # The generic next-action falls back to the original subline.
     generic = main.setup_incomplete_banner_props()["subline"]
     assert props["subline"] != generic
+
+
+# ---------------------------------------------------------------------------
+# main -- search wiring (OQ-2, Phase 5)
+# ---------------------------------------------------------------------------
+
+
+def _search_hierarchy() -> dict:
+    """A one-equipment hierarchy with two runs for the search-count tests."""
+
+    return {
+        EquipmentNode("EQ1"): {
+            ProjectNode("P1", "Cortex Pilot"): [
+                RunNode("Run_2026-05-07", RunKind.EXPERIMENTAL, "alpha sweep"),
+                RunNode("Run_2026-05-06", RunKind.EXPERIMENTAL, "beta sweep"),
+            ],
+        },
+    }
+
+
+def test_main_chip_state_to_tree_filters_threads_search() -> None:
+    """The search-box query reaches TreeFilters.search (OQ-2)."""
+
+    state = main.MainPageState()
+    filters = main.chip_state_to_tree_filters(state.chip_state, search="cortex")
+    assert filters.search == "cortex"
+
+
+def test_main_count_search_results_counts_projects_and_runs() -> None:
+    """The result pill counts project + run rows (equipment is always shown)."""
+
+    filters = main.chip_state_to_tree_filters(main.MainPageState().chip_state)
+    nodes = build_nodes(hierarchy=_search_hierarchy(), filters=filters)
+    # 1 project + 2 runs.
+    assert main.count_search_results(nodes) == 3
+
+
+def test_main_count_search_results_narrows_with_query() -> None:
+    """A query surfaces only the matching run under its project."""
+
+    filters = main.chip_state_to_tree_filters(main.MainPageState().chip_state, search="alpha")
+    nodes = build_nodes(hierarchy=_search_hierarchy(), filters=filters)
+    # Project surfaces with only its matching run -> 1 project + 1 run.
+    assert main.count_search_results(nodes) == 2
+
+
+def test_main_count_search_results_zero_on_no_match() -> None:
+    """A no-match query yields a zero count (the no-matches state) even
+    though build_nodes still emits the equipment row."""
+
+    filters = main.chip_state_to_tree_filters(
+        main.MainPageState().chip_state, search="zzz-no-such-run"
+    )
+    nodes = build_nodes(hierarchy=_search_hierarchy(), filters=filters)
+    assert main.count_search_results(nodes) == 0
+
+
+def test_main_density_card_class_maps_compact() -> None:
+    """`?density=compact` -> the Files-card class the theme rule keys on; any
+    other value -> no class (comfortable default)."""
+
+    assert main.density_card_class("compact") == "exlab-density-compact"
+    assert main.density_card_class("") == ""
+    assert main.density_card_class("comfortable") == ""
 
 
 # ---------------------------------------------------------------------------

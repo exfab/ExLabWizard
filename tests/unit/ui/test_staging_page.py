@@ -8,6 +8,8 @@ Visual concerns are covered by Phase-16 Playwright tests.
 
 from __future__ import annotations
 
+import pytest
+
 from exlab_wizard.constants import RunSyncState
 from exlab_wizard.orchestrator.staging_query import StagedRunSummary
 from exlab_wizard.ui.pages.staging import (
@@ -19,6 +21,15 @@ from exlab_wizard.ui.pages.staging import (
     render_staging_dock,
     row_props,
     state_pill_props,
+)
+
+# The staging dock is no longer routed from the operator UI; this page module
+# and its renderers are kept dormant for reversibility, so these tests are
+# skipped rather than deleted. See
+# docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md.
+pytestmark = pytest.mark.skip(
+    reason="orchestrator/staging hidden — see "
+    "docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md"
 )
 
 # ---------------------------------------------------------------------------

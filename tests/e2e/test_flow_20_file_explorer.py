@@ -34,9 +34,10 @@ def test_flow_20_file_explorer_renders_three_regions(page, server_url) -> None:
         page.locator(f'[data-testid="{testid}"]').wait_for(state="visible", timeout=10_000)
     # Tree has at least one equipment node.
     page.locator('[data-testid="tree-node-equipment"]').first.wait_for(state="visible")
-    # Footer Staging segment + Clear verified action.
-    page.locator('[data-testid="footer-staging-segment"]').wait_for(state="visible")
-    page.locator('[data-testid="footer-clear-verified"]').wait_for(state="visible")
+    # Footer "Staging" segment + bulk clear-verified are intentionally absent —
+    # orchestrator/staging hidden (see
+    # docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md).
+    # Per-run sync actions live on the metadata pane (see the next test).
 
 
 def test_flow_20_select_run_node_renders_metadata_pane(page, server_url) -> None:

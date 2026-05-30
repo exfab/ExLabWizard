@@ -29,6 +29,51 @@ SEGMENT_DANGER = "danger"
 
 
 @dataclass(frozen=True)
+class FooterSegmentStates:
+    """Derived ``SEGMENT_*`` state for each footer status segment (Phase 5).
+
+    Only the segments whose state varies with live backend signals are
+    carried here -- Validator, LIMS, Staging. The Sync segment keeps its own
+    richer label/click logic in the page renderer (it doubles as the
+    Operations entry point), so it is not duplicated in this mapping.
+    """
+
+    validator: str
+    lims: str
+    staging: str
+
+
+def derive_footer_segment_states(
+    *,
+    problems_count_hard: int = 0,
+    lims_reachable: bool = True,
+    staging_pending: int = 0,
+) -> FooterSegmentStates:
+    """Map live backend counts to per-segment states (Frontend §3.5.5).
+
+    * **Validator** -- ``WARNING`` when at least one hard-tier finding gates
+      work (``problems_count_hard > 0``), sourced from the 30 s background
+      audit rollup.
+    * **LIMS** -- ``DANGER`` when the LIMS endpoint is unreachable
+      (``deps.lims_reachable`` is ``False``).
+    * **Staging** -- ``WARNING`` when runs are pending clearance. There is no
+      cheap cached count today (a per-render ``list_staged_runs`` scan would
+      be I/O on the render path), so the caller passes ``0`` and the segment
+      stays ``NORMAL`` until a cached signal exists; the parameter is wired so
+      that becomes a one-line change.
+
+    Pure so the mapping is unit-testable; the defaults describe a clean /
+    half-wired backend (every segment ``NORMAL``) so a missing signal degrades
+    quietly rather than raising.
+    """
+    return FooterSegmentStates(
+        validator=SEGMENT_WARNING if problems_count_hard > 0 else SEGMENT_NORMAL,
+        lims=SEGMENT_NORMAL if lims_reachable else SEGMENT_DANGER,
+        staging=SEGMENT_WARNING if staging_pending > 0 else SEGMENT_NORMAL,
+    )
+
+
+@dataclass(frozen=True)
 class SegmentSpec:
     """Computed render spec for a status-bar segment."""
 

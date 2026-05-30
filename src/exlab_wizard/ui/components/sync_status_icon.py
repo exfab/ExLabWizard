@@ -104,23 +104,59 @@ _STATUS_TO_PROPS: dict[str, dict[str, str]] = {
 }
 
 
+# Neutral props returned for an unknown / ``None`` status in tolerant mode:
+# a muted dash with no icon. Keys mirror the normal props shape so callers
+# (``sync_status_icon`` render fn, file-list Status cell, legend) can treat
+# both paths identically.
+_NEUTRAL_PROPS: Final[dict[str, str]] = {
+    "icon_name": "",
+    "color_var": "--color-muted",
+    "tooltip": "",
+}
+
+
+def sync_legend_entries() -> list[dict[str, str]]:
+    """Return the sync-status legend rows, in declaration order (Phase 5).
+
+    One dict per state in ``_STATUS_TO_PROPS`` -- ``{"status", "icon_name",
+    "color_var", "tooltip"}`` -- so the Files-header legend popover lists
+    exactly the icons + meanings the file list / metadata pane render and can't
+    drift from them (``_STATUS_TO_PROPS`` is the single source of truth). Pure
+    so it is testable without NiceGUI.
+    """
+
+    return [{"status": status, **props} for status, props in _STATUS_TO_PROPS.items()]
+
+
 def sync_status_props(
-    status: SyncStatusOrIcon,
+    status: SyncStatusOrIcon | None,
     *,
     retry_n: int | None = None,
     retry_m: int | None = None,
+    strict: bool = True,
 ) -> dict[str, Any]:
     """Compute icon + tooltip + retry-counter for a sync status.
 
     The ``retry_n``/``retry_m`` annotations are rendered only when
     ``status == "retrying"`` (Frontend §10.5.1).
+
+    ``strict`` (default ``True``) preserves the original contract: an unknown
+    status raises ``ValueError`` so a genuinely wrong value is caught loudly.
+    With ``strict=False`` an unknown *or* ``None`` status returns neutral
+    props (a muted dash, no icon) instead of raising -- used by callers that
+    render optional per-file / per-folder status (the file-list Status cell,
+    the folder rollup, the legend) where ``None`` is legitimate, not a bug.
     """
 
-    key = status.value if isinstance(status, SyncStatus) else str(status)
+    key = (
+        "" if status is None else (status.value if isinstance(status, SyncStatus) else str(status))
+    )
     if key not in _STATUS_TO_PROPS:
-        raise ValueError(
-            f"unknown sync status {status!r}: must be one of {sorted(_STATUS_TO_PROPS)}",
-        )
+        if strict:
+            raise ValueError(
+                f"unknown sync status {status!r}: must be one of {sorted(_STATUS_TO_PROPS)}",
+            )
+        return {**_NEUTRAL_PROPS, "status": key, "retry_label": ""}
     base = dict(_STATUS_TO_PROPS[key])
     base["status"] = key
     if key == STATUS_RETRYING and retry_n is not None and retry_m is not None:
@@ -132,14 +168,20 @@ def sync_status_props(
 
 
 def sync_status_icon(
-    status: SyncStatusOrIcon,
+    status: SyncStatusOrIcon | None,
     *,
     retry_n: int | None = None,
     retry_m: int | None = None,
+    strict: bool = True,
 ) -> Any:
-    """Build a NiceGUI row containing the icon and optional retry counter."""
+    """Build a NiceGUI row containing the icon and optional retry counter.
 
-    props = sync_status_props(status, retry_n=retry_n, retry_m=retry_m)
+    ``strict`` is forwarded to :func:`sync_status_props`; with
+    ``strict=False`` an unknown / ``None`` status renders a muted dash
+    instead of raising (used by the file-list Status cell and the legend).
+    """
+
+    props = sync_status_props(status, retry_n=retry_n, retry_m=retry_m, strict=strict)
     try:
         from nicegui import ui
     except Exception:
@@ -147,9 +189,13 @@ def sync_status_icon(
 
     row = ui.row().classes("items-center").style("gap: 0.25rem;")
     with row:
-        ui.icon(props["icon_name"]).style(
-            f"color: var({props['color_var']}); font-size: 1rem;"
-        ).tooltip(props["tooltip"])
+        if props["icon_name"]:
+            ui.icon(props["icon_name"]).style(
+                f"color: var({props['color_var']}); font-size: 1rem;"
+            ).tooltip(props["tooltip"])
+        else:
+            # Neutral / unknown status (tolerant mode): a muted dash.
+            ui.label("-").style(f"color: var({props['color_var']});")
         if props["retry_label"]:
             ui.label(props["retry_label"]).style(
                 "font-family: var(--font-mono); "

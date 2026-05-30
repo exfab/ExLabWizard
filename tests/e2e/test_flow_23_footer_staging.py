@@ -6,6 +6,16 @@ verified runs") moves into the footer Staging segment's popover.
 
 from __future__ import annotations
 
+import pytest
+
+# The footer Staging segment + bulk Clear-verified were removed: orchestrator/
+# staging is hidden at the UI layer. See
+# docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md.
+pytestmark = pytest.mark.skip(
+    reason="orchestrator/staging hidden — see "
+    "docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md"
+)
+
 
 def _goto(page, url: str, *, retries: int = 2) -> None:
     last: Exception | None = None

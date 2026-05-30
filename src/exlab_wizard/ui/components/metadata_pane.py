@@ -15,6 +15,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from exlab_wizard.ui.components.empty_state import empty_state
+from exlab_wizard.ui.components.sync_status_icon import STATUS_ON_NAS, sync_status_icon
+
 # Node-kind discriminators consumed by the dispatcher.
 NODE_KIND_EQUIPMENT = "equipment"
 NODE_KIND_RECEIVED_EQUIPMENT = "received_equipment"
@@ -23,6 +26,11 @@ NODE_KIND_RUNS_FOLDER = "runs_folder"
 NODE_KIND_TEST_RUNS_FOLDER = "test_runs_folder"
 NODE_KIND_RUN = "run"
 NODE_KIND_RECEIVED_RUN = "received_run"
+
+# Selected-file/folder sub-card kinds (Phase 4 / Option B), set by the mount
+# layer on the payload it assembles (see mount._build_selected_file).
+SELECTED_KIND_FILE = "file"
+SELECTED_KIND_FOLDER = "folder"
 
 
 @dataclass(frozen=True)
@@ -33,6 +41,23 @@ class MetadataPaneState:
     node_kind: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)
     """Node-kind-specific data: equipment dict, run dict, lifecycle dict, etc."""
+    selected_file: dict[str, Any] | None = None
+    """Phase 4 / Option B (spec §4.4): a file/folder selected in the centre
+    list, assembled by mount._build_selected_file. Rendered as a sub-card
+    *beneath* the node-kind content (and beneath the empty state), so the
+    selection's metadata shows whether or not a tree node is also selected."""
+
+
+def selected_file_card_title(payload: dict[str, Any]) -> str:
+    """Return the sub-card heading for a selected file/folder payload (pure).
+
+    ``"Selected folder"`` for a folder payload (``kind == "folder"``),
+    ``"Selected file"`` otherwise. Pure so the title mapping is testable
+    without spinning up NiceGUI.
+    """
+    if payload.get("kind") == SELECTED_KIND_FOLDER:
+        return "Selected folder"
+    return "Selected file"
 
 
 def render_metadata_pane(
@@ -57,12 +82,19 @@ def render_metadata_pane(
         .style("gap: 0.5rem;")
         .props('data-testid="metadata-pane"') as container
     ):
+        # The node-kind dispatch and the selected-file sub-card are an
+        # if/elif chain that *falls through* (no early return): a file/folder
+        # selected in the centre list appends its own sub-card BELOW whatever
+        # the node dispatch rendered -- including the empty state -- so the
+        # selection's metadata is visible whether or not a tree node is also
+        # selected (Phase 4 / Option B, spec §4.4).
         if state.selected_node is None or state.node_kind is None:
-            ui.label("Select a node to see its metadata.").props(
-                'data-testid="metadata-pane-empty"'
-            ).style("color: var(--color-muted);")
-            return container
-        if state.node_kind == NODE_KIND_EQUIPMENT:
+            empty_state(
+                icon="info",
+                message="Select a node to see its metadata.",
+                testid="metadata-pane-empty",
+            )
+        elif state.node_kind == NODE_KIND_EQUIPMENT:
             _render_equipment(state.payload)
         elif state.node_kind == NODE_KIND_RECEIVED_EQUIPMENT:
             _render_received_equipment(state.payload)
@@ -76,6 +108,8 @@ def render_metadata_pane(
             _render_received_run(state.payload)
         else:
             ui.label(f"Unknown node kind: {state.node_kind}").style("color: var(--color-muted);")
+        if state.selected_file:
+            _render_selected_file_card(state.selected_file)
     return container
 
 
@@ -84,9 +118,84 @@ def _kv(key: str, value: Any) -> None:  # pragma: no cover -- NiceGUI render, dr
         from nicegui import ui
     except Exception:
         return
+    with ui.row().classes("items-center").style("flex-wrap: nowrap;"):
+        ui.label(f"{key}:").style(
+            "color: var(--color-muted); width: 12rem; min-width: 12rem; white-space: nowrap;"
+        )
+        # Values overflow rather than wrap (long paths stay on one line); the
+        # metadata pane is horizontally scrollable so they remain reachable.
+        ui.label(str(value) if value is not None else "-").style(
+            "font-family: var(--font-mono); white-space: nowrap;"
+        )
+
+
+def _kv_sync(key: str, status: Any) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
+    """Key/value row whose value is a sync-status icon (tolerant).
+
+    Mirrors :func:`_kv`'s label column but renders the status through the
+    tolerant icon path (``strict=False``): a ``None`` / unknown status shows
+    a neutral dash rather than raising (spec §4.5).
+    """
+    try:
+        from nicegui import ui
+    except Exception:
+        return
     with ui.row().classes("items-center w-full"):
         ui.label(f"{key}:").style("color: var(--color-muted); width: 12rem; min-width: 12rem;")
-        ui.label(str(value) if value is not None else "-").style("font-family: var(--font-mono);")
+        sync_status_icon(status, strict=False)
+
+
+def _render_selected_file_card(
+    payload: dict[str, Any],
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
+    """Render the SELECTED FILE / SELECTED FOLDER sub-card (Phase 4, §4.4).
+
+    Appended beneath the node-kind content. A file shows
+    name/size/modified/sync/path; a tombstone ("On NAS") omits the size row
+    and notes that the local copy is gone. A folder shows
+    name/item-count/sync-rollup/path with no size row -- the recursive total
+    is deferred (spec §11).
+    """
+    try:
+        from nicegui import ui
+    except Exception:
+        return
+    is_folder = payload.get("kind") == SELECTED_KIND_FOLDER
+    testid = "metadata-selected-folder" if is_folder else "metadata-selected-file"
+    with (
+        ui.column()
+        .classes("w-full")
+        .style(
+            "gap: 0.4rem; margin-top: 0.75rem; padding-top: 0.75rem; "
+            "border-top: 1px solid var(--color-rule);"
+        )
+        .props(f'data-testid="{testid}"')
+    ):
+        ui.label(selected_file_card_title(payload).upper()).style(
+            "font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.08em; "
+            "color: var(--color-muted); font-weight: 600;"
+        )
+        ui.label(payload.get("name", "")).style(
+            "font-family: var(--font-display); color: var(--color-heading); font-weight: 600;"
+        )
+        if is_folder:
+            _kv("Items", payload.get("item_count"))
+            _kv_sync("Sync", payload.get("rollup"))
+            _kv("Path", payload.get("path"))
+        else:
+            tombstone = bool(payload.get("tombstone"))
+            if not tombstone:
+                _kv("Size", payload.get("size"))
+            _kv("Modified", payload.get("modified"))
+            _kv_sync(
+                "Sync",
+                payload.get("sync_status") or (STATUS_ON_NAS if tombstone else None),
+            )
+            _kv("Path", payload.get("path"))
+            if tombstone:
+                ui.label("On NAS -- local copy cleared.").props(
+                    'data-testid="metadata-selected-file-tombstone-note"'
+                ).style("color: var(--color-muted); margin-top: 0.25rem;")
 
 
 def _render_equipment(

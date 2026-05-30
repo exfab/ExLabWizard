@@ -25,7 +25,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from exlab_wizard.ui.components.sync_status_icon import STATUS_ON_NAS
+from exlab_wizard.ui.components.empty_state import empty_state
+from exlab_wizard.ui.components.sync_status_icon import STATUS_ON_NAS, sync_status_icon
 from exlab_wizard.ui.pages.staging import format_bytes
 
 # Action discriminators consumed by the on_context_menu callback.
@@ -62,6 +63,9 @@ class FileListState:
     entries: list[FileListEntry] = field(default_factory=list)
     new_paths: frozenset[str] = field(default_factory=frozenset)
     """Paths that appeared in the most recent diff -- briefly highlighted."""
+    selected_path: str | None = None
+    """Path of the row the operator single-clicked (Phase 4 / Option B); the
+    matching row carries the selected fill + accent bar via row_background."""
 
 
 @dataclass(frozen=True)
@@ -109,18 +113,77 @@ def diff_file_lists(
     )
 
 
+def row_background(
+    entry: FileListEntry,
+    *,
+    is_selected: bool,
+    is_new: bool,
+    index: int,
+) -> str:
+    """Return the CSS background + decoration fragment for one file-list row.
+
+    Pure function (no NiceGUI) so the row-state precedence is testable in
+    isolation. Implements the spec's row-state stack (Redesign §4.2).
+
+    **Background** -- first matching tier wins, top to bottom:
+
+    1. Selected   -> ``--color-row-selected`` fill + inset left accent bar.
+    2. New-file    -> ``--color-highlight`` (the just-arrived flash).
+    3. Tombstone   -> *no* fill (explicitly suppresses the zebra stripe).
+    4. Zebra       -> ``--color-zebra`` on odd ``index`` rows.
+    5. (otherwise) -> no background.
+
+    **Decoration** -- applied *additively* whenever the row is a tombstone,
+    independent of which background tier won, so a *selected* tombstone keeps
+    both the selected fill and the dim/italic "On NAS" treatment.
+
+    Zebra parity is computed from ``index`` (the row's position in the
+    rendered list), not CSS ``:nth-child``, so interleaved selected / new /
+    tombstone rows never shift the stripe pattern and the server-side
+    re-render stays deterministic. Odd ``index`` values (the 2nd, 4th, ...
+    rows) are striped, matching the even-row shading in the approved mockup.
+
+    The constant ``border-bottom`` rule is the caller's concern; this returns
+    only the state-dependent fragment.
+    """
+    # Every token carries a literal fallback (the design.py value): the root
+    # theme (build_root_css / register_theme) is not injected on the /main
+    # route, so a bare var(--color-row-selected) resolves to empty and the
+    # whole declaration is dropped -- the row would show no fill. The
+    # fallbacks make the zebra / selection / new-file shading render
+    # regardless, matching the discipline in framed_pane and the toggle tab.
+    parts: list[str] = []
+    if is_selected:
+        parts.append("background: var(--color-row-selected, #dceaff);")
+        parts.append("box-shadow: inset 3px 0 0 var(--color-row-selected-bar, #1b75bc);")
+    elif is_new:
+        parts.append("background: var(--color-highlight, #fff6e0);")
+    elif entry.tombstone:
+        # Tombstone tier contributes no fill -- it deliberately suppresses the
+        # zebra stripe so the dim/italic treatment below reads cleanly.
+        pass
+    elif index % 2 == 1:
+        parts.append("background: var(--color-zebra, #f7f9fb);")
+    if entry.tombstone:
+        parts.append("opacity: 0.65;")
+        parts.append("font-style: italic;")
+    return " ".join(parts)
+
+
 def render_file_list(
     *,
     state: FileListState,
     on_double_click: Callable[[FileListEntry], None] | None = None,
     on_context_menu: Callable[[FileListEntry, str], None] | None = None,
+    on_select: Callable[[FileListEntry], None] | None = None,
 ) -> Any:  # pragma: no cover -- NiceGUI render, driven by e2e
     """Render the centre-pane file list. Pure render function.
 
     Double-clicking a folder navigates into it; double-clicking a file
-    asks the OS to open it. Single-click selects the row for the
-    right-click context menu only — the right pane is node-scoped
-    (Redesign §4.3 / decision 6A).
+    asks the OS to open it. Single-click (``on_select``) selects the row --
+    files **and** folders -- so its metadata appears in the right pane and
+    the row picks up the selected fill + accent bar (Phase 4 / Option B,
+    spec §4.3). The right-click context menu is unchanged.
     """
     try:
         from nicegui import ui
@@ -129,9 +192,11 @@ def render_file_list(
 
     with ui.column().classes("w-full h-full").style("gap: 0;") as container:
         if not state.entries:
-            ui.label("Empty folder.").style(
-                "color: var(--color-muted); padding: var(--sp-3);"
-            ).props('data-testid="file-list-empty"')
+            empty_state(
+                icon="folder_open",
+                message="This folder is empty.",
+                testid="file-list-empty",
+            )
             return container
         with (
             ui.element("table")
@@ -142,12 +207,15 @@ def render_file_list(
             with ui.element("thead"):
                 _render_header()
             with ui.element("tbody"):
-                for entry in state.entries:
+                for index, entry in enumerate(state.entries):
                     _render_row(
                         entry,
+                        index=index,
                         is_new=entry.path in state.new_paths,
+                        is_selected=entry.path == state.selected_path,
                         on_double_click=on_double_click,
                         on_context_menu=on_context_menu,
+                        on_select=on_select,
                     )
     return container
 
@@ -180,31 +248,44 @@ def _render_header() -> None:  # pragma: no cover -- NiceGUI render, driven by e
 def _render_row(
     entry: FileListEntry,
     *,
+    index: int,
     is_new: bool,
+    is_selected: bool,
     on_double_click: Callable[[FileListEntry], None] | None,
     on_context_menu: Callable[[FileListEntry, str], None] | None,
+    on_select: Callable[[FileListEntry], None] | None,
 ) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     try:
         from nicegui import ui
     except Exception:
         return
-    highlight = "background: var(--color-highlight); " if is_new else ""
     size_text = "-" if entry.size_bytes is None else format_bytes(int(entry.size_bytes))
     modified_text = entry.modified_iso or "-"
-    sync_text = entry.sync_status or (STATUS_ON_NAS if entry.tombstone else "-")
-    # A tombstone ("On NAS") row is dimmed -- the local copy is gone.
-    row_style = f"{highlight}border-bottom: 1px solid var(--color-rule);"
-    if entry.tombstone:
-        row_style += " opacity: 0.65;"
+    # Row-state precedence (Selected > New > Tombstone > Zebra) plus the
+    # dim/italic tombstone decoration are computed once by the pure resolver
+    # (Phase 2); the border-bottom rule is the row's only constant style.
+    state_style = row_background(entry, is_selected=is_selected, is_new=is_new, index=index)
+    row_style = f"{state_style} border-bottom: 1px solid var(--color-rule);".strip()
+    # The Status cell renders an icon (tolerant: an untracked file or a
+    # folder carries no status and shows a neutral dash); a tombstone with
+    # no recorded status still reads as the "On NAS" cloud.
+    status_for_icon = entry.sync_status or (STATUS_ON_NAS if entry.tombstone else None)
     keep_local_attr = ' data-keep-local="true"' if entry.keep_local else ""
     tombstone_attr = ' data-tombstone="true"' if entry.tombstone else ""
-    with (
+    selected_attr = ' data-selected="true"' if is_selected else ""
+    row = (
         ui.element("tr")
         .style(row_style)
         .props(
-            f'data-testid="file-list-row" data-path="{entry.path}"{keep_local_attr}{tombstone_attr}'
+            f'data-testid="file-list-row" data-path="{entry.path}"'
+            f"{keep_local_attr}{tombstone_attr}{selected_attr}"
         )
-    ):
+    )
+    # Single-click selects the row (files AND folders); the default-arg
+    # idiom pins ``entry`` per row so every closure captures its own row.
+    if on_select is not None:
+        row.on("click", lambda _evt, e=entry: on_select(e))
+    with row:
         with ui.element("td").classes("p-2").style("font-weight: 500;"):
             ui.label(entry.name)
             if entry.keep_local:
@@ -218,7 +299,7 @@ def _render_row(
         with ui.element("td").classes("p-2"):
             ui.label(modified_text)
         with ui.element("td").classes("p-2"):
-            ui.label(sync_text)
+            sync_status_icon(status_for_icon, strict=False)
         if on_context_menu is not None:
             with ui.context_menu().props(
                 f'data-testid="file-context-menu" data-path="{entry.path}"'

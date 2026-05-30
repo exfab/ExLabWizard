@@ -275,6 +275,14 @@ def to_nicegui_nodes(nodes: Iterable[TreeNode]) -> list[dict[str, Any]]:
         if icon_url is not None:
             payload["sync_icon"] = icon_url
             payload["sync_status"] = node.sync_status or ""
+            # Friendly hover tooltip mirroring the icon's meaning: the cloud
+            # (CLEARED) reads "on NAS only", the local-disk icon reads
+            # "data on local disk" (Phase 5 sync tooltips).
+            payload["sync_title"] = (
+                "Cleared -- data on NAS only"
+                if node.sync_status == RunSyncState.CLEARED.value
+                else "Data on local disk"
+            )
         out.append(payload)
     return out
 
@@ -314,6 +322,7 @@ def _tree_header_slot(*, tree_id: int, listener_id: str) -> str:
         '<div class="row items-center" style="gap: 0.4rem">'
         '<img v-if="props.node.sync_icon" :src="props.node.sync_icon" '
         'style="width: 1rem; height: 1rem; flex-shrink: 0;" '
+        ":title=\"props.node.sync_title || ''\" "
         ":alt=\"props.node.sync_status || ''\" />"
         "<span :data-testid=\"'tree-node-' + props.node.testid_kind\" "
         ':data-node-id="props.node.id" '
@@ -368,6 +377,7 @@ def build_tree(
     on_run_context_action: Callable[[str, str], None] | None = None,
     filters: TreeFilters | None = None,
     expand_all: bool = False,
+    selected_node: str | None = None,
 ) -> Any:
     """Build the project / equipment tree.
 
@@ -397,6 +407,13 @@ def build_tree(
         return payload
 
     tree = ui.tree(payload, label_key="label", node_key="id").props('data-testid="main-tree"')
+    if selected_node:
+        # Seed Quasar's v-model:selected so the current node renders with the
+        # selected fill + 3px accent bar (the theme's .q-tree__node--selected
+        # rule mirrors the file-row selection). The id can contain spaces /
+        # slashes, so set the prop dict directly rather than via the
+        # whitespace-splitting props-string parser (OQ-6).
+        tree._props["selected"] = selected_node
     if expand_all:
         # NiceGUI's wrapper for Quasar's expandAll() method.
         tree.expand()

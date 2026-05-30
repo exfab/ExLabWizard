@@ -1,18 +1,20 @@
 """Add-Equipment wizard (GUI/Orchestrator Redesign §6).
 
-Four-step wizard launched from the main-window toolbar:
+Three-step wizard launched from the main-window toolbar:
 
 1. Identity — equipment ID (validated against ``^[A-Z][A-Z0-9_]*$``) +
    label.
 2. Paths — local_root (where this device acquires runs).
-3. Sync mode — pick ``nas`` (acquire + sync directly to NAS) or
-   ``stage`` (acquire + push to a connected PC's staging area). Neither
-   mode collects a per-equipment transport: the NAS connection is the
-   single ``nas:`` remote and the staging hop is
-   ``orchestrator.staging_remote`` (both configured in Settings).
-4. Review & confirm — assembles a validated EquipmentConfig via the
+3. Review & confirm — assembles a validated EquipmentConfig via the
    shared ``build_equipment_config()`` and posts it through
    ``POST /config/equipment``.
+
+The sync-mode step is intentionally hidden: orchestrator / staging is
+hidden at the UI layer (see
+``docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md``),
+so every equipment is created in ``nas`` mode (sync directly to NAS via
+the single ``nas:`` remote). The dormant ``_render_sync_mode_step`` is
+kept so re-listing it restores the step verbatim.
 
 The render function is pure (state + callbacks); the actual NiceGUI
 mount layer wires the on-confirm callback to the config router.
@@ -32,17 +34,21 @@ from exlab_wizard.ui.equipment_form import build_equipment_config
 _log = get_logger(__name__)
 
 
+# The "sync_mode" step is intentionally omitted: orchestrator / staging is
+# hidden at the UI layer (see
+# docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md).
+# Every equipment is created in ``nas`` mode. Re-listing "sync_mode" here and
+# in ``EQUIPMENT_STEP_TITLES`` / ``_STEP_RENDERERS`` below restores the step
+# verbatim (the renderer is kept, dormant).
 EQUIPMENT_WIZARD_STEPS: tuple[str, ...] = (
     "identity",
     "paths",
-    "sync_mode",
     "review",
 )
 
 EQUIPMENT_STEP_TITLES: dict[str, str] = {
     "identity": "Identity",
     "paths": "Paths",
-    "sync_mode": "Sync mode",
     "review": "Review & confirm",
 }
 
@@ -58,13 +64,13 @@ class EquipmentWizardState:
     # Step 2
     local_root: str = ""
     nas_root: str = ""
-    # Step 3 -- sync_mode is "nas" or "stage". rclone.conf migration
-    # (Phase 8): neither mode carries a per-equipment transport. The
-    # ``nas:`` remote defines the NAS connection and
-    # ``orchestrator.staging_remote`` defines the staging hop, so picking
-    # the mode is the only per-equipment choice.
+    # sync_mode is retained but no longer operator-selectable: the sync-mode
+    # wizard step is hidden (orchestrator/staging hidden — see module note),
+    # so every equipment is created in "nas" mode. The field stays so the
+    # dormant ``_render_sync_mode_step`` and ``SyncMode.STAGE`` backend remain
+    # one edit away from re-enabling.
     sync_mode: str = "nas"
-    # Step 4
+    # Review step
     last_error: str | None = None
     confirmed: bool = False
 
@@ -323,7 +329,6 @@ def _render_review_step(
         ui.label(f"Label: {state.label}")
         ui.label(f"Local root: {state.local_root}")
         ui.label(f"NAS root: {state.nas_root}")
-        ui.label(f"Sync mode: {state.sync_mode}")
     if state.sync_mode == "nas":
         ui.label(
             "This device syncs directly to the NAS via the rclone remote "
@@ -343,6 +348,6 @@ _StepRenderer = Callable[[EquipmentWizardState, Callable[[], object], Callable[[
 _STEP_RENDERERS: dict[str, _StepRenderer] = {
     "identity": _render_identity_step,
     "paths": _render_paths_step,
-    "sync_mode": _render_sync_mode_step,
+    # "sync_mode": _render_sync_mode_step,  # hidden — see EQUIPMENT_WIZARD_STEPS note
     "review": _render_review_step,
 }
