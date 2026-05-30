@@ -16,8 +16,8 @@ import asyncio
 import contextlib
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +39,7 @@ from exlab_wizard.logging import get_logger
 from exlab_wizard.paths import cache_dir, creation_json_path
 from exlab_wizard.sync.bandwidth import effective_bandwidth_limit_kibps
 from exlab_wizard.sync.cleanup import cleanup_interlocks_satisfied
+from exlab_wizard.sync.file_stability import wait_until_stable
 from exlab_wizard.sync.manifest import RemoteManifest, parse_lsjson
 from exlab_wizard.sync.pre_sync_gate import is_eligible
 from exlab_wizard.sync.queue import (
@@ -54,7 +55,7 @@ from exlab_wizard.sync.transports import (
 )
 from exlab_wizard.sync.transports.rclone import RcloneDriver
 from exlab_wizard.sync.verifier import VerifyResult
-from exlab_wizard.utils.time import utc_now, utc_now_iso
+from exlab_wizard.utils.time import dt_to_iso, utc_now, utc_now_iso
 from exlab_wizard.validator.engine import Validator
 from exlab_wizard.validator.findings import Finding
 
@@ -484,6 +485,50 @@ class NASSyncClient:
                 terminal=True,
             )
             return
+
+        # Pre-transfer stability gate (file-stability design, 2026-05-30).
+        # Confirm each file in the transfer subset has stopped growing before
+        # rclone runs; still-growing files are deferred to a later sweep so
+        # rclone only transfers complete files. Runs in a worker thread so the
+        # blocking stdlib poll never stalls the event loop.
+        stability = self._config.sync.stability
+        subset_rel: tuple[str, ...] = job.files or self._discover_run_files(run_path)
+        if stability.enabled and subset_rel:
+            abs_paths = [run_path / rel for rel in subset_rel]
+            stable, _unstable = await asyncio.to_thread(
+                wait_until_stable,
+                abs_paths,
+                stability.interval_seconds,
+                stability.checks,
+                stability.timeout_seconds,
+                stability.max_workers,
+            )
+            stable_rel = tuple(sorted(p.relative_to(run_path).as_posix() for p in stable))
+            if not stable_rel:
+                # Nothing settled this pass -- defer WITHOUT consuming the retry
+                # budget. The worker re-picks the job once next_attempt_at passes.
+                next_iso = dt_to_iso(
+                    utc_now() + timedelta(seconds=self._config.sync.poll_interval_seconds)
+                )
+                await self._queue.transition(
+                    job.id, SyncJobState.QUEUED, next_attempt_at=next_iso
+                )
+                _log.debug(
+                    "stability deferred run %s (%d files still settling)",
+                    run_path,
+                    len(subset_rel),
+                )
+                return
+            if stable_rel != subset_rel:
+                _log.debug(
+                    "stability narrowed run %s to %d/%d files",
+                    run_path,
+                    len(stable_rel),
+                    len(subset_rel),
+                )
+            # Carry the settled subset forward; the existing push/verify path
+            # builds --files-from from job.files (a frozen dataclass, so replace()).
+            job = replace(job, files=stable_rel)
 
         # Transition QUEUED -> RUNNING.
         await self._queue.transition(job.id, SyncJobState.RUNNING)

@@ -15,7 +15,9 @@ These rules are **never** overridden by component context, user request, or conv
 Agents must treat violations as hard errors.
 
 - **NEVER** use data colors (Okabe-Ito) for buttons, navigation, headings, text links,
-  input borders, or any UI chrome.
+  input borders, or any UI chrome. **Exception:** categorical file-type / node-type
+  icons (`ui/components/file_type_icon.py`, `tree._node_type_props`) may use `--oi-*`
+  hues -- they are a categorical *encoding* of a file/node category, not chrome.
 - **NEVER** use `#F0E442` (yellow) as text color, stroke, or thin line on white or light
   backgrounds.
 - **NEVER** render numeric data, axis labels, badge text, captions, or code outside
@@ -59,8 +61,11 @@ for data series.
 ### Data Colors -- Okabe-Ito -- Visualization Only
 
 Colorblind-safe palette designed by Masataka Okabe and Kei Ito. Safe across
-deuteranopia, protanopia, and tritanopia. Used **exclusively** for data visualization:
-plot series, progress bars, status badges, and semantic states.
+deuteranopia, protanopia, and tritanopia. Used for data visualization (plot
+series, progress bars, status badges, and semantic states) and for the
+**categorical file-type / node-type icon encoding** (`file_type_icon.py`,
+`tree._node_type_props`) -- a categorical encoding of a file/node category,
+not UI chrome.
 
 | Token            | Name           | Hex       | CB Safe     | Primary Use                 |
 |------------------|----------------|-----------|-------------|-----------------------------|

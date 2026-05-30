@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from exlab_wizard.ui.components.empty_state import empty_state
+from exlab_wizard.ui.components.file_type_icon import file_type_icon
 from exlab_wizard.ui.components.sync_status_icon import STATUS_ON_NAS, sync_status_icon
 
 # Node-kind discriminators consumed by the dispatcher.
@@ -175,9 +176,11 @@ def _render_selected_file_card(
             "font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.08em; "
             "color: var(--color-muted); font-weight: 600;"
         )
-        ui.label(payload.get("name", "")).style(
-            "font-family: var(--font-display); color: var(--color-heading); font-weight: 600;"
-        )
+        with ui.row().classes("items-center").style("gap: 0.4rem;"):
+            file_type_icon(payload.get("name", ""), is_dir=is_folder)
+            ui.label(payload.get("name", "")).style(
+                "font-family: var(--font-display); color: var(--color-heading); font-weight: 600;"
+            )
         if is_folder:
             _kv("Items", payload.get("item_count"))
             _kv_sync("Sync", payload.get("rollup"))
