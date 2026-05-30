@@ -116,6 +116,13 @@ def register_theme() -> str:
     NiceGUI's import side effects (the package opens browser channels at
     import time in some configurations).
 
+    The ``:root`` block is injected with ``shared=True`` so it lands in the
+    document head of *every* page rather than only the page being rendered
+    at call time -- this is invoked once at app setup (from ``mount_ui``),
+    before any client connects, so a per-client (``shared=False``) head
+    injection would have nothing to attach to and the design tokens would
+    never reach the browser.
+
     Returns the CSS string that was registered (handy for tests and for
     the static-asset bundler).
     """
@@ -123,7 +130,7 @@ def register_theme() -> str:
     from nicegui import ui
 
     css = build_root_css()
-    ui.add_head_html(f"<style>{css}</style>")
+    ui.add_head_html(f"<style>{css}</style>", shared=True)
     _log.debug(
         "registered_theme_css",
         extra={"event": "ui.theme.registered", "bytes": len(css)},

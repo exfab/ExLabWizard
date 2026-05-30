@@ -145,18 +145,24 @@ def row_background(
     The constant ``border-bottom`` rule is the caller's concern; this returns
     only the state-dependent fragment.
     """
+    # Every token carries a literal fallback (the design.py value): the root
+    # theme (build_root_css / register_theme) is not injected on the /main
+    # route, so a bare var(--color-row-selected) resolves to empty and the
+    # whole declaration is dropped -- the row would show no fill. The
+    # fallbacks make the zebra / selection / new-file shading render
+    # regardless, matching the discipline in framed_pane and the toggle tab.
     parts: list[str] = []
     if is_selected:
-        parts.append("background: var(--color-row-selected);")
-        parts.append("box-shadow: inset 3px 0 0 var(--color-row-selected-bar);")
+        parts.append("background: var(--color-row-selected, #dceaff);")
+        parts.append("box-shadow: inset 3px 0 0 var(--color-row-selected-bar, #1b75bc);")
     elif is_new:
-        parts.append("background: var(--color-highlight);")
+        parts.append("background: var(--color-highlight, #fff6e0);")
     elif entry.tombstone:
         # Tombstone tier contributes no fill -- it deliberately suppresses the
         # zebra stripe so the dim/italic treatment below reads cleanly.
         pass
     elif index % 2 == 1:
-        parts.append("background: var(--color-zebra);")
+        parts.append("background: var(--color-zebra, #f7f9fb);")
     if entry.tombstone:
         parts.append("opacity: 0.65;")
         parts.append("font-style: italic;")

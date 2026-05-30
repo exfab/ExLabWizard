@@ -51,12 +51,15 @@ _TITLE_STYLE = (
     "letter-spacing: 0.08em; color: var(--color-muted, #8892a4); font-weight: 600;"
 )
 
-# Right-aligned count pill (e.g. "7 items").
+# Count pill (e.g. "7 items"). Default is right-aligned (margin-left: auto);
+# the left-aligned variant drops that so the pill sits next to the title (used
+# by the Files pane, which groups its count + refresh control on the left).
 _COUNT_STYLE = (
     "margin-left: auto; background: var(--color-rule, #e8ecf2); "
     "color: var(--color-muted, #8892a4); border-radius: var(--radius-lg, 16px); "
     "padding: 0 var(--sp-2, 0.5rem); font-size: var(--text-xs, 0.6875rem);"
 )
+_COUNT_STYLE_LEFT = _COUNT_STYLE.replace("margin-left: auto; ", "")
 
 # Scrollable body.
 _BODY_STYLE = "flex: 1 1 auto; min-height: 0; overflow: auto; padding: var(--sp-3, 0.75rem);"
@@ -88,6 +91,7 @@ def framed_pane(
     count: str | None = None,
     testid: str,
     header_extra: Callable[[], None] | None = None,
+    count_left: bool = False,
 ) -> Iterator[Any]:
     """Context manager rendering a framed, titled pane; yields the body element.
 
@@ -125,7 +129,9 @@ def framed_pane(
         with ui.element("div").props(f'data-testid="{testid}-header"').style(_HEADER_STYLE):
             ui.label(title).style(_TITLE_STYLE)
             if count is not None:
-                ui.label(count).props(f'data-testid="{testid}-count"').style(_COUNT_STYLE)
+                ui.label(count).props(f'data-testid="{testid}-count"').style(
+                    _COUNT_STYLE_LEFT if count_left else _COUNT_STYLE
+                )
             if header_extra is not None:
                 header_extra()
         # Open the body div last and yield it so `with framed_pane(...)`

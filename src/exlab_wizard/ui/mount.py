@@ -74,9 +74,14 @@ def mount_ui(app: FastAPI, *, storage_secret: str) -> None:
     """
     from nicegui import ui
 
-    from exlab_wizard.ui.theme import register_static_assets
+    from exlab_wizard.ui.theme import register_static_assets, register_theme
 
     register_static_assets()
+    # Inject the canonical :root design-token block app-wide (shared=True) so
+    # every page's components resolve var(--color-*)/var(--sp-*)/... to real
+    # values rather than falling back to scattered literals (the block was
+    # previously never wired into the running app).
+    register_theme()
     _register_pages(app, ui)
     ui.run_with(
         app,

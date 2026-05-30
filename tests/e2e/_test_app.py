@@ -237,7 +237,7 @@ def build_test_app() -> FastAPI:
     """Construct the FastAPI app and mount the NiceGUI test surface."""
     from nicegui import ui
 
-    from exlab_wizard.ui.theme import register_static_assets
+    from exlab_wizard.ui.theme import register_static_assets, register_theme
 
     app = create_app()
     test_state = TestState()
@@ -247,6 +247,9 @@ def build_test_app() -> FastAPI:
     # tree component's sync-icon SVGs (sync_local.svg / sync_cloud.svg)
     # resolve under e2e tests. Idempotent.
     register_static_assets()
+    # Inject the :root design-token block app-wide so the demo mirrors
+    # production (grey canvas + resolved var(--color-*) tokens).
+    register_theme()
 
     # ----------------------------------------------------------------------
     # Welcome (Flow 01)
@@ -284,6 +287,9 @@ def build_test_app() -> FastAPI:
         seed_finding: str = "",
         selected: str = "",
         right_pane: str = "",
+        file: str = "",
+        q: str = "",
+        density: str = "",
     ) -> None:
         from exlab_wizard.ui.components import tree as tree_component
 
@@ -348,6 +354,13 @@ def build_test_app() -> FastAPI:
 
         del orchestrator  # accepted for callers; the redesign always renders staging surfaces
 
+        # Phase 4 (Option B): resolve the ?file= selection against the seeded
+        # feed via the production helper so the demo mirrors real behavior.
+        from exlab_wizard.ui import mount as _mount
+
+        feed_entries = _seeded_file_entries(test_state, selected_path)
+        selected_file = _mount._build_selected_file(file or None, feed_entries, None)
+
         state = main_page.MainPageState(
             setup_incomplete=bool(setup),
             orchestrator_enabled=True,
@@ -356,6 +369,10 @@ def build_test_app() -> FastAPI:
             selected_node_is_received=is_received,
             right_pane_collapsed=(right_pane == "collapsed"),
             folder_feed_path=selected_path,
+            selected_file_path=file or None,
+            selected_file=selected_file,
+            search_query=q,
+            density=density,
         )
 
         def _on_open_new_project() -> None:
@@ -432,6 +449,22 @@ def build_test_app() -> FastAPI:
                     qs += f"&right_pane={right_pane}"
                 ui.navigate.to(f"/main?{qs}")
 
+        def _on_select_file(entry: Any) -> None:
+            test_state.last_action = f"select_file:{entry.path}"
+            ui.navigate.to(
+                "/main"
+                + _mount._build_main_query(
+                    selected, right_pane, file=entry.path, q=q, density=density
+                )
+            )
+
+        def _on_refresh_folder() -> None:
+            test_state.last_action = "refresh_folder"
+            ui.navigate.to(
+                "/main"
+                + _mount._build_main_query(selected, right_pane, file=file, q=q, density=density)
+            )
+
         main_page.render_file_explorer_page(
             on_open_new_project=_on_open_new_project,
             on_open_new_run=_on_open_new_run,
@@ -446,9 +479,11 @@ def build_test_app() -> FastAPI:
             on_clear_verified=_on_clear_verified,
             on_tree_context_action=_on_tree_context_action,
             on_file_context_action=_on_file_context_action,
+            on_select_file=_on_select_file,
+            on_refresh_folder=_on_refresh_folder,
             state=state,
             hierarchy=hierarchy,
-            file_list_entries=_seeded_file_entries(test_state, selected_path),
+            file_list_entries=feed_entries,
             metadata_payload=_seeded_metadata_payload(selected_path, node_kind),
             # Expand the whole tree up front so e2e tests see every run
             # row (and its sync icon) in the DOM without clicking carets.

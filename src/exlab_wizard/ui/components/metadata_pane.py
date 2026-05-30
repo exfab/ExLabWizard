@@ -115,9 +115,15 @@ def _kv(key: str, value: Any) -> None:  # pragma: no cover -- NiceGUI render, dr
         from nicegui import ui
     except Exception:
         return
-    with ui.row().classes("items-center w-full"):
-        ui.label(f"{key}:").style("color: var(--color-muted); width: 12rem; min-width: 12rem;")
-        ui.label(str(value) if value is not None else "-").style("font-family: var(--font-mono);")
+    with ui.row().classes("items-center").style("flex-wrap: nowrap;"):
+        ui.label(f"{key}:").style(
+            "color: var(--color-muted); width: 12rem; min-width: 12rem; white-space: nowrap;"
+        )
+        # Values overflow rather than wrap (long paths stay on one line); the
+        # metadata pane is horizontally scrollable so they remain reachable.
+        ui.label(str(value) if value is not None else "-").style(
+            "font-family: var(--font-mono); white-space: nowrap;"
+        )
 
 
 def _kv_sync(key: str, status: Any) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e

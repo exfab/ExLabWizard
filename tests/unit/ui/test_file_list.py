@@ -193,7 +193,7 @@ def test_render_file_list_keep_local_menu_and_tombstone() -> None:
 def test_row_bg_selected_wins_over_new() -> None:
     bg = row_background(_entry("/a"), is_selected=True, is_new=True, index=0)
     assert "--color-row-selected" in bg
-    assert "inset 3px 0 0 var(--color-row-selected-bar)" in bg
+    assert "inset 3px 0 0 var(--color-row-selected-bar" in bg
     assert "--color-highlight" not in bg
 
 
@@ -274,8 +274,8 @@ def test_render_marks_selected_row_only() -> None:
     selected = _row_by_path(container, "/r/scan.tif")
     assert selected._props.get("data-selected") == "true"
     # Selected fill + 3px accent bar come from row_background.
-    assert "var(--color-row-selected)" in selected._style.get("background", "")
-    assert "var(--color-row-selected-bar)" in selected._style.get("box-shadow", "")
+    assert "--color-row-selected" in selected._style.get("background", "")
+    assert "--color-row-selected-bar" in selected._style.get("box-shadow", "")
     # The other rows are not marked selected.
     assert _row_by_path(container, "/r/Runs")._props.get("data-selected") is None
     assert _row_by_path(container, "/r/old.tif")._props.get("data-selected") is None

@@ -295,24 +295,18 @@ def render_file_explorer_page(
                 ),
                 expand_all=tree_expand_all,
             )
-        # Flex row: the centre file list grows to fill, a tall vertical
-        # toggle tab sits on the metadata pane's left edge, then the
-        # metadata pane itself. The tab lives *between* the two panes, so
-        # it travels horizontally with the pane -- open, it hugs the pane's
-        # left border; collapsed (pane unrendered) the growing file list
-        # pushes it to the right screen edge.
-        #
-        # The tab is TOP-aligned (align-self:flex-start), not centred. The
-        # splitter panel's top is identical in both states, but its height
-        # differs (the metadata pane adds height when open), so a centred
-        # tab landed at a different Y per state -- that vertical shift was
-        # the up/down "jump". Pinning to the top ties the tab's Y to the
-        # constant panel top, so it holds its line on toggle.
+        # The Files pane fills the splitter's right side; the metadata pane
+        # floats over its right edge as an overlay popover (no permanent docked
+        # column). The vertical "Metadata" tab toggles it via the right_pane URL
+        # param. position:relative anchors the absolutely-positioned popover+tab.
         with (
             outer_split.after,
             ui.element("div")
             .classes("w-full h-full")
-            .style("display: flex; flex-direction: row; flex-wrap: nowrap; align-items: stretch;"),
+            .style(
+                "position: relative; display: flex; flex-direction: row; "
+                "flex-wrap: nowrap; align-items: stretch;"
+            ),
         ):
             with ui.element("div").style("flex: 1 1 auto; min-width: 0; height: 100%;"):
                 files_count = f"{len(file_list_entries)} items" if file_list_entries else None
@@ -321,22 +315,21 @@ def render_file_explorer_page(
                     # OQ-1/A mitigation: a per-folder refresh, distinct from the
                     # toolbar's "Refresh everything" -- it re-scans only the open
                     # folder then re-renders (mount._refresh_selected_folder).
-                    # Right-aligned via the count pill's auto margin when a count
-                    # is shown, else it claims the auto margin itself.
+                    # Grouped on the left beside the count pill (count_left=True).
                     refresh = on_refresh_folder
                     if refresh is None:
                         return
-                    margin = "" if files_count is not None else "margin-left: auto; "
                     ui.button(icon="refresh", on_click=lambda _evt: refresh()).props(
                         'flat dense round size=sm data-testid="files-refresh" '
                         'title="Refresh this folder"'
-                    ).style(f"{margin}color: var(--color-muted, #8892a4);")
+                    ).style("color: var(--color-muted, #8892a4);")
 
                 with framed_pane(
                     "Files",
                     count=files_count,
                     testid="files-pane",
                     header_extra=_files_header_extra,
+                    count_left=True,
                 ):
                     _render_centre_file_list(
                         s,
@@ -344,26 +337,20 @@ def render_file_explorer_page(
                         on_file_context_action=on_file_context_action,
                         on_select_file=on_select_file,
                     )
-            # Vertical collapse/expand tab: a chevron stacked above a rotated
-            # text label, inside one tall box with a raised-surface background
-            # so it reads as a distinct tab. The glyph points the way the pane
-            # will move -- right-chevron collapses it away, left-chevron pulls
-            # it back; the label names the action. Callback wired by the mount
-            # layer.
+            # Vertical "Metadata" tab: a chevron above a vertical label in a
+            # raised box. Absolutely positioned -- on the popover's left edge
+            # when open (overlapping it, painted just behind so the right half
+            # tucks under the panel), or parked at the container's right edge
+            # when the popover is closed.
             if on_toggle_right_pane is not None:
                 collapsed = s.right_pane_collapsed
                 chevron = "◀" if collapsed else "▶"
-                tab_label = "Expand metadata" if collapsed else "Collapse metadata"
-                # The button stays `flat` (Quasar forces its own background to
-                # transparent !important on flat buttons, so the tab fill must
-                # live on an inner element, not the button). The button is just
-                # the sized, padding-free click target; the inner column paints
-                # the raised-surface tab.
-                #
-                # Every theme var carries a literal fallback: register_theme()
-                # is not injected on every route, so a bare var(--color-surface)
-                # resolves to empty and the whole declaration is dropped (no
-                # fill). The fallbacks make the tab render regardless.
+                tab_label = "Metadata"
+                tab_pos = (
+                    "right: 0; z-index: 21;"
+                    if collapsed
+                    else "right: calc(40% - 16px); z-index: 19;"
+                )
                 toggle = (
                     ui.button(on_click=lambda _evt: on_toggle_right_pane())
                     .props(
@@ -371,7 +358,10 @@ def render_file_explorer_page(
                         'aria-label="Toggle metadata pane" title="Toggle metadata pane"'
                     )
                     .style(
-                        "align-self: flex-start; flex: 0 0 auto; margin: 8px 2px 0 2px; "
+                        # Absolute so it anchors to the popover's left edge (open)
+                        # or the container's right edge (closed). Theme vars keep
+                        # literal fallbacks for robustness.
+                        f"position: absolute; top: 64px; {tab_pos} "
                         "min-width: 0; width: 40px; height: 190px; padding: 0; "
                         "color: var(--color-muted, #8892a4);"
                     )
@@ -379,12 +369,16 @@ def render_file_explorer_page(
                 with (
                     toggle,
                     ui.column().style(
-                        "align-items: center; gap: 6px; flex-wrap: nowrap; "
-                        "height: 100%; width: 100%; padding: 8px 2px; "
-                        # Surface fill + border + soft shadow so the chevron and
-                        # label read as a distinct raised tab against the page.
+                        # Content hugs the left edge so the chevron + vertical
+                        # label stay on the visible left half (the right half is
+                        # tucked behind the metadata pane). Only the left corners
+                        # are rounded so the right edge reads as merging into the
+                        # pane.
+                        "align-items: flex-start; gap: 4px; flex-wrap: nowrap; "
+                        "height: 100%; width: 100%; padding: 8px 3px; "
                         "background: var(--color-surface, #ffffff); "
-                        "border: 1px solid var(--color-border, #dde3ed); border-radius: 6px; "
+                        "border: 1px solid var(--color-border, #dde3ed); "
+                        "border-radius: 6px 0 0 6px; "
                         "box-shadow: 0 1px 3px rgba(0, 54, 96, 0.12);"
                     ),
                 ):
@@ -392,30 +386,30 @@ def render_file_explorer_page(
                         "flex: 0 0 auto; font-size: 12px; line-height: 1; "
                         "color: var(--color-muted, #8892a4);"
                     )
-                    # The label is rotated 270deg (reads bottom-to-top). A
-                    # transform keeps the element's layout box horizontal, so
-                    # this flex-grow wrapper supplies the vertical room and
-                    # centres the rotated text within it.
-                    with ui.element("div").style(
-                        "flex: 1 1 auto; width: 100%; display: flex; "
-                        "align-items: center; justify-content: center; overflow: hidden;"
-                    ):
-                        ui.label(tab_label).style(
-                            "transform: rotate(270deg); white-space: nowrap; "
-                            "font-size: 11px; letter-spacing: 0.05em; text-transform: none; "
-                            "color: var(--color-muted, #8892a4);"
-                        )
+                    # Vertical label via writing-mode (robust -- no transform-box
+                    # clipping): vertical-rl + rotate(180deg) reads bottom-to-top,
+                    # matching the prior orientation. The column's
+                    # align-items:flex-start keeps it on the visible left half.
+                    ui.label(tab_label).style(
+                        "writing-mode: vertical-rl; transform: rotate(180deg); "
+                        "white-space: nowrap; font-size: 11px; letter-spacing: 0.05em; "
+                        "text-transform: none; color: var(--color-muted, #8892a4);"
+                    )
             if not s.right_pane_collapsed:
-                # Metadata pane gets the same card frame as the other panes but
-                # keeps its own tabs in place of a title strip (approved
-                # default), so card_style() is applied directly rather than via
-                # framed_pane. card_style() ends with ';', so appending
-                # 'overflow: auto;' produces valid CSS and (last-wins) overrides
-                # the card's 'overflow: hidden;' so the tab panels scroll.
+                # Metadata floats as an overlay popover over the right of the
+                # Files pane (z-index above it, strong left shadow so it reads as
+                # raised). It keeps its own tabs in place of a title strip;
+                # card_style() ends with ';' so the appended overrides
+                # concatenate to valid CSS.
                 with (
                     ui.element("div")
                     .props('data-testid="metadata-pane-card"')
-                    .style(f"flex: 0 0 40%; min-width: 0; {card_style()} overflow: auto;")
+                    .style(
+                        "position: absolute; top: 0; right: 0; height: 100%; "
+                        "width: 40%; z-index: 20; min-width: 0; "
+                        f"{card_style()} overflow: auto; "
+                        "box-shadow: -4px 0 16px rgba(0, 54, 96, 0.15);"
+                    )
                 ):
                     _render_right_pane(
                         s,
