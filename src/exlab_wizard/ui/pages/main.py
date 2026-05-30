@@ -195,6 +195,18 @@ def render_file_explorer_page(
 
     from exlab_wizard.ui.components.breadcrumb import render_breadcrumb
 
+    # Pin the page to the viewport so the three panes fill the height between
+    # the fixed header and footer and scroll *internally* rather than growing
+    # the page. NiceGUI's q-layout / q-page chain is min-height-driven (content-
+    # sized) by default; these page-scoped overrides give it a definite height
+    # and flex-fill down to the splitter, whose panes then scroll within their
+    # own overflow:auto bodies.
+    ui.query(".q-page-container").style(
+        "height: 100vh; display: flex; flex-direction: column; overflow: hidden;"
+    )
+    ui.query(".q-page").style("flex: 1 1 0; min-height: 0; display: flex; flex-direction: column;")
+    ui.query(".nicegui-content").style("flex: 1 1 0; min-height: 0;")
+
     with (
         ui.header()
         .classes("items-center")
@@ -276,7 +288,9 @@ def render_file_explorer_page(
     # Splitter holds tree | (file list + metadata pane). The right-pane
     # collapse toggle is wired by the caller via on_toggle_right_pane.
     with (
-        ui.splitter(value=20).classes("w-full h-full").style("gap: var(--sp-3, 0.75rem);")
+        ui.splitter(value=20)
+        .classes("w-full")
+        .style("flex: 1 1 0; min-height: 0; gap: var(--sp-3, 0.75rem);")
     ) as outer_split:
         with (
             outer_split.before,
