@@ -29,12 +29,17 @@ metadata popover), **this doc wins** and the original spec must be reconciled
 | `dcf7095` | 4 | Selection → metadata sub-card (URL/navigate `?file=`/`?q=`/`?density=`), per-folder refresh, tolerant status icons in the file list |
 | `c201ddc` | post-4 | **Metadata popover** + **`register_theme` wired app-wide** + Files-header left grouping + metadata overflow + e2e demo wiring |
 | `f4a7149` | post-4 | Panes pinned to the viewport height with internal scroll |
+| `01edee7` | 5 | **Search wiring (OQ-2)** + shared **empty-state** placeholder + toolbar **group divider** |
+| `1bb3c8d` | 5 | **Live footer status segments** (Validator → WARNING on hard finding, LIMS → DANGER when unreachable) via a pure `derive_footer_segment_states` helper |
 
 Unit gate is green at the tip: `uv run ruff check` + `ruff format --check` +
-`mypy src` clean; `tests/unit/ui/` **603 passed**. The Phase-4 interaction was
+`mypy src` clean; `tests/unit/ui/` **614 passed**. The Phase-4 interaction was
 demo-verified live (Playwright MCP against the seeded e2e app on `:8099`):
 file/folder selection → sub-card, tombstone variant, per-folder refresh,
-status icons, viewport-height + internal scroll all confirmed.
+status icons, viewport-height + internal scroll all confirmed. The Phase-5
+items above are **unit-verified only** — not yet visually walked through
+(the search box, empty states, toolbar divider, and footer colours want a
+live Playwright pass, folded into Phase 6 / §C).
 
 ---
 
@@ -86,40 +91,63 @@ source).
 
 ---
 
-## B. Phase 5 — Polish (remaining; reconcile each item with the popover)
+## B. Phase 5 — Polish (reconcile each item with the popover)
 
 Each item is self-contained. Now that `register_theme` is wired, scoped CSS on
 Quasar classes (e.g. tree selection) will actually resolve its tokens.
 
+**Done this session** (`01edee7`, `1bb3c8d`) — unit-verified, visual pass
+pending:
+
+- [x] **Search wiring + affordances (OQ-2)** — `main.py` / `mount.py` /
+      `_test_app.py`. The search query now reaches `TreeFilters.search` via
+      `chip_state_to_tree_filters(..., search=s.search_query)`; the input
+      carries `value` + `clearable` + a 300 ms Quasar `debounce`, and
+      `on_change` re-navigates `?q=` through `_on_search` (production + e2e
+      mirror). A result-count / no-matches pill below the box is sourced from
+      the new pure `count_search_results(build_nodes(...))`.
+- [x] **Empty states** — new shared `components/empty_state.py`
+      (`empty_state(icon, message, testid)`, centred icon + hint); the three
+      bare labels (`file_list.py`, `metadata_pane.py`, `main.py`) now route
+      through it, each testid preserved.
+- [x] **Live status segments** — pure `derive_footer_segment_states` in
+      `status_bar_segment.py`; `mount._build_main_state` sources
+      `problems_count_hard` + `deps.lims_reachable` onto three new
+      `MainPageState` fields the footer reads. Validator → WARNING on a hard
+      finding, LIMS → DANGER when unreachable. **Staging** has no cheap cached
+      count yet (a per-render `list_staged_runs` scan would be I/O on the
+      render path), so it stays NORMAL with the `staging_pending` param wired
+      and ready (one-line change when a cached signal exists). Sync was already
+      live off the operations counts.
+- [x] **Toolbar grouping** — `main.py`. Vertical `q-separator` divider + gap
+      between the creation actions (New Project / Run / Test Run / Add
+      Equipment) and the utility actions (Operations / Refresh / Settings);
+      every button's order + testid unchanged.
+
+**Remaining** (the visual / theme-CSS items — verify live before/after):
+
+- [ ] **File-list density (`?density=compact`)** — *split out of the toolbar
+      item.* `?density=` is threaded onto `MainPageState` but inert. Needs: a
+      pure `density_class` helper; a `card_classes` param on `framed_pane`; a
+      scoped `.exlab-density-compact td { padding-top/bottom: --sp-1 }` rule
+      registered via the theme; and a compact/comfortable toggle control in the
+      Files header (+ `on_toggle_density` through `mount._main` + the e2e
+      handler). Low CSS blast-radius (opt-in class) but touches theme
+      injection, so verify live. **Open UX question: a header toggle vs
+      URL-only — decide before building the control.**
 - [ ] **Unified selection (OQ-6)** — `components/tree.py` + `theme.py`. Give
       the selected **tree** node the same `--color-row-selected` fill + 3px
       `--color-row-selected-bar` left bar as file rows (file rows already do
       this via `row_background`, which now carries literal fallbacks). Comment
-      the Quasar-class (`.q-tree__node--selected`) dependency.
+      the Quasar-class (`.q-tree__node--selected`) dependency. Needs a live
+      pass — unit tests can only assert the CSS string is registered, not that
+      the Quasar selector actually wins.
 - [ ] **Sync tooltips + legend** — `tree.py`, `file_list.py`, `main.py`. Tree
       header-slot `<img>` gets a `:title` from the node's sync status; the
       file-list Status cell already routes through `sync_status_icon`
       (Phase 4) so it carries the icon tooltip — add a "?" legend popover in
       the Files header (next to the count + refresh) listing each state's icon
       + meaning sourced from `_STATUS_TO_PROPS` (single source of truth).
-- [ ] **Live status segments** — `mount.py` `_build_main_state`. Derive
-      `SEGMENT_NORMAL/WARNING/DANGER` + counts for Sync / Validator
-      (`problems_count_hard > 0` → WARNING) / LIMS (unreachable → DANGER) /
-      Staging. Extract the derivation into a pure helper for unit testing;
-      the footer component is otherwise unchanged.
-- [ ] **Empty states** — `main.py`, `metadata_pane.py`, `file_list.py`.
-      Replace the three bare labels with an icon + one-line hint.
-- [ ] **Toolbar grouping + density** — `main.py`. Divider + gap between
-      creation and utility actions (order/testids preserved); density
-      (`?density=compact`, already threaded onto `MainPageState`) → a CSS class
-      on the Files card toggling row padding `--sp-1`/`--sp-2` (**file list
-      only**, padding only).
-- [ ] **Search wiring + affordances (OQ-2)** — `main.py`. The search input is
-      still **inert** (`main.py`, the Explorer pane). Bind it → `?q=` (already
-      threaded) → `chip_state_to_tree_filters(..., search=q)` via
-      `on_value_change` + ~250 ms debounce (same re-navigate pattern as the
-      filter chips); add a result count from `build_nodes`, `clearable` (×),
-      and a no-matches state.
 
 **Tests (Phase 5):** `test_status_bar_segment.py` (derivation helper);
 `test_main_page`/`test_pages.py` (search wiring → `TreeFilters.search`, result
