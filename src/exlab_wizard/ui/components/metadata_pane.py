@@ -17,7 +17,12 @@ from typing import Any
 
 from exlab_wizard.ui.components.empty_state import empty_state
 from exlab_wizard.ui.components.file_type_icon import file_type_icon
-from exlab_wizard.ui.components.sync_status_icon import STATUS_ON_NAS, sync_status_icon
+from exlab_wizard.ui.components.sync_status_icon import (
+    FileSyncView,
+    file_sync_view,
+    sync_pair_icons,
+    sync_rollup_icon,
+)
 
 # Node-kind discriminators consumed by the dispatcher.
 NODE_KIND_EQUIPMENT = "equipment"
@@ -130,12 +135,16 @@ def _kv(key: str, value: Any) -> None:  # pragma: no cover -- NiceGUI render, dr
         )
 
 
-def _kv_sync(key: str, status: Any) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
-    """Key/value row whose value is a sync-status icon (tolerant).
+def _kv_sync(
+    key: str, status: Any, render_icon: Callable[[FileSyncView], Any]
+) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
+    """Key/value row whose value is a sync icon (file pair or folder rollup).
 
     Mirrors :func:`_kv`'s label column but renders the status through the
-    tolerant icon path (``strict=False``): a ``None`` / unknown status shows
-    a neutral dash rather than raising (spec §4.5).
+    tolerant presentation map: a ``None`` / unknown status renders nothing
+    rather than raising (spec §4.5). ``render_icon`` is the icon renderer to
+    use for the value cell -- :func:`sync_pair_icons` for a file's two-icon
+    pair, :func:`sync_rollup_icon` for a folder's single rollup icon.
     """
     try:
         from nicegui import ui
@@ -143,7 +152,17 @@ def _kv_sync(key: str, status: Any) -> None:  # pragma: no cover -- NiceGUI rend
         return
     with ui.row().classes("items-center w-full"):
         ui.label(f"{key}:").style("color: var(--color-muted); width: 12rem; min-width: 12rem;")
-        sync_status_icon(status, strict=False)
+        render_icon(file_sync_view(status))
+
+
+def _kv_sync_pair(key: str, status: Any) -> None:  # pragma: no cover -- NiceGUI render
+    """Key/value row whose value is a file's two-icon (local + NAS) pair."""
+    _kv_sync(key, status, sync_pair_icons)
+
+
+def _kv_sync_rollup(key: str, status: Any) -> None:  # pragma: no cover -- NiceGUI render
+    """Key/value row whose value is a folder's single rollup sync icon."""
+    _kv_sync(key, status, sync_rollup_icon)
 
 
 def _render_selected_file_card(
@@ -183,16 +202,16 @@ def _render_selected_file_card(
             )
         if is_folder:
             _kv("Items", payload.get("item_count"))
-            _kv_sync("Sync", payload.get("rollup"))
+            _kv_sync_rollup("Sync", payload.get("rollup"))
             _kv("Path", payload.get("path"))
         else:
             tombstone = bool(payload.get("tombstone"))
             if not tombstone:
                 _kv("Size", payload.get("size"))
             _kv("Modified", payload.get("modified"))
-            _kv_sync(
+            _kv_sync_pair(
                 "Sync",
-                payload.get("sync_status") or (STATUS_ON_NAS if tombstone else None),
+                payload.get("sync_status") or ("on_nas" if tombstone else None),
             )
             _kv("Path", payload.get("path"))
             if tombstone:

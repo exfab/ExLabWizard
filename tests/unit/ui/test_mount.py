@@ -1495,8 +1495,9 @@ def test_build_selected_file_folder_delegates_to_aggregate(
     assert payload["name"] == "Runs"
     assert payload["path"] == "/d/EQ1/Runs"
     assert payload["item_count"] == 3
-    # Worst-of rollup: a single failed child dominates.
-    assert payload["rollup"] == "failed"
+    # Worst-of rollup: a single failed child dominates. The two-icon view
+    # model maps the "failed" discriminator to the "upload_failed" view value.
+    assert payload["rollup"] == "upload_failed"
 
 
 def test_build_selected_folder_degrades_on_scan_failure(

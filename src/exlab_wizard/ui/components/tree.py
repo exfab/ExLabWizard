@@ -9,17 +9,21 @@ Renders the ``<equipment>/<project>/<run>`` hierarchy:
 * Run node (test) -- dimmed styling + ``TestRun_`` prefix in
   warning-tier color + a *"Test"* pill.
 
-Run rows also carry a small **sync icon** to the left of the label:
+Run rows also carry a small colour-coded **rollup sync icon** to the left
+of the label (two-icon sync-presence design, 2026-05-30):
 
-* ``sync_local.svg`` -- run data is still on local disk (rollup
-  ``syncing`` / ``synced``, any state other than ``cleared``).
-* ``sync_cloud.svg`` -- the run's staging copy has been cleared
-  (rollup ``cleared``); only the ``.exlab-wizard/`` cache subtree
-  remains on disk (§7.1.10).
+* ``sync_local.svg`` on a blue background -- run data is still on local
+  disk (not fully backed up).
+* ``sync_nas.svg`` on a green background -- the run is fully backed up on
+  the NAS.
+* ``sync_nas.svg`` on a red / amber background with a ``✕`` / ``!`` badge
+  -- a problem (upload failed) or a held (blocked-by-validation) run.
 
-The run-node rollup is derived from the run's ``sync_state.json`` by the
-browse router (operator-free per-file NAS sync design, 2026-05-21);
-``RunNode.sync_status`` carries a :class:`RunSyncState` value.
+The run-node rollup discriminator is derived from the run's
+``sync_state.json`` + persisted ``creation.json`` failure status by the
+browse router; ``RunNode.sync_status`` carries that string, which
+:func:`~exlab_wizard.ui.components.sync_status_icon.file_sync_view` maps
+to a :class:`~exlab_wizard.ui.components.sync_status_icon.FileSyncView`.
 
 ``.exlab-wizard/`` folders are hidden by default (Frontend §13.1) and
 hidden filtering is the caller's concern.
@@ -35,8 +39,12 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from exlab_wizard.constants.enums import RunKind, RunSyncState, TreeProjectStatus
+from exlab_wizard.constants.enums import RunKind, TreeProjectStatus
 from exlab_wizard.logging import get_logger
+from exlab_wizard.ui.components.sync_status_icon import (
+    file_sync_view,
+    sync_rollup_icon_props,
+)
 
 _log = get_logger(__name__)
 
@@ -79,9 +87,11 @@ _TESTID_KIND_BY_KIND: dict[str, str] = {
     KIND_RUN_TEST: "run",
 }
 
-# Static URLs served by ``ui/theme.py:register_static_assets``.
+# Static URLs served by ``ui/theme.py:register_static_assets``. The rollup
+# props come from :mod:`sync_status_icon`; these names are retained as the
+# module's public asset-URL surface (asserted by the tree tests).
 SYNC_ICON_LOCAL_URL = "/assets/sync_local.svg"
-SYNC_ICON_CLOUD_URL = "/assets/sync_cloud.svg"
+SYNC_ICON_NAS_URL = "/assets/sync_nas.svg"
 
 
 @dataclass(frozen=True)
@@ -249,20 +259,19 @@ def build_nodes(
     return nodes
 
 
-def _sync_icon_url(node: TreeNode) -> str | None:
-    """Return the per-row sync-icon URL, or ``None`` for non-run rows.
+def _sync_rollup_props(node: TreeNode) -> dict[str, str] | None:
+    """Return the single rollup-icon props for a run row, or None for non-run rows.
 
-    Run rows get one of the two ``/assets/sync_*.svg`` URLs depending on
-    the derived run rollup: a ``cleared`` run (staging copy cleaned, data
-    on NAS only) gets ``sync_cloud.svg``; a ``syncing`` / ``synced`` run
-    still has data on disk and gets ``sync_local.svg``. Equipment /
-    project rows render unchanged.
+    Run rows are summarised by a single colour-coded rollup icon derived
+    from the run's discriminator (``node.sync_status``) via the two-icon
+    presentation map: ``sync_nas.svg`` (green) when fully backed up,
+    ``sync_local.svg`` (blue) while local files remain, plus red/amber
+    problem/held variants with a badge. Equipment / project rows render
+    no sync icon.
     """
     if node.kind not in _RUN_KINDS:
         return None
-    if node.sync_status == RunSyncState.CLEARED.value:
-        return SYNC_ICON_CLOUD_URL
-    return SYNC_ICON_LOCAL_URL
+    return sync_rollup_icon_props(file_sync_view(node.sync_status))
 
 
 def to_nicegui_nodes(nodes: Iterable[TreeNode]) -> list[dict[str, Any]]:
@@ -291,18 +300,14 @@ def to_nicegui_nodes(nodes: Iterable[TreeNode]) -> list[dict[str, Any]]:
             "type_icon": type_icon,
             "type_color": type_color,
         }
-        icon_url = _sync_icon_url(node)
-        if icon_url is not None:
-            payload["sync_icon"] = icon_url
-            payload["sync_status"] = node.sync_status or ""
-            # Friendly hover tooltip mirroring the icon's meaning: the cloud
-            # (CLEARED) reads "on NAS only", the local-disk icon reads
-            # "data on local disk" (Phase 5 sync tooltips).
-            payload["sync_title"] = (
-                "Cleared -- data on NAS only"
-                if node.sync_status == RunSyncState.CLEARED.value
-                else "Data on local disk"
-            )
+        rollup = _sync_rollup_props(node)
+        if rollup is not None:
+            payload["sync_icon"] = rollup["svg"]
+            payload["sync_bg"] = rollup["bg_var"]
+            payload["sync_badge"] = rollup["badge"]
+            payload["sync_badge_bg"] = rollup.get("badge_bg", "--color-sync-problem")
+            payload["sync_title"] = rollup["tooltip"]
+            payload["sync_status"] = file_sync_view(node.sync_status).value
         out.append(payload)
     return out
 
@@ -342,10 +347,24 @@ def _tree_header_slot(*, tree_id: int, listener_id: str) -> str:
         '<div class="row items-center" style="gap: 0.4rem">'
         '<q-icon v-if="props.node.type_icon" :name="props.node.type_icon" '
         ":style=\"{ color: 'var(' + props.node.type_color + ')', fontSize: '1rem', flexShrink: 0 }\"></q-icon>"
-        '<img v-if="props.node.sync_icon" :src="props.node.sync_icon" '
-        'style="width: 1rem; height: 1rem; flex-shrink: 0;" '
-        ":title=\"props.node.sync_title || ''\" "
+        '<span v-if="props.node.sync_icon" '
+        ':data-sync-bg="props.node.sync_bg" '
+        'style="position: relative; display: inline-flex; align-items: center; '
+        "justify-content: center; width: 1.25rem; height: 1.25rem; "
+        'border-radius: var(--radius-sm); flex-shrink: 0;" '
+        ":style=\"{ background: 'var(' + props.node.sync_bg + ')' }\" "
+        ":title=\"props.node.sync_title || ''\">"
+        '<img :src="props.node.sync_icon" '
+        'style="width: 0.85rem; height: 0.85rem;" '
         ":alt=\"props.node.sync_status || ''\" />"
+        '<span v-if="props.node.sync_badge" data-sync-badge="true" '
+        'style="position: absolute; top: -3px; right: -3px; font-size: 0.55rem; '
+        "font-weight: 700; color: var(--color-surface); border-radius: 50%; "
+        "width: 0.75rem; height: 0.75rem; display: flex; align-items: center; "
+        'justify-content: center;" '
+        ":style=\"{ background: 'var(' + (props.node.sync_badge_bg || '--color-sync-problem') + ')' }\">"
+        "{{ props.node.sync_badge }}</span>"
+        "</span>"
         "<span :data-testid=\"'tree-node-' + props.node.testid_kind\" "
         ':data-node-id="props.node.id" '
         ':data-kind="props.node.kind" '
