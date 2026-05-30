@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from exlab_wizard.ui.components.empty_state import empty_state
+from exlab_wizard.ui.components.file_type_icon import file_type_icon
 from exlab_wizard.ui.components.sync_status_icon import STATUS_ON_NAS, sync_status_icon
 from exlab_wizard.ui.pages.staging import format_bytes
 
@@ -286,7 +287,11 @@ def _render_row(
     if on_select is not None:
         row.on("click", lambda _evt, e=entry: on_select(e))
     with row:
-        with ui.element("td").classes("p-2").style("font-weight: 500;"):
+        with (
+            ui.element("td").classes("p-2").style("font-weight: 500;"),
+            ui.row().classes("items-center").style("gap: 0.4rem;"),
+        ):
+            file_type_icon(entry.name, is_dir=entry.is_dir)
             ui.label(entry.name)
             if entry.keep_local:
                 ui.label("kept local").props('data-testid="file-keep-local-badge"').style(

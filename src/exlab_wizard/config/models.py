@@ -45,6 +45,7 @@ __all__ = [
     "BandwidthWindow",
     "Config",
     "EquipmentConfig",
+    "FileStabilityConfig",
     "LIMSConfig",
     "LoggingConfig",
     "NASCleanupConfig",
@@ -429,6 +430,25 @@ def _default_ignore_globs() -> list[str]:
     return ["*.partial", "*.tmp"]
 
 
+class FileStabilityConfig(BaseModel):
+    """``sync.stability:`` sub-block. Pre-rclone size-stability guard.
+
+    A complete file passes in ``(checks - 1) * interval_seconds`` (~4 s with
+    the defaults); ``timeout_seconds`` bounds a still-growing file before it
+    is deferred to a later sweep. On NFS-mounted sources raise
+    ``interval_seconds`` to at least the mount's ``actimeo`` (typically >= 30 s)
+    so attribute-cache staleness cannot mask an in-progress write.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    enabled: bool = True
+    interval_seconds: float = Field(default=2.0, gt=0)
+    checks: int = Field(default=3, ge=2)
+    timeout_seconds: float = Field(default=30.0, gt=0)
+    max_workers: int = Field(default=8, ge=1)
+
+
 class SyncConfig(BaseModel):
     """``sync:`` block. NAS sync engine kill-switch + retry / quiescence policy."""
 
@@ -439,6 +459,7 @@ class SyncConfig(BaseModel):
     quiescence_minutes: int = Field(default=10, ge=1)
     ignore_globs: list[str] = Field(default_factory=_default_ignore_globs)
     poll_interval_seconds: int = Field(default=120, ge=1)
+    stability: FileStabilityConfig = Field(default_factory=FileStabilityConfig)
 
 
 # ---------------------------------------------------------------------------

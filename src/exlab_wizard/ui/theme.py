@@ -125,6 +125,21 @@ def build_root_css() -> str:
     )
 
 
+def mdi_font_head_html() -> str:
+    """Return the ``<link>`` that loads the vendored MDI webfont from ``/assets``.
+
+    Served by :func:`register_static_assets` (mounted before
+    :func:`register_theme` in ``mount_ui``) and bundled offline under
+    ``assets/fonts/mdi/`` so the frozen desktop app renders MDI glyphs with no
+    network access. Quasar already understands ``mdi-*`` icon names once this
+    stylesheet is present.
+    """
+    return (
+        '<link rel="stylesheet" '
+        'href="/assets/fonts/mdi/css/materialdesignicons.min.css">'
+    )
+
+
 def register_theme() -> str:
     """Register the design tokens with NiceGUI / Quasar at app start.
 
@@ -147,6 +162,7 @@ def register_theme() -> str:
 
     css = build_root_css()
     ui.add_head_html(f"<style>{css}</style>", shared=True)
+    ui.add_head_html(mdi_font_head_html(), shared=True)
     _log.debug(
         "registered_theme_css",
         extra={"event": "ui.theme.registered", "bytes": len(css)},
