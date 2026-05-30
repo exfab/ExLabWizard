@@ -72,3 +72,27 @@ def test_framed_pane_card_carries_testid() -> None:
     card = body.parent_slot.parent if body.parent_slot else None
     assert card is not None
     assert card._props.get("data-testid") == "explorer-pane"
+
+
+def test_framed_pane_renders_header_extra_in_strip() -> None:
+    """``header_extra`` renders its controls inside the title strip (Phase 4).
+
+    Used by the Files pane to host the per-folder refresh button beside the
+    count pill, without framed_pane knowing the control's semantics.
+    """
+    from nicegui import ui
+
+    created = []
+
+    def _extra() -> None:
+        created.append(ui.button(icon="refresh").props('data-testid="files-refresh"'))
+
+    with framed_pane("Files", count="2 items", testid="files-pane", header_extra=_extra) as body:
+        assert body is not None
+    assert created, "header_extra was not invoked"
+    # The card root's first child is the header strip; the extra control lands
+    # among its children (not in the scrollable body).
+    card = body.parent_slot.parent if body.parent_slot else None
+    assert card is not None
+    header = card.default_slot.children[0]
+    assert created[0] in header.default_slot.children

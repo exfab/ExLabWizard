@@ -2,14 +2,50 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import Any
+
 from exlab_wizard.ui.components.file_list import (
     FILE_CONTEXT_COPY_PATH,
     FILE_CONTEXT_KEEP_LOCAL,
     FILE_CONTEXT_OPEN,
     FileListEntry,
+    FileListState,
     diff_file_lists,
+    render_file_list,
     row_background,
 )
+
+
+def _walk(element: Any) -> Any:
+    """Yield ``element`` and every descendant across all its slots.
+
+    NiceGUI renders into the auto-index page outside a ``@ui.page`` context,
+    so a component can be rendered directly in a unit test and its element
+    tree inspected (mirrors the framed-pane tests).
+    """
+    yield element
+    for slot in (getattr(element, "slots", None) or {}).values():
+        for child in slot.children:
+            yield from _walk(child)
+
+
+def _rows(container: Any) -> list[Any]:
+    """Return the rendered ``file-list-row`` <tr> elements under ``container``."""
+    return [el for el in _walk(container) if el._props.get("data-testid") == "file-list-row"]
+
+
+def _row_by_path(container: Any, path: str) -> Any:
+    return next(r for r in _rows(container) if r._props.get("data-path") == path)
+
+
+def _click(element: Any) -> None:
+    """Invoke ``element``'s registered click handler (simulates a single-click)."""
+    listeners = [
+        listener for listener in element._event_listeners.values() if listener.type == "click"
+    ]
+    assert listeners, "element has no click listener"
+    listeners[0].handler(SimpleNamespace())
 
 
 def _entry(
@@ -207,3 +243,68 @@ def test_row_bg_selected_tombstone_keeps_both_treatments() -> None:
 
 def test_row_bg_plain_even_row_is_empty() -> None:
     assert row_background(_entry("/a"), is_selected=False, is_new=False, index=0) == ""
+
+
+# ---------------------------------------------------------------------------
+# Selection render path (Phase 4 / Option B) -- live NiceGUI render + inspect
+# ---------------------------------------------------------------------------
+
+
+def _selection_state() -> FileListState:
+    return FileListState(
+        path="/r",
+        selected_path="/r/scan.tif",
+        entries=[
+            FileListEntry(
+                name="scan.tif",
+                path="/r/scan.tif",
+                is_dir=False,
+                size_bytes=2048,
+                sync_status="synced",
+            ),
+            FileListEntry(name="Runs", path="/r/Runs", is_dir=True),
+            FileListEntry(name="old.tif", path="/r/old.tif", is_dir=False, tombstone=True),
+        ],
+    )
+
+
+def test_render_marks_selected_row_only() -> None:
+    """The row whose path matches ``selected_path`` carries the selected fill."""
+    container = render_file_list(state=_selection_state())
+    selected = _row_by_path(container, "/r/scan.tif")
+    assert selected._props.get("data-selected") == "true"
+    # Selected fill + 3px accent bar come from row_background.
+    assert "var(--color-row-selected)" in selected._style.get("background", "")
+    assert "var(--color-row-selected-bar)" in selected._style.get("box-shadow", "")
+    # The other rows are not marked selected.
+    assert _row_by_path(container, "/r/Runs")._props.get("data-selected") is None
+    assert _row_by_path(container, "/r/old.tif")._props.get("data-selected") is None
+
+
+def test_render_tombstone_row_is_dimmed_and_marked() -> None:
+    """A tombstone row carries the data-tombstone attr + dim/italic decoration."""
+    container = render_file_list(state=_selection_state())
+    tomb = _row_by_path(container, "/r/old.tif")
+    assert tomb._props.get("data-tombstone") == "true"
+    assert tomb._style.get("opacity") == "0.65"
+    assert tomb._style.get("font-style") == "italic"
+
+
+def test_on_select_fires_for_file_and_folder() -> None:
+    """Single-click selection fires ``on_select`` for files AND folders."""
+    picked: list[Any] = []
+    container = render_file_list(
+        state=_selection_state(), on_select=lambda entry: picked.append(entry)
+    )
+    _click(_row_by_path(container, "/r/scan.tif"))
+    _click(_row_by_path(container, "/r/Runs"))
+    assert [entry.path for entry in picked] == ["/r/scan.tif", "/r/Runs"]
+    # The folder selection carries the directory entry, not a file.
+    assert picked[1].is_dir is True
+
+
+def test_no_click_listener_when_on_select_absent() -> None:
+    """Selection is opt-in: with no ``on_select`` the rows wire no click handler."""
+    container = render_file_list(state=_selection_state())
+    row = _row_by_path(container, "/r/scan.tif")
+    assert not [li for li in row._event_listeners.values() if li.type == "click"]

@@ -23,7 +23,7 @@ callers can safely concatenate an override (e.g. the metadata pane appends
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 # Card shell: surface fill, hairline border, soft shadow, rounded corners,
@@ -82,7 +82,13 @@ def body_style() -> str:
 
 
 @contextlib.contextmanager
-def framed_pane(title: str, *, count: str | None = None, testid: str) -> Iterator[Any]:
+def framed_pane(
+    title: str,
+    *,
+    count: str | None = None,
+    testid: str,
+    header_extra: Callable[[], None] | None = None,
+) -> Iterator[Any]:
     """Context manager rendering a framed, titled pane; yields the body element.
 
     Use as::
@@ -94,6 +100,11 @@ def framed_pane(title: str, *, count: str | None = None, testid: str) -> Iterato
     right-aligned pill such as ``"7 items"``. ``testid`` is set on the card
     (``data-testid="<testid>"``); the title strip carries ``<testid>-header``
     and the count pill ``<testid>-count``.
+
+    ``header_extra`` is an optional zero-arg callback invoked *inside* the
+    title strip, after the title + count pill, so a pane can add header
+    controls (e.g. the Files pane's per-folder refresh button) without this
+    helper knowing their semantics. It is skipped outside a NiceGUI context.
 
     The manager opens the body div last and yields *it*, so children of the
     ``with`` block become DOM descendants of the body (not the card root or
@@ -115,6 +126,8 @@ def framed_pane(title: str, *, count: str | None = None, testid: str) -> Iterato
             ui.label(title).style(_TITLE_STYLE)
             if count is not None:
                 ui.label(count).props(f'data-testid="{testid}-count"').style(_COUNT_STYLE)
+            if header_extra is not None:
+                header_extra()
         # Open the body div last and yield it so `with framed_pane(...)`
         # children nest here, inside the scroll region.
         with ui.element("div").style(_BODY_STYLE) as body:

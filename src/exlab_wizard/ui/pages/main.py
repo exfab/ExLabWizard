@@ -71,6 +71,18 @@ class MainPageState:
     """True when the selected tree node is received equipment (decision 1):
     the three creation buttons (New Project / New Run / New Test Run) are
     disabled while this is True."""
+    # Redesign §4.3/§4.4 (Phase 4, Option B): a file or folder selected in the
+    # centre list. ``selected_file_path`` highlights the row; ``selected_file``
+    # is a render-ready payload assembled by the mount layer (no new fetch for
+    # files -- resolved from the in-memory feed; a one-level scan for folders).
+    # Shape: {"kind": "file"|"folder", "name", "path", ...}; see
+    # metadata_pane.render_selected_file_card.
+    selected_file_path: str | None = None
+    selected_file: dict[str, Any] | None = None
+    # §4.9 search box -> tree filter; §4.8 file-list row density ("" =
+    # comfortable, "compact"). Both ride the URL (?q=, ?density=) per OQ-1/A.
+    search_query: str = ""
+    density: str = ""
 
 
 def _default_chips() -> tuple[filter_chips.ChipDefinition, ...]:
@@ -149,6 +161,8 @@ def render_file_explorer_page(
     on_clear_verified: Callable[[], None] | None = None,
     on_tree_context_action: Callable[[str, str], None] | None = None,
     on_file_context_action: Callable[[Any, str], None] | None = None,
+    on_select_file: Callable[[Any], None] | None = None,
+    on_refresh_folder: Callable[[], None] | None = None,
     state: MainPageState | None = None,
     hierarchy: dict | None = None,
     file_list_entries: list[Any] | None = None,
@@ -302,11 +316,33 @@ def render_file_explorer_page(
         ):
             with ui.element("div").style("flex: 1 1 auto; min-width: 0; height: 100%;"):
                 files_count = f"{len(file_list_entries)} items" if file_list_entries else None
-                with framed_pane("Files", count=files_count, testid="files-pane"):
+
+                def _files_header_extra() -> None:
+                    # OQ-1/A mitigation: a per-folder refresh, distinct from the
+                    # toolbar's "Refresh everything" -- it re-scans only the open
+                    # folder then re-renders (mount._refresh_selected_folder).
+                    # Right-aligned via the count pill's auto margin when a count
+                    # is shown, else it claims the auto margin itself.
+                    refresh = on_refresh_folder
+                    if refresh is None:
+                        return
+                    margin = "" if files_count is not None else "margin-left: auto; "
+                    ui.button(icon="refresh", on_click=lambda _evt: refresh()).props(
+                        'flat dense round size=sm data-testid="files-refresh" '
+                        'title="Refresh this folder"'
+                    ).style(f"{margin}color: var(--color-muted, #8892a4);")
+
+                with framed_pane(
+                    "Files",
+                    count=files_count,
+                    testid="files-pane",
+                    header_extra=_files_header_extra,
+                ):
                     _render_centre_file_list(
                         s,
                         file_list_entries=file_list_entries,
                         on_file_context_action=on_file_context_action,
+                        on_select_file=on_select_file,
                     )
             # Vertical collapse/expand tab: a chevron stacked above a rotated
             # text label, inside one tall box with a raised-surface background
@@ -444,11 +480,14 @@ def _render_centre_file_list(
     *,
     file_list_entries: list[Any] | None = None,
     on_file_context_action: Callable[[Any, str], None] | None = None,
+    on_select_file: Callable[[Any], None] | None = None,
 ) -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     """Render the centre-pane file list (Redesign §4.3).
 
     Each row carries a right-click context menu (*Open in OS* /
-    *Copy path*) when ``on_file_context_action`` is wired.
+    *Copy path*) when ``on_file_context_action`` is wired. Single-click
+    selection (``on_select_file``) drives the right-pane metadata sub-card
+    and highlights the selected row (Phase 4 / Option B).
     """
     from exlab_wizard.ui.components.file_list import (
         FileListState,
@@ -467,8 +506,13 @@ def _render_centre_file_list(
     fl_state = FileListState(
         path=state.folder_feed_path,
         entries=list(file_list_entries or []),
+        selected_path=state.selected_file_path,
     )
-    render_file_list(state=fl_state, on_context_menu=on_file_context_action)
+    render_file_list(
+        state=fl_state,
+        on_context_menu=on_file_context_action,
+        on_select=on_select_file,
+    )
 
 
 def _render_right_pane(
@@ -499,6 +543,7 @@ def _render_right_pane(
                 selected_node=state.selected_node,
                 node_kind=state.selected_node_kind,
                 payload=dict(metadata_payload or {}),
+                selected_file=state.selected_file,
             )
             render_metadata_pane(
                 state=mp_state,

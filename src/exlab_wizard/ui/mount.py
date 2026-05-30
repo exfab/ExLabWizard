@@ -141,7 +141,13 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         )
 
     @ui.page("/main")
-    def _main(selected: str = "", right_pane: str = "") -> Any:
+    def _main(
+        selected: str = "",
+        right_pane: str = "",
+        file: str = "",
+        q: str = "",
+        density: str = "",
+    ) -> Any:
         deps = _deps()
         from exlab_wizard.api.routers import browse as _browse
 
@@ -150,28 +156,57 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         selected_path = selected or None
         node_kind, is_received = _classify_node(selected_path, hierarchy)
         right_pane_collapsed = right_pane == "collapsed"
+        # Kick off / rebind the folder feed for the selected path and
+        # gather the most recent payload (empty list on first render or if
+        # the feed hasn't ticked yet). Resolved before the state build so a
+        # ?file= selection can be matched against the in-memory feed.
+        feed_entries = _drive_folder_feed(app, deps, selected_path)
+        selected_file = _build_selected_file(file or None, feed_entries, deps)
         state = _build_main_state(
             deps,
             selected_node=selected_path,
             node_kind=node_kind,
             is_received=is_received,
             right_pane_collapsed=right_pane_collapsed,
+            selected_file_path=file or None,
+            selected_file=selected_file,
+            search_query=q,
+            density=density,
         )
         metadata_payload = _build_metadata_payload(selected_path, node_kind, deps)
-        # Kick off / rebind the folder feed for the selected path and
-        # gather the most recent payload (empty list on first render or
-        # if the feed hasn't ticked yet).
-        feed_entries = _drive_folder_feed(app, deps, selected_path)
 
         def _refresh() -> None:
-            ui.navigate.to("/main" + _build_main_query(selected, right_pane))
+            ui.navigate.to(
+                "/main" + _build_main_query(selected, right_pane, file=file, q=q, density=density)
+            )
 
         def _on_select_node(node_id: str) -> None:
-            ui.navigate.to("/main" + _build_main_query(node_id, right_pane))
+            # Selecting a new tree node repaints the centre list for the new
+            # folder, so any ?file= selection (a path under the *previous*
+            # folder) is dropped; search query + density carry over.
+            ui.navigate.to("/main" + _build_main_query(node_id, right_pane, q=q, density=density))
 
         def _on_toggle_right_pane() -> None:
             new_pane = "" if right_pane == "collapsed" else "collapsed"
-            ui.navigate.to("/main" + _build_main_query(selected, new_pane))
+            ui.navigate.to(
+                "/main" + _build_main_query(selected, new_pane, file=file, q=q, density=density)
+            )
+
+        def _on_select_file(entry: Any) -> None:
+            # Single-click on a file/folder row -> carry its path on ?file=.
+            ui.navigate.to(
+                "/main"
+                + _build_main_query(
+                    selected, right_pane, file=getattr(entry, "path", ""), q=q, density=density
+                )
+            )
+
+        def _on_refresh_folder() -> None:
+            # Files-pane refresh: re-scan the open folder now, then re-render.
+            _refresh_selected_folder(app, deps, selected_path)
+            ui.navigate.to(
+                "/main" + _build_main_query(selected, right_pane, file=file, q=q, density=density)
+            )
 
         def _on_run_staging_action(path: str, action: str) -> None:
             _run_staging_action(deps, path, action, ui)
@@ -203,6 +238,8 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             on_clear_verified=_on_clear_verified,
             on_tree_context_action=_on_tree_context_action,
             on_file_context_action=_on_file_context_action,
+            on_select_file=_on_select_file,
+            on_refresh_folder=_on_refresh_folder,
             state=state,
             hierarchy=hierarchy,
             file_list_entries=feed_entries,
@@ -690,6 +727,10 @@ def _build_main_state(
     node_kind: str | None = None,
     is_received: bool = False,
     right_pane_collapsed: bool = False,
+    selected_file_path: str | None = None,
+    selected_file: dict[str, Any] | None = None,
+    search_query: str = "",
+    density: str = "",
 ) -> Any:
     from exlab_wizard.ui.pages import main as main_page
 
@@ -706,6 +747,10 @@ def _build_main_state(
         selected_node_is_received=is_received,
         right_pane_collapsed=right_pane_collapsed,
         folder_feed_path=selected_node,
+        selected_file_path=selected_file_path,
+        selected_file=selected_file,
+        search_query=search_query,
+        density=density,
         operations_count=ops_count,
         operations_input_required=ops_input_required,
         creation_in_flight=ops_active > 0,
@@ -772,7 +817,14 @@ def _setup_next_action(deps: Any) -> str | None:
         return None
 
 
-def _build_main_query(selected: str, right_pane: str) -> str:
+def _build_main_query(
+    selected: str,
+    right_pane: str,
+    *,
+    file: str = "",
+    q: str = "",
+    density: str = "",
+) -> str:
     """Compose the ``?selected=...&right_pane=...`` query string for /main.
 
     Omits each param when empty so the URL stays clean for default state.
@@ -782,6 +834,12 @@ def _build_main_query(selected: str, right_pane: str) -> str:
     trip back through the FastAPI query parser. The path separator
     ``/`` is intentionally preserved (``safe="/"``) so the encoded id
     stays human-readable in the address bar.
+
+    Phase 4 (Option B / OQ-1/A) adds three optional params carried on the
+    same URL/navigate model rather than a second (refreshable) paradigm:
+    ``file`` (selected file/folder path in the centre list), ``q`` (search
+    query), and ``density`` (file-list row density). Filesystem paths in
+    ``file`` are URL-encoded (spaces / unicode) like ``selected``.
     """
     from urllib.parse import quote
 
@@ -790,6 +848,12 @@ def _build_main_query(selected: str, right_pane: str) -> str:
         parts.append(f"selected={quote(selected, safe='/')}")
     if right_pane:
         parts.append(f"right_pane={quote(right_pane, safe='/')}")
+    if file:
+        parts.append(f"file={quote(file, safe='/')}")
+    if q:
+        parts.append(f"q={quote(q, safe='')}")
+    if density:
+        parts.append(f"density={quote(density, safe='')}")
     return ("?" + "&".join(parts)) if parts else ""
 
 
@@ -976,6 +1040,105 @@ def _metadata_for_run(node_id: str) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Selection -> metadata payload (Phase 4, Option B / spec §4.3)
+# ---------------------------------------------------------------------------
+
+
+def _build_selected_file(
+    file_path: str | None,
+    feed_entries: list[Any],
+    deps: Any,
+) -> dict[str, Any] | None:
+    """Resolve a centre-list selection (file or folder) to a render payload.
+
+    Phase 4 / Option B (spec §4.3). ``file_path`` is the ``?file=`` query
+    param -- the path the operator single-clicked in the Files pane. It is
+    matched by path against the in-memory folder-feed entries (already
+    fetched for the current node, so a file needs no extra I/O). A match
+    that is a directory delegates to :func:`_build_selected_folder` for the
+    one-level aggregate scan; a file match projects the feed entry's fields
+    into a file-card payload.
+
+    Returns ``None`` when ``file_path`` is empty or matches no current
+    entry -- e.g. the file was removed since the click -- so the metadata
+    pane shows no sub-card rather than an error (spec §7).
+
+    File payload shape::
+
+        {"kind": "file", "name", "path", "size", "modified",
+         "sync_status", "tombstone"}
+
+    ``size`` is pre-formatted via :func:`format_bytes`; a tombstone ("On
+    NAS") row has no on-disk copy, so its ``size`` is ``None`` (spec §4.5).
+    """
+    if not file_path:
+        return None
+    match = next((e for e in feed_entries if getattr(e, "path", None) == file_path), None)
+    if match is None:
+        return None
+    if getattr(match, "is_dir", False):
+        return _build_selected_folder(match.name, match.path, deps)
+    from exlab_wizard.ui.pages.staging import format_bytes
+
+    size_bytes = getattr(match, "size_bytes", None)
+    tombstone = bool(getattr(match, "tombstone", False))
+    return {
+        "kind": "file",
+        "name": match.name,
+        "path": match.path,
+        "size": (None if tombstone or size_bytes is None else format_bytes(int(size_bytes))),
+        "modified": getattr(match, "modified_iso", None),
+        "sync_status": getattr(match, "sync_status", None),
+        "tombstone": tombstone,
+    }
+
+
+def _build_selected_folder(
+    name: str,
+    path: str,
+    deps: Any,
+) -> dict[str, Any]:
+    """Aggregate a one-level folder scan into a folder-card payload (OQ-4/B).
+
+    Phase 4 / Option B (spec §4.3, §4.6). A folder selected in the centre
+    list is summarised by a single-level :func:`scan_folder_sync`: its
+    immediate ``item_count`` and a worst-of ``sync_rollup`` over the
+    children's per-file sync states. No total size is computed -- the
+    recursive walk is deferred (spec §11).
+
+    A scan failure degrades to ``item_count=None`` + a neutral (``None``)
+    rollup rather than raising, so a transient permission / vanished-folder
+    error still renders a usable card (spec §7).
+
+    Folder payload shape::
+
+        {"kind": "folder", "name", "path", "item_count", "rollup"}
+    """
+    from exlab_wizard.api.routers import browse as _browse
+    from exlab_wizard.ui.components.sync_rollup import sync_rollup
+
+    config = getattr(deps, "config", None) if deps is not None else None
+    item_count: int | None
+    rollup: str | None
+    try:
+        response = _browse.scan_folder_sync(path, config)
+        entries = list(getattr(response, "entries", []) or [])
+        item_count = len(entries)
+        rollup = sync_rollup(getattr(entry, "sync_status", None) for entry in entries)
+    except Exception as exc:
+        _log.warning("folder aggregate scan failed for %s: %s", path, exc)
+        item_count = None
+        rollup = None
+    return {
+        "kind": "folder",
+        "name": name,
+        "path": path,
+        "item_count": item_count,
+        "rollup": rollup,
+    }
+
+
 def _drive_folder_feed(app: Any, deps: Any, selected_path: str | None) -> list[Any]:
     """Mount / rebind the per-tab FolderFeed and return current entries.
 
@@ -1059,6 +1222,46 @@ async def _fetch_folder_async(deps: Any, path: str, coord: Any) -> Any:
     if coord is not None:
         coord.record_folder_refresh()
     return result
+
+
+def _refresh_selected_folder(app: Any, deps: Any, selected_path: str | None) -> None:
+    """Force a fresh single-folder scan and prime the feed payload (OQ-1/A).
+
+    The Files-pane refresh button's mitigation for the navigate-per-click
+    model (spec §4.6 / OQ-1/A): rather than wait for the folder feed's next
+    poll tick, scan the current folder synchronously now and write the
+    result onto the per-tab feed's ``last_payload`` so the immediate
+    re-navigation renders fresh contents. Distinct from the toolbar's
+    "Refresh everything" -- this re-scans only the open folder.
+
+    A scan failure is swallowed to a WARN: the existing payload simply
+    stays until the next poll (spec §7). A no-op when nothing is selected
+    or the per-tab feed hasn't been mounted yet.
+    """
+    if selected_path is None:
+        return
+    from exlab_wizard.api.routers import browse as _browse
+
+    config = getattr(deps, "config", None) if deps is not None else None
+    try:
+        payload = _browse.scan_folder_sync(selected_path, config)
+    except Exception as exc:
+        _log.warning("per-folder refresh scan failed for %s: %s", selected_path, exc)
+        return
+    try:
+        tab_storage: Any = app.storage.tab
+    except Exception:
+        tab_storage = None
+    feed = tab_storage.get("folder_feed") if tab_storage is not None else None
+    if feed is not None and getattr(feed, "state", None) is not None:
+        feed.state.last_payload = payload
+        # A folder walk just happened, so record it on the coordinator -- the
+        # same bookkeeping _fetch_folder_async does after its scan. This keeps
+        # the manual refresh inside the coalescing window (should_skip_tree),
+        # so an immediately-following tree poll won't redundantly re-walk.
+        coord = tab_storage.get("folder_feed_coord") if tab_storage is not None else None
+        if coord is not None:
+            coord.record_folder_refresh()
 
 
 def _run_staging_action(deps: Any, path: str, action: str, ui: Any) -> None:

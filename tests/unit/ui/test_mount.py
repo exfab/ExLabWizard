@@ -24,6 +24,7 @@ import exlab_wizard.api.app  # noqa: F401  -- import order matters
 from exlab_wizard.constants import KEYRING_USERNAME_LIMS, RunKind
 from exlab_wizard.controller import SessionState
 from exlab_wizard.ui import mount
+from exlab_wizard.ui.components.file_list import FileListEntry
 
 
 def _deps(**overrides: Any) -> SimpleNamespace:
@@ -1201,6 +1202,29 @@ def test_build_main_query_url_encodes_special_chars() -> None:
     assert "?" not in mount._build_main_query("with?q", "")[len("?selected=") :]
 
 
+def test_build_main_query_includes_file_q_density() -> None:
+    """Phase 4 adds optional file / q / density params to the same URL model."""
+    out = mount._build_main_query("EQ1", "", file="/d/EQ1/scan.tif", q="cortex", density="compact")
+    assert out.startswith("?selected=EQ1")
+    assert "file=/d/EQ1/scan.tif" in out
+    assert "q=cortex" in out
+    assert "density=compact" in out
+
+
+def test_build_main_query_omits_empty_phase4_params() -> None:
+    """The Phase 4 params default empty and drop out of the URL entirely."""
+    assert mount._build_main_query("EQ1", "collapsed") == "?selected=EQ1&right_pane=collapsed"
+
+
+def test_build_main_query_encodes_file_path_and_search() -> None:
+    """``file`` keeps '/' readable but encodes spaces; ``q`` encodes everything."""
+    out = mount._build_main_query("", "", file="/d/My Run/a b.tif", q="a&b c")
+    assert "file=/d/My%20Run/a%20b.tif" in out
+    # The search query is fully encoded (safe='') so '&' and ' ' can't break
+    # the query parser.
+    assert "q=a%26b%20c" in out
+
+
 def test_classify_node_returns_none_for_empty_selection() -> None:
     assert mount._classify_node(None, {}) == (None, False)
     assert mount._classify_node("", {}) == (None, False)
@@ -1361,6 +1385,181 @@ def test_build_main_state_threads_selection_into_state() -> None:
     assert state.selected_node_is_received is False
     assert state.right_pane_collapsed is True
     assert state.folder_feed_path == "EQ1/Cortex"
+
+
+def test_build_main_state_threads_file_search_density() -> None:
+    """Phase 4 selection / search / density fields reach MainPageState."""
+    selected = {"kind": "file", "name": "scan.tif", "path": "/d/scan.tif"}
+    state = mount._build_main_state(
+        _deps(),
+        selected_file_path="/d/scan.tif",
+        selected_file=selected,
+        search_query="cortex",
+        density="compact",
+    )
+    assert state.selected_file_path == "/d/scan.tif"
+    assert state.selected_file == selected
+    assert state.search_query == "cortex"
+    assert state.density == "compact"
+
+
+# ---------------------------------------------------------------------------
+# _build_selected_file / _build_selected_folder (Phase 4, Option B)
+# ---------------------------------------------------------------------------
+
+
+def test_build_selected_file_resolves_file_by_path_match() -> None:
+    """A clicked path is resolved from the in-memory feed into a file payload."""
+    from exlab_wizard.ui.pages.staging import format_bytes
+
+    entries = [
+        FileListEntry(
+            name="scan.tif",
+            path="/d/EQ1/scan.tif",
+            is_dir=False,
+            size_bytes=2048,
+            modified_iso="2026-05-20T10:00:00Z",
+            sync_status="synced",
+        ),
+        FileListEntry(name="meta.json", path="/d/EQ1/meta.json", is_dir=False),
+    ]
+    payload = mount._build_selected_file("/d/EQ1/scan.tif", entries, _deps())
+    assert payload is not None
+    assert payload["kind"] == "file"
+    assert payload["name"] == "scan.tif"
+    assert payload["path"] == "/d/EQ1/scan.tif"
+    assert payload["size"] == format_bytes(2048)  # pre-formatted, not raw bytes
+    assert payload["modified"] == "2026-05-20T10:00:00Z"
+    assert payload["sync_status"] == "synced"
+    assert payload["tombstone"] is False
+
+
+def test_build_selected_file_none_for_empty_or_missing_path() -> None:
+    """Empty path or a path matching no current entry resolves to None."""
+    entries = [FileListEntry(name="a", path="/d/a", is_dir=False)]
+    assert mount._build_selected_file(None, entries, _deps()) is None
+    assert mount._build_selected_file("", entries, _deps()) is None
+    # Removed since the click -> no match -> None (no sub-card, no error).
+    assert mount._build_selected_file("/d/removed", entries, _deps()) is None
+
+
+def test_build_selected_file_tombstone_omits_size() -> None:
+    """A tombstone ("On NAS") file has no on-disk copy, so size is None."""
+    entries = [
+        FileListEntry(
+            name="old.tif",
+            path="/d/old.tif",
+            is_dir=False,
+            size_bytes=999,
+            sync_status="on_nas",
+            tombstone=True,
+        )
+    ]
+    payload = mount._build_selected_file("/d/old.tif", entries, _deps())
+    assert payload is not None
+    assert payload["tombstone"] is True
+    assert payload["size"] is None
+    assert payload["sync_status"] == "on_nas"
+
+
+def test_build_selected_file_folder_delegates_to_aggregate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A directory match delegates to the one-level folder aggregate scan."""
+    from exlab_wizard.api.routers import browse as browse_mod
+
+    fake_entries = [
+        SimpleNamespace(sync_status="synced"),
+        SimpleNamespace(sync_status="failed"),
+        SimpleNamespace(sync_status=None),
+    ]
+    monkeypatch.setattr(
+        browse_mod,
+        "scan_folder_sync",
+        lambda _path, _config: SimpleNamespace(entries=fake_entries),
+    )
+    entries = [FileListEntry(name="Runs", path="/d/EQ1/Runs", is_dir=True)]
+    payload = mount._build_selected_file("/d/EQ1/Runs", entries, _deps(config=_config()))
+    assert payload is not None
+    assert payload["kind"] == "folder"
+    assert payload["name"] == "Runs"
+    assert payload["path"] == "/d/EQ1/Runs"
+    assert payload["item_count"] == 3
+    # Worst-of rollup: a single failed child dominates.
+    assert payload["rollup"] == "failed"
+
+
+def test_build_selected_folder_degrades_on_scan_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A scan failure yields item_count=None + neutral rollup, no raise."""
+    from exlab_wizard.api.routers import browse as browse_mod
+
+    def _boom(_path: Any, _config: Any) -> Any:
+        msg = "folder vanished"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(browse_mod, "scan_folder_sync", _boom)
+    with caplog.at_level("WARNING"):
+        payload = mount._build_selected_folder("Runs", "/d/EQ1/Runs", _deps(config=_config()))
+    assert payload == {
+        "kind": "folder",
+        "name": "Runs",
+        "path": "/d/EQ1/Runs",
+        "item_count": None,
+        "rollup": None,
+    }
+    assert any("folder aggregate scan failed" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# _refresh_selected_folder (Phase 4, OQ-1/A)
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_selected_folder_primes_feed_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A force-refresh writes the fresh scan onto the per-tab feed payload and
+    records a folder walk on the coordinator (coalescing bookkeeping)."""
+    from exlab_wizard.api.routers import browse as browse_mod
+
+    sentinel = SimpleNamespace(path="/d/EQ1/Runs", entries=[])
+    monkeypatch.setattr(browse_mod, "scan_folder_sync", lambda _path, _config: sentinel)
+    recorded: list[bool] = []
+    coord = SimpleNamespace(record_folder_refresh=lambda: recorded.append(True))
+    feed = SimpleNamespace(state=SimpleNamespace(last_payload=None))
+    app = SimpleNamespace(
+        storage=SimpleNamespace(tab={"folder_feed": feed, "folder_feed_coord": coord})
+    )
+    mount._refresh_selected_folder(app, _deps(config=_config()), "/d/EQ1/Runs")
+    assert feed.state.last_payload is sentinel
+    assert recorded == [True]
+
+
+def test_refresh_selected_folder_noop_when_path_none() -> None:
+    """Nothing selected -> no scan, no write, no raise."""
+    app = SimpleNamespace(storage=SimpleNamespace(tab={}))
+    mount._refresh_selected_folder(app, _deps(), None)
+
+
+def test_refresh_selected_folder_swallows_scan_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A failed scan keeps the existing payload and warns."""
+    from exlab_wizard.api.routers import browse as browse_mod
+
+    def _boom(_path: Any, _config: Any) -> Any:
+        msg = "gone"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(browse_mod, "scan_folder_sync", _boom)
+    feed = SimpleNamespace(state=SimpleNamespace(last_payload="keep"))
+    app = SimpleNamespace(storage=SimpleNamespace(tab={"folder_feed": feed}))
+    with caplog.at_level("WARNING"):
+        mount._refresh_selected_folder(app, _deps(config=_config()), "/d/EQ1/Runs")
+    assert feed.state.last_payload == "keep"
+    assert any("per-folder refresh scan failed" in r.message for r in caplog.records)
 
 
 def test_open_in_os_returns_false_on_unhandled_platform(
