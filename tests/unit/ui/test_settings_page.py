@@ -18,6 +18,8 @@ import exlab_wizard.api.app  # noqa: F401  -- import order matters
 from exlab_wizard.config.models import Config
 from exlab_wizard.ui.components import credential_field
 from exlab_wizard.ui.pages.settings import (
+    SECTION_TITLES,
+    SETTINGS_SECTIONS,
     build_settings_draft,
     finalize_settings_draft,
     lims_credential_initial_state,
@@ -99,6 +101,17 @@ def test_finalize_allows_blank_staging_root() -> None:
 
     assert finalized.orchestrator.staging_root == ""
     assert finalized.orchestrator.label == "BENCH-1"
+
+
+def test_orchestrator_section_is_titled_workstation() -> None:
+    """Orchestrator/staging is hidden at the UI layer (see
+    docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md): the
+    section id stays ``"orchestrator"`` so the setup gate and section routing
+    are untouched, but its operator-visible title is "Workstation" and only the
+    label is collected (the staging-root input is gone). Guards against a revert
+    to the old "Orchestrator Mode" title or dropping the section entirely."""
+    assert SECTION_TITLES["orchestrator"] == "Workstation"
+    assert "orchestrator" in SETTINGS_SECTIONS
 
 
 def test_finalize_raises_on_invalid_edit() -> None:

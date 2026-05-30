@@ -17,6 +17,8 @@ the original bug class returning.
 
 from __future__ import annotations
 
+import pytest
+
 
 def _goto(page, url: str, *, retries: int = 2) -> None:
     """Navigate to ``url`` with one retry on transient NiceGUI failures."""
@@ -41,11 +43,15 @@ def test_flow_25_main_route_renders_redesigned_layout(page, server_url) -> None:
     """The /main route mounts the redesigned renderer, not the legacy one.
 
     Asserts the six toolbar buttons (the legacy toolbar had five and no
-    Add Equipment), the metadata-tab testid (the legacy renderer
-    emitted ``tab-details`` instead), and the footer Clear-verified
-    button (legacy footer had three status segments and no bulk
-    action). If any of these fail, ``/main`` is back on the legacy
-    renderer and the bug class has returned.
+    Add Equipment) and the metadata-tab testid (the legacy renderer
+    emitted ``tab-details`` instead). If any of these fail, ``/main`` is
+    back on the legacy renderer and the bug class has returned.
+
+    (The footer Clear-verified button is no longer asserted: orchestrator/
+    staging is hidden — see
+    docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md.
+    The six-button toolbar + tab-metadata already distinguish the
+    redesigned renderer from the legacy one.)
     """
     _goto(page, f"{server_url}/main")
     for testid in (
@@ -61,7 +67,6 @@ def test_flow_25_main_route_renders_redesigned_layout(page, server_url) -> None:
     # tab-details. A legacy renderer would fail this assertion.
     page.locator('[data-testid="tab-metadata"]').wait_for(state="visible", timeout=5_000)
     page.locator('[data-testid="tab-problems"]').wait_for(state="visible", timeout=5_000)
-    page.locator('[data-testid="footer-clear-verified"]').wait_for(state="visible", timeout=5_000)
     # The legacy renderer rendered ``tab-details`` — explicitly assert
     # it's gone so a future revert is caught.
     assert page.locator('[data-testid="tab-details"]').count() == 0
@@ -169,6 +174,10 @@ def test_flow_25_received_equipment_disables_creation_buttons(page, server_url) 
     assert add_eq.get_attribute("aria-disabled") != "true"
 
 
+@pytest.mark.skip(
+    reason="orchestrator/staging hidden — footer Clear-verified removed; see "
+    "docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md"
+)
 def test_flow_25_footer_clear_verified_routes_to_callback(page, server_url) -> None:
     """The footer Clear-verified button is wired to a callback.
 

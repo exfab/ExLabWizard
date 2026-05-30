@@ -103,3 +103,16 @@ def test_flow_08_lims_password_cancel_discards_edit(page, server_url) -> None:
     settings.lims_password_input.fill("typo-password")
     settings.lims_password_cancel.click()
     expect(settings.lims_password_status).to_have_text("Status: Not set", timeout=5_000)
+
+
+def test_flow_08_workstation_section_hides_staging_root(page, server_url) -> None:
+    """The renamed "Workstation" section (id still ``orchestrator``) collects the
+    label but no staging-root field — orchestrator/staging hidden (see
+    docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md)."""
+    settings = SettingsPage(page)
+    page.goto(f"{server_url}/settings?active=orchestrator")
+    page.wait_for_load_state("networkidle")
+    settings.section("orchestrator").wait_for(state="visible", timeout=10_000)
+    body = settings.section("orchestrator").inner_text()
+    assert "Workstation label" in body
+    assert "Staging root" not in body

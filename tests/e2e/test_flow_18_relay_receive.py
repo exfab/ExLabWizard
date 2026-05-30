@@ -7,6 +7,16 @@ cue. Selecting it renders the relay metadata in the right pane.
 
 from __future__ import annotations
 
+import pytest
+
+# Relay-receive depends on a configured staging_root, which is no longer
+# surfaced: orchestrator/staging is hidden at the UI layer. See
+# docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md.
+pytestmark = pytest.mark.skip(
+    reason="orchestrator/staging hidden — see "
+    "docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md"
+)
+
 
 def _goto(page, url: str, *, retries: int = 2) -> None:
     last: Exception | None = None

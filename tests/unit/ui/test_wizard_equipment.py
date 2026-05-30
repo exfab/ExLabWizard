@@ -14,11 +14,28 @@ from exlab_wizard.ui.pages.wizard_equipment import (
 )
 
 
-def test_wizard_has_four_steps_without_signal_step() -> None:
-    """The completeness-signal step is removed by the quiescence redesign."""
-    assert EQUIPMENT_WIZARD_STEPS == ("identity", "paths", "sync_mode", "review")
+def test_wizard_has_three_steps_with_sync_mode_hidden() -> None:
+    """The sync-mode step is hidden (orchestrator/staging hidden — see
+    docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md), so the
+    wizard is identity → paths → review. The completeness-signal step was
+    already removed by the quiescence redesign."""
+    assert EQUIPMENT_WIZARD_STEPS == ("identity", "paths", "review")
     assert set(EQUIPMENT_STEP_TITLES) == set(EQUIPMENT_WIZARD_STEPS)
     assert "signal" not in EQUIPMENT_WIZARD_STEPS
+    assert "sync_mode" not in EQUIPMENT_WIZARD_STEPS
+
+
+def test_assembled_equipment_defaults_to_nas_sync_mode() -> None:
+    """With the sync-mode step hidden, every wizard-built equipment is nas-mode."""
+    from exlab_wizard.constants import SyncMode
+
+    s = EquipmentWizardState()  # operator never picks a mode
+    s.equipment_id = "FLOW_99"
+    s.label = "Flow Cytometer 99"
+    s.local_root = "/data/lab"
+    s.nas_root = "//nas01/lab"
+    eq = assemble_equipment_config(s)
+    assert eq.sync_mode == SyncMode.NAS
 
 
 def _state_filled_for(step: str) -> EquipmentWizardState:

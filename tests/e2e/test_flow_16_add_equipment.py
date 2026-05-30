@@ -1,7 +1,10 @@
 """E2E flow 16: Add-Equipment wizard (Redesign §6).
 
-Drives the four-step wizard end to end against the test app:
-identity → paths → sync_mode → review → confirm.
+Drives the wizard end to end against the test app:
+identity → paths → review → confirm. The sync-mode step is hidden
+(orchestrator/staging hidden — see
+docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md), so
+every equipment is created in nas mode.
 
 The test app mounts the wizard at ``/wizard/equipment?step=<step>`` so
 each step can be loaded directly; the production navigation between
@@ -12,6 +15,7 @@ NiceGUI render path produces every testid the catalog promises.
 
 from __future__ import annotations
 
+import pytest
 from playwright.sync_api import expect
 
 from tests.e2e.page_objects.wizard_equipment_page import WizardEquipmentPage
@@ -49,6 +53,10 @@ def test_flow_16_add_equipment_paths_step(page, server_url) -> None:
     wiz.nas_root.wait_for(state="visible")
 
 
+@pytest.mark.skip(
+    reason="sync-mode wizard step hidden (orchestrator/staging hidden) — see "
+    "docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md"
+)
 def test_flow_16_add_equipment_sync_mode_step(page, server_url) -> None:
     """Sync mode step renders the nas/stage radio."""
     wiz = WizardEquipmentPage(page)
