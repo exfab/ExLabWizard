@@ -55,7 +55,7 @@ Guiding principles:
 
 ### 2.1 Visual tokens and the design system
 
-ExLab-Wizard inherits its visual design system from the lab's authoritative style guide at [`DESIGN.md`](../DESIGN.md) (*"Scientific Analysis Dashboard Design System v1.1"*). DESIGN.md is the single source of truth for color palette, type scale, spacing tokens, border radius, shadows, and component styling rules across all lab applications (PhenoTypic, ExLab-Wizard, future tools). This subsection describes how ExLab-Wizard consumes those tokens, the small set of ExLab-Wizard-specific overrides, and the Python module that exposes the tokens to runtime code.
+ExLab-Wizard inherits its visual design system from the lab's authoritative style guide at [`DESIGN.md`](../../DESIGN.md) (*"Scientific Analysis Dashboard Design System v1.1"*). DESIGN.md is the single source of truth for color palette, type scale, spacing tokens, border radius, shadows, and component styling rules across all lab applications (PhenoTypic, ExLab-Wizard, future tools). This subsection describes how ExLab-Wizard consumes those tokens, the small set of ExLab-Wizard-specific overrides, and the Python module that exposes the tokens to runtime code.
 
 #### 2.1.1 The `design.py` module
 
@@ -722,7 +722,7 @@ Beyond NiceGUI's component defaults (Tab / Shift-Tab navigation, Enter to submit
 
 ## 4. New Project Wizard
 
-Modal, multi-step. User capability: "Create a New Project" (User Interaction Spec Section 3.1). Backed by the Mapping B LIMS integration ([Design Spec §7.2](../design_specs/design_spec_sections/07_Sync_and_Database_Integration.md#72-lims-integration)): ExLab-Wizard does not create LIMS projects, only consumes them.
+Modal, multi-step. User capability: "Create a New Project" (User Interaction Spec Section 3.1). Backed by the Mapping B LIMS integration ([Design Spec §7.2](tions/07_Sync_and_Database_Integration.md#72-lims-integration)): ExLab-Wizard does not create LIMS projects, only consumes them.
 
 | Step | Purpose | Widgets |
 |---|---|---|
