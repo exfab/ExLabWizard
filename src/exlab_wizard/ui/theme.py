@@ -69,6 +69,13 @@ def build_root_css() -> str:
         f"  --color-info:    {design.COLOR_INFO};\n"
         f"  --color-warning: {design.COLOR_WARNING};\n"
         f"  --color-danger:  {design.COLOR_DANGER};\n"
+        # Sync-status icon tokens (two-icon presence model, 2026-05-30).
+        f"  --color-sync-local:   {design.COLOR_SYNC_LOCAL};\n"
+        f"  --color-sync-cached:  {design.COLOR_SYNC_CACHED};\n"
+        f"  --color-sync-safe:    {design.COLOR_SYNC_SAFE};\n"
+        f"  --color-sync-absent:  {design.COLOR_SYNC_ABSENT};\n"
+        f"  --color-sync-problem: {design.COLOR_SYNC_PROBLEM};\n"
+        f"  --color-sync-held:    {design.COLOR_SYNC_HELD};\n"
         f"  --font-display: {design.FONT_DISPLAY};\n"
         f"  --font-body:    {design.FONT_BODY};\n"
         f"  --font-mono:    {design.FONT_MONO};\n"
