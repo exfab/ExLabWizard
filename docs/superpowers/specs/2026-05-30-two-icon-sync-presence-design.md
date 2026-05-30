@@ -3,8 +3,9 @@
 **Date:** 2026-05-30
 **Status:** Approved (design); ready for implementation plan
 **Supersedes (UI only):** the single-glyph `sync_status_icon` display and the
-single-SVG run-tree rollup (`sync_local.svg` / `sync_cloud.svg`). The backend
-sync states are unchanged.
+single-SVG run-tree rollup (`sync_local.svg` / `sync_cloud.svg`). `sync_cloud.svg`
+is **retired** — the tree now uses `sync_nas.svg` so it speaks the same vocabulary
+as the file rows. The backend sync states are unchanged.
 
 ## 1. Problem
 
@@ -29,23 +30,42 @@ this is a presentation change plus one additive backend read.
 
 ## 2. Design principle
 
-**Each icon's background colour describes that one location.** The two icons are
-always rendered in a fixed order — **local on the left, NAS on the right** — so
-"which location" never depends on colour (important for colour-blind operators).
+One unified colour language across **both** files (two icons) and folders (one
+rollup icon). The two per-file icons are always rendered in a fixed order —
+**local on the left, NAS on the right** — so "which location" never depends on
+colour (important for colour-blind operators).
 
-| Colour | Token | Meaning at this location |
+**blue = "here" · green = "safe on NAS" · gray = "absent" · red = "problem" ·
+amber = "held".**
+
+| Icon | Meaning | Colour | Token |
+|---|---|---|---|
+| **local** | here (only copy) | 🔵 solid blue | `--color-sync-local` |
+| **local** | here, also on NAS (cache — safe to clear) | 🔵 faded blue | `--color-sync-cached` |
+| **local** | not here, and that's fine | ⬜ gray | `--color-sync-absent` |
+| **local** | gone / lost | 🔴 red | `--color-sync-problem` |
+| **nas** | safe on NAS | 🟢 green | `--color-sync-safe` |
+| **nas** | not on NAS yet | ⬜ gray | `--color-sync-absent` |
+| **nas** | upload failed | 🔴 red | `--color-sync-problem` |
+| **nas** | held by validation | 🟠 amber | `--color-sync-held` |
+
+`sync_local.svg` is itself blue (`#1b75bc`), so blue-for-local reinforces the
+glyph rather than fighting it. The two blues both mean "here"; the **fade** is the
+only difference and consistently means "also backed up" — and the NAS icon's
+green is the primary "is it safe?" tell, so the fade is secondary.
+
+We introduce sync-specific semantic aliases (added to `design.py` + emitted by
+`theme.build_root_css`) so the sync UI does not couple to incidental palette
+edits:
+
+| Alias | Resolves to | Hex |
 |---|---|---|
-| 🟢 green | `--color-success` `#2e9e5b` | Present — this is the working copy |
-| 🔵 light-blue | `--color-row-selected` `#dceaff` | Present but secondary/cached — safe to clear, it's on the NAS |
-| ⬜ gray | `--color-muted` (tinted) | Absent, and that's fine |
-| 🔴 red | `--color-danger` `#d2492a` | Problem **here** |
-| 🟠 amber | `--color-warning` `#e8a13a` | Held / needs attention **here** |
-
-We introduce sync-specific semantic aliases so the sync UI does not couple to
-incidental palette edits: `--color-sync-present`, `--color-sync-cached`,
-`--color-sync-absent`, `--color-sync-problem`, `--color-sync-held`. These alias
-the tokens above and are added to `design.py` + emitted by
-`theme.build_root_css`.
+| `--color-sync-local` | solid blue | `--color-primary` `#1b75bc` |
+| `--color-sync-cached` | faded blue | `--color-row-selected` `#dceaff` |
+| `--color-sync-safe` | green | `--color-success` `#2e9e5b` |
+| `--color-sync-absent` | tinted gray | a light `--color-muted` tint |
+| `--color-sync-problem` | red | `--color-danger` `#d2492a` |
+| `--color-sync-held` | amber | `--color-warning` `#e8a13a` |
 
 ## 3. State taxonomy
 
@@ -54,11 +74,11 @@ the raw `SyncStatus`. Seven views cover every case:
 
 | # | `FileSyncView` | local bg | nas bg | Meaning |
 |---|---|---|---|---|
-| 1 | `LOCAL_ONLY` | 🟢 green | ⬜ gray | Here, not backed up yet (incl. pending/syncing/retrying — detail hidden) |
-| 2 | `SYNCED` | 🔵 light-blue | 🟢 green | Safe on NAS; local is now just a cache |
+| 1 | `LOCAL_ONLY` | 🔵 blue | ⬜ gray | Here, not backed up yet (incl. pending/syncing/retrying — detail hidden) |
+| 2 | `SYNCED` | 🔵 faded blue | 🟢 green | Safe on NAS; local is now just a cache |
 | 3 | `ON_NAS` | ⬜ gray | 🟢 green | Backed up; local copy reclaimed (cleaned) |
-| 4 | `UPLOAD_FAILED` | 🟢 green | 🔴 red | Local copy fine; NAS push failed (retries exhausted) |
-| 5 | `BLOCKED` | 🟢 green | 🟠 amber | Local fine; upload **held** by a hard validation finding |
+| 4 | `UPLOAD_FAILED` | 🔵 blue | 🔴 red | Local copy fine; NAS push failed (retries exhausted) |
+| 5 | `BLOCKED` | 🔵 blue | 🟠 amber | Local fine; upload **held** by a hard validation finding |
 | 6 | `MISSING` | 🔴 red | 🔴 red | Tracked, but gone locally **and** never confirmed on NAS |
 | 7 | `NONE` | — | — | Untracked file / folder — no icons (neutral) |
 
@@ -123,26 +143,46 @@ from the `FileListEntry` (which gains `nas_verified`, `record_present`, and
 existing tombstone treatment (dim/italic, no "Open in OS") is unchanged; a
 tombstone row is simply one whose view is `ON_NAS` or `MISSING`.
 
-### 4.3 `sync_rollup.py` — folder / tree rollup
+### 4.3 `sync_rollup.py` — folder / tree rollup (single icon)
 
-Generalise the worst-of reduction to operate over `FileSyncView` values with
-this severity order (most-attention-worthy first):
+A folder is a **summary**, so it renders **one** icon (not the two-icon pair) —
+"is everything in here safe?". Two steps:
 
-```
-MISSING > UPLOAD_FAILED > BLOCKED > LOCAL_ONLY > SYNCED > ON_NAS
-```
+1. **Worst-of reduction** over child `FileSyncView` values, with this severity
+   order (most-attention-worthy first):
 
-Rationale: problems first; then **at-risk** local-only files (present but not yet
-backed up) outrank fully-`SYNCED` ones; `ON_NAS` (done, reclaimed) is calmest.
-`NONE` is ignored, as today. The folder metadata pane and the run tree both
-render the rolled-up view via `sync_pair_icons`.
+   ```
+   MISSING > UPLOAD_FAILED > BLOCKED > LOCAL_ONLY > SYNCED > ON_NAS
+   ```
 
-### 4.4 Surfaces (all three speak the same language)
+   Rationale: problems first; then **at-risk** local-only files (present but not
+   yet backed up) outrank fully-`SYNCED` ones; `ON_NAS` (done, reclaimed) is
+   calmest. `NONE` is ignored, as today.
 
-- **File rows** (`file_list.py`) — per-file two-icon pair.
-- **Run tree** (`browse.py` tree headers) — per-run rolled-up pair, replacing
-  the single `sync_local.svg` / `sync_cloud.svg` icon.
-- **Metadata pane** — selected folder shows its rolled-up pair.
+2. **Single-icon mapping** of the rolled-up view, via a new
+   `sync_rollup_icon(view) -> {"svg", "bg_var", "badge", "tooltip"}`:
+
+   | Rolled-up view | SVG | bg |
+   |---|---|---|
+   | `SYNCED` / `ON_NAS` (all safe) | `sync_nas.svg` | 🟢 green |
+   | `LOCAL_ONLY` (not fully synced) | `sync_local.svg` | 🔵 blue |
+   | `BLOCKED` (a held file) | `sync_nas.svg` | 🟠 amber |
+   | `UPLOAD_FAILED` / `MISSING` (an error) | `sync_nas.svg` | 🔴 red |
+   | `NONE` (empty / untracked) | — | none |
+
+   This is exactly the operator's stated model: fully synced → `sync_nas` green;
+   not synced → `sync_local` blue; error → `sync_nas` red (held → amber).
+
+### 4.4 Surfaces
+
+- **File rows** (`file_list.py`) — per-file **two-icon** pair (detail).
+- **Run tree** (`browse.py` tree headers) — per-run **single** rollup icon
+  (`sync_rollup_icon`), replacing the old `sync_local.svg` / `sync_cloud.svg`
+  glyph. `sync_cloud.svg` is retired.
+- **Metadata pane** — selected folder shows its **single** rollup icon.
+
+Files show both locations (detail); folders summarise to one icon. They share the
+same colour language, so the summary never contradicts the detail beneath it.
 
 ## 5. Backend changes (additive)
 
@@ -192,11 +232,14 @@ Position (local left / NAS right) and the two distinct SVG shapes already encode
   (mapping table, all seven views) and `sync_pair_props` (colours, badges,
   tooltips). Drop the `strict`/neutral-dash tests.
 - **Update** `tests/unit/ui/test_sync_rollup.py` for the new `FileSyncView`
-  severity order.
+  severity order, and add tests for `sync_rollup_icon` (the single-icon mapping:
+  `sync_nas` green/amber/red vs `sync_local` blue).
 - **Rewrite** `tests/e2e/test_flow_05_browse_view_sync_icons.py`: it currently
-  asserts one `sync_local.svg` vs one `sync_cloud.svg` per run; assert the
-  two-icon pair and per-view backgrounds instead. Keep the asset-200 check,
-  adding `sync_nas.svg`.
+  asserts one `sync_local.svg` vs one `sync_cloud.svg` per run. Assert the new
+  tree rollup icon instead (`sync_nas.svg` for synced/cleared runs, `sync_local.svg`
+  for not-fully-synced) plus the per-view backgrounds, and the file-row two-icon
+  pair. Update the asset-200 check to `sync_local.svg` + `sync_nas.svg`
+  (`sync_cloud.svg` is no longer served).
 - **New** unit tests for the `MISSING` surfacing in `browse.py` and the queue
   status threading (`UPLOAD_FAILED` / `BLOCKED`).
 - Existing sync backend / `sync_state_writer` / `pre_sync_gate` tests are
@@ -212,12 +255,24 @@ Position (local left / NAS right) and the two distinct SVG shapes already encode
 
 ## 9. Token summary (for the plan)
 
+**Per-file two icons:**
+
 | View | local bg token | nas bg token | badge |
 |---|---|---|---|
-| `LOCAL_ONLY` | `--color-sync-present` | `--color-sync-absent` | — |
-| `SYNCED` | `--color-sync-cached` | `--color-sync-present` | — |
-| `ON_NAS` | `--color-sync-absent` | `--color-sync-present` | — |
-| `UPLOAD_FAILED` | `--color-sync-present` | `--color-sync-problem` | `✕` on NAS |
-| `BLOCKED` | `--color-sync-present` | `--color-sync-held` | `!` on NAS |
+| `LOCAL_ONLY` | `--color-sync-local` | `--color-sync-absent` | — |
+| `SYNCED` | `--color-sync-cached` | `--color-sync-safe` | — |
+| `ON_NAS` | `--color-sync-absent` | `--color-sync-safe` | — |
+| `UPLOAD_FAILED` | `--color-sync-local` | `--color-sync-problem` | `✕` on NAS |
+| `BLOCKED` | `--color-sync-local` | `--color-sync-held` | `!` on NAS |
 | `MISSING` | `--color-sync-problem` | `--color-sync-problem` | `✕` on both |
 | `NONE` | — (no icons) | — | — |
+
+**Folder / tree single rollup icon (`sync_rollup_icon`):**
+
+| Rolled-up view | SVG | bg token | badge |
+|---|---|---|---|
+| `SYNCED` / `ON_NAS` | `sync_nas.svg` | `--color-sync-safe` | — |
+| `LOCAL_ONLY` | `sync_local.svg` | `--color-sync-local` | — |
+| `BLOCKED` | `sync_nas.svg` | `--color-sync-held` | `!` |
+| `UPLOAD_FAILED` / `MISSING` | `sync_nas.svg` | `--color-sync-problem` | `✕` |
+| `NONE` | — (no icon) | — | — |
