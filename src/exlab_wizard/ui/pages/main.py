@@ -22,6 +22,7 @@ from typing import Any
 from exlab_wizard.logging import get_logger
 from exlab_wizard.ui import notifications
 from exlab_wizard.ui.components import banner_stack, filter_chips, status_bar_segment
+from exlab_wizard.ui.components.framed_pane import card_style, framed_pane
 from exlab_wizard.ui.components.tree import TreeFilters, build_tree
 from exlab_wizard.ui.pages.staging import StagingDockState
 
@@ -260,8 +261,14 @@ def render_file_explorer_page(
 
     # Splitter holds tree | (file list + metadata pane). The right-pane
     # collapse toggle is wired by the caller via on_toggle_right_pane.
-    with ui.splitter(value=20).classes("w-full h-full") as outer_split:
-        with outer_split.before, ui.column().classes("w-full p-3").style("gap: 0.5rem;"):
+    with (
+        ui.splitter(value=20).classes("w-full h-full").style("gap: var(--sp-3, 0.75rem);")
+    ) as outer_split:
+        with (
+            outer_split.before,
+            framed_pane("Explorer", testid="explorer-pane"),
+            ui.column().classes("w-full").style("gap: 0.5rem;"),
+        ):
             ui.input(label="Search").props('data-testid="main-search"').style("width: 100%;")
             filter_chips.filter_chips(_default_chips(), state=s.chip_state)
             build_tree(
@@ -293,14 +300,14 @@ def render_file_explorer_page(
             .classes("w-full h-full")
             .style("display: flex; flex-direction: row; flex-wrap: nowrap; align-items: stretch;"),
         ):
-            with ui.element("div").style(
-                "flex: 1 1 auto; min-width: 0; height: 100%; overflow: auto;"
-            ):
-                _render_centre_file_list(
-                    s,
-                    file_list_entries=file_list_entries,
-                    on_file_context_action=on_file_context_action,
-                )
+            with ui.element("div").style("flex: 1 1 auto; min-width: 0; height: 100%;"):
+                files_count = f"{len(file_list_entries)} items" if file_list_entries else None
+                with framed_pane("Files", count=files_count, testid="files-pane"):
+                    _render_centre_file_list(
+                        s,
+                        file_list_entries=file_list_entries,
+                        on_file_context_action=on_file_context_action,
+                    )
             # Vertical collapse/expand tab: a chevron stacked above a rotated
             # text label, inside one tall box with a raised-surface background
             # so it reads as a distinct tab. The glyph points the way the pane
@@ -363,8 +370,16 @@ def render_file_explorer_page(
                             "color: var(--color-muted, #8892a4);"
                         )
             if not s.right_pane_collapsed:
-                with ui.element("div").style(
-                    "flex: 0 0 40%; min-width: 0; height: 100%; overflow: auto;"
+                # Metadata pane gets the same card frame as the other panes but
+                # keeps its own tabs in place of a title strip (approved
+                # default), so card_style() is applied directly rather than via
+                # framed_pane. card_style() ends with ';', so appending
+                # 'overflow: auto;' produces valid CSS and (last-wins) overrides
+                # the card's 'overflow: hidden;' so the tab panels scroll.
+                with (
+                    ui.element("div")
+                    .props('data-testid="metadata-pane-card"')
+                    .style(f"flex: 0 0 40%; min-width: 0; {card_style()} overflow: auto;")
                 ):
                     _render_right_pane(
                         s,
@@ -374,10 +389,16 @@ def render_file_explorer_page(
 
     if not s.setup_incomplete:
         with (
+            # Footer reads as a framed bar to match the panes: surface fill,
+            # hairline border, soft shadow, small margins so it sits as a
+            # distinct card rather than bleeding to the window edges.
             ui.footer().style(
-                "background: var(--color-bg); "
-                "border-top: 1px solid var(--color-rule); "
-                "padding: 0 var(--sp-4); min-height: 24px;"
+                "background: var(--color-surface, #ffffff); "
+                "border: 1px solid var(--color-border, #dde3ed); "
+                "border-radius: var(--radius-md, 10px); "
+                "box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,54,96,0.07)); "
+                "margin: var(--sp-2, 0.5rem); "
+                "padding: 0 var(--sp-4, 1rem); min-height: 24px;"
             ),
             ui.row().classes("items-center w-full"),
         ):
