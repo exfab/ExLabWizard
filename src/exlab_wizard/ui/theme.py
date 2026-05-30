@@ -134,10 +134,7 @@ def mdi_font_head_html() -> str:
     network access. Quasar already understands ``mdi-*`` icon names once this
     stylesheet is present.
     """
-    return (
-        '<link rel="stylesheet" '
-        'href="/assets/fonts/mdi/css/materialdesignicons.min.css">'
-    )
+    return '<link rel="stylesheet" href="/assets/fonts/mdi/css/materialdesignicons.min.css">'
 
 
 def register_theme() -> str:

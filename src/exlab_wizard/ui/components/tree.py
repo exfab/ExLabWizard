@@ -67,6 +67,7 @@ def _node_type_props(kind: str) -> tuple[str, str]:
     """Return the ``(icon, colour_var)`` for a tree node kind."""
     return _NODE_TYPE_PROPS.get(kind, ("mdi-folder-outline", "--oi-grey"))
 
+
 # Map internal kind to the testid suffix the Playwright flows expect.
 # Both run_experimental and run_test collapse to "run" (the e2e contract
 # treats them interchangeably for selection / context-menu purposes).
