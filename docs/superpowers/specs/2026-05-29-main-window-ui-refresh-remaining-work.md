@@ -32,8 +32,9 @@ metadata popover), **this doc wins** and the original spec must be reconciled
 | `01edee7` | 5 | **Search wiring (OQ-2)** + shared **empty-state** placeholder + toolbar **group divider** |
 | `1bb3c8d` | 5 | **Live footer status segments** (Validator → WARNING on hard finding, LIMS → DANGER when unreachable) via a pure `derive_footer_segment_states` helper |
 | `a31b916` | 5 | **File-list density** toggle + **unified tree selection** (OQ-6) + **sync tooltips** + **sync-status legend** popover |
+| `e72cd73` | 6 | **e2e flow 28** (file selection + search/density/legend) + UX catalog/doc; suite + 91.70% coverage + static all green |
 
-**Phase 5 is complete.** Unit gate is green at the tip: `uv run ruff check` +
+**Phases 5 and 6 are complete.** Unit gate is green at the tip: `uv run ruff check` +
 `ruff format --check` + `mypy src` clean; `tests/unit/ui/` **623 passed**. Every
 Phase-5 item was **live-verified via Playwright** (DOM inspection + screenshots)
 against the seeded e2e app on `:8099`, in addition to the Phase-4 verification:
@@ -52,8 +53,12 @@ against the seeded e2e app on `:8099`, in addition to the Phase-4 verification:
 
 Footer WARNING/DANGER colours are unit-verified only (the e2e harness has no
 backend signals, so it renders NORMAL; the derivation fires in production).
-Remaining work is **Phase 6** (formal e2e suite + final screenshot pass, §C)
-and **cleanup** (§D).
+
+**Phase 6** ran the full e2e suite (green; flow 28 added), met the **91.70%**
+coverage gate, and spot-checked the app-wide theme on welcome/settings/problems
+(no regression) — see §C. The only remaining work is **§D cleanup** (optional
+literal-fallback thinning; delete scratch PNGs + `RESUME.md` before merge) and
+**§A** (reconciling the *original* design spec for the popover + `register_theme`).
 
 ---
 
@@ -164,46 +169,62 @@ style + tooltip shape where assertable).
 
 ---
 
-## C. Phase 6 — e2e + final verification (highest-risk remaining work)
+## C. Phase 6 — e2e + final verification ✅ DONE (`e72cd73`)
 
-The e2e suite has **not been run** since Phases 3–4 and the post-demo layout
-changes. Several flows almost certainly need updates because the DOM shape
-changed. Known break points to check first:
+**Outcome: the suite was already green.** The Phase 3–5 DOM changes broke
+**no** existing flow — the predicted break points below were all absorbed
+because the `data-testid`s were preserved through every refactor and the flows
+assert on testids, not on rendered text. The actual work was *adding* the
+missing coverage + verifying.
 
-- [ ] **File-list Status cell is now an icon, not text** (`file_list.py`
-      `_render_row` → `sync_status_icon(..., strict=False)`). Any flow asserting
-      the literal status string ("synced"/"acquiring"/…) in a file row will
-      fail — assert on the icon / a `data-*` hook instead. (Add a status
-      `data-*` attribute if flows need a stable selector.)
-- [ ] **Metadata is an absolute popover** (`data-testid="metadata-pane-card"`
-      now `position: absolute`, overlaying Files). Flows asserting a docked /
-      side-by-side metadata pane, or its width/position, need updating. Open/
-      close still rides `right_pane`.
-- [ ] **Toggle label changed** to **"Metadata"** (was "Collapse metadata" /
-      "Expand metadata"); `data-testid="toggle-right-pane"` preserved. Update
-      any text assertions.
-- [ ] **Framed panes** add testids `explorer-pane`, `files-pane`,
-      `files-pane-header`, `files-pane-count`, plus `files-refresh`,
-      `metadata-selected-file`, `metadata-selected-folder`, and file rows now
-      carry `data-selected="true"` + `data-path`. Use these for new selection
-      flows.
-- [ ] **`register_theme` app-wide** changes the rendered look of **every**
-      page (grey canvas, body/heading fonts, resolved tokens). Re-check any
-      screenshot/visual e2e and `scripts/generate_screenshots.py` output
-      against the mockups; this is the single biggest visual blast radius.
-- [ ] **`tests/e2e/_test_app.py`** was modified (its `/main` handler now wires
-      `file`/`q`/`density`, `on_select_file`, `on_refresh_folder`, and
-      `register_theme`) as a thin slice pulled forward to enable the demo.
-      Finalize/cover it properly here; confirm it still mirrors production
-      (`mount.py` `_main`).
-- [ ] New e2e smoke: select a file row → it highlights + the metadata sub-card
-      appears in the popover while the tree run-context remains; per-folder
-      refresh works; full-height + internal scroll holds (no page scroll).
-- [ ] Full suite: `uv run pytest` (respect the **91% coverage gate**).
-- [ ] Static: `uv run ruff check` + `ruff format --check` + `mypy src`.
-- [ ] Visual confirm: launch the app (the `/run` or `/verify` skill, or
-      `scripts/generate_screenshots.py`) and compare `/main` (run selected +
-      file selected, popover open/closed) against the approved mockups.
+Predicted break points, all checked clean:
+
+- [x] **Status cell is now an icon, not text** — no flow asserted the literal
+      status string (the file-list rows expose `data-tombstone` / `data-path`
+      hooks; `flow_05_browse_view_sync_icons` already asserts on the icon).
+- [x] **Metadata is an absolute popover** — no flow asserted a docked layout
+      or its width/position; open/close rides `right_pane` (`flow_25`).
+- [x] **Toggle label "Metadata"** — no flow asserted the old label text;
+      `toggle-right-pane` testid preserved (`flow_25`).
+- [x] **Framed-pane / selection testids** — `explorer-pane`, `files-pane`,
+      `data-selected`, `data-path`, `metadata-selected-file` now driven by the
+      new flow 28 (below).
+- [x] **`register_theme` app-wide** — every flow navigates its page and
+      passes; spot-screenshotted `/` (welcome), `/settings`, `/problems` — all
+      render the grey canvas + navy serif headings + themed controls with **no
+      regression**. (`/main` was already fully walked through in Phase 5.)
+- [x] **`tests/e2e/_test_app.py`** mirrors production `mount._main` (now also
+      `on_search` / `on_toggle_density`); proven by `flow_25` + `flow_28`.
+
+Delivered:
+
+- [x] **New flow 28** (`test_flow_28_selection_search_density.py`, 6 tests):
+      file-row single-click → `?file=` + `data-selected` + the
+      `metadata-selected-file` sub-card while run metadata stays; search
+      result-count + no-matches pill; density toggle → `?density=`; sync-status
+      legend popover; the selected tree node's `.q-tree__node--selected` hook.
+- [x] **UX catalog** (`ux_catalog.py`) gains the new affordances
+      (`file-list-row`, `toggle-right-pane`, `main-search`,
+      `files-density-toggle`, `files-legend`); `docs/UX_INTERACTIONS.md`
+      regenerated; testid-exists + e2e-covered checks pass.
+- [x] **Full e2e:** `pytest tests/e2e` — **70 passed, 3 skipped** (the skips
+      are pre-existing: an unconditional skip in `flow_12` + production-app
+      health skips in `flow_00`/`19`/`26`). Note: `flow_06`/`flow_09` are
+      intermittently order-flaky under the shared session server — pre-existing,
+      pass in isolation.
+- [x] **Coverage gate:** `pytest tests/unit tests/integration --cov
+      --cov-fail-under=91` (the CI command — unit **first**, e2e excluded since
+      it runs in a subprocess) → **91.70%**, 2338 passed.
+- [x] **Static:** `ruff check` + `ruff format --check` + `mypy src` clean.
+- [x] **Visual confirm:** `/main` (run + file selected, popover open/closed,
+      density compact/comfortable, legend, tree selection) verified live in
+      Phase 5; welcome/settings/problems spot-checked here.
+
+> **Gotcha recorded:** run the suite as CI does — `pytest tests/unit
+> tests/integration` (unit first). `pytest tests` (alphabetical) runs
+> `integration` before `unit`, and an integration test pollutes NiceGUI's
+> global auto-index slot stack, making the in-process `tests/unit/ui` render
+> tests fail. Not a product bug — a collection-order constraint.
 
 ---
 
