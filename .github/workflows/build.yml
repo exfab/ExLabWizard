@@ -180,7 +180,11 @@ jobs:
             echo "ISCC.exe not found after choco install innosetup" >&2
             exit 1
           fi
-          "$iscc" "/DAppVersion=${version}" packaging/windows/exlab-wizard.iss
+          # Git-bash rewrites a leading-slash arg like "/DAppVersion=..." into a
+          # Windows path, so ISCC sees it as a second script filename. Disable
+          # MSYS path conversion for this call; the .iss path is relative and so
+          # is left untouched.
+          MSYS_NO_PATHCONV=1 "$iscc" "/DAppVersion=${version}" packaging/windows/exlab-wizard.iss
           ls -lh "ExLab-Wizard-${version}-win-x64-setup.exe"
 
       # --- Installer: macOS (.dmg) -------------------------------------------
