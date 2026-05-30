@@ -384,25 +384,24 @@ def _render_run_step_fields(
     from nicegui import ui
 
     if step_id == "project_equipment":
+
+        def _on_project_name(event: Any) -> None:
+            state.selected_project_name = event.value or None
+            on_project_equipment_change()
+
+        def _on_equipment(event: Any) -> None:
+            state.selected_equipment = event.value or None
+            on_project_equipment_change()
+
         ui.input(
             label="Parent project name",
             value=state.selected_project_name or "",
-        ).props('data-testid="wizard-run-project-name"').on_value_change(
-            lambda e: (
-                setattr(state, "selected_project_name", e.value or None),
-                on_project_equipment_change(),
-            )
-        )
+        ).props('data-testid="wizard-run-project-name"').on_value_change(_on_project_name)
         ui.select(
             equipment_ids,
             value=(state.selected_equipment if state.selected_equipment in equipment_ids else None),
             label="Equipment",
-        ).props('data-testid="wizard-run-equipment"').on_value_change(
-            lambda e: (
-                setattr(state, "selected_equipment", e.value or None),
-                on_project_equipment_change(),
-            )
-        )
+        ).props('data-testid="wizard-run-equipment"').on_value_change(_on_equipment)
     elif step_id == "readme":
         for field_id, label in (
             ("label", "Label"),

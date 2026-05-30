@@ -75,6 +75,7 @@ def _version_tuple(value: str) -> tuple[int, ...]:
         return ()
     return tuple(int(part) for part in match.group().split("."))
 
+
 # Conventional ``_answers_file`` value (Backend §5.3). A deviation is a WARN.
 _CONVENTIONAL_ANSWERS_FILE: str = ".exlab-answers.yml"
 

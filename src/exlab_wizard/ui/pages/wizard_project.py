@@ -429,16 +429,16 @@ def _render_project_step_fields(
 
             gate.on_click(_reveal_manual)
     elif step_id == "equipment":
+
+        def _on_equipment(event: Any) -> None:
+            state.selected_equipment = event.value or None
+            on_equipment_change()
+
         ui.select(
             equipment_ids,
             value=(state.selected_equipment if state.selected_equipment in equipment_ids else None),
             label="Equipment",
-        ).props('data-testid="wizard-project-equipment"').on_value_change(
-            lambda e: (
-                setattr(state, "selected_equipment", e.value or None),
-                on_equipment_change(),
-            )
-        )
+        ).props('data-testid="wizard-project-equipment"').on_value_change(_on_equipment)
     elif step_id == "readme":
         for field_id, label in (
             ("label", "Label"),
