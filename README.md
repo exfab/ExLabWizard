@@ -52,11 +52,16 @@ runtime-only install drop the extra: `uv sync` / `pip install -e .`.
 
 ### Pre-built binary
 
-For each tagged release, the `build` workflow publishes single-folder
-PyInstaller artifacts under
-[Releases](../../releases) (`linux-x64`, `win-x64`, `mac-arm64`).
-Unpack and run the platform-specific entry point under `ExLab-Wizard/`
-(or `ExLab-Wizard.app/` on macOS).
+Every tagged release publishes a GitHub Release that carries per-OS installers —
+a Windows `.exe` installer, a macOS `.dmg`, and a Linux `.AppImage` — plus raw
+archives for each platform under [Releases](../../releases). Download the
+installer (or archive) for your platform from the
+[latest release](https://github.com/exfab/ExLabWizard/releases/latest) and run it.
+
+On startup ExLab-Wizard checks GitHub for a newer release; when one is found it
+raises an OS notification and the tray menu gains a "Check for updates…" item
+that opens the releases page. This probe can be disabled with
+`update_check.enabled: false` in `config.yaml`.
 
 ## Running ExLab-Wizard
 

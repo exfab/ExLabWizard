@@ -39,6 +39,7 @@ from exlab_wizard.tray.quit_coordinator import QuitCoordinator
 from exlab_wizard.tray.server_runner import ServerRunner
 from exlab_wizard.tray.status import StatusTicker
 from exlab_wizard.tray.window_launcher import WindowLauncher
+from exlab_wizard.update_check import RELEASES_LATEST_URL
 
 __all__ = ["TrayApp", "main"]
 
@@ -61,6 +62,10 @@ class TrayApp:
     notification_bus: NotificationBus
     autostart: AutostartManager
     icon: Any = None
+    # Startup update notifier (Design Spec §15.6 / §15.8 item 3). Defaulted to
+    # None so existing constructions / tests that omit it keep working; the
+    # launcher wires a real :class:`UpdateChecker` when config enables it.
+    update_checker: Any = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -88,9 +93,25 @@ class TrayApp:
             except Exception:
                 _log.exception("icon.stop raised")
 
+    def open_releases_page(self) -> None:
+        """Open the GitHub releases page in the operator's browser.
+
+        Wired to the "Check for updates…" tray item (Design Spec §15.6 /
+        §15.8 item 3). Any browser-launch failure is logged and swallowed so
+        the tray menu callback never crashes the icon thread.
+        """
+        import webbrowser
+
+        try:
+            webbrowser.open(RELEASES_LATEST_URL)
+        except Exception:
+            _log.exception("open_releases_page raised")
+
     def shutdown(self) -> None:
         """Tear down sub-components synchronously."""
         self.status_ticker.stop()
+        if self.update_checker is not None:
+            self.update_checker.stop()
         self.notification_bus.cancel_all()
         self.window_launcher.close()
         self.server_runner.stop()
@@ -104,10 +125,13 @@ class TrayApp:
         """
         self.start_server()
         self.status_ticker.start()
+        if self.update_checker is not None:
+            self.update_checker.start()
         self.icon = build_icon(
             on_open=self.open_window,
             on_quit=self.request_quit,
             status_provider=self.status_ticker.tick_once,
+            on_check_update=self.open_releases_page,
         )
         if run_loop is None:
             try:
@@ -163,6 +187,10 @@ def _build_default_components(
     """
     fastapi_app = app if app is not None else _build_default_app(state_dir)
     deps = getattr(fastapi_app.state, "dependencies", None)
+    # Startup update notifier (Design Spec §15.6 / §15.8 item 3). Only wired
+    # when the loaded config has it enabled; absent config or an explicit
+    # ``update_check.enabled: false`` leaves it None (no probe, no tray item).
+    update_checker = _build_update_checker(deps)
     server_runner = ServerRunner(app=fastapi_app, state_dir=state_dir)
     window_launcher = WindowLauncher(state_dir=state_dir)
     notification_bus = NotificationBus()
@@ -181,6 +209,7 @@ def _build_default_components(
         status_ticker=status_ticker,
         notification_bus=notification_bus,
         autostart=autostart,
+        update_checker=update_checker,
     )
     if deps is not None:
         # Expose a quit hook + tray-availability flag on deps so the in-window
@@ -189,6 +218,23 @@ def _build_default_components(
         deps.request_quit = tray_app.request_quit
         deps.tray_available = _tray_backend_available()
     return tray_app
+
+
+def _build_update_checker(deps: Any) -> Any | None:
+    """Construct an :class:`UpdateChecker` when config enables it.
+
+    Design Spec §15.6 / §15.8 item 3. The loaded :class:`Config` is reachable
+    as ``deps.config``; when that config's ``update_check.enabled`` is True we
+    return a checker, otherwise None (so the notifier and tray item stay off).
+    The import is deferred to keep the tray module's import graph light, matching
+    the other deferred imports in this module.
+    """
+    config = getattr(deps, "config", None)
+    if config is None or not config.update_check.enabled:
+        return None
+    from exlab_wizard.update_check import UpdateChecker
+
+    return UpdateChecker()
 
 
 def _tray_backend_available() -> bool:

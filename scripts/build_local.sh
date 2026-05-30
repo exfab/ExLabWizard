@@ -15,6 +15,11 @@
 # * Does NOT package the artifact -- the CI workflow handles zipping /
 #   tar.gz / .app -> .dmg. The local script stops at ``dist/`` so the
 #   developer can inspect the directory layout.
+# * CI additionally builds real per-OS installers from inputs under
+#   ``packaging/`` (Windows Inno Setup .exe via
+#   ``packaging/windows/exlab-wizard.iss``; macOS .dmg; Linux AppImage via
+#   ``packaging/linux/AppRun`` + ``exlab-wizard.desktop``) and attaches them
+#   to the GitHub Release on publish. This local script does not.
 
 set -euo pipefail
 

@@ -61,5 +61,5 @@ tests/docker/nas-data/*
 
 # superpowers brainstorming visual companion
 .superpowers/
-graphify-out/
+/graphify-out/
 /*.png

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -137,10 +138,13 @@ def test_run_wires_icon_and_invokes_run_loop(monkeypatch: pytest.MonkeyPatch) ->
 
     built: dict[str, Any] = {}
 
-    def _fake_build_icon(*, on_open: Any, on_quit: Any, status_provider: Any) -> Any:
+    def _fake_build_icon(
+        *, on_open: Any, on_quit: Any, status_provider: Any, on_check_update: Any
+    ) -> Any:
         built["on_open"] = on_open
         built["on_quit"] = on_quit
         built["status_provider"] = status_provider
+        built["on_check_update"] = on_check_update
         return MagicMock()
 
     monkeypatch.setattr("exlab_wizard.tray.main.build_icon", _fake_build_icon)
@@ -157,6 +161,7 @@ def test_run_wires_icon_and_invokes_run_loop(monkeypatch: pytest.MonkeyPatch) ->
     # Compare the underlying methods (bound-method identity is fresh per access).
     assert built["on_open"].__func__ is TrayApp.open_window
     assert built["on_quit"].__func__ is TrayApp.request_quit
+    assert built["on_check_update"].__func__ is TrayApp.open_releases_page
     assert built["status_provider"] == tray.status_ticker.tick_once
     assert invocations == ["loop"]
     # Shutdown was called by run().
@@ -459,7 +464,7 @@ def test_parse_argv_samples_without_test_errors(
 
 
 @pytest.fixture
-def test_mode_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+def test_mode_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Path]:
     """Sandbox ``main(["--test", ...])`` into ``tmp_path``.
 
     Redirects ``Path.home()`` and pins ``sys.platform=linux`` so the Linux
@@ -481,7 +486,12 @@ def test_mode_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setattr(tray_main, "configure_logging", lambda: None)
     monkeypatch.setattr(tray_main, "_build_default_components", lambda **_: _make_tray())
     monkeypatch.setattr(TrayApp, "run", lambda self, **_: 0)
-    return tmp_path
+    yield tmp_path
+    # ``main(["--test"])`` sets EXLAB_WIZARD_TEST_MODE directly via os.environ
+    # (not monkeypatch), so it is NOT auto-reverted. Pop it on teardown or it
+    # leaks into later tests in the same process -- e.g. the config-loader
+    # round-trip tests, whose fixture YAML would then be TEST_-prefixed.
+    os.environ.pop(paths.TEST_MODE_ENV, None)
 
 
 def test_main_test_flag_sets_env_and_bootstraps_config(test_mode_env: Path) -> None:

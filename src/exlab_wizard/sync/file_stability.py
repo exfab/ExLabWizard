@@ -118,9 +118,7 @@ def wait_until_stable(
         return [], []
     workers = max(1, min(max_workers, len(items)))  # never more threads than files
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        results = list(
-            pool.map(lambda p: (p, is_stable(p, interval, checks, timeout)), items)
-        )
+        results = list(pool.map(lambda p: (p, is_stable(p, interval, checks, timeout)), items))
     stable = [p for p, ok in results if ok]
     unstable = [p for p, ok in results if not ok]
     _log.debug("wait_until_stable: %d stable, %d unstable", len(stable), len(unstable))

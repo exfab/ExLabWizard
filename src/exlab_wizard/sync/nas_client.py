@@ -510,9 +510,7 @@ class NASSyncClient:
                 next_iso = dt_to_iso(
                     utc_now() + timedelta(seconds=self._config.sync.poll_interval_seconds)
                 )
-                await self._queue.transition(
-                    job.id, SyncJobState.QUEUED, next_attempt_at=next_iso
-                )
+                await self._queue.transition(job.id, SyncJobState.QUEUED, next_attempt_at=next_iso)
                 _log.debug(
                     "stability deferred run %s (%d files still settling)",
                     run_path,
