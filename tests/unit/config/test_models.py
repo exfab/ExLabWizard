@@ -169,6 +169,7 @@ def _full_config_dict() -> dict:
                 ],
             },
         },
+        "update_check": {"enabled": True},
     }
 
 

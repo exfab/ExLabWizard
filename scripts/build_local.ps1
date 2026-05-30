@@ -13,6 +13,11 @@
 #   (``pip install -e .[build]``).
 # * Does NOT package the artifact (the CI job zips ``dist\ExLab-Wizard``);
 #   the local script stops at ``dist\`` so you can inspect the layout.
+# * CI additionally builds real per-OS installers from inputs under
+#   ``packaging\`` (Windows Inno Setup .exe via
+#   ``packaging\windows\exlab-wizard.iss``; macOS .dmg; Linux AppImage via
+#   ``packaging\linux\AppRun`` + ``exlab-wizard.desktop``) and attaches them
+#   to the GitHub Release on publish. This local script does not.
 
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")

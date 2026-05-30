@@ -64,6 +64,7 @@ def build_icon(
     icon_image: Any = None,
     icon_name: str = DEFAULT_ICON_NAME,
     title: str = "ExLab-Wizard",
+    on_check_update: Callable[[], None] | None = None,
 ) -> Any:
     """Build the pystray icon with the §4.1 menu.
 
@@ -71,6 +72,11 @@ def build_icon(
     menu (pystray supports lazily-evaluated text via callable labels)
     so the operator sees live status without a separate refresh
     notification.
+
+    When ``on_check_update`` is supplied (Design Spec §15.6 / §15.8 item 3)
+    a "Check for updates…" item is inserted between the separator and Quit,
+    giving the order Open, Status, ---, Check for updates…, Quit. When it is
+    None the menu is exactly as before.
     """
     pystray = pystray_module if pystray_module is not None else _import_pystray()
     image = icon_image if icon_image is not None else default_icon_image()
@@ -86,7 +92,17 @@ def build_icon(
         enabled=False,
     )
     quit_item = pystray.MenuItem("Quit", lambda _icon=None, _item=None: _safe_call(on_quit, "Quit"))
-    menu = pystray.Menu(open_item, status_item, pystray.Menu.SEPARATOR, quit_item)
+
+    items: list[Any] = [open_item, status_item, pystray.Menu.SEPARATOR]
+    if on_check_update is not None:
+        items.append(
+            pystray.MenuItem(
+                "Check for updates…",
+                lambda _icon=None, _item=None: _safe_call(on_check_update, "Check for updates"),
+            )
+        )
+    items.append(quit_item)
+    menu = pystray.Menu(*items)
 
     return pystray.Icon(icon_name, image, title, menu)
 

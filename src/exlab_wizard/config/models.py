@@ -59,6 +59,7 @@ __all__ = [
     "READMEDefaultField",
     "RclonePerf",
     "SyncConfig",
+    "UpdateCheckConfig",
     "ValidatorConfig",
 ]
 
@@ -515,6 +516,24 @@ class OrchestratorConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# update_check
+# ---------------------------------------------------------------------------
+
+
+class UpdateCheckConfig(BaseModel):
+    """``update_check:`` block. Design Spec §15.6 / §15.8 item 3.
+
+    Kill-switch for the startup update notifier (the §15.8 item 3 self-update
+    channel, notifier-only stage). Default-ON; set ``enabled: false`` to stop
+    the launch-time GitHub Releases probe on air-gapped or policy-locked hosts.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    enabled: bool = True
+
+
+# ---------------------------------------------------------------------------
 # top level
 # ---------------------------------------------------------------------------
 
@@ -536,6 +555,7 @@ class Config(BaseModel):
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     sync: SyncConfig = Field(default_factory=SyncConfig)
     orchestrator: OrchestratorConfig = Field(default_factory=OrchestratorConfig)
+    update_check: UpdateCheckConfig = Field(default_factory=UpdateCheckConfig)
 
     @model_validator(mode="after")
     def _cross_field_invariants(self) -> Config:

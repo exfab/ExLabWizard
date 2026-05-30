@@ -1,0 +1,9 @@
+#!/bin/sh
+# AppRun -- AppImage entry point for ExLab-Wizard.
+#
+# Launches the operator-facing CLI alias (ExLab-Wizard) from inside the
+# bundled PyInstaller --onedir tree. The onedir lives at
+# $APPDIR/usr/bin/ExLab-Wizard/ (see the AppImage step in
+# .github/workflows/build.yml).
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/usr/bin/ExLab-Wizard/ExLab-Wizard" "$@"

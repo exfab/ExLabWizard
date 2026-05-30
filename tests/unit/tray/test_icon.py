@@ -164,3 +164,35 @@ def test_import_pystray_returns_module(monkeypatch: pytest.MonkeyPatch) -> None:
     from exlab_wizard.tray.icon import _import_pystray
 
     assert _import_pystray() is fake_pystray
+
+
+def test_check_update_item_omitted_by_default() -> None:
+    """Without ``on_check_update`` the menu keeps its original 4-item shape."""
+    icon = build_icon(
+        on_open=lambda: None,
+        on_quit=lambda: None,
+        status_provider=lambda: "Idle",
+        pystray_module=_FakePystray,
+    )
+    assert len(icon.menu.items) == 4  # Open / Status / SEPARATOR / Quit
+
+
+def test_check_update_item_inserted_before_quit() -> None:
+    """``on_check_update`` adds a 'Check for updates…' item before Quit."""
+    invoked: list[str] = []
+    icon = build_icon(
+        on_open=lambda: None,
+        on_quit=lambda: None,
+        status_provider=lambda: "Idle",
+        pystray_module=_FakePystray,
+        on_check_update=lambda: invoked.append("check"),
+    )
+    items = icon.menu.items
+    # Order: Open, Status, ---, Check for updates…, Quit.
+    assert len(items) == 5
+    assert items[2] is _FakePystray.Menu.SEPARATOR
+    assert items[3].label == "Check for updates…"
+    assert items[4].label == "Quit"
+    # The new item is wired to the supplied callback.
+    items[3].action(icon, items[3])
+    assert invoked == ["check"]

@@ -21,6 +21,15 @@
 # follow-up. The smoke step here is structural -- it invokes the
 # bundled binary with ``--version`` and asserts it prints the package
 # version.
+#
+# In addition to the raw archive (.zip/.tar.gz), each job builds a real
+# per-OS installer from inputs under ``packaging/``:
+#   * Windows -> Inno Setup .exe (packaging/windows/exlab-wizard.iss)
+#   * macOS   -> .dmg (create-dmg, with an hdiutil fallback)
+#   * Linux   -> AppImage (packaging/linux/AppRun + exlab-wizard.desktop)
+# On a published release every produced asset is attached to that release.
+# Installers do NOT register OS autostart -- the app manages its own
+# autostart at runtime (in-app AutostartManager).
 
 name: build
 
@@ -34,6 +43,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+
+# Release assets are uploaded from the matrix job, which needs write
+# access to the repository contents (releases).
+permissions:
+  contents: write
 
 # Auto-cancel superseded runs on the same branch / PR. When a new commit
 # lands, any in-flight or queued run on the older SHA is cancelled so we
@@ -107,11 +121,14 @@ jobs:
           test "$actual_version" = "$expected_version"
 
       - name: Package artifact
+        id: package
         shell: bash
         run: |
           set -euo pipefail
           version=$(python -c "from exlab_wizard import __version__; print(__version__)")
           out_name="ExLab-Wizard-${version}-${{ matrix.artifact_suffix }}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "out_name=${out_name}" >> "$GITHUB_OUTPUT"
           case "${{ matrix.os }}" in
             windows-latest)
               cd dist
@@ -119,8 +136,8 @@ jobs:
               cd ..
               ;;
             macos-*)
-              # v1 ships an unsigned ``.app`` directory inside a tar;
-              # a real ``.dmg`` is a v1.1 follow-up (Backend Spec §15.2).
+              # Raw unsigned ``.app`` directory inside a tar; the .dmg is
+              # produced by a dedicated step below.
               cd dist
               tar -czf "../${out_name}.tar.gz" "ExLab-Wizard.app"
               cd ..
@@ -133,6 +150,104 @@ jobs:
           esac
           ls -lh ExLab-Wizard-* || true
 
+      # --- Installer: Windows (Inno Setup .exe) ------------------------------
+      - name: Install Inno Setup (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: choco install innosetup -y --no-progress
+
+      - name: Download WebView2 bootstrapper (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fSL -o packaging/windows/MicrosoftEdgeWebview2Setup.exe \
+            "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+
+      - name: Build Inno Setup installer (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.package.outputs.version }}"
+          iscc "/DAppVersion=${version}" packaging/windows/exlab-wizard.iss
+          ls -lh "ExLab-Wizard-${version}-win-x64-setup.exe"
+
+      # --- Installer: macOS (.dmg) -------------------------------------------
+      - name: Install create-dmg (macOS)
+        if: matrix.os == 'macos-14'
+        run: brew install create-dmg
+
+      - name: Build DMG (macOS)
+        if: matrix.os == 'macos-14'
+        shell: bash
+        run: |
+          set -uo pipefail
+          version="${{ steps.package.outputs.version }}"
+          dmg="ExLab-Wizard-${version}-mac-arm64.dmg"
+          rm -f "$dmg"
+          # create-dmg can be flaky on headless CI; retry once, then fall
+          # back to a plain hdiutil image so packaging never hard-fails.
+          make_dmg() {
+            create-dmg \
+              --volname "ExLab-Wizard" \
+              --app-drop-link 450 180 \
+              --icon "ExLab-Wizard.app" 150 180 \
+              --no-internet-enable \
+              "$dmg" "dist/ExLab-Wizard.app"
+          }
+          if ! make_dmg; then
+            echo "create-dmg failed, retrying once..." >&2
+            rm -f "$dmg"
+            if ! make_dmg; then
+              echo "create-dmg failed twice; falling back to hdiutil..." >&2
+              rm -f "$dmg"
+              staging="$(mktemp -d)"
+              cp -R "dist/ExLab-Wizard.app" "$staging/"
+              ln -s /Applications "$staging/Applications"
+              hdiutil create -volname "ExLab-Wizard" -srcfolder "$staging" \
+                -ov -format UDZO "$dmg"
+              rm -rf "$staging"
+            fi
+          fi
+          ls -lh "$dmg"
+
+      # --- Installer: Linux (AppImage) ---------------------------------------
+      - name: Build AppImage (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        env:
+          ARCH: x86_64
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          set -euo pipefail
+          version="${{ steps.package.outputs.version }}"
+          out="ExLab-Wizard-${version}-linux-x64.AppImage"
+
+          curl -fSL -o appimagetool \
+            "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x appimagetool
+
+          rm -rf AppDir
+          mkdir -p AppDir/usr/bin
+          # Drop the whole onedir bundle in; AppRun execs the CLI alias inside it.
+          cp -R dist/ExLab-Wizard AppDir/usr/bin/ExLab-Wizard
+
+          cp packaging/linux/AppRun AppDir/AppRun
+          chmod +x AppDir/AppRun
+          cp packaging/linux/exlab-wizard.desktop AppDir/exlab-wizard.desktop
+
+          if [ -f assets/icons/ExLabWizard.png ]; then
+            cp assets/icons/ExLabWizard.png AppDir/exlab-wizard.png
+          else
+            # No app icon present -- write a 1x1 PNG placeholder so that
+            # appimagetool (which requires an icon) still succeeds.
+            printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc````\x00\x00\x00\x05\x00\x01\xa5\xf6E@\x00\x00\x00\x00IEND\xaeB`\x82' > AppDir/exlab-wizard.png
+          fi
+
+          ./appimagetool AppDir "$out"
+          ls -lh "$out"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -140,5 +255,20 @@ jobs:
           path: |
             ExLab-Wizard-*.zip
             ExLab-Wizard-*.tar.gz
+            ExLab-Wizard-*-setup.exe
+            ExLab-Wizard-*.dmg
+            ExLab-Wizard-*.AppImage
           if-no-files-found: error
           retention-days: 30
+
+      # On a published release, attach every asset this job produced (raw
+      # archive + installer) to the already-published release. Each matrix
+      # job appends its own files to the same release.
+      - name: Attach assets to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          fail_on_unmatched_files: true
+          files: |
+            ExLab-Wizard-*

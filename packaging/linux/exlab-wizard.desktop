@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ExLab-Wizard
+Comment=ExLab-Wizard equipment sync wizard
+Exec=ExLab-Wizard
+Icon=exlab-wizard
+Terminal=false
+Categories=Utility;Science;
