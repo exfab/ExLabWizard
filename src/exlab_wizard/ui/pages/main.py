@@ -84,6 +84,13 @@ class MainPageState:
     # comfortable, "compact"). Both ride the URL (?q=, ?density=) per OQ-1/A.
     search_query: str = ""
     density: str = ""
+    # Footer status-segment states (Phase 5 / §3.5.5), derived from live
+    # backend signals by the mount layer
+    # (status_bar_segment.derive_footer_segment_states). Default to NORMAL so a
+    # half-wired backend (or a direct render in tests) shows a calm footer.
+    validator_state: str = status_bar_segment.SEGMENT_NORMAL
+    lims_state: str = status_bar_segment.SEGMENT_NORMAL
+    staging_state: str = status_bar_segment.SEGMENT_NORMAL
 
 
 def _default_chips() -> tuple[filter_chips.ChipDefinition, ...]:
@@ -525,19 +532,23 @@ def render_file_explorer_page(
                     state=status_bar_segment.SEGMENT_NORMAL,
                     on_click=on_open_operations if s.operations_count > 0 else None,
                 )
+            # Validator / LIMS / Staging states are derived from live backend
+            # signals by the mount (derive_footer_segment_states): Validator
+            # warns on a hard finding, LIMS goes danger when the endpoint is
+            # unreachable. They default to NORMAL on a half-wired backend.
             status_bar_segment.status_bar_segment(
                 label="Validator",
-                state=status_bar_segment.SEGMENT_NORMAL,
+                state=s.validator_state,
             )
             status_bar_segment.status_bar_segment(
                 label="LIMS",
-                state=status_bar_segment.SEGMENT_NORMAL,
+                state=s.lims_state,
             )
             # Footer Staging segment with bulk-clear-verified popover
             # (§4.6: the bottom dock's bulk action relocates here).
             status_bar_segment.status_bar_segment(
                 label="Staging",
-                state=status_bar_segment.SEGMENT_NORMAL,
+                state=s.staging_state,
             ).props('data-testid="footer-staging-segment"')
             if on_clear_verified is not None:
                 ui.button("Clear verified runs", on_click=lambda _evt: on_clear_verified()).props(

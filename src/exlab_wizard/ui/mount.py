@@ -747,6 +747,7 @@ def _build_main_state(
     search_query: str = "",
     density: str = "",
 ) -> Any:
+    from exlab_wizard.ui.components.status_bar_segment import derive_footer_segment_states
     from exlab_wizard.ui.pages import main as main_page
 
     # Redesign §3.1: orchestrator pipeline is always active; the staging
@@ -754,6 +755,18 @@ def _build_main_state(
     # its True default. Folder-feed path mirrors the selected node so the
     # centre pane shows the right folder.
     ops_count, ops_input_required, ops_active = _operation_counts(deps)
+    # Real Problems counts from the 30 s background audit (T6 / §B5).
+    problems_hard = int(getattr(deps, "last_audit_hard", 0) or 0)
+    # Footer status segments (Phase 5 / §3.5.5): Validator warns on a hard
+    # finding; LIMS goes danger when the endpoint is unreachable. ``lims_reachable``
+    # defaults True so a half-wired backend doesn't false-alarm; Staging has no
+    # cheap cached count yet (a per-render list_staged_runs scan would be I/O on
+    # the render path) so it stays NORMAL.
+    lims_reachable = bool(getattr(deps, "lims_reachable", True)) if deps is not None else False
+    footer_segments = derive_footer_segment_states(
+        problems_count_hard=problems_hard,
+        lims_reachable=lims_reachable,
+    )
     return main_page.MainPageState(
         setup_incomplete=not _is_setup_ready(deps),
         setup_next_action=_setup_next_action(deps),
@@ -769,9 +782,11 @@ def _build_main_state(
         operations_count=ops_count,
         operations_input_required=ops_input_required,
         creation_in_flight=ops_active > 0,
-        # Real Problems counts from the 30 s background audit (T6 / §B5).
-        problems_count_hard=int(getattr(deps, "last_audit_hard", 0) or 0),
+        problems_count_hard=problems_hard,
         problems_count_soft=int(getattr(deps, "last_audit_soft", 0) or 0),
+        validator_state=footer_segments.validator,
+        lims_state=footer_segments.lims,
+        staging_state=footer_segments.staging,
     )
 
 
