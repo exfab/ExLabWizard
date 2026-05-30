@@ -489,6 +489,9 @@ FILE_STATE_ACQUIRING = "acquiring"
 FILE_STATE_SYNCING = "syncing"
 FILE_STATE_SYNCED = "synced"
 FILE_STATE_ON_NAS = "on_nas"
+FILE_STATE_UPLOAD_FAILED = "upload_failed"
+FILE_STATE_BLOCKED = "blocked"
+FILE_STATE_MISSING = "missing"
 
 
 def _find_run_root(folder: Path) -> Path | None:
@@ -528,23 +531,61 @@ def _read_sync_state(run_root: Path) -> Any:
         return None
 
 
-def _file_state_from_record(record: Any | None, *, on_disk: bool) -> str | None:
-    """Map a ``sync_state.json`` record + on-disk presence to a GUI state.
+def _run_failure_flags(run_root: Path | None) -> tuple[bool, bool]:
+    """Return (run_failed, run_blocked) from the run's creation.json sync_status.
 
-    The five-state table (operator-free per-file NAS sync design,
-    2026-05-21):
+    The per-file sync queue never persists per-file failure; failure is a
+    per-run signal carried by ``creation.json``'s ``sync_status`` field
+    (``failed`` / ``blocked_by_validation``). Read tolerantly: an absent or
+    undecodable ``creation.json`` yields no failure signal.
+    """
+    if run_root is None:
+        return (False, False)
+    try:
+        payload = read_msgspec_json(creation_json_path(run_root), CreationJson)
+    except Exception:  # absent / undecodable creation.json -> no failure signal
+        return (False, False)
+    status = getattr(payload, "sync_status", None)
+    return (status == "failed", status == "blocked_by_validation")
 
-    * not recorded + on disk        -> ``acquiring``
-    * recorded, unverified + disk   -> ``syncing``
-    * recorded, verified + on disk  -> ``synced``
-    * recorded, verified + absent   -> ``on_nas`` (tombstone)
+
+def _file_state_from_record(
+    record: Any | None,
+    *,
+    on_disk: bool,
+    run_failed: bool = False,
+    run_blocked: bool = False,
+) -> str | None:
+    """Map a sync_state.json record + on-disk presence to a GUI discriminator.
+
+    ``run_failed`` / ``run_blocked`` come from the run's persisted
+    ``creation.json`` ``sync_status`` and apply only to an on-disk file that
+    has not yet verified to the NAS (the files a failed/blocked run did not
+    finish uploading). A verified file stays ``synced`` regardless.
+
+    * not recorded + on disk         -> ``acquiring``
+    * recorded, verified + on disk   -> ``synced``
+    * recorded, unverified + disk    -> ``blocked`` / ``upload_failed`` /
+      ``syncing`` (depending on the run flags)
+    * recorded, verified + absent    -> ``on_nas`` (tombstone)
+    * recorded, unverified + absent  -> ``missing`` (lost: tracked, gone
+      locally, never verified)
     """
     if record is None:
         return FILE_STATE_ACQUIRING if on_disk else None
     verified = getattr(record, "verified_at", None) is not None
     if on_disk:
-        return FILE_STATE_SYNCED if verified else FILE_STATE_SYNCING
-    return FILE_STATE_ON_NAS if verified else None
+        if verified:
+            return FILE_STATE_SYNCED
+        if run_blocked:
+            return FILE_STATE_BLOCKED
+        if run_failed:
+            return FILE_STATE_UPLOAD_FAILED
+        return FILE_STATE_SYNCING
+    # absent on disk
+    if verified:
+        return FILE_STATE_ON_NAS
+    return FILE_STATE_MISSING  # tracked, gone locally, never verified = lost
 
 
 def _per_file_sync_status(path: Path) -> str | None:
@@ -565,7 +606,10 @@ def _per_file_sync_status(path: Path) -> str | None:
         return None
     rel = _run_relative_posix(run_root, path)
     record = state.files.get(rel) if rel is not None else None
-    return _file_state_from_record(record, on_disk=True)
+    run_failed, run_blocked = _run_failure_flags(run_root)
+    return _file_state_from_record(
+        record, on_disk=True, run_failed=run_failed, run_blocked=run_blocked
+    )
 
 
 def _run_relative_posix(run_root: Path, path: Path) -> str | None:
@@ -673,13 +717,21 @@ def _build_run_node(run_dir: Path, *, kind: str) -> RunNode:
 
 
 def _run_rollup_status(run_dir: Path) -> str | None:
-    """Return a run's derived ``RunSyncState`` rollup value, or ``None``.
+    """Return a run's rollup discriminator for the tree icon, or ``None``.
 
-    Reads ``sync_state.json`` and applies the pure
-    :meth:`SyncStateWriter.rollup_state` derivation.
+    A run whose ``creation.json`` ``sync_status`` is ``blocked_by_validation``
+    / ``failed`` folds to ``blocked`` / ``upload_failed`` (so the tree carries
+    the held/problem rollup). Otherwise the rollup is derived from
+    ``sync_state.json`` via the pure :meth:`SyncStateWriter.rollup_state`
+    derivation (``syncing`` / ``synced`` / ``cleared``).
     """
     from exlab_wizard.cache.sync_state_writer import SyncStateWriter
 
+    run_failed, run_blocked = _run_failure_flags(run_dir)
+    if run_blocked:
+        return FILE_STATE_BLOCKED
+    if run_failed:
+        return FILE_STATE_UPLOAD_FAILED
     try:
         state = SyncStateWriter().read_sync(run_dir)
     except Exception as exc:  # pragma: no cover -- defensive
@@ -771,6 +823,7 @@ def scan_folder_sync(folder_path: str, config: Any) -> FolderResponse:
     # whole folder (operator-free per-file NAS sync design, 2026-05-21).
     run_root = _find_run_root(path)
     sync_state = _read_sync_state(run_root) if run_root is not None else None
+    run_failed, run_blocked = _run_failure_flags(run_root)
     on_disk_rel: set[str] = set()
     for entry in sorted(scandir_entries, key=lambda e: e.name):
         try:
@@ -792,7 +845,16 @@ def scan_folder_sync(folder_path: str, config: Any) -> FolderResponse:
                 is_dir=is_dir,
                 size_bytes=None if is_dir else stat.st_size,
                 modified_iso=dt_to_iso(datetime.fromtimestamp(stat.st_mtime, tz=UTC)),
-                sync_status=(None if is_dir else _file_state_from_record(record, on_disk=True)),
+                sync_status=(
+                    None
+                    if is_dir
+                    else _file_state_from_record(
+                        record,
+                        on_disk=True,
+                        run_failed=run_failed,
+                        run_blocked=run_blocked,
+                    )
+                ),
                 keep_local=bool(getattr(record, "keep_local", False)),
             )
         )
@@ -832,8 +894,10 @@ def _tombstone_entries(
         if abs_path.parent != folder:
             continue
         state = _file_state_from_record(record, on_disk=False)
+        # verified-absent -> "on_nas"; unverified-absent -> "missing" (lost file).
+        # state is None only for no-record inputs, which never occur in this loop
+        # (it iterates recorded files), so the guard below is a safety net.
         if state is None:
-            # An unverified, absent record is not a meaningful tombstone.
             continue
         out.append(
             FolderEntry(
