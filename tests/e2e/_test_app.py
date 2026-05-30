@@ -465,6 +465,15 @@ def build_test_app() -> FastAPI:
                 + _mount._build_main_query(selected, right_pane, file=file, q=q, density=density)
             )
 
+        def _on_search(query: str) -> None:
+            test_state.last_action = f"search:{query}"
+            ui.navigate.to(
+                "/main"
+                + _mount._build_main_query(
+                    selected, right_pane, file=file, q=query, density=density
+                )
+            )
+
         main_page.render_file_explorer_page(
             on_open_new_project=_on_open_new_project,
             on_open_new_run=_on_open_new_run,
@@ -481,6 +490,7 @@ def build_test_app() -> FastAPI:
             on_file_context_action=_on_file_context_action,
             on_select_file=_on_select_file,
             on_refresh_folder=_on_refresh_folder,
+            on_search=_on_search,
             state=state,
             hierarchy=hierarchy,
             file_list_entries=feed_entries,

@@ -25,6 +25,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from exlab_wizard.ui.components.empty_state import empty_state
 from exlab_wizard.ui.components.sync_status_icon import STATUS_ON_NAS, sync_status_icon
 from exlab_wizard.ui.pages.staging import format_bytes
 
@@ -191,9 +192,11 @@ def render_file_list(
 
     with ui.column().classes("w-full h-full").style("gap: 0;") as container:
         if not state.entries:
-            ui.label("Empty folder.").style(
-                "color: var(--color-muted); padding: var(--sp-3);"
-            ).props('data-testid="file-list-empty"')
+            empty_state(
+                icon="folder_open",
+                message="This folder is empty.",
+                testid="file-list-empty",
+            )
             return container
         with (
             ui.element("table")

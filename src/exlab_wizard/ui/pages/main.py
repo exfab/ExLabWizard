@@ -22,8 +22,9 @@ from typing import Any
 from exlab_wizard.logging import get_logger
 from exlab_wizard.ui import notifications
 from exlab_wizard.ui.components import banner_stack, filter_chips, status_bar_segment
+from exlab_wizard.ui.components.empty_state import empty_state
 from exlab_wizard.ui.components.framed_pane import card_style, framed_pane
-from exlab_wizard.ui.components.tree import TreeFilters, build_tree
+from exlab_wizard.ui.components.tree import TreeFilters, TreeNode, build_nodes, build_tree
 from exlab_wizard.ui.pages.staging import StagingDockState
 
 _log = get_logger(__name__)
@@ -106,6 +107,23 @@ def chip_state_to_tree_filters(state: filter_chips.ChipState, search: str = "") 
     )
 
 
+def count_search_results(nodes: list[TreeNode]) -> int:
+    """Count the project + run rows surfaced under the equipment roots.
+
+    :func:`build_nodes` always emits every equipment row -- even one with no
+    matching children -- so the equipment tally is not a useful "did the
+    search find anything" signal. This sums the project + run rows instead:
+    the number the search-result pill shows, and whose ``0`` value drives the
+    no-matches state (Phase 5 / OQ-2). Pure so it is testable without NiceGUI.
+    """
+
+    total = 0
+    for equipment in nodes:
+        for project in equipment.children:
+            total += 1 + len(project.children)
+    return total
+
+
 def problems_badge_text(state: MainPageState) -> str:
     """Return the count text shown on the Problems tab.
 
@@ -163,6 +181,7 @@ def render_file_explorer_page(
     on_file_context_action: Callable[[Any, str], None] | None = None,
     on_select_file: Callable[[Any], None] | None = None,
     on_refresh_folder: Callable[[], None] | None = None,
+    on_search: Callable[[str], None] | None = None,
     state: MainPageState | None = None,
     hierarchy: dict | None = None,
     file_list_entries: list[Any] | None = None,
@@ -241,6 +260,14 @@ def render_file_explorer_page(
         ui.button("Add Equipment", on_click=lambda _evt: on_open_add_equipment()).props(
             'color=primary data-testid="toolbar-add-equipment"'
         )
+        # Group divider: the creation actions (New Project / New Run / New Test
+        # Run / Add Equipment) sit left of this rule; the utility actions
+        # (Operations / Refresh / Settings) sit right of it, so the toolbar
+        # reads as two groups. Every button's order + testid is unchanged; the
+        # margin supplies the inter-group gap.
+        ui.separator().props('vertical data-testid="toolbar-group-divider"').style(
+            "height: 1.5rem; margin: 0 var(--sp-2, 0.5rem); background: var(--color-rule, #e8ecf2);"
+        )
         # [Operations…] surfaces only while ≥1 operation is in flight
         # (Frontend §9.5). Label carries the count; a warning color flags
         # any suspended (INPUT_REQUIRED) session needing an answer.
@@ -297,11 +324,46 @@ def render_file_explorer_page(
             framed_pane("Explorer", testid="explorer-pane"),
             ui.column().classes("w-full").style("gap: 0.5rem;"),
         ):
-            ui.input(label="Search").props('data-testid="main-search"').style("width: 100%;")
+            tree_filters = chip_state_to_tree_filters(s.chip_state, search=s.search_query)
+            # Search box (§4.9 / OQ-2): the clear affordance (clearable) wipes
+            # it; Quasar's `debounce` coalesces keystrokes so the page re-navigates
+            # (?q=) once the operator pauses -- the same URL/navigate model the
+            # filter chips and row selection already use. The narrowed local
+            # keeps mypy happy about the optional callback inside the closure.
+            search_cb = on_search
+
+            def _on_search_change(event: Any) -> None:
+                if search_cb is None:
+                    return
+                search_cb((event.value or "").strip())
+
+            ui.input(
+                label="Search",
+                value=s.search_query,
+                on_change=_on_search_change if on_search is not None else None,
+            ).props('data-testid="main-search" clearable debounce=300').style("width: 100%;")
+            # Result count / no-matches affordance -- shown only while a query
+            # is active, sourced from the same build_nodes the tree renders so
+            # the tally can't drift from what's on screen.
+            if s.search_query:
+                _matches = count_search_results(
+                    build_nodes(hierarchy=hierarchy or {}, filters=tree_filters)
+                )
+                _search_hint_style = (
+                    "color: var(--color-muted); font-size: var(--text-xs); padding: 0 var(--sp-1);"
+                )
+                if _matches == 0:
+                    ui.label("No matches.").props('data-testid="main-search-no-matches"').style(
+                        _search_hint_style
+                    )
+                else:
+                    ui.label(f"{_matches} result{'s' if _matches != 1 else ''}").props(
+                        'data-testid="main-search-count"'
+                    ).style(_search_hint_style)
             filter_chips.filter_chips(_default_chips(), state=s.chip_state)
             build_tree(
                 hierarchy=hierarchy or {},
-                filters=chip_state_to_tree_filters(s.chip_state),
+                filters=tree_filters,
                 on_select=on_select_node,
                 on_equipment_context_action=on_tree_context_action,
                 on_run_context_action=(
@@ -502,14 +564,15 @@ def _render_centre_file_list(
         render_file_list,
     )
 
-    try:
-        from nicegui import ui
-    except Exception:
-        return
+    # No NiceGUI guard here: empty_state() and render_file_list() each no-op
+    # outside an app context, and FileListState is a plain dataclass, so the
+    # function degrades safely without an explicit ``ui`` import.
     if state.folder_feed_path is None:
-        ui.label("Select a folder in the tree to see its contents.").style(
-            "color: var(--color-muted); padding: var(--sp-3);"
-        ).props('data-testid="file-list-empty"')
+        empty_state(
+            icon="account_tree",
+            message="Select a folder in the tree to see its contents.",
+            testid="file-list-empty",
+        )
         return
     fl_state = FileListState(
         path=state.folder_feed_path,

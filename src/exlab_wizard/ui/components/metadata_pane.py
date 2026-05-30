@@ -15,6 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from exlab_wizard.ui.components.empty_state import empty_state
 from exlab_wizard.ui.components.sync_status_icon import STATUS_ON_NAS, sync_status_icon
 
 # Node-kind discriminators consumed by the dispatcher.
@@ -88,9 +89,11 @@ def render_metadata_pane(
         # selection's metadata is visible whether or not a tree node is also
         # selected (Phase 4 / Option B, spec §4.4).
         if state.selected_node is None or state.node_kind is None:
-            ui.label("Select a node to see its metadata.").props(
-                'data-testid="metadata-pane-empty"'
-            ).style("color: var(--color-muted);")
+            empty_state(
+                icon="info",
+                message="Select a node to see its metadata.",
+                testid="metadata-pane-empty",
+            )
         elif state.node_kind == NODE_KIND_EQUIPMENT:
             _render_equipment(state.payload)
         elif state.node_kind == NODE_KIND_RECEIVED_EQUIPMENT:

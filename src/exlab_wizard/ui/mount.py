@@ -213,6 +213,15 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
                 "/main" + _build_main_query(selected, right_pane, file=file, q=q, density=density)
             )
 
+        def _on_search(query: str) -> None:
+            # Typing in the search box re-filters the tree only; keep the
+            # selected node, file selection, pane state and density and swap
+            # just ?q= (debounced render-side so this fires once per pause).
+            ui.navigate.to(
+                "/main"
+                + _build_main_query(selected, right_pane, file=file, q=query, density=density)
+            )
+
         def _on_run_staging_action(path: str, action: str) -> None:
             _run_staging_action(deps, path, action, ui)
 
@@ -245,6 +254,7 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             on_file_context_action=_on_file_context_action,
             on_select_file=_on_select_file,
             on_refresh_folder=_on_refresh_folder,
+            on_search=_on_search,
             state=state,
             hierarchy=hierarchy,
             file_list_entries=feed_entries,
