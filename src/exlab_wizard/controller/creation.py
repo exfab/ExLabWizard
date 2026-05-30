@@ -33,10 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import getpass
-import os
 import shutil
-import socket
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -47,11 +44,8 @@ from exlab_wizard.api.schemas import (
     CreationJson,
     EquipmentJson,
     LimsProjectBlock,
-    OrchestratorBlock,
-    PathsBlock,
     PluginApplied,
     PluginIsolation,
-    TemplateBlock,
 )
 from exlab_wizard.cache.creation_writer import CreationWriter
 from exlab_wizard.cache.equipment import EquipmentCacheWriter
@@ -60,14 +54,12 @@ from exlab_wizard.config.models import Config
 from exlab_wizard.constants import (
     ANSWERS_FILE_NAME,
     CACHE_DIR_NAME,
-    CREATION_JSON_VERSION,
     EQUIPMENT_JSON_VERSION,
     LABEL_MAX_LENGTH,
     LOG_FILE_TEMPLATE,
     OBJECTIVE_MAX_LENGTH,
     README_FILE_NAME,
     CreationLevel,
-    FieldType,
     LIMSProjectSource,
     PluginStatus,
     RunKind,
@@ -75,6 +67,12 @@ from exlab_wizard.constants import (
     SyncStatus,
     TemplateType,
     Tier,
+)
+from exlab_wizard.controller.metadata_assembly import (
+    TemplateDesc,
+    _os_username,
+    build_creation_json,
+    build_readme_context,
 )
 from exlab_wizard.controller.session_store import Session, SessionStore
 from exlab_wizard.controller.state_machine import (
@@ -100,11 +98,7 @@ from exlab_wizard.plugins.base import PluginContext
 from exlab_wizard.plugins.host import InputRequiredPayload, PluginHost, PluginPassResult
 from exlab_wizard.plugins.logger import HostPluginLogger
 from exlab_wizard.readme import (
-    CoreFields,
-    CustomField,
     ReadmeContext,
-    SystemFields,
-    TemplateFieldDecl,
 )
 from exlab_wizard.template.copier_driver import (
     CORE_README_FIELD_IDS,
@@ -911,53 +905,29 @@ class CreationController:
         block (Backend Spec §10.6). Reads ``self._config`` at call time so
         a live settings reload is reflected on the next creation.
         """
-        template_decls = _readme_decls_from_template(resolved.extra_readme_fields)
-        config_decls = _readme_decls_from_config(self._config.readme.defaults)
-        template_ids = {decl.id for decl in template_decls}
-        config_ids = {decl.id for decl in config_decls}
-
-        template_fields: dict[str, Any] = {}
-        config_fields: dict[str, Any] = {}
-        custom_fields: list[CustomField] = []
-        for key, value in req.readme_extra.items():
-            if key in template_ids:
-                template_fields[key] = value
-            elif key in config_ids:
-                config_fields[key] = value
-            elif key in CORE_README_FIELD_IDS:
-                # Core fields live in their own layer; never echoed as custom.
-                continue
-            else:
-                custom_fields.append(
-                    CustomField(label=key, value="" if value is None else str(value))
-                )
-
         is_run = isinstance(req, RunCreateRequest)
-        equipment = next(
-            (entry for entry in self._config.equipment if entry.id == req.equipment_id),
-            None,
+        desc = TemplateDesc(
+            name=resolved.name,
+            version=resolved.exlab_version,
+            source_path=str(resolved.path),
+            run_scope=resolved.run_scope,
+            extra_readme_fields=resolved.extra_readme_fields,
+            plugin_order=resolved.plugin_order,
         )
-        system = SystemFields(
+        return build_readme_context(
+            config=self._config,
+            equipment_id=req.equipment_id,
+            level=CreationLevel.RUN if is_run else CreationLevel.PROJECT,
+            label=req.label,
+            operator=req.operator,
+            objective=req.objective,
+            readme_extra=req.readme_extra,
+            template=desc,
+            short_id=self._short_id_for(req),
+            run_name=dst.name if is_run else None,
+            run_kind_value=self._run_kind_value_for(req) if is_run else "",
             created=utc_now(),
             created_by=_os_username(),
-            equipment={"id": req.equipment_id, "label": equipment.label if equipment else ""},
-            template={"name": resolved.name, "version": resolved.exlab_version},
-            # §10.6: ``project`` is the machine-safe LIMS short id recorded in
-            # README metadata (§3.1) -- distinct from the human-readable
-            # ``<project>/`` folder segment. ``run`` is the run directory name.
-            project=self._short_id_for(req),
-            run=dst.name if is_run else None,
-            run_kind=self._run_kind_value_for(req) if is_run else "",
-        )
-        return ReadmeContext(
-            level=CreationLevel.RUN if is_run else CreationLevel.PROJECT,
-            core=CoreFields(label=req.label, operator=req.operator, objective=req.objective),
-            template_fields=template_fields,
-            config_fields=config_fields,
-            custom_fields=custom_fields,
-            system=system,
-            template_field_decls=template_decls,
-            config_field_decls=config_decls,
         )
 
     async def _write_cache(
@@ -1032,39 +1002,31 @@ class CreationController:
             for entry in plugin_result.applied
         ]
 
-        # Redesign §3.1: creation.json always carries the orchestrator
-        # block. Redesign §3.3: the block carries the producing equipment's
-        # label so a receiving orchestrator can auto-discover the relayed
-        # equipment without a per-equipment config of its own.
-        eq = next((e for e in self._config.equipment if e.id == req.equipment_id), None)
-        orchestrator_block = OrchestratorBlock(
-            enabled=True,
-            host=socket.gethostname(),
-            label=self._config.orchestrator.label,
-            equipment_label=eq.label if eq else None,
+        # Redesign §3.1/§3.3: the orchestrator block, template/paths blocks,
+        # and the CreationJson assembly are shared with the sample-data
+        # seeder via ``build_creation_json`` so the two can never drift.
+        desc = TemplateDesc(
+            name=resolved.name,
+            version=resolved.exlab_version,
+            source_path=str(resolved.path),
+            run_scope=resolved.run_scope,
+            extra_readme_fields=resolved.extra_readme_fields,
+            plugin_order=resolved.plugin_order,
         )
-
-        payload = CreationJson(
-            schema_version=CREATION_JSON_VERSION,
-            created_at=utc_now_iso(),
-            created_by=req.operator,
+        payload = build_creation_json(
+            config=self._config,
+            equipment_id=req.equipment_id,
+            operator=req.operator,
             level=level_value,
-            run_kind=RunKind(run_kind_value),
-            lims_project=lims_block,
-            template=TemplateBlock(
-                name=resolved.name,
-                version=resolved.exlab_version,
-                source_path=str(resolved.path),
-                run_scope=resolved.run_scope,
-            ),
-            variables=dict(req.variables),
-            paths=PathsBlock(
-                local=str(dst),
-                nas=str(Path(nas_root) / req.equipment_id) if nas_root else "",
-            ),
+            run_kind_value=run_kind_value,
+            lims_block=lims_block,
+            template=desc,
+            variables=req.variables,
+            dst=dst,
+            nas_root=nas_root,
             plugins_applied=plugins_applied,
-            orchestrator=orchestrator_block,
             sync_status=SyncStatus.PENDING,
+            created_at_iso=utc_now_iso(),
         )
         await self._cache_creation.write_creation(cache_path, payload)
 
@@ -1264,76 +1226,6 @@ def _required_field_ids(extra_fields: list[dict[str, Any]]) -> tuple[str, ...]:
             if isinstance(fid, str) and fid:
                 out.append(fid)
     return tuple(out)
-
-
-def _readme_decls_from_template(entries: list[dict[str, Any]]) -> list[TemplateFieldDecl]:
-    """Map a template's ``_exlab_readme.fields`` dicts to typed declarations.
-
-    Entries without a string ``id`` are skipped (mirrors
-    :func:`_required_field_ids`); ``type`` is coerced to
-    :class:`~exlab_wizard.constants.FieldType` so the generator can
-    type-check values against it. An unknown ``type`` raises ``ValueError``,
-    which the pipeline surfaces as a failed creation.
-    """
-    decls: list[TemplateFieldDecl] = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        fid = entry.get("id")
-        if not isinstance(fid, str) or not fid:
-            continue
-        options = entry.get("options")
-        hint = entry.get("hint")
-        decls.append(
-            TemplateFieldDecl(
-                id=fid,
-                label=str(entry.get("label", fid)),
-                type=FieldType(str(entry.get("type", FieldType.STRING.value))),
-                required=bool(entry.get("required", False)),
-                default=entry.get("default", ""),
-                options=list(options) if isinstance(options, list) else None,
-                hint=hint if isinstance(hint, str) else None,
-            )
-        )
-    return decls
-
-
-def _readme_decls_from_config(defaults: list[Any]) -> list[TemplateFieldDecl]:
-    """Map ``config.readme.defaults`` entries to typed declarations.
-
-    Core field ids are dropped -- they are backend-managed and live in
-    their own layer (Backend Spec §10.3), matching the required-field gate
-    in :meth:`CreationController._validate_inputs`.
-    """
-    decls: list[TemplateFieldDecl] = []
-    for entry in defaults:
-        if entry.id in CORE_README_FIELD_IDS:
-            continue
-        decls.append(
-            TemplateFieldDecl(
-                id=entry.id,
-                label=entry.label,
-                type=entry.type,
-                required=entry.required,
-                default=entry.default,
-                options=list(entry.options) if entry.options else None,
-                hint=entry.hint,
-            )
-        )
-    return decls
-
-
-def _os_username() -> str:
-    """Return the creating OS user for the README ``system.created_by``.
-
-    Distinct from the experiment ``operator`` (Backend Spec §10.6). Falls
-    back to the ``USER`` / ``USERNAME`` environment variables and finally
-    ``"unknown"`` when the platform cannot report a login name.
-    """
-    try:
-        return getpass.getuser()
-    except Exception:
-        return os.environ.get("USER") or os.environ.get("USERNAME") or "unknown"
 
 
 def _has_hard_finding(findings: list[Finding]) -> bool:

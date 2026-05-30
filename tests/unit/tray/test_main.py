@@ -543,13 +543,37 @@ def test_main_test_with_samples_adds_equipment(test_mode_env: Path) -> None:
 
     tray_main.main(["--test", "--add-test-samples"])
 
-    cfg = load_config(test_mode_env / ".config" / "exlab-wizard-test" / "config.yaml")
-    assert len(cfg.equipment) == 1
-    # ``--test`` sets EXLAB_WIZARD_TEST_MODE=1, which makes the loader
-    # rewrite every equipment id with the ``TEST_`` prefix so test-mode
-    # runs land under an identifiable namespace on the NAS. The seeded
-    # ``TESTRIG`` sample therefore surfaces as ``TEST_TESTRIG``.
-    assert cfg.equipment[0].id == f"{TEST_MODE_PREFIX}TESTRIG"
+    sandbox = test_mode_env / ".config" / "exlab-wizard-test"
+    cfg = load_config(sandbox / "config.yaml")
+    # ``--add-test-samples`` now seeds the declarative ``SAMPLES`` set (two
+    # equipment) via the shared generator instead of one hardcoded entry.
+    # ``--test`` sets EXLAB_WIZARD_TEST_MODE=1, so the loader rewrites every
+    # equipment id with the ``TEST_`` prefix (an identifiable NAS namespace).
+    assert {e.id for e in cfg.equipment} == {
+        f"{TEST_MODE_PREFIX}TESTRIG",
+        f"{TEST_MODE_PREFIX}ALTRIG",
+    }
+    # A full sample tree was seeded on disk under the sandbox local root.
+    local_root = sandbox / "local"
+    assert (local_root / f"{TEST_MODE_PREFIX}TESTRIG" / "Demo Project").is_dir()
+    assert (local_root / f"{TEST_MODE_PREFIX}ALTRIG" / "Failure Modes").is_dir()
+
+
+def test_main_test_with_samples_repeat_boot_is_noop(test_mode_env: Path) -> None:
+    """A second ``--test --add-test-samples`` boot must neither re-seed nor wipe."""
+    from exlab_wizard.constants import TEST_MODE_PREFIX
+    from exlab_wizard.tray import main as tray_main
+
+    tray_main.main(["--test", "--add-test-samples"])
+
+    sandbox = test_mode_env / ".config" / "exlab-wizard-test"
+    operator_file = sandbox / "local" / f"{TEST_MODE_PREFIX}TESTRIG" / "operator_added.txt"
+    operator_file.write_text("keep me", encoding="utf-8")
+
+    # bootstrap_test_config short-circuits on the existing config, so the second
+    # boot never calls generate_samples -- no wipe, no re-seed.
+    tray_main.main(["--test", "--add-test-samples"])
+    assert operator_file.is_file(), "repeat boot must not wipe/re-seed an existing sandbox"
 
 
 def test_main_without_test_does_not_set_env(test_mode_env: Path) -> None:
