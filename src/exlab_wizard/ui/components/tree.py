@@ -51,6 +51,22 @@ KIND_RUN_TEST = "run_test"
 _RUN_KINDS: frozenset[str] = frozenset({KIND_RUN_EXPERIMENTAL, KIND_RUN_TEST})
 _EQUIPMENT_KINDS: frozenset[str] = frozenset({KIND_EQUIPMENT, KIND_RECEIVED_EQUIPMENT})
 
+
+# Node-kind -> (MDI glyph, Okabe-Ito colour token). Distinct from the
+# file-type map (different domain): equipment/project/run, not file extensions.
+_NODE_TYPE_PROPS: dict[str, tuple[str, str]] = {
+    KIND_EQUIPMENT: ("mdi-microscope", "--oi-blue"),
+    KIND_RECEIVED_EQUIPMENT: ("mdi-microscope", "--oi-blue"),
+    KIND_PROJECT: ("mdi-folder", "--oi-grey"),
+    KIND_RUN_EXPERIMENTAL: ("mdi-file-document", "--oi-sky"),
+    KIND_RUN_TEST: ("mdi-flask-outline", "--oi-purple"),
+}
+
+
+def _node_type_props(kind: str) -> tuple[str, str]:
+    """Return the ``(icon, colour_var)`` for a tree node kind."""
+    return _NODE_TYPE_PROPS.get(kind, ("mdi-folder-outline", "--oi-grey"))
+
 # Map internal kind to the testid suffix the Playwright flows expect.
 # Both run_experimental and run_test collapse to "run" (the e2e contract
 # treats them interchangeably for selection / context-menu purposes).
@@ -263,6 +279,7 @@ def to_nicegui_nodes(nodes: Iterable[TreeNode]) -> list[dict[str, Any]]:
 
     out: list[dict[str, Any]] = []
     for node in nodes:
+        type_icon, type_color = _node_type_props(node.kind)
         payload: dict[str, Any] = {
             "id": node.node_id,
             "label": node.label,
@@ -270,6 +287,8 @@ def to_nicegui_nodes(nodes: Iterable[TreeNode]) -> list[dict[str, Any]]:
             "testid_kind": _TESTID_KIND_BY_KIND.get(node.kind, node.kind),
             "badges": list(node.badges),
             "children": to_nicegui_nodes(node.children),
+            "type_icon": type_icon,
+            "type_color": type_color,
         }
         icon_url = _sync_icon_url(node)
         if icon_url is not None:
@@ -320,6 +339,8 @@ def _ctx_emit(*, tree_id: int, listener_id: str, kind: str, action: str) -> str:
 def _tree_header_slot(*, tree_id: int, listener_id: str) -> str:
     return (
         '<div class="row items-center" style="gap: 0.4rem">'
+        '<q-icon v-if="props.node.type_icon" :name="props.node.type_icon" '
+        ":style=\"{ color: 'var(' + props.node.type_color + ')', fontSize: '1rem', flexShrink: 0 }\"></q-icon>"
         '<img v-if="props.node.sync_icon" :src="props.node.sync_icon" '
         'style="width: 1rem; height: 1rem; flex-shrink: 0;" '
         ":title=\"props.node.sync_title || ''\" "

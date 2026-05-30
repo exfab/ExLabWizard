@@ -20,6 +20,7 @@ from exlab_wizard.config.models import (
     BandwidthWindow,
     Config,
     EquipmentConfig,
+    FileStabilityConfig,
     LIMSConfig,
     LoggingConfig,
     NASCleanupConfig,
@@ -135,6 +136,13 @@ def _full_config_dict() -> dict:
             "quiescence_minutes": 10,
             "ignore_globs": ["*.partial", "*.tmp"],
             "poll_interval_seconds": 120,
+            "stability": {
+                "enabled": True,
+                "interval_seconds": 2.0,
+                "checks": 3,
+                "timeout_seconds": 30.0,
+                "max_workers": 8,
+            },
         },
         "orchestrator": {
             "label": "Lab Acquisition Station 01",
@@ -681,6 +689,30 @@ def test_sync_config_accepts_custom_quiescence_settings() -> None:
     assert cfg.quiescence_minutes == 30
     assert cfg.ignore_globs == ["*.lock"]
     assert cfg.poll_interval_seconds == 60
+
+
+def test_file_stability_config_defaults() -> None:
+    cfg = SyncConfig()
+    assert cfg.stability.enabled is True
+    assert cfg.stability.interval_seconds == 2.0
+    assert cfg.stability.checks == 3
+    assert cfg.stability.timeout_seconds == 30.0
+    assert cfg.stability.max_workers == 8
+
+
+def test_file_stability_rejects_non_positive_interval() -> None:
+    with pytest.raises(ValidationError):
+        FileStabilityConfig(interval_seconds=0)
+
+
+def test_file_stability_rejects_checks_below_two() -> None:
+    with pytest.raises(ValidationError):
+        FileStabilityConfig(checks=1)
+
+
+def test_file_stability_rejects_unknown_key() -> None:
+    with pytest.raises(ValidationError):
+        FileStabilityConfig(bogus=1)
 
 
 def test_sync_config_ignore_globs_default_is_independent_per_instance() -> None:
