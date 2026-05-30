@@ -588,4 +588,47 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
         action="Right-click a file-list row and choose 'Copy path'",
         outcome="Copies the file's absolute path to the system clipboard.",
     ),
+    # -- File explorer: selection / search / density / legend (Phase 4/5) ---
+    UXInteraction(
+        flow="File explorer",
+        route="/main",
+        testid="file-list-row",
+        element="table row",
+        action="Single-click a file row in the centre list",
+        outcome="Selects the row (highlight + accent bar) and threads ?file= so "
+        "the metadata popover shows the file's sub-card (Phase 4 / Option B).",
+    ),
+    UXInteraction(
+        flow="File explorer",
+        route="/main",
+        testid="toggle-right-pane",
+        element="button",
+        action="Click the vertical 'Metadata' tab",
+        outcome="Opens / collapses the metadata popover over the Files pane via ?right_pane=.",
+    ),
+    UXInteraction(
+        flow="File explorer",
+        route="/main",
+        testid="main-search",
+        element="input",
+        action="Type in the Explorer search box",
+        outcome="Filters the tree (debounced ?q=) and shows a result-count / "
+        "no-matches pill below the box (OQ-2).",
+    ),
+    UXInteraction(
+        flow="File explorer",
+        route="/main",
+        testid="files-density-toggle",
+        element="button",
+        action="Click the Files-header density toggle",
+        outcome="Flips the file list between comfortable and compact row padding via ?density= (§4.8).",
+    ),
+    UXInteraction(
+        flow="File explorer",
+        route="/main",
+        testid="files-legend",
+        element="button",
+        action="Click the Files-header '?' legend button",
+        outcome="Opens a popover listing every sync-status icon and its meaning.",
+    ),
 )
