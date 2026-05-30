@@ -25,9 +25,12 @@ test module. Public entry points:
 
 from __future__ import annotations
 
+import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from exlab_wizard.config.models import EquipmentConfig
 from exlab_wizard.constants import CACHE_DIR_NAME
@@ -39,7 +42,70 @@ __all__ = [
     "local_check_factory",
     "local_lsjson_factory",
     "missing_one_lsjson_factory",
+    "wait_for_job_state",
+    "wait_until",
 ]
+
+
+# A generous wall-clock ceiling: irrelevant when the worker is responsive,
+# but large enough that a loaded CI runner never trips it spuriously.
+_DEFAULT_WAIT_TIMEOUT_S = 30.0
+_DEFAULT_POLL_INTERVAL_S = 0.02
+
+
+async def wait_until(
+    predicate: Callable[[], Awaitable[bool]],
+    *,
+    timeout: float = _DEFAULT_WAIT_TIMEOUT_S,  # noqa: ASYNC109 - wall-clock budget, not an asyncio.timeout cancel scope
+    interval: float = _DEFAULT_POLL_INTERVAL_S,
+    message: str = "condition not met within timeout",
+) -> None:
+    """Await until ``predicate()`` returns True, bounded by wall-clock ``timeout``.
+
+    Replaces fixed-iteration busy-poll loops in the sync tests: the budget is
+    a real time ceiling (default 30s) rather than a magic iteration count, so a
+    slow/loaded worker thread cannot trip a false failure while a responsive one
+    still returns in milliseconds. Raises ``AssertionError(message)`` on timeout.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        if await predicate():
+            return
+        if time.monotonic() >= deadline:
+            raise AssertionError(message)
+        await asyncio.sleep(interval)
+
+
+async def wait_for_job_state(
+    client: Any,
+    job_id: str,
+    target: set[Any],
+    *,
+    timeout: float = _DEFAULT_WAIT_TIMEOUT_S,  # noqa: ASYNC109 - wall-clock budget, not an asyncio.timeout cancel scope
+    interval: float = _DEFAULT_POLL_INTERVAL_S,
+) -> Any:
+    """Return the queue row once ``row.state`` is in ``target`` (wall-clock bounded).
+
+    Thin loop over the most common sync-test shape: polling
+    ``client._queue.get_by_id(job_id)`` until the job reaches one of the
+    ``target`` states. Returns the matching row; raises ``AssertionError``
+    (naming the last observed state) on timeout. Like :func:`wait_until`, the
+    budget is a real wall-clock ceiling rather than a fixed iteration count, so
+    a slow/loaded worker thread cannot trip a false failure.
+    """
+    deadline = time.monotonic() + timeout
+    last_state = None
+    while True:
+        row = await client._queue.get_by_id(job_id)
+        if row is not None:
+            last_state = row.state
+            if row.state in target:
+                return row
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"job {job_id} never reached {target}; last observed state={last_state}"
+            )
+        await asyncio.sleep(interval)
 
 
 def _read_files_from(files_from: Path | None) -> tuple[str, ...]:

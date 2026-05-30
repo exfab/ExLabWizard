@@ -14,8 +14,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from exlab_wizard.api.schemas import (
     CreationJson,
     LimsProjectBlock,
@@ -44,6 +42,8 @@ from tests.unit.sync._helpers import (
     local_check_factory,
     local_lsjson_factory,
     missing_one_lsjson_factory,
+    wait_for_job_state,
+    wait_until,
 )
 
 
@@ -150,17 +150,15 @@ async def test_hash_mismatch_first_failure_retries(tmp_path: Path) -> None:
     try:
         handle = await client.enqueue(run_dir)
         # Wait for the second pass to land on a non-error state.
-        for _ in range(400):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state in {
+        await wait_for_job_state(
+            client,
+            handle.job_id,
+            {
                 SyncJobState.VERIFIED,
                 SyncJobState.CLEANUP_ELIGIBLE,
                 SyncJobState.CLEANED,
-            }:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("expected eventual VERIFIED after retry")
+            },
+        )
         # Two transport calls: one mismatch, one success.
         assert call_count["n"] >= 2
     finally:
@@ -189,13 +187,7 @@ async def test_hash_mismatch_second_failure_terminal(tmp_path: Path) -> None:
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
-        for _ in range(400):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.FAILED:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("expected terminal FAILED on second hash mismatch")
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.FAILED})
     finally:
         await client.close()
 
@@ -229,13 +221,7 @@ async def test_cleanup_full_delete_when_retain_cache_false(tmp_path: Path) -> No
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
-        for _ in range(400):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.CLEANED:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("expected CLEANED state")
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.CLEANED})
         # Full directory removal: the run directory itself is gone.
         assert not run_dir.exists()
     finally:
@@ -266,13 +252,7 @@ async def test_cleanup_retain_cache_keeps_metadata(tmp_path: Path) -> None:
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
-        for _ in range(400):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.CLEANED:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("expected CLEANED state")
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.CLEANED})
         # Data files removed; cache subtree retained.
         assert (run_dir / CACHE_DIR_NAME).exists()
         assert not (run_dir / "data.bin").exists()
@@ -306,13 +286,7 @@ async def test_cleanup_disabled_keeps_files(tmp_path: Path) -> None:
     try:
         handle = await client.enqueue(run_dir)
         # Wait for VERIFIED.
-        for _ in range(400):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.VERIFIED:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("expected VERIFIED")
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.VERIFIED})
         # The run dir is still intact.
         assert run_dir.exists()
         assert (run_dir / "data.bin").exists()
@@ -344,13 +318,7 @@ async def test_cleanup_eligible_when_min_verify_passes_unmet(tmp_path: Path) -> 
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
-        for _ in range(400):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.CLEANUP_ELIGIBLE:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("expected CLEANUP_ELIGIBLE")
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.CLEANUP_ELIGIBLE})
         # Files retained because min_verify_passes wasn't met.
         assert (run_dir / "data.bin").exists()
     finally:
@@ -382,13 +350,7 @@ async def test_cleanup_blocked_by_remote_stat(tmp_path: Path) -> None:
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
-        for _ in range(400):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.CLEANUP_ELIGIBLE:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("expected CLEANUP_ELIGIBLE on remote stat fail")
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.CLEANUP_ELIGIBLE})
         # Files retained because remote_stat failed.
         assert (run_dir / "data.bin").exists()
     finally:
@@ -555,13 +517,7 @@ async def test_cleanup_marks_cleared_in_sync_state(tmp_path: Path) -> None:
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
-        for _ in range(400):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.CLEANED:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("expected CLEANED state")
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.CLEANED})
     finally:
         await client.close()
 
@@ -600,13 +556,7 @@ async def test_cleanup_keeps_keep_local_file(tmp_path: Path) -> None:
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
-        for _ in range(400):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.CLEANED:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("expected CLEANED state")
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.CLEANED})
         # The keep_local file survives; the other data file is removed.
         assert (run_dir / "data.bin").exists()
         assert not (run_dir / "subdir" / "child.txt").exists()
@@ -650,13 +600,7 @@ async def test_cleanup_deferred_when_run_only_partially_synced(tmp_path: Path) -
     await client.init()
     try:
         handle = await client.enqueue(run_dir, files=["data.bin"])
-        for _ in range(400):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.VERIFIED:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("expected VERIFIED")
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.VERIFIED})
         # Give the worker a beat -- cleanup must NOT advance the job.
         await asyncio.sleep(0.1)
         row = await client._queue.get_by_id(handle.job_id)
@@ -702,13 +646,7 @@ async def test_worker_marks_failed_when_local_run_vanished(tmp_path: Path) -> No
         import shutil
 
         shutil.rmtree(run_dir)
-        for _ in range(400):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.FAILED:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("expected FAILED on vanished local")
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.FAILED})
     finally:
         await client.close()
 
@@ -761,13 +699,7 @@ async def test_cleanup_runs_hash_gate_before_delete(tmp_path: Path) -> None:
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
-        for _ in range(400):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.CLEANED:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("expected CLEANED after a passing hash-gate")
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.CLEANED})
         # The hash-gate ran before the irreversible delete; data is gone.
         assert gate_calls["n"] >= 1
         assert not (run_dir / "data.bin").exists()
@@ -799,13 +731,7 @@ async def test_cleanup_aborts_delete_on_hash_mismatch(tmp_path: Path) -> None:
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
-        for _ in range(400):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.CLEANUP_ELIGIBLE:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("expected CLEANUP_ELIGIBLE on a failing hash-gate")
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.CLEANUP_ELIGIBLE})
         # The local data survives because the integrity gate did not pass.
         await asyncio.sleep(0.05)
         row = await client._queue.get_by_id(handle.job_id)
@@ -868,13 +794,7 @@ async def test_cleanup_aborts_delete_when_remote_file_vanished_at_gate(tmp_path:
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
-        for _ in range(400):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.CLEANUP_ELIGIBLE:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("expected CLEANUP_ELIGIBLE when the cleanup existence probe fails")
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.CLEANUP_ELIGIBLE})
         # The probe ran (a second lsjson call) and the local data survives.
         await asyncio.sleep(0.05)
         row = await client._queue.get_by_id(handle.job_id)
@@ -932,13 +852,14 @@ async def test_network_error_records_backoff_retry(tmp_path: Path) -> None:
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
-        for _ in range(200):
+
+        async def _attempted() -> bool:
             row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.attempts >= 1:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("network error never increased attempts")
+            return row is not None and row.attempts >= 1
+
+        await wait_until(_attempted, message="network error never increased attempts")
+        row = await client._queue.get_by_id(handle.job_id)
+        assert row is not None
         assert row.last_error == "network"
         assert row.next_attempt_at  # backoff scheduled
     finally:
@@ -1060,15 +981,18 @@ async def test_partial_batch_credits_reconciled_files_in_sync_state(tmp_path: Pa
     await client.init()
     try:
         handle = await client.enqueue(run_dir, ["data.bin", "subdir/child.txt"])
+
         # data.bin reconciles on every sweep; the batch re-queues because
         # child.txt never reconciles. Wait until data.bin is credited.
-        for _ in range(600):
+        async def _data_credited() -> bool:
             state = await sync_state.read(run_dir)
-            if "data.bin" in state.files and state.files["data.bin"].verified_at:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("expected data.bin to be credited from the partial listing")
+            return "data.bin" in state.files and bool(state.files["data.bin"].verified_at)
+
+        await wait_until(
+            _data_credited,
+            message="expected data.bin to be credited from the partial listing",
+        )
+        state = await sync_state.read(run_dir)
 
         # data.bin reconciled: it carries a synced_signature + verified_at.
         assert state.files["data.bin"].synced_signature is not None
@@ -1121,17 +1045,15 @@ async def test_full_batch_credits_every_file_in_sync_state(tmp_path: Path) -> No
     await client.init()
     try:
         handle = await client.enqueue(run_dir, ["data.bin", "subdir/child.txt"])
-        for _ in range(400):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state in {
+        await wait_for_job_state(
+            client,
+            handle.job_id,
+            {
                 SyncJobState.VERIFIED,
                 SyncJobState.CLEANUP_ELIGIBLE,
                 SyncJobState.CLEANED,
-            }:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("expected eventual VERIFIED")
+            },
+        )
         state = await sync_state.read(run_dir)
         assert {"data.bin", "subdir/child.txt"} <= set(state.files)
         for rec in state.files.values():

@@ -52,6 +52,8 @@ from exlab_wizard.validator.engine import Validator
 from tests.unit.sync._helpers import (
     local_lsjson_factory,
     missing_one_lsjson_factory,
+    wait_for_job_state,
+    wait_until,
 )
 
 # ---------------------------------------------------------------------------
@@ -289,13 +291,7 @@ async def test_retry_resets_failed_to_queued(tmp_path: Path, writer: CreationWri
     try:
         handle = await client.enqueue(run_dir)
         # Wait until the worker has marked the job as FAILED.
-        for _ in range(200):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.FAILED:
-                break
-            await asyncio.sleep(0.02)
-        else:
-            pytest.fail("worker did not transition to FAILED in time")
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.FAILED})
 
         await client.retry(handle.job_id)
         row = await client._queue.get_by_id(handle.job_id)
@@ -356,17 +352,15 @@ async def test_worker_drives_to_verified_and_marks_synced(
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
-        for _ in range(300):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state in {
+        await wait_for_job_state(
+            client,
+            handle.job_id,
+            {
                 SyncJobState.VERIFIED,
                 SyncJobState.CLEANUP_ELIGIBLE,
                 SyncJobState.CLEANED,
-            }:
-                break
-            await asyncio.sleep(0.02)
-        else:
-            pytest.fail("worker did not reach VERIFIED in time")
+            },
+        )
         creation_path = run_dir / CACHE_DIR_NAME / CREATION_JSON_NAME
         decoded = msgspec_json.decode(creation_path.read_bytes(), type=CreationJson)
         assert decoded.sync_status == "synced"
@@ -412,17 +406,15 @@ async def test_routine_reconcile_marks_synced_from_lsjson(
     await client.init()
     try:
         handle = await client.enqueue(run_dir, ["data.bin"])
-        for _ in range(400):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state in {
+        await wait_for_job_state(
+            client,
+            handle.job_id,
+            {
                 SyncJobState.VERIFIED,
                 SyncJobState.CLEANUP_ELIGIBLE,
                 SyncJobState.CLEANED,
-            }:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("worker did not reconcile to VERIFIED via lsjson")
+            },
+        )
 
         # The data file is credited in sync_state.json from the lsjson match.
         state = await sync_state.read(run_dir)
@@ -466,14 +458,16 @@ async def test_routine_reconcile_requeues_when_remote_file_missing(
     await client.init()
     try:
         handle = await client.enqueue(run_dir, ["data.bin", "other.bin"])
+
         # The credited file lands in sync_state; the job never reaches VERIFIED.
-        for _ in range(200):
+        async def _data_credited() -> bool:
             state = await sync_state.read(run_dir)
-            if "data.bin" in state.files and state.files["data.bin"].verified_at:
-                break
-            await asyncio.sleep(0.01)
-        else:
-            pytest.fail("data.bin was never credited from the partial listing")
+            return "data.bin" in state.files and bool(state.files["data.bin"].verified_at)
+
+        await wait_until(
+            _data_credited,
+            message="data.bin was never credited from the partial listing",
+        )
 
         # The job keeps cycling QUEUED -> RUNNING -> AWAITING_VERIFY ->
         # QUEUED because "other.bin" never reconciles; it must never reach a
@@ -508,13 +502,7 @@ async def test_worker_terminal_failed_on_auth_error(tmp_path: Path, writer: Crea
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
-        for _ in range(200):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.FAILED:
-                break
-            await asyncio.sleep(0.02)
-        else:
-            pytest.fail("worker did not reach FAILED on auth error")
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.FAILED})
     finally:
         await client.close()
 
@@ -537,13 +525,7 @@ async def test_enqueue_existing_failed_resets_to_queued(
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
-        for _ in range(200):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.FAILED:
-                break
-            await asyncio.sleep(0.02)
-        else:
-            pytest.fail("worker did not reach FAILED")
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.FAILED})
         # Now the same enqueue call should reset to QUEUED.
         handle2 = await client.enqueue(run_dir)
         assert handle2.state == HandleState.QUEUED
@@ -699,13 +681,7 @@ async def test_enqueue_requeues_terminal_job_with_new_files(
     await client.init()
     try:
         handle = await client.enqueue(run_dir, ["data.bin"])
-        for _ in range(200):
-            row = await client._queue.get_by_id(handle.job_id)
-            if row is not None and row.state is SyncJobState.FAILED:
-                break
-            await asyncio.sleep(0.02)
-        else:
-            pytest.fail("worker did not reach FAILED")
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.FAILED})
         # Re-enqueue with a new subset -> re-armed QUEUED carrying the new files.
         handle2 = await client.enqueue(run_dir, ["other.bin"])
         assert handle2.state == HandleState.QUEUED
@@ -985,14 +961,16 @@ async def test_drive_job_bandwidth_comes_from_nas_block(
     await client.init()
     try:
         await client.enqueue(run_dir)
+
         # Wait for the worker to complete at least the push step (recorded
         # bwlimit is set before the push call in _drive_job).
-        for _ in range(200):
-            if recorded:
-                break
-            await asyncio.sleep(0.02)
-        else:
-            pytest.fail("worker did not invoke the push callable in time")
+        async def _push_recorded() -> bool:
+            return bool(recorded)
+
+        await wait_until(
+            _push_recorded,
+            message="worker did not invoke the push callable in time",
+        )
     finally:
         await client.close()
 
