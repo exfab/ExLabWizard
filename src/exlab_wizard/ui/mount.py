@@ -30,12 +30,15 @@ from exlab_wizard.constants import (
     KEYRING_USERNAME_LIMS,
     AuditScopeKind,
     RunKind,
-    RunSyncState,
     SetupState,
 )
 from exlab_wizard.logging import get_logger
+
+# clear_run_dir backs the per-run tree context-menu "clear" action (force-sync /
+# clear / view-log), which applies to nas-mode runs too — kept after the staging
+# dock was hidden. See
+# docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md.
 from exlab_wizard.orchestrator.staging_clear import clear_run_dir
-from exlab_wizard.orchestrator.staging_query import list_staged_runs
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -102,9 +105,6 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
     )
     from exlab_wizard.ui.pages import (
         settings as settings_page,
-    )
-    from exlab_wizard.ui.pages import (
-        staging as staging_page,
     )
     from exlab_wizard.ui.pages import (
         templates as templates_page,
@@ -225,9 +225,6 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         def _on_run_staging_action(path: str, action: str) -> None:
             _run_staging_action(deps, path, action, ui)
 
-        def _on_clear_verified() -> None:
-            _bulk_clear_verified(deps, ui)
-
         def _on_tree_context_action(node_id: str, action: str) -> None:
             # Either edit or remove deep-links into Settings with the
             # equipment pre-selected (Redesign §4.6 / decision 4A).
@@ -249,7 +246,6 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             on_navigate_breadcrumb=_on_select_node,
             on_toggle_right_pane=_on_toggle_right_pane,
             on_run_staging_action=_on_run_staging_action,
-            on_clear_verified=_on_clear_verified,
             on_tree_context_action=_on_tree_context_action,
             on_file_context_action=_on_file_context_action,
             on_select_file=_on_select_file,
@@ -453,20 +449,6 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             findings=findings,
             last_audit_at=getattr(deps, "last_audit_at", None),
         )
-
-    @ui.page("/staging")
-    def _staging() -> Any:
-        deps = _deps()
-        state = _build_staging_state(deps)
-        if state is None:
-            _render_unavailable(
-                ui,
-                "Staging unavailable",
-                "No config is wired on this app instance.",
-            )
-            return None
-        return staging_page.render_staging_dock(state)
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1310,7 +1292,7 @@ def _run_staging_action(deps: Any, path: str, action: str, ui: Any) -> None:
 
     config = getattr(deps, "config", None) if deps is not None else None
     if config is None:
-        _show_toast(ui, "Staging action unavailable: no config", positive=False)
+        _show_toast(ui, "Run action unavailable: no config", positive=False)
         return
     run_path = Path(path)
     if action == RUN_CONTEXT_FORCE_SYNC:
@@ -1349,45 +1331,7 @@ def _run_staging_action(deps: Any, path: str, action: str, ui: Any) -> None:
     if action == RUN_CONTEXT_VIEW_LOG:
         _open_log_dialog(deps, run_path, ui)
         return
-    _show_toast(ui, f"Unknown staging action: {action}", positive=False)
-
-
-def _bulk_clear_verified(deps: Any, ui: Any) -> None:
-    """Bulk-clear every staged run whose sync job is verified.
-
-    Wired from the file-explorer footer's *Clear verified runs* button.
-    Same in-process dispatch pattern as the per-run actions. The
-    operator-free per-file NAS sync redesign (2026-05-21) keys the
-    "clearable" set off the sync-queue job state; Phase 5 swaps this to
-    the ``sync_state.json`` ``SYNCED`` rollup.
-    """
-    config = getattr(deps, "config", None) if deps is not None else None
-    if config is None:
-        _show_toast(ui, "Clear-verified unavailable: no config", positive=False)
-        return
-
-    async def _do_bulk() -> None:
-        try:
-            cleared: list[str] = []
-            sync_state_writer = getattr(deps, "sync_state_writer", None)
-            for summary in list_staged_runs(config=config, sync_state_writer=sync_state_writer):
-                # Only a fully-SYNCED run is clearable; ``cleared`` runs
-                # have no staging copy left and ``syncing`` runs are unproven.
-                if summary.current_state != RunSyncState.SYNCED.value:
-                    continue
-                files, _bytes = await asyncio.to_thread(clear_run_dir, Path(summary.path))
-                if files > 0:
-                    cleared.append(summary.path)
-        except Exception as exc:
-            _log.exception("bulk clear-verified failed")
-            _show_toast(ui, f"Clear-verified failed: {exc}", positive=False)
-            return
-        if cleared:
-            _show_toast(ui, f"Cleared {len(cleared)} verified run(s)", positive=True)
-        else:
-            _show_toast(ui, "No verified runs to clear", positive=True)
-
-    _spawn_background(_do_bulk())
+    _show_toast(ui, f"Unknown run action: {action}", positive=False)
 
 
 def _file_context_action(
@@ -2107,25 +2051,6 @@ def _safe_audit(deps: Any) -> list[Any]:
         return []
 
 
-def _build_staging_state(deps: Any) -> Any:
-    from exlab_wizard.ui.pages import staging as staging_page
-
-    config = getattr(deps, "config", None) if deps is not None else None
-    if config is None:
-        return None
-    # Redesign §3.1: orchestrator pipeline is always active; missing
-    # staging_root surfaces as an empty staging dock, not a None panel.
-    try:
-        rows = list_staged_runs(
-            config=config,
-            sync_state_writer=getattr(deps, "sync_state_writer", None),
-        )
-    except Exception as exc:
-        _log.warning("staging_query failed: %s", exc)
-        return staging_page.StagingDockState(rows=[])
-    return staging_page.StagingDockState(rows=list(rows))
-
-
 def _show_toast(ui: Any, message: str, *, positive: bool) -> None:
     del ui  # toasts route through the notifications helper, not raw ui
     try:
@@ -2137,12 +2062,3 @@ def _show_toast(ui: Any, message: str, *, positive: bool) -> None:
             notifications.notify_error(message)
     except Exception as exc:
         _log.debug("toast notify failed: %s", exc)
-
-
-def _render_unavailable(ui: Any, headline: str, subline: str) -> None:
-    try:
-        with ui.card().style("max-width: 480px; padding: var(--sp-6);"):
-            ui.label(headline).style("font-weight: 600;")
-            ui.label(subline).style("color: var(--color-muted);")
-    except Exception as exc:
-        _log.warning("render_unavailable failed: %s", exc)

@@ -14,7 +14,18 @@ The flow:
 
 from __future__ import annotations
 
+import pytest
+
 from tests.e2e.page_objects.staging_page import StagingPage
+
+# Orchestrator/staging is hidden at the UI layer; the staging dock is no longer
+# reachable from the operator UI. The dock + test app /staging route are kept
+# for reversibility. See
+# docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md.
+pytestmark = pytest.mark.skip(
+    reason="orchestrator/staging hidden — see "
+    "docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md"
+)
 
 
 def test_flow_09_orchestrator(page, server_url) -> None:

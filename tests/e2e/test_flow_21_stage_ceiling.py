@@ -8,6 +8,17 @@ why the per-run sync status tops out at ``relayed``.
 
 from __future__ import annotations
 
+import pytest
+
+# Stage-mode equipment can no longer be created (the sync-mode wizard step is
+# hidden), so the stage-ceiling note is unreachable from the operator UI:
+# orchestrator/staging is hidden. See
+# docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md.
+pytestmark = pytest.mark.skip(
+    reason="orchestrator/staging hidden — see "
+    "docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md"
+)
+
 
 def _goto(page, url: str, *, retries: int = 2) -> None:
     last: Exception | None = None

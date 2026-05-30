@@ -183,7 +183,6 @@ def render_file_explorer_page(
     on_navigate_breadcrumb: Callable[[str], None] | None = None,
     on_toggle_right_pane: Callable[[], None] | None = None,
     on_run_staging_action: Callable[[str, str], None] | None = None,
-    on_clear_verified: Callable[[], None] | None = None,
     on_tree_context_action: Callable[[str, str], None] | None = None,
     on_file_context_action: Callable[[Any, str], None] | None = None,
     on_select_file: Callable[[Any], None] | None = None,
@@ -544,16 +543,10 @@ def render_file_explorer_page(
                 label="LIMS",
                 state=s.lims_state,
             )
-            # Footer Staging segment with bulk-clear-verified popover
-            # (§4.6: the bottom dock's bulk action relocates here).
-            status_bar_segment.status_bar_segment(
-                label="Staging",
-                state=s.staging_state,
-            ).props('data-testid="footer-staging-segment"')
-            if on_clear_verified is not None:
-                ui.button("Clear verified runs", on_click=lambda _evt: on_clear_verified()).props(
-                    'flat data-testid="footer-clear-verified"'
-                )
+            # Footer "Staging" segment + bulk clear-verified are intentionally
+            # omitted: orchestrator/staging is hidden at the UI layer (see
+            # docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md).
+            # ``MainPageState.staging_state`` stays as an inert field.
 
 
 def _render_centre_file_list(

@@ -14,7 +14,6 @@ from pydantic import ValidationError
 
 from exlab_wizard.config.models import Config
 from exlab_wizard.logging import get_logger
-from exlab_wizard.paths import suggested_staging_root
 from exlab_wizard.ui import notifications
 from exlab_wizard.ui.components import credential_field, test_connection_panel
 
@@ -54,7 +53,7 @@ SECTION_TITLES: dict[str, str] = {
     "operators": "Operators",
     "validator": "Validator",
     "logging": "Logging",
-    "orchestrator": "Orchestrator Mode",
+    "orchestrator": "Workstation",
     "application": "Application",
 }
 
@@ -609,20 +608,16 @@ def _render_section_body(
                 label="Rotated log copies kept", value=draft.logging.central_log_keep
             ).bind_value(draft.logging, "central_log_keep")
         elif section == "orchestrator":
-            # ``label`` is required (it identifies this workstation in every
-            # run's creation.json). ``staging_root`` is opt-in: blank means
-            # this device is not a staging PC. The placeholder shows an
-            # OS-appropriate suggestion without prefilling the value -- the
-            # directory is created only when a non-empty path is saved (see
-            # ui.mount._persist_config).
+            # ``label`` is required: it identifies this workstation in every
+            # run's creation.json. The staging-root input is intentionally
+            # hidden (orchestrator/staging hidden — see
+            # docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md);
+            # ``orchestrator.staging_root`` stays blank, so this device never
+            # acts as a staging PC. The section id stays "orchestrator" so the
+            # setup gate / settings_sections_for keep working.
             ui.input(label="Workstation label", value=draft.orchestrator.label).bind_value(
                 draft.orchestrator, "label"
             )
-            ui.input(
-                label="Staging root (optional)",
-                value=draft.orchestrator.staging_root,
-                placeholder=str(suggested_staging_root()),
-            ).bind_value(draft.orchestrator, "staging_root")
         elif section == "application":
             # "Start at login" (T8): applied immediately (NOT draft-bound,
             # §7.13). Seeded from the real registration state; on toggle it

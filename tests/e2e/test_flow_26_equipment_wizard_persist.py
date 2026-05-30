@@ -67,22 +67,15 @@ def test_equipment_wizard_confirm_persists_to_config(browser, prod_server) -> No
         wiz.label.fill("Confocal Microscope 1")
         wiz.next_button.click()
 
-        # 2. Paths.
+        # 2. Paths. The sync-mode step is hidden (orchestrator/staging hidden —
+        #    see docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md),
+        #    so paths advances straight to review; every equipment is nas-mode.
         wiz.local_root.wait_for(state="visible", timeout=10_000)
         wiz.local_root.fill("/data/MICROSCOPE_01")
         wiz.nas_root.fill("/srv/nas/MICROSCOPE_01")
         wiz.next_button.click()
 
-        # 3. Sync mode -- nas is the default. rclone.conf migration (Phase 8)
-        #    removed the per-equipment SFTP/SMB transport fields: nas-mode now
-        #    just shows a note that the connection is the single nas: remote
-        #    (configured in Settings -> NAS Remote). Picking the mode is the
-        #    only choice, so advancing is immediate.
-        wiz.sync_mode.wait_for(state="visible", timeout=10_000)
-        wiz.nas_note.wait_for(state="visible", timeout=10_000)
-        wiz.next_button.click()
-
-        # 4. Review -> Confirm.
+        # 3. Review -> Confirm.
         wiz.confirm.wait_for(state="visible", timeout=10_000)
         wiz.confirm.click()
         page.wait_for_load_state("networkidle")

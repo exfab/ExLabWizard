@@ -96,36 +96,6 @@ class _Fluent:
         return False
 
 
-class _FakeUI:
-    """Records cards / labels and exposes a ``navigate.to`` spy."""
-
-    def __init__(self) -> None:
-        self.cards = 0
-        self.labels: list[str] = []
-        self.navigated: list[str] = []
-        self.navigate = SimpleNamespace(to=self.navigated.append)
-
-    def card(self, *_args: Any, **_kwargs: Any) -> _Fluent:
-        self.cards += 1
-        return _Fluent()
-
-    def label(self, text: str = "", *_args: Any, **_kwargs: Any) -> _Fluent:
-        self.labels.append(text)
-        return _Fluent()
-
-
-class _BoomUI:
-    """A ``ui`` whose element factories raise -- exercises render except paths."""
-
-    def card(self, *_args: Any, **_kwargs: Any) -> Any:
-        msg = "no ui slot"
-        raise RuntimeError(msg)
-
-    def label(self, *_args: Any, **_kwargs: Any) -> Any:
-        msg = "no ui slot"
-        raise RuntimeError(msg)
-
-
 class _FakeController:
     """Duck-typed CreationController for the create-flow helpers."""
 
@@ -452,51 +422,11 @@ def test_safe_audit_forwards_validator_output() -> None:
     assert mount._safe_audit(deps) == expected
 
 
-# ---------------------------------------------------------------------------
-# _build_staging_state
-# ---------------------------------------------------------------------------
-
-
-def test_staging_state_when_staging_root_missing(tmp_path: Path) -> None:
-    """Redesign §3.1: orchestrator pipeline is always on, but a missing
-    staging_root on disk surfaces as empty rows, not a None panel."""
-    deps = _deps(
-        config=_config(
-            orchestrator_label="LAB",
-            orchestrator_staging_root=str(tmp_path / "does-not-exist"),
-        ),
-    )
-    state = mount._build_staging_state(deps)
-    # State may be None when staging is empty or not built; either way the
-    # always-on contract doesn't promise rows when there are none.
-    assert state is None or state.rows == []
-
-
-def test_staging_state_none_when_no_config() -> None:
-    assert mount._build_staging_state(_deps()) is None
-
-
-def test_staging_state_returns_empty_rows_on_query_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    deps = _deps(
-        config=_config(
-            orchestrator_label="LAB",
-            orchestrator_staging_root="/staging",
-        ),
-    )
-
-    def _raise(*_args: Any, **_kwargs: Any) -> None:
-        msg = "no staging root"
-        raise RuntimeError(msg)
-
-    monkeypatch.setattr(
-        "exlab_wizard.orchestrator.staging_query.list_staged_runs",
-        _raise,
-    )
-    state = mount._build_staging_state(deps)
-    assert state is not None
-    assert state.rows == []
+# NOTE: _build_staging_state was removed when the /staging route was hidden
+# (orchestrator/staging hidden — see
+# docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md). The
+# staging read-side itself (orchestrator.staging_query.list_staged_runs) stays
+# and is covered by test_staging_query.
 
 
 # ---------------------------------------------------------------------------
@@ -663,22 +593,8 @@ def test_apply_live_config_falls_back_to_setting_config(
     assert any("live config reload failed" in r.message for r in caplog.records)
 
 
-# ---------------------------------------------------------------------------
-# _render_unavailable
-# ---------------------------------------------------------------------------
-
-
-def test_render_unavailable_renders_headline_and_subline() -> None:
-    ui = _FakeUI()
-    mount._render_unavailable(ui, "Staging unavailable", "Orchestrator disabled")
-    assert "Staging unavailable" in ui.labels
-    assert "Orchestrator disabled" in ui.labels
-
-
-def test_render_unavailable_swallows_failure(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level("WARNING"):
-        mount._render_unavailable(_BoomUI(), "headline", "subline")
-    assert any("render_unavailable" in r.message for r in caplog.records)
+# NOTE: _render_unavailable was removed with the /staging route (its only
+# caller) — orchestrator/staging hidden; see the design spec referenced above.
 
 
 # ---------------------------------------------------------------------------
@@ -1698,21 +1614,6 @@ class _StubNasSync:
         return SimpleNamespace(state="queued", job_id="j-1")
 
 
-def _drain_background() -> None:
-    """Run any pending mount background tasks to completion."""
-    import asyncio as _aio
-
-    loop = _aio.new_event_loop()
-    try:
-        loop.run_until_complete(_aio.sleep(0))
-        # Drain the mount's strong-ref set; each task is in the same loop.
-        pending = [t for t in mount._BACKGROUND_TASKS if not t.done()]
-        if pending:
-            loop.run_until_complete(_aio.gather(*pending, return_exceptions=True))
-    finally:
-        loop.close()
-
-
 async def test_run_staging_action_force_sync_invokes_nas_sync_enqueue() -> None:
     """Force-sync routes to ``deps.nas_sync.enqueue`` with the run path."""
     nas_sync = _StubNasSync()
@@ -1779,62 +1680,10 @@ async def test_run_staging_action_clear_verified_invokes_clear(
     assert captured == [Path("EQ1/proj/Run_x")]
 
 
-# ---------------------------------------------------------------------------
-# _bulk_clear_verified: success / no config / error
-# ---------------------------------------------------------------------------
-
-
-async def test_bulk_clear_verified_clears_verified_rows(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The bulk action clears every ``synced`` row and toasts the count."""
-    cleared: list[Path] = []
-
-    def _summary(path: str, state: str) -> SimpleNamespace:
-        return SimpleNamespace(path=path, current_state=state)
-
-    monkeypatch.setattr(
-        mount,
-        "list_staged_runs",
-        lambda **_kw: [
-            _summary("/staging/EQ1/proj/Run_a", "synced"),
-            _summary("/staging/EQ1/proj/Run_b", "synced"),
-            _summary("/staging/EQ1/proj/Run_c", "syncing"),
-        ],
-    )
-    monkeypatch.setattr(mount, "clear_run_dir", lambda p: cleared.append(p) or (1, 10))
-    deps = _deps(config=_config())
-    ui = _UiSpy()
-    mount._bulk_clear_verified(deps, ui)
-    pending = [t for t in mount._BACKGROUND_TASKS if not t.done()]
-    for task in pending:
-        await task
-    # Only the two verified rows were cleared.
-    assert cleared == [Path("/staging/EQ1/proj/Run_a"), Path("/staging/EQ1/proj/Run_b")]
-
-
-def test_bulk_clear_verified_no_config_toasts_and_returns() -> None:
-    """The early-exit when config is missing produces a toast, no task."""
-    deps = _deps(config=None)
-    ui = _UiSpy()
-    mount._bulk_clear_verified(deps, ui)
-
-
-async def test_bulk_clear_verified_logs_helper_exception(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An exception from the clear sweep is caught + toasted."""
-
-    def _raise(**_kw: Any) -> list[Any]:
-        raise RuntimeError("staging walker exploded")
-
-    monkeypatch.setattr(mount, "list_staged_runs", _raise)
-    deps = _deps(config=_config())
-    ui = _UiSpy()
-    mount._bulk_clear_verified(deps, ui)
-    pending = [t for t in mount._BACKGROUND_TASKS if not t.done()]
-    for task in pending:
-        await task
+# NOTE: _bulk_clear_verified was removed with the footer "Clear verified runs"
+# button (its only caller) — orchestrator/staging hidden; see the design spec.
+# Per-run clear (the kept tree context-menu action) is still covered by
+# test_run_staging_action_clear_verified_invokes_clear above.
 
 
 # ---------------------------------------------------------------------------
@@ -2931,23 +2780,6 @@ def test_metadata_for_owned_equipment_no_match_returns_empty() -> None:
     assert mount._metadata_for_owned_equipment("EQ1", config) == {}
 
 
-async def test_bulk_clear_verified_no_verified_rows_toasts(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """With no SYNCED rows the sweep clears nothing and toasts 'none'."""
-    monkeypatch.setattr(
-        mount,
-        "list_staged_runs",
-        lambda **_kw: [SimpleNamespace(path="/staging/EQ1/Run_a", current_state="syncing")],
-    )
-    cleared: list[Any] = []
-    monkeypatch.setattr(mount, "clear_run_dir", lambda p: cleared.append(p) or (0, 0))
-    mount._bulk_clear_verified(_deps(config=_config()), _UiSpy())
-    for task in [t for t in mount._BACKGROUND_TASKS if not t.done()]:
-        await task
-    assert cleared == []  # syncing rows are never cleared
-
-
 async def test_toggle_keep_local_unresolvable_relative_path_toasts(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -3009,22 +2841,3 @@ def test_template_questions_map_swallows_outer_failure(
     with caplog.at_level("WARNING"):
         assert mount._template_questions_map(_deps(config=_config()), "project") == {}
     assert any("template question scan" in r.message for r in caplog.records)
-
-
-def test_build_staging_state_query_failure_returns_empty_rows(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    """A staging-query failure degrades to an empty dock, not a crash."""
-
-    def _raise(**_kw: Any) -> Any:
-        msg = "no staging root"
-        raise RuntimeError(msg)
-
-    # mount imports ``list_staged_runs`` into its own namespace, so patch there.
-    monkeypatch.setattr(mount, "list_staged_runs", _raise)
-    deps = _deps(config=_config(orchestrator_label="LAB", orchestrator_staging_root="/staging"))
-    with caplog.at_level("WARNING"):
-        state = mount._build_staging_state(deps)
-    assert state is not None
-    assert state.rows == []
-    assert any("staging_query failed" in r.message for r in caplog.records)

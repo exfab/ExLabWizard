@@ -352,7 +352,8 @@ def build_test_app() -> FastAPI:
             },
         }
 
-        del orchestrator  # accepted for callers; the redesign always renders staging surfaces
+        del orchestrator  # accepted for back-compat with existing test URLs; the
+        # operator UI no longer renders staging surfaces (orchestrator/staging hidden).
 
         # Phase 4 (Option B): resolve the ?file= selection against the seeded
         # feed via the production helper so the demo mirrors real behavior.
@@ -424,9 +425,6 @@ def build_test_app() -> FastAPI:
         def _on_run_staging_action(path: str, action: str) -> None:
             test_state.last_action = f"run.{action}:{path}"
 
-        def _on_clear_verified() -> None:
-            test_state.last_action = "clear_verified"
-
         def _on_tree_context_action(node_id: str, action: str) -> None:
             test_state.last_action = f"tree.{action}:{node_id}"
             ui.navigate.to(f"/settings?active=equipment&equipment_id={node_id}")
@@ -485,7 +483,6 @@ def build_test_app() -> FastAPI:
             on_navigate_breadcrumb=_on_select_node,
             on_toggle_right_pane=_on_toggle_right_pane,
             on_run_staging_action=_on_run_staging_action,
-            on_clear_verified=_on_clear_verified,
             on_tree_context_action=_on_tree_context_action,
             on_file_context_action=_on_file_context_action,
             on_select_file=_on_select_file,
