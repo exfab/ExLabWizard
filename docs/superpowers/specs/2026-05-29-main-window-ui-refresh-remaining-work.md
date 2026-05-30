@@ -31,15 +31,29 @@ metadata popover), **this doc wins** and the original spec must be reconciled
 | `f4a7149` | post-4 | Panes pinned to the viewport height with internal scroll |
 | `01edee7` | 5 | **Search wiring (OQ-2)** + shared **empty-state** placeholder + toolbar **group divider** |
 | `1bb3c8d` | 5 | **Live footer status segments** (Validator → WARNING on hard finding, LIMS → DANGER when unreachable) via a pure `derive_footer_segment_states` helper |
+| `a31b916` | 5 | **File-list density** toggle + **unified tree selection** (OQ-6) + **sync tooltips** + **sync-status legend** popover |
 
-Unit gate is green at the tip: `uv run ruff check` + `ruff format --check` +
-`mypy src` clean; `tests/unit/ui/` **614 passed**. The Phase-4 interaction was
-demo-verified live (Playwright MCP against the seeded e2e app on `:8099`):
-file/folder selection → sub-card, tombstone variant, per-folder refresh,
-status icons, viewport-height + internal scroll all confirmed. The Phase-5
-items above are **unit-verified only** — not yet visually walked through
-(the search box, empty states, toolbar divider, and footer colours want a
-live Playwright pass, folded into Phase 6 / §C).
+**Phase 5 is complete.** Unit gate is green at the tip: `uv run ruff check` +
+`ruff format --check` + `mypy src` clean; `tests/unit/ui/` **623 passed**. Every
+Phase-5 item was **live-verified via Playwright** (DOM inspection + screenshots)
+against the seeded e2e app on `:8099`, in addition to the Phase-4 verification:
+
+- Search filters the tree + result-count / no-matches pill (URL-seeded and
+  interactive typing → debounce → navigate).
+- Empty states (Files / metadata) render the icon + hint.
+- Toolbar divider separates creation vs utility actions.
+- Density toggle: compact row padding `4px` (--sp-1) vs comfortable `8px`
+  (--sp-2), horizontal padding preserved; toggle navigates `?density=`.
+- Tree selection: selected node computed `background #dceaff` + inset `3px
+  #1b75bc` bar — matches the file-row selection, selected node only.
+- Sync tooltips: run icons carry "Data on local disk" / "Cleared -- data on
+  NAS only".
+- Legend popover: "?" lists all 10 sync states + icons + meanings.
+
+Footer WARNING/DANGER colours are unit-verified only (the e2e harness has no
+backend signals, so it renders NORMAL; the derivation fires in production).
+Remaining work is **Phase 6** (formal e2e suite + final screenshot pass, §C)
+and **cleanup** (§D).
 
 ---
 
@@ -124,30 +138,24 @@ pending:
       Equipment) and the utility actions (Operations / Refresh / Settings);
       every button's order + testid unchanged.
 
-**Remaining** (the visual / theme-CSS items — verify live before/after):
+**Done this session** (`a31b916`) — all live-verified:
 
-- [ ] **File-list density (`?density=compact`)** — *split out of the toolbar
-      item.* `?density=` is threaded onto `MainPageState` but inert. Needs: a
-      pure `density_class` helper; a `card_classes` param on `framed_pane`; a
-      scoped `.exlab-density-compact td { padding-top/bottom: --sp-1 }` rule
-      registered via the theme; and a compact/comfortable toggle control in the
-      Files header (+ `on_toggle_density` through `mount._main` + the e2e
-      handler). Low CSS blast-radius (opt-in class) but touches theme
-      injection, so verify live. **Open UX question: a header toggle vs
-      URL-only — decide before building the control.**
-- [ ] **Unified selection (OQ-6)** — `components/tree.py` + `theme.py`. Give
-      the selected **tree** node the same `--color-row-selected` fill + 3px
-      `--color-row-selected-bar` left bar as file rows (file rows already do
-      this via `row_background`, which now carries literal fallbacks). Comment
-      the Quasar-class (`.q-tree__node--selected`) dependency. Needs a live
-      pass — unit tests can only assert the CSS string is registered, not that
-      the Quasar selector actually wins.
-- [ ] **Sync tooltips + legend** — `tree.py`, `file_list.py`, `main.py`. Tree
-      header-slot `<img>` gets a `:title` from the node's sync status; the
-      file-list Status cell already routes through `sync_status_icon`
-      (Phase 4) so it carries the icon tooltip — add a "?" legend popover in
-      the Files header (next to the count + refresh) listing each state's icon
-      + meaning sourced from `_STATUS_TO_PROPS` (single source of truth).
+- [x] **File-list density (`?density=compact`)** — pure `density_card_class`;
+      `framed_pane` `card_classes` param; scoped `.exlab-density-compact td`
+      theme rule (--sp-1 vs --sp-2); a compact/comfortable **header toggle**
+      (decided: header toggle, not URL-only) wired through `mount._main` + the
+      e2e handler. Verified: 4px vs 8px row padding, toggle navigates.
+- [x] **Unified selection (OQ-6)** — `build_tree` seeds Quasar's
+      `v-model:selected` from `?selected=` (via `tree._props["selected"]`, so
+      ids with spaces/slashes survive); a `.q-tree__node-header.q-tree__node--selected`
+      theme rule gives the fill + 3px bar. Verified: computed `#dceaff` + inset
+      `#1b75bc` on the selected node only.
+- [x] **Sync tooltips + legend** — tree header-slot `<img>` gets a friendly
+      `:title` (`sync_title`: local vs cleared); a "?" legend popover in the
+      Files header lists every state's icon + meaning via
+      `sync_status_icon.sync_legend_entries()` (`_STATUS_TO_PROPS`, single
+      source of truth). The file-list Status cell already carried the Phase-4
+      icon tooltip.
 
 **Tests (Phase 5):** `test_status_bar_segment.py` (derivation helper);
 `test_main_page`/`test_pages.py` (search wiring → `TreeFilters.search`, result
