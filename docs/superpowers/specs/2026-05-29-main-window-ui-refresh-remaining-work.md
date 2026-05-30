@@ -99,14 +99,16 @@ source).
 
 ---
 
-## A. Spec reconciliation (do first)
+## A. Spec reconciliation ✅ DONE
 
-- [ ] Amend the design spec for the **popover** layout (§4.4/§5) and the
-      **`register_theme` wired** fact (§3.2). Keep the approved mockups but
-      annotate that the metadata region is now an overlay.
-- [ ] Decide & record: is the popover **the** direction, or a toggle between
-      docked/popover? (Current code is popover-only.) This decision gates how
-      much of Phase 5's metadata-pane polish applies.
+- [x] Amended `2026-05-29-main-window-ui-refresh-design.md`: a reconciliation
+      banner up top + inline "shipped divergence" notes at §3.2 (`register_theme`
+      wired app-wide), §4.1 (metadata is a floating popover, not a docked card),
+      §4.4 (only the container changed; the sub-card logic is as built), and §5
+      (rationale for the popover). The mockups are kept; the metadata region is
+      annotated as an overlay.
+- [x] Decided & recorded: the popover is **the** direction (popover-only, no
+      docked/popover toggle) — operator-directed during the Phase-4 demo.
 
 ---
 
@@ -230,20 +232,18 @@ Delivered:
 
 ## D. Cleanup / tech-debt
 
-- [ ] **Thin redundant literal fallbacks (optional).** Now that
-      `register_theme` is wired, the scattered `var(--x, #literal)` fallbacks
-      in `framed_pane.py`, `file_list.row_background`, `main.py` toggle, and the
-      footer are a safety net rather than the only source. Either keep them
-      (defensive, since `register_theme` could be skipped in a headless/cron
-      render) and document that, or remove them in a focused pass. **Decide and
-      record; do not silently leave both.**
-- [ ] **Scratch artifacts.** Delete the demo PNGs in the repo root
-      (`phase4-*.png`), the `.playwright-mcp/` snapshots, and the throwaway
-      uvicorn server on `:8099`. Delete `RESUME.md` before merge (it is a
-      working note, intentionally uncommitted).
-- [ ] **Confirm `register_theme` has no double-injection.** It is called once
-      from `mount_ui` with `shared=True`; verify no per-page duplicate creeps
-      in during Phase 5.
+- [x] **Literal fallbacks — decided: KEEP.** The scattered `var(--x, #literal)`
+      fallbacks stay as a deliberate defensive net: `register_theme` can be
+      skipped in a headless/cron render (and was, in fact, never injected at
+      all before the post-Phase-4 fix), so a bare `var(--x)` would resolve to
+      empty and drop the declaration. Documented here rather than thinned.
+- [x] **Scratch artifacts deleted.** `RESUME.md`, the `phase4/5/6-*.png` demo
+      PNGs, and `.playwright-mcp/` removed; the throwaway `:8099` uvicorn server
+      stopped. (All were untracked/gitignored — no commit needed for their
+      removal.)
+- [x] **No `register_theme` double-injection.** Confirmed it is called exactly
+      once per app — `mount_ui` (production) and `_test_app` (e2e), both
+      `shared=True`; no per-page duplicate.
 
 ---
 

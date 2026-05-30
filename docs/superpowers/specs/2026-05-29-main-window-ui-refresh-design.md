@@ -1,7 +1,7 @@
 # Main-window UI refresh — Design Spec
 
 **Date:** 2026-05-29
-**Status:** Approved for planning
+**Status:** Approved → **implemented (Phases 0–6, branch `feature/gui-imrprovement-v2`)**, with two shipped divergences recorded below.
 **Scope:** Visual + interaction refresh of the main window (`/main`). Frame the
 three content panes as elevated, titled cards; add Excel-style zebra striping to
 the centre file list with a defined row-state precedence; extend the right
@@ -13,6 +13,22 @@ values flow through the existing design-token system; no hard-coded literals.
 
 **Mockups:** `2026-05-29-main-window-ui-refresh-mockups/` (standalone HTML;
 colors there are placeholders — the tokens in §3 are authoritative).
+
+> **Reconciliation (2026-05-30) — partially superseded.** Phases 0–6 shipped.
+> Two deliberate, operator-directed changes during the Phase-4 demo now diverge
+> from this spec and are the **approved** behaviour; where they disagree, this
+> spec defers to
+> [`…-remaining-work.md`](2026-05-29-main-window-ui-refresh-remaining-work.md) §2:
+>
+> 1. **Metadata is a floating popover, not a docked card.** It renders as an
+>    absolute overlay over the right ~40% of the Files pane, toggled by the
+>    vertical "Metadata" tab on its left edge (still via `right_pane`). The
+>    selection → sub-card *logic* (§4.4) is unchanged — only the container moved
+>    from a docked column to an overlay. (Amends §4.1 / §4.4 / §5.)
+> 2. **`register_theme` is wired app-wide.** The `:root` token block is now
+>    injected on every page (`ui.add_head_html(…, shared=True)` from `mount_ui`),
+>    so the §3.2 tokens resolve live everywhere — the inline `var(--x, #literal)`
+>    fallbacks are a safety net, not the only source. (Amends §3.2 / §7.)
 
 ---
 
@@ -125,6 +141,14 @@ because the zebra/selection work depends on a correct row-background layer.
 *(Verification note for planning: grep for any other `var(--…)` not present in
 `build_root_css` before implementing, and fold any stragglers in here.)*
 
+**Shipped (2026-05-30):** all three vars are emitted, **and** `register_theme`
+is now actually injected app-wide (`ui.add_head_html(…, shared=True)` from
+`mount_ui`) — it had previously only ever been called by a unit test, so every
+`var(--…)` reference resolved to its inline literal fallback (or to empty where
+a component had none). The tokens are now live on every page; the scattered
+fallbacks remain as a defensive net for a headless/cron render that skips the
+injection.
+
 ---
 
 ## 4. Design
@@ -166,6 +190,16 @@ Applied in `render_file_explorer_page`:
 The vertical collapse tab between the centre and metadata panes
 (`main.py:310-364`) is unchanged in behaviour; it already paints its own raised
 surface and sits *between* the cards.
+
+> **Shipped divergence (2026-05-30):** the metadata region is **not** a docked
+> card in the splitter. It floats as an absolute overlay popover over the right
+> ~40% of the Files pane (`position:absolute; top:0; right:0; width:40%;
+> z-index` above the Files card, with a strong left shadow so it reads as
+> raised). The vertical collapse tab became the **"Metadata" tab** on the
+> popover's left edge that opens/closes it via `right_pane` (open → raised panel
+> over Files; closed → full-width file list, tab parked at the right edge). The
+> Explorer + Files cards and the footer card are exactly as described above;
+> only the metadata container changed. See remaining-work §2.
 
 ### 4.2 File list: zebra + row-state precedence — `components/file_list.py`
 
@@ -271,6 +305,12 @@ appended *after* the node-kind content, within the same `metadata-pane` column.
   a file can only be selected inside a selected run's folder, so the run context
   is normally present.)
 - No change to the Problems tab.
+
+> **Shipped (2026-05-30):** the selection → sub-card logic above is exactly as
+> built (`metadata-selected-file` / `metadata-selected-folder`, appended beneath
+> the node content). Only its *container* differs — the `metadata-pane` column
+> renders inside the floating popover (§4.1 divergence note), not a docked
+> column.
 
 ### 4.5 Unified selection styling + sync tooltips/legend
 
@@ -438,6 +478,14 @@ On top of that, the input gains:
 - **Token-first ordering** means the framing/zebra/selection layers all reference
   variables that exist before any component consumes them, and the §3.2 fix
   removes three pieces of dead styling in the same pass.
+- **Why the metadata pane became a popover (shipped divergence):** during the
+  Phase-4 demo the operator preferred reclaiming the full Files width by default
+  and surfacing metadata as a raised overlay on demand, rather than a permanently
+  docked third column. The popover keeps the URL/`right_pane` toggle model and
+  the Option-B sub-card logic intact — only the container is an absolute overlay
+  — so the change is presentation-only. Recorded as the approved layout in
+  remaining-work §2; the original docked-card framing in §4.1 is retained above
+  for history.
 
 ---
 
