@@ -584,16 +584,21 @@ def render_file_explorer_page(
 def _render_sync_legend() -> None:  # pragma: no cover -- NiceGUI render, driven by e2e
     """Render the Files-header sync-status legend ("?") popover.
 
-    Lists each sync state's icon + meaning, sourced from
-    :func:`sync_status_icon.sync_legend_entries` (which reads ``_STATUS_TO_PROPS``,
-    the single source of truth) so the legend can't drift from the icons the
-    file list / metadata pane actually render.
+    Lists each visible sync view as a real two-icon (local + NAS) swatch +
+    its meaning, sourced from
+    :func:`sync_status_icon.sync_legend_entries` so the legend renders the
+    same icon pairs the file list / metadata pane actually draw and can't
+    drift from them.
     """
     try:
         from nicegui import ui
     except Exception:
         return
-    from exlab_wizard.ui.components.sync_status_icon import sync_legend_entries
+    from exlab_wizard.ui.components.sync_status_icon import (
+        FileSyncView,
+        sync_legend_entries,
+        sync_pair_icons,
+    )
 
     with (
         ui.button(icon="help_outline")
@@ -615,9 +620,7 @@ def _render_sync_legend() -> None:  # pragma: no cover -- NiceGUI render, driven
                     "gap: var(--sp-2, 0.5rem); padding: var(--sp-1) var(--sp-3); flex-wrap: nowrap;"
                 )
             ):
-                ui.icon(entry["icon_name"]).style(
-                    f"color: var({entry['color_var']}); font-size: 1rem;"
-                )
+                sync_pair_icons(FileSyncView(entry["view"]))
                 ui.label(entry["tooltip"]).style("font-size: var(--text-sm); white-space: nowrap;")
 
 

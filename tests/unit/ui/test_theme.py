@@ -119,6 +119,21 @@ def test_root_css_contains_semantic_aliases() -> None:
     assert "--color-danger" in css
 
 
+def test_root_css_emits_sync_tokens() -> None:
+    """The two-icon sync-presence tokens are emitted into the :root block."""
+
+    css = theme.build_root_css()
+    for var in (
+        "--color-sync-local",
+        "--color-sync-cached",
+        "--color-sync-safe",
+        "--color-sync-absent",
+        "--color-sync-problem",
+        "--color-sync-held",
+    ):
+        assert var in css, f"{var} missing from :root block"
+
+
 def test_root_css_contains_typography_tokens() -> None:
     css = theme.build_root_css()
     assert "IBM Plex Sans" in css

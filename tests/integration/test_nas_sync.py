@@ -202,10 +202,20 @@ async def test_full_happy_path_via_stub_rclone(
         # the post-cleanup status is ``"cleaned"``; ``"synced"`` is the
         # transient state set by ``_mark_synced`` before cleanup runs.
         # Both are valid happy-path outcomes; cleanup may have already
-        # fired by the time we read the file.
+        # fired by the time we read the file. The status is stamped by a
+        # separate async step that lags the queue-row transition, so poll
+        # the file rather than reading it the instant the row goes terminal
+        # -- a loaded runner otherwise observes the pre-stamp ``pending``.
         creation_path = run_dir / CACHE_DIR_NAME / CREATION_JSON_NAME
-        decoded = msgspec_json.decode(creation_path.read_bytes(), type=CreationJson)
-        assert decoded.sync_status in {"synced", "cleaned"}
+
+        async def _synced_or_cleaned() -> bool:
+            decoded = msgspec_json.decode(creation_path.read_bytes(), type=CreationJson)
+            return decoded.sync_status in {"synced", "cleaned"}
+
+        await wait_until(
+            _synced_or_cleaned,
+            message="creation.json sync_status never became 'synced'/'cleaned'",
+        )
     finally:
         await client.close()
 

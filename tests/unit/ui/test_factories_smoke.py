@@ -79,18 +79,27 @@ def test_smoke_override_badge_renders_with_callback() -> None:
 
 
 def test_smoke_sync_status_icon_renders_each_state() -> None:
+    # Two-icon sync-presence (2026-05-30): each file renders a local+NAS pair;
+    # runs/folders render a single rollup icon. Both no-op safely per view.
     for status in (
         "pending",
         "synced",
         "failed",
         "blocked_by_validation",
-        "override_active",
+        "on_nas",
+        "missing",
     ):
+        view = sync_status_icon.file_sync_view(status)
         with _slot():
-            out = sync_status_icon.sync_status_icon(status)
+            out = sync_status_icon.sync_pair_icons(view)
         assert out is not None
+        with _slot():
+            out = sync_status_icon.sync_rollup_icon(view)
+        assert out is not None
+    # The NONE view (unknown / None status) still renders a placeholder span.
+    none_view = sync_status_icon.file_sync_view("nope")
     with _slot():
-        out = sync_status_icon.sync_status_icon("retrying", retry_n=1, retry_m=3)
+        out = sync_status_icon.sync_pair_icons(none_view)
     assert out is not None
 
 

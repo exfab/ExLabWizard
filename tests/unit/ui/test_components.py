@@ -9,8 +9,6 @@ active.
 
 from __future__ import annotations
 
-import pytest
-
 from exlab_wizard.constants import TreeProjectStatus
 from exlab_wizard.ui.components import (
     bandwidth_schedule_editor,
@@ -97,99 +95,115 @@ def test_override_badge_inactive_uses_muted() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_sync_status_pending_uses_muted() -> None:
-    props = sync_status_icon.sync_status_props("pending")
-    assert props["color_var"] == "--color-muted"
-    assert props["icon_name"] == "schedule"
+def test_file_sync_view_maps_backend_discriminators() -> None:
+    """The backend discriminator string collapses to the right view (two-icon
+    sync-presence design, 2026-05-30)."""
+
+    fsv = sync_status_icon.file_sync_view
+    FileSyncView = sync_status_icon.FileSyncView
+    assert fsv("synced") is FileSyncView.SYNCED
+    assert fsv("syncing") is FileSyncView.LOCAL_ONLY
+    assert fsv("acquiring") is FileSyncView.LOCAL_ONLY
+    assert fsv("on_nas") is FileSyncView.ON_NAS
+    assert fsv("cleaned") is FileSyncView.ON_NAS
+    assert fsv("cleared") is FileSyncView.ON_NAS
+    assert fsv("failed") is FileSyncView.UPLOAD_FAILED
+    assert fsv("upload_failed") is FileSyncView.UPLOAD_FAILED
+    assert fsv("blocked") is FileSyncView.BLOCKED
+    assert fsv("blocked_by_validation") is FileSyncView.BLOCKED
+    assert fsv("missing") is FileSyncView.MISSING
 
 
-def test_sync_status_synced_uses_success() -> None:
-    props = sync_status_icon.sync_status_props("synced")
-    assert props["color_var"] == "--color-success"
+def test_file_sync_view_unknown_and_none_map_to_none_view() -> None:
+    assert sync_status_icon.file_sync_view("invalid") is sync_status_icon.FileSyncView.NONE
+    assert sync_status_icon.file_sync_view(None) is sync_status_icon.FileSyncView.NONE
+    assert sync_status_icon.file_sync_view("") is sync_status_icon.FileSyncView.NONE
 
 
-def test_sync_status_failed_uses_danger() -> None:
-    props = sync_status_icon.sync_status_props("failed")
-    assert props["color_var"] == "--color-danger"
+def test_sync_pair_props_local_only_blue_local_gray_nas() -> None:
+    """LOCAL_ONLY: present locally (blue), not yet on the NAS (faded gray)."""
+
+    p = sync_status_icon.sync_pair_props(sync_status_icon.FileSyncView.LOCAL_ONLY)
+    assert p["local"]["bg_var"] == "--color-sync-local"
+    assert p["nas"]["bg_var"] == "--color-sync-absent"
+    assert p["nas"]["faded"] is True
 
 
-def test_sync_status_blocked_uses_warning() -> None:
-    """Blocked-by-validation maps to warning per Frontend §2.1.4."""
-
-    props = sync_status_icon.sync_status_props("blocked_by_validation")
-    assert props["color_var"] == "--color-warning"
-
-
-def test_sync_status_override_uses_info() -> None:
-    props = sync_status_icon.sync_status_props("override_active")
-    assert props["color_var"] == "--color-info"
+def test_sync_pair_props_synced_cached_local_safe_nas() -> None:
+    p = sync_status_icon.sync_pair_props(sync_status_icon.FileSyncView.SYNCED)
+    assert p["local"]["bg_var"] == "--color-sync-cached"
+    assert p["nas"]["bg_var"] == "--color-sync-safe"
 
 
-def test_sync_status_cleaned_uses_success_with_cloud_icon() -> None:
-    """Cleaned status (post-cleanup) reuses the success color with a cloud glyph."""
-
-    props = sync_status_icon.sync_status_props("cleaned")
-    assert props["color_var"] == "--color-success"
-    assert props["icon_name"] == "cloud_done"
+def test_sync_pair_props_on_nas_gray_local_safe_nas() -> None:
+    p = sync_status_icon.sync_pair_props(sync_status_icon.FileSyncView.ON_NAS)
+    assert p["local"]["bg_var"] == "--color-sync-absent"
+    assert p["nas"]["bg_var"] == "--color-sync-safe"
 
 
-def test_sync_status_acquiring_uses_muted() -> None:
-    """``acquiring`` (new file, still settling) uses the muted token."""
+def test_sync_pair_props_upload_failed_red_nas_with_badge() -> None:
+    """A failed upload paints the NAS cell red with an ``✕`` badge."""
 
-    props = sync_status_icon.sync_status_props("acquiring")
-    assert props["color_var"] == "--color-muted"
-    assert props["status"] == "acquiring"
-    assert props["icon_name"]
-
-
-def test_sync_status_syncing_uses_info() -> None:
-    """``syncing`` (settled, transferring) uses the info token."""
-
-    props = sync_status_icon.sync_status_props("syncing")
-    assert props["color_var"] == "--color-info"
-    assert props["status"] == "syncing"
-    assert props["icon_name"]
+    p = sync_status_icon.sync_pair_props(sync_status_icon.FileSyncView.UPLOAD_FAILED)
+    assert p["local"]["bg_var"] == "--color-sync-local"
+    assert p["nas"]["bg_var"] == "--color-sync-problem"
+    assert p["nas"]["badge"] == "✕"
 
 
-def test_sync_status_on_nas_uses_muted_cloud() -> None:
-    """``on_nas`` (tombstone, local copy cleared) uses a muted cloud glyph."""
+def test_sync_pair_props_blocked_amber_nas_with_badge() -> None:
+    """A held (blocked-by-validation) upload paints the NAS cell amber + ``!``."""
 
-    props = sync_status_icon.sync_status_props("on_nas")
-    assert props["color_var"] == "--color-muted"
-    assert props["status"] == "on_nas"
-    assert props["icon_name"] == "cloud"
-
-
-def test_sync_status_retrying_with_counter() -> None:
-    """Retry counter renders as ``(N/M)`` (Frontend §10.5.1)."""
-
-    props = sync_status_icon.sync_status_props("retrying", retry_n=2, retry_m=5)
-    assert props["color_var"] == "--color-info"
-    assert props["retry_label"] == "(2/5)"
+    p = sync_status_icon.sync_pair_props(sync_status_icon.FileSyncView.BLOCKED)
+    assert p["nas"]["bg_var"] == "--color-sync-held"
+    assert p["nas"]["badge"] == "!"
 
 
-def test_sync_status_unknown_raises() -> None:
-    """Unknown status values raise."""
+def test_sync_pair_props_missing_red_both_with_badges() -> None:
+    p = sync_status_icon.sync_pair_props(sync_status_icon.FileSyncView.MISSING)
+    assert p["local"]["bg_var"] == "--color-sync-problem"
+    assert p["nas"]["bg_var"] == "--color-sync-problem"
+    assert p["local"]["badge"] == "✕" and p["nas"]["badge"] == "✕"
 
-    with pytest.raises(ValueError):
-        sync_status_icon.sync_status_props("invalid")
+
+def test_sync_pair_props_none_view_returns_none() -> None:
+    """The NONE view renders nothing (no pair props)."""
+
+    assert sync_status_icon.sync_pair_props(sync_status_icon.FileSyncView.NONE) is None
 
 
-def test_sync_legend_entries_cover_every_state() -> None:
-    """The legend lists one row per known state, each with icon + meaning,
-    sourced from _STATUS_TO_PROPS (single source of truth, Phase 5)."""
+def test_sync_rollup_icon_props_safe_local_problem() -> None:
+    """The single rollup icon: green NAS for safe, blue local while not synced,
+    red NAS + badge for a problem."""
+
+    safe = sync_status_icon.sync_rollup_icon_props(sync_status_icon.FileSyncView.SYNCED)
+    assert safe["svg"] == sync_status_icon.SYNC_NAS_SVG
+    assert safe["bg_var"] == "--color-sync-safe"
+    local = sync_status_icon.sync_rollup_icon_props(sync_status_icon.FileSyncView.LOCAL_ONLY)
+    assert local["svg"] == sync_status_icon.SYNC_LOCAL_SVG
+    assert local["bg_var"] == "--color-sync-local"
+    problem = sync_status_icon.sync_rollup_icon_props(sync_status_icon.FileSyncView.UPLOAD_FAILED)
+    assert problem["bg_var"] == "--color-sync-problem"
+    assert problem["badge"] == "✕"
+
+
+def test_sync_rollup_icon_props_none_view_returns_none() -> None:
+    assert sync_status_icon.sync_rollup_icon_props(sync_status_icon.FileSyncView.NONE) is None
+
+
+def test_sync_legend_entries_cover_every_visible_view() -> None:
+    """The legend lists one row per visible (non-NONE) view, each carrying the
+    view value the swatch renderer rehydrates + a human tooltip."""
 
     entries = sync_status_icon.sync_legend_entries()
-    # One row per documented state; each carries the keys the legend renders.
-    assert len(entries) == len(sync_status_icon._STATUS_TO_PROPS)
+    assert entries
+    views = {e["view"] for e in entries}
+    assert sync_status_icon.FileSyncView.NONE.value not in views
     for entry in entries:
-        assert entry["status"]
-        assert entry["icon_name"]
-        assert entry["color_var"].startswith("--color-")
+        # ``view`` rehydrates to a real (non-NONE) FileSyncView.
+        assert (
+            sync_status_icon.FileSyncView(entry["view"]) is not sync_status_icon.FileSyncView.NONE
+        )
         assert entry["tooltip"]
-    # The mapping agrees with sync_status_props for a known state.
-    synced = next(e for e in entries if e["status"] == "synced")
-    assert synced["icon_name"] == "check_circle"
 
 
 # ---------------------------------------------------------------------------
@@ -817,12 +831,9 @@ def test_tree_run_node_propagates_sync_status() -> None:
     assert nodes[0].children[0].children[0].sync_status == "cleaned"
 
 
-def test_to_nicegui_nodes_cleared_run_uses_cloud_icon() -> None:
-    """A ``cleared`` run row carries the cloud-icon URL and its sync_status.
-
-    Operator-free per-file NAS sync design (2026-05-21): the run rollup
-    is a :class:`RunSyncState` value; the cloud icon keys off ``cleared``.
-    """
+def test_to_nicegui_nodes_cleared_run_uses_nas_icon() -> None:
+    """A ``cleared`` run rolls up (via file_sync_view) to ON_NAS: the green NAS
+    rollup icon (two-icon sync-presence design, 2026-05-30)."""
 
     equipment = tree.EquipmentNode(equipment_id="CONFOCAL_01")
     project = tree.ProjectNode(short_id="PROJ-1", name="Cortex Q3")
@@ -838,12 +849,16 @@ def test_to_nicegui_nodes_cleared_run_uses_cloud_icon() -> None:
         )
     )
     run_dict = payload[0]["children"][0]["children"][0]
-    assert run_dict["sync_icon"] == tree.SYNC_ICON_CLOUD_URL
-    assert run_dict["sync_status"] == "cleared"
+    assert run_dict["sync_icon"] == tree.SYNC_ICON_NAS_URL
+    assert run_dict["sync_bg"] == "--color-sync-safe"
+    assert run_dict["sync_status"] == sync_status_icon.FileSyncView.ON_NAS.value
 
 
 def test_to_nicegui_nodes_local_run_uses_local_icon() -> None:
-    """Any non-``cleaned`` sync status (or unset) maps to the local-icon URL."""
+    """A still-local run (pending / syncing) gets the blue local rollup icon.
+
+    An unrecognised / unset status maps to NONE -> no sync icon is emitted.
+    """
 
     equipment = tree.EquipmentNode(equipment_id="CONFOCAL_01")
     project = tree.ProjectNode(short_id="PROJ-1", name="Cortex Q3")
@@ -865,7 +880,31 @@ def test_to_nicegui_nodes_local_run_uses_local_icon() -> None:
     )
     run_dicts = payload[0]["children"][0]["children"]
     assert run_dicts[0]["sync_icon"] == tree.SYNC_ICON_LOCAL_URL
-    assert run_dicts[1]["sync_icon"] == tree.SYNC_ICON_LOCAL_URL
+    assert run_dicts[0]["sync_bg"] == "--color-sync-local"
+    # A None / unknown status -> NONE view -> rollup props is None -> no icon.
+    assert "sync_icon" not in run_dicts[1]
+
+
+def test_to_nicegui_nodes_failed_run_carries_problem_badge() -> None:
+    """A failed run rolls up to the red NAS rollup icon + ``✕`` badge."""
+
+    equipment = tree.EquipmentNode(equipment_id="CONFOCAL_01")
+    project = tree.ProjectNode(short_id="PROJ-1", name="Cortex Q3")
+    run = tree.RunNode(
+        directory_name="Run_2026-05-07",
+        run_kind="experimental",
+        sync_status="failed",
+    )
+    payload = tree.to_nicegui_nodes(
+        tree.build_nodes(
+            hierarchy={equipment: {project: [run]}},
+            filters=tree.TreeFilters(),
+        )
+    )
+    run_dict = payload[0]["children"][0]["children"][0]
+    assert run_dict["sync_icon"] == tree.SYNC_ICON_NAS_URL
+    assert run_dict["sync_bg"] == "--color-sync-problem"
+    assert run_dict["sync_badge"] == "✕"
 
 
 def test_to_nicegui_nodes_equipment_and_project_have_no_sync_icon() -> None:
@@ -873,7 +912,9 @@ def test_to_nicegui_nodes_equipment_and_project_have_no_sync_icon() -> None:
 
     equipment = tree.EquipmentNode(equipment_id="CONFOCAL_01")
     project = tree.ProjectNode(short_id="PROJ-1", name="Cortex Q3")
-    run = tree.RunNode(directory_name="Run_2026-05-07", run_kind="experimental")
+    run = tree.RunNode(
+        directory_name="Run_2026-05-07", run_kind="experimental", sync_status="synced"
+    )
     payload = tree.to_nicegui_nodes(
         tree.build_nodes(
             hierarchy={equipment: {project: [run]}},
@@ -887,8 +928,7 @@ def test_to_nicegui_nodes_equipment_and_project_have_no_sync_icon() -> None:
 
 def test_to_nicegui_nodes_carries_sync_title() -> None:
     """Run rows carry a friendly ``sync_title`` hover tooltip mirroring the
-    icon: cleared -> "on NAS only", anything else -> "data on local disk"
-    (Phase 5 sync tooltips)."""
+    rollup icon's meaning (two-icon sync-presence design, 2026-05-30)."""
 
     equipment = tree.EquipmentNode(equipment_id="CONFOCAL_01")
     project = tree.ProjectNode(short_id="PROJ-1", name="Cortex Q3")
@@ -896,7 +936,7 @@ def test_to_nicegui_nodes_carries_sync_title() -> None:
         directory_name="Run_2026-05-06", run_kind="experimental", sync_status="cleared"
     )
     local = tree.RunNode(
-        directory_name="Run_2026-05-07", run_kind="experimental", sync_status="synced"
+        directory_name="Run_2026-05-07", run_kind="experimental", sync_status="syncing"
     )
     payload = tree.to_nicegui_nodes(
         tree.build_nodes(
@@ -905,7 +945,9 @@ def test_to_nicegui_nodes_carries_sync_title() -> None:
         )
     )
     run_dicts = payload[0]["children"][0]["children"]
+    # cleared -> ON_NAS rollup: "Fully backed up on the NAS".
     assert "NAS" in run_dicts[0]["sync_title"]
+    # syncing -> LOCAL_ONLY rollup: "Not fully synced -- local files remain".
     assert "local" in run_dicts[1]["sync_title"].lower()
 
 
@@ -1037,7 +1079,7 @@ def test_factories_smoke_outside_nicegui() -> None:
     assert mode_badge.mode_badge("experimental") is not None
     assert test_run_badge.test_run_badge() is not None
     assert override_badge.override_badge(active=True) is not None
-    assert sync_status_icon.sync_status_icon("synced") is not None
+    assert sync_status_icon.sync_pair_icons(sync_status_icon.file_sync_view("synced")) is not None
 
     # Component factories that return rich payloads:
     assert session_progress.session_progress(active_phase=None) is not None

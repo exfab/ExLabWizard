@@ -173,16 +173,21 @@ def _seeded_metadata_payload(node_id: str | None, node_kind: str | None) -> dict
     return {}
 
 
-# Default synthetic file-list feed. Operator-free per-file NAS sync
-# design (2026-05-21): the rows exercise the five per-file display
-# states -- a synced+kept-local file, an acquiring file, a syncing
-# file, and an "On NAS" tombstone (cleared run, no local copy). Each
+# Default synthetic file-list feed. Two-icon sync-presence design
+# (2026-05-30): the rows exercise every per-file display state --
+# a synced+kept-local file, an acquiring file, a syncing file, an
+# "On NAS" tombstone (cleared run, no local copy), a "missing" lost
+# file (tracked, gone locally, never verified), an upload-failed
+# file (problem/red NAS), and a blocked file (held/amber NAS). Each
 # tuple is (name, size|None, sync_status, keep_local, tombstone).
 _DEFAULT_FEED_ROWS: list[tuple[str, int | None, str | None, bool, bool]] = [
     ("scan.tif", 1024, "synced", True, False),
     ("metadata.json", 256, "acquiring", False, False),
     ("frames.raw", 4096, "syncing", False, False),
     ("archived.tif", None, "on_nas", False, True),
+    ("lost.tif", None, "missing", False, True),
+    ("stuck.raw", 2048, "upload_failed", False, False),
+    ("held.json", 512, "blocked", False, False),
 ]
 
 
@@ -244,7 +249,7 @@ def build_test_app() -> FastAPI:
     app.state.test_state = test_state
 
     # Mount the project's ``assets/`` directory at ``/assets`` so the
-    # tree component's sync-icon SVGs (sync_local.svg / sync_cloud.svg)
+    # tree component's sync-icon SVGs (sync_local.svg / sync_nas.svg)
     # resolve under e2e tests. Idempotent.
     register_static_assets()
     # Inject the :root design-token block app-wide so the demo mirrors
@@ -328,15 +333,38 @@ def build_test_app() -> FastAPI:
         hierarchy: dict[Any, Any] = {
             tree_component.EquipmentNode("TEST_EQ1", relay=False): {
                 tree_component.ProjectNode("LIMS-001", "Demo Project"): [
-                    tree_component.RunNode("Run_2026-05-07", "experimental", "Demo run"),
+                    # Two-icon sync-presence design (2026-05-30): the run
+                    # rollup icon now comes from file_sync_view(sync_status)
+                    # -> sync_rollup_icon_props(view). ``None`` renders NO
+                    # icon, so each run below carries an explicit status that
+                    # exercises a distinct rollup state:
+                    #   syncing -> LOCAL_ONLY  -> sync_local.svg (blue)
+                    #   cleared -> ON_NAS      -> sync_nas.svg   (green)
+                    #   upload_failed          -> sync_nas.svg   (red,  ✕)
+                    #   blocked                -> sync_nas.svg   (amber, !)
+                    tree_component.RunNode(
+                        directory_name="Run_2026-05-07",
+                        run_kind="experimental",
+                        label="Demo run",
+                        sync_status="syncing",
+                    ),
                     tree_component.RunNode(
                         directory_name="Run_2026-05-06",
                         run_kind="experimental",
                         label="Cleared run",
-                        # Operator-free per-file NAS sync design
-                        # (2026-05-21): the run rollup is a RunSyncState
-                        # value; ``cleared`` drives the cloud icon.
                         sync_status="cleared",
+                    ),
+                    tree_component.RunNode(
+                        directory_name="Run_2026-05-05",
+                        run_kind="experimental",
+                        label="Failed run",
+                        sync_status="upload_failed",
+                    ),
+                    tree_component.RunNode(
+                        directory_name="Run_2026-05-04",
+                        run_kind="experimental",
+                        label="Blocked run",
+                        sync_status="blocked",
                     ),
                     tree_component.RunNode("TestRun_2026-05-07", "test", "Test run"),
                 ],

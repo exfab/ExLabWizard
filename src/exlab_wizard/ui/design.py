@@ -60,6 +60,17 @@ COLOR_INFO: str = OI_SKY
 COLOR_WARNING: str = OI_ORANGE
 COLOR_DANGER: str = OI_VERMILION
 
+# Sync-status icon tokens -- two-icon presence model (2026-05-30).
+# Intent-first aliases so component CSS reads e.g. var(--color-sync-safe)
+# over a bare green. Colour language: blue = here, green = safe on NAS,
+# gray = absent, red = problem, amber = held.
+COLOR_SYNC_LOCAL: str = COLOR_BLUE  # present locally
+COLOR_SYNC_CACHED: str = COLOR_ROW_SELECTED  # present, also on NAS (cache)
+COLOR_SYNC_SAFE: str = COLOR_SUCCESS  # safe on NAS
+COLOR_SYNC_ABSENT: str = COLOR_RULE  # absent, and that's fine
+COLOR_SYNC_PROBLEM: str = COLOR_DANGER  # problem here
+COLOR_SYNC_HELD: str = COLOR_WARNING  # held here
+
 # Typography (Frontend Spec §2.1.3 override of DESIGN.md §02).
 # DM Serif Display / DM Sans / DM Mono are replaced by IBM Plex Sans (body and
 # headings) and the OS monospace stack (paths, hex, code).
