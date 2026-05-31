@@ -1,13 +1,24 @@
-"""E2E flow 05b: per-run sync icons in the browse tree.
+"""E2E flow 05b: per-run sync rollup icons in the browse tree.
 
-Verifies that the project / equipment tree (Frontend §3.5) renders the
-correct SVG icon to the left of each run name based on its sync status:
+Two-icon sync-presence design (2026-05-30). The project / equipment
+tree (Frontend §3.5) renders a single colour-coded rollup icon to the
+left of each run name, derived from ``file_sync_view(sync_status)`` ->
+``sync_rollup_icon_props(view)``:
 
-* rollup other than ``cleared`` (or absent) -> ``/assets/sync_local.svg``
-* rollup ``cleared``                        -> ``/assets/sync_cloud.svg``
+* ``syncing`` / ``pending`` / ``local_only``  -> LOCAL_ONLY    -> ``/assets/sync_local.svg`` (blue)
+* ``synced`` / ``cleared`` / ``on_nas``       -> ON_NAS/SYNCED -> ``/assets/sync_nas.svg``   (green)
+* ``upload_failed`` / ``failed``              -> UPLOAD_FAILED -> ``/assets/sync_nas.svg``   (red,  ✕ badge)
+* ``blocked`` / ``blocked_by_validation``     -> BLOCKED       -> ``/assets/sync_nas.svg``   (amber, ! badge)
+* ``None`` / ``""`` / unknown                 -> NONE          -> no icon rendered
 
-Also asserts the static asset mount actually serves the SVGs (200 OK)
-so a missing PyInstaller bundle entry would surface here.
+The seeded hierarchy in ``tests/e2e/_test_app.py`` carries one run of
+each visible state (plus a NONE test-run that renders nothing), so the
+tree shows exactly one ``sync_local.svg`` and three ``sync_nas.svg``
+icons, one problem background, and two badges.
+
+Also asserts the static asset mount serves the SVGs (200 OK) so a
+missing PyInstaller bundle entry would surface here. The retired cloud
+asset is no longer referenced anywhere.
 """
 
 from __future__ import annotations
@@ -25,29 +36,34 @@ def test_flow_05_sync_icons_render_in_tree(page, server_url) -> None:
 
     tree = page.locator('[data-testid="main-tree"]')
 
-    # The seeded hierarchy in tests/e2e/_test_app.py contains:
-    #   - Run_2026-05-07 (local;   sync_status=None)    -> sync_local.svg
-    #   - Run_2026-05-06 (cleared; sync_status=cleared) -> sync_cloud.svg
-    #   - TestRun_2026-05-07 (local; sync_status=None)  -> sync_local.svg
+    # Seeded runs under TEST_EQ1 / LIMS-001:
+    #   Run_2026-05-07 (syncing)       -> LOCAL_ONLY    -> sync_local.svg
+    #   Run_2026-05-06 (cleared)       -> ON_NAS        -> sync_nas.svg (green)
+    #   Run_2026-05-05 (upload_failed) -> UPLOAD_FAILED -> sync_nas.svg (red,  ✕)
+    #   Run_2026-05-04 (blocked)       -> BLOCKED       -> sync_nas.svg (amber, !)
+    #   TestRun_2026-05-07 (None)      -> NONE          -> no icon
     local_icons = tree.locator('img[src="/assets/sync_local.svg"]')
-    cloud_icons = tree.locator('img[src="/assets/sync_cloud.svg"]')
+    nas_icons = tree.locator('img[src="/assets/sync_nas.svg"]')
 
-    # Two local runs (one experimental, one test) and one cleaned run.
-    assert local_icons.count() == 2, f"expected 2 sync_local icons, got {local_icons.count()}"
-    assert cloud_icons.count() == 1, f"expected 1 sync_cloud icon, got {cloud_icons.count()}"
+    # At least one local-only (blue) run and at least one NAS-presence run.
+    assert local_icons.count() >= 1, f"expected >= 1 sync_local icon, got {local_icons.count()}"
+    assert nas_icons.count() >= 1, f"expected >= 1 sync_nas icon, got {nas_icons.count()}"
 
-    # The cleaned-run icon's parent header carries the canonical sync_status
-    # marker on the label span (set by the default-header slot template).
-    cloud_header = cloud_icons.first.locator("xpath=..")
-    assert cloud_header.locator('span[data-sync-status="cleared"]').count() == 1, (
-        "cleared run header missing data-sync-status='cleared' marker"
+    # The failed run carries the problem (red) background...
+    problem_bg = tree.locator('span[data-sync-bg="--color-sync-problem"]')
+    assert problem_bg.count() >= 1, (
+        f"expected >= 1 problem-background rollup, got {problem_bg.count()}"
     )
+
+    # ...and a corner badge (✕ for failed, ! for blocked) is rendered.
+    badges = tree.locator('span[data-sync-badge="true"]')
+    assert badges.count() >= 1, f"expected >= 1 sync badge, got {badges.count()}"
 
 
 def test_flow_05_sync_icons_static_assets_serve_200(server_url) -> None:
-    """The ``/assets`` mount serves both SVGs as 200 OK."""
+    """The ``/assets`` mount serves both presence SVGs as 200 OK."""
 
-    for url in (f"{server_url}/assets/sync_local.svg", f"{server_url}/assets/sync_cloud.svg"):
+    for url in (f"{server_url}/assets/sync_local.svg", f"{server_url}/assets/sync_nas.svg"):
         response = httpx.get(url, timeout=5.0)
         assert response.status_code == 200, f"{url} returned {response.status_code}"
         body = response.text

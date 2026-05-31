@@ -723,6 +723,21 @@ Include this `:root` block in all generated CSS files:
 }
 ```
 
+### Sync-status Icon Tokens
+
+Two-icon presence model (2026-05-30). Each is an intent-first alias of an existing
+token, so component CSS reads `var(--color-sync-safe)` over a bare green. Colour
+language: blue = here, green = safe on NAS, gray = absent, red = problem, amber = held.
+
+| Token                  | Resolves to            | Hex       | Meaning                      |
+|------------------------|------------------------|-----------|------------------------------|
+| `--color-sync-local`   | `--color-blue`         | `#1b75bc` | Present locally (here)       |
+| `--color-sync-cached`  | `--color-row-selected` | `#dceaff` | Present, also on NAS (cache) |
+| `--color-sync-safe`    | `--color-success`      | `#009E73` | Safe on NAS                  |
+| `--color-sync-absent`  | `--color-rule`         | `#e8ecf2` | Absent (fine)                |
+| `--color-sync-problem` | `--color-danger`       | `#D55E00` | Problem here                 |
+| `--color-sync-held`    | `--color-warning`      | `#E69F00` | Held here                    |
+
 ---
 
 ## 08 -- Usage Rules & Anti-Patterns

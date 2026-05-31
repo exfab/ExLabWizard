@@ -27,7 +27,7 @@ from typing import Any
 
 from exlab_wizard.ui.components.empty_state import empty_state
 from exlab_wizard.ui.components.file_type_icon import file_type_icon
-from exlab_wizard.ui.components.sync_status_icon import STATUS_ON_NAS, sync_status_icon
+from exlab_wizard.ui.components.sync_status_icon import file_sync_view, sync_pair_icons
 from exlab_wizard.ui.pages.staging import format_bytes
 
 # Action discriminators consumed by the on_context_menu callback.
@@ -267,10 +267,11 @@ def _render_row(
     # (Phase 2); the border-bottom rule is the row's only constant style.
     state_style = row_background(entry, is_selected=is_selected, is_new=is_new, index=index)
     row_style = f"{state_style} border-bottom: 1px solid var(--color-rule);".strip()
-    # The Status cell renders an icon (tolerant: an untracked file or a
-    # folder carries no status and shows a neutral dash); a tombstone with
-    # no recorded status still reads as the "On NAS" cloud.
-    status_for_icon = entry.sync_status or (STATUS_ON_NAS if entry.tombstone else None)
+    # The Status cell renders the two-icon (local + NAS) presence pair.
+    # Tombstones carry their own discriminator ("on_nas" or "missing"); a
+    # tombstone with no recorded status still reads as "on_nas". An untracked
+    # file / folder carries no status and the pair renders nothing.
+    view = file_sync_view(entry.sync_status or ("on_nas" if entry.tombstone else None))
     keep_local_attr = ' data-keep-local="true"' if entry.keep_local else ""
     tombstone_attr = ' data-tombstone="true"' if entry.tombstone else ""
     selected_attr = ' data-selected="true"' if is_selected else ""
@@ -304,7 +305,7 @@ def _render_row(
         with ui.element("td").classes("p-2"):
             ui.label(modified_text)
         with ui.element("td").classes("p-2"):
-            sync_status_icon(status_for_icon, strict=False)
+            sync_pair_icons(view)
         if on_context_menu is not None:
             with ui.context_menu().props(
                 f'data-testid="file-context-menu" data-path="{entry.path}"'
