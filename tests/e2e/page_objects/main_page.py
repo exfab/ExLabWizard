@@ -87,3 +87,22 @@ class MainPage:
     def footer_staging_segment(self) -> Locator:
         """Footer Staging status segment (Redesign §4.6)."""
         return self._page.get_by_test_id("footer-staging-segment")
+
+    @property
+    def sync_local_icons(self) -> Locator:
+        """Run-row rollup icons resolving to the local-presence SVG.
+
+        Two-icon sync-presence design (2026-05-30): a run whose rollup
+        view is LOCAL_ONLY renders ``/assets/sync_local.svg`` (blue).
+        """
+        return self.tree.locator('img[src="/assets/sync_local.svg"]')
+
+    @property
+    def sync_nas_icons(self) -> Locator:
+        """Run-row rollup icons resolving to the NAS-presence SVG.
+
+        A run whose rollup view is ON_NAS / SYNCED / UPLOAD_FAILED /
+        BLOCKED renders ``/assets/sync_nas.svg`` (green / red / amber by
+        background).
+        """
+        return self.tree.locator('img[src="/assets/sync_nas.svg"]')
