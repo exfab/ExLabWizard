@@ -31,6 +31,9 @@ TEST_RUNS_JSON_NAME: str = "test_runs.json"
 # wizard against an existing directory. Backend Spec §5.3.
 ANSWERS_FILE_NAME: str = ".exlab-answers.yml"
 
+# Subdirectory name (under a cache dir) holding per-instance template stores. Spec §5.0.
+TEMPLATES_SUBDIR: str = "templates"
+
 # Per-host log filename template inside the central log dir. Backend Spec §4.5.
 # Format with ``LOG_FILE_TEMPLATE.format(hostname=...)``.
 LOG_FILE_TEMPLATE: str = "wizard.{hostname}.log"

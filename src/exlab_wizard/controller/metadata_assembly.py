@@ -79,6 +79,10 @@ class TemplateDesc:
             ``str(ResolvedTemplate.path)``.
         run_scope: The run-scope tag persisted on ``creation.json``'s
             template block; ``None`` for project/equipment templates.
+        provenance_path: Path (relative to the instance dir, POSIX) of the
+            frozen verbatim template copy written under
+            ``.exlab-wizard/templates/...`` at creation time; empty when no
+            copy was made.
         extra_readme_fields: ``_exlab_readme.fields`` entries (free-form
             dicts) used to build the template-layer field declarations.
         plugin_order: Plugin slug ordering (unused by these helpers but
@@ -89,6 +93,7 @@ class TemplateDesc:
     version: str
     source_path: str
     run_scope: RunScope | None = None
+    provenance_path: str = ""
     extra_readme_fields: list[dict[str, Any]] = field(default_factory=list)
     plugin_order: list[str] = field(default_factory=list)
 
@@ -210,6 +215,7 @@ def build_creation_json(
             version=template.version,
             source_path=template.source_path,
             run_scope=template.run_scope,
+            provenance_path=template.provenance_path,
         ),
         variables=dict(variables),
         paths=PathsBlock(

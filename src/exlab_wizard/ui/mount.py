@@ -43,6 +43,8 @@ from exlab_wizard.orchestrator.staging_clear import clear_run_dir
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+    from exlab_wizard.template.resolution import TemplateChoices
+
 
 __all__ = ["MOUNT_PATH", "mount_ui"]
 
@@ -105,6 +107,9 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
     )
     from exlab_wizard.ui.pages import (
         settings as settings_page,
+    )
+    from exlab_wizard.ui.pages import (
+        template_editor as template_editor_page,
     )
     from exlab_wizard.ui.pages import (
         templates as templates_page,
@@ -270,10 +275,20 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
     @ui.page("/wizard/project")
     async def _wizard_project() -> Any:
         deps = _deps()
+        initial = _resolve_template_choices(deps, "project")
+
+        def _resolve_project_templates(equipment_id: str | None) -> Any:
+            # Per-equipment project templates layer over the global store
+            # once the operator picks equipment (step 3, after the template
+            # step -- so this reflects on a step-back). Backend Spec §5.0.
+            return _resolve_template_choices(deps, "project", equipment_id=equipment_id)
+
         return wizard_project_page.render_project_wizard(
-            templates=_template_names(deps, "project"),
+            templates=initial.names,
             equipment_ids=_equipment_ids(deps),
-            template_questions=_template_questions_map(deps, "project"),
+            template_questions=initial.questions,
+            template_paths=initial.paths,
+            on_resolve=_resolve_project_templates,
             lims_projects=await _lims_projects(deps),
             on_submit=lambda state: _submit_project(deps, state, ui),
             on_cancel=lambda: ui.navigate.to("/main"),
@@ -343,9 +358,12 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
         )
 
     @ui.page("/templates")
-    def _templates() -> Any:
+    def _templates(loc: str = "global") -> Any:
         deps = _deps()
+        # Global scaffolding always targets the flat templates_dir; the
+        # location selector only changes which directories are *listed*.
         templates_dir = _templates_dir(deps)
+        scan_dirs = _location_scan_dirs(deps, loc)
 
         def _on_create(
             name: str, template_type: str, description: str, run_scope: str | None
@@ -367,13 +385,106 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             _show_toast(ui, f"Template {name!r} created", positive=True)
             ui.navigate.to("/templates")
 
-        summaries = (
-            templates_page.list_templates(templates_dir) if templates_dir is not None else []
-        )
+        # Merge the listings across the location's scan dirs (the global
+        # location has one flat dir; an equipment location has its
+        # type-segregated project/ + run/ stores). ``rel_by_name`` records
+        # the on-disk path so the Edit link can deep-link straight to it.
+        summaries: list[Any] = []
+        dir_by_name: dict[str, Path] = {}
+        for directory in scan_dirs:
+            for summary in templates_page.list_templates(directory):
+                if summary.name in dir_by_name:
+                    continue
+                dir_by_name[summary.name] = summary.path
+                summaries.append(summary)
+
+        def _on_edit(name: str) -> None:
+            target = dir_by_name.get(name)
+            if target is None:
+                _show_toast(ui, f"Template {name!r} not found", positive=False)
+                return
+            ui.navigate.to(f"/templates/edit?dir={target}")
+
         return templates_page.render_template_manager(
             templates=summaries,
             on_create=_on_create,
             on_back=lambda: ui.navigate.to("/main"),
+            on_edit=_on_edit,
+            locations=_template_locations(deps),
+            on_location_change=lambda value: ui.navigate.to(f"/templates?loc={value}"),
+        )
+
+    @ui.page("/templates/edit")
+    def _templates_edit(dir: str = "") -> Any:  # query-param name (binds NiceGUI ?dir=)
+        from exlab_wizard.template import authoring
+
+        template_dir = Path(dir) if dir else None
+        if template_dir is None or not template_dir.is_dir():
+            _show_toast(ui, "Template not found; returning to templates", positive=False)
+            ui.navigate.to("/templates")
+            return None
+
+        def _reload() -> None:
+            ui.navigate.to(f"/templates/edit?dir={template_dir}")
+
+        def _on_save_manifest(manifest: Any) -> None:
+            try:
+                _, expected = authoring.read_manifest(template_dir)
+                authoring.write_manifest(template_dir, manifest, expected_stat=expected)
+            except (
+                authoring.StaleEditError,
+                authoring.UnsafePathError,
+                authoring.TemplateAuthoringError,
+            ) as exc:
+                _show_toast(ui, f"Questions not saved: {exc}", positive=False)
+                return
+            _show_toast(ui, "Questions saved", positive=True)
+            _reload()
+
+        def _on_save_content(rel: str, text: str) -> None:
+            try:
+                existing = template_dir / rel
+                expected = None
+                if existing.is_file():
+                    _, expected = authoring.read_content(existing)
+                authoring.write_content_file(template_dir, rel, text, expected_stat=expected)
+            except (
+                authoring.StaleEditError,
+                authoring.UnsafePathError,
+                authoring.TemplateAuthoringError,
+            ) as exc:
+                _show_toast(ui, f"File not saved: {exc}", positive=False)
+                return
+            _show_toast(ui, f"Saved {rel}", positive=True)
+            _reload()
+
+        def _on_upload(filename: str, data: bytes, render_as_template: bool) -> None:
+            try:
+                authoring.upload_file(
+                    template_dir, filename, data, render_as_template=render_as_template
+                )
+            except (authoring.UnsafePathError, authoring.TemplateAuthoringError) as exc:
+                _show_toast(ui, f"Upload failed: {exc}", positive=False)
+                return
+            _show_toast(ui, f"Uploaded {filename}", positive=True)
+            _reload()
+
+        def _on_delete(rel: str) -> None:
+            try:
+                authoring.delete_path(template_dir, rel)
+            except (authoring.UnsafePathError, authoring.TemplateAuthoringError) as exc:
+                _show_toast(ui, f"Delete failed: {exc}", positive=False)
+                return
+            _show_toast(ui, f"Deleted {rel}", positive=True)
+            _reload()
+
+        return template_editor_page.render_template_editor(
+            template_dir=template_dir,
+            on_save_manifest=_on_save_manifest,
+            on_save_content=_on_save_content,
+            on_upload=_on_upload,
+            on_delete=_on_delete,
+            on_back=lambda: ui.navigate.to("/templates"),
         )
 
     @ui.page("/settings")
@@ -1741,54 +1852,185 @@ def _templates_dir(deps: Any) -> Path | None:
     return Path(config.paths.templates_dir)
 
 
-def _template_names(deps: Any, template_type: str) -> list[str]:
-    """List template directory names of ``template_type`` under templates_dir."""
+def _selected_template_path(deps: Any, state: Any) -> Path | None:
+    """Return the absolute path of the template the wizard state selected.
+
+    Prefers the resolved ``state.selected_template_path`` the template step
+    stored -- this honours a per-instance (per-project / per-equipment)
+    override the resolver picked, so the pipeline renders the exact file the
+    operator saw (Backend Spec §5.0; design §4.3). Falls back to
+    ``templates_dir / selected_template`` when the state carries no resolved
+    path (e.g. the resolver was not wired), preserving the prior behaviour.
+    Returns ``None`` when no template is selected and no fallback is
+    derivable.
+    """
+    resolved = getattr(state, "selected_template_path", None)
+    if resolved is not None:
+        return Path(resolved)
+    name = getattr(state, "selected_template", None)
+    if not name:
+        return None
     templates_dir = _templates_dir(deps)
-    if templates_dir is None:
+    return templates_dir / name if templates_dir is not None else None
+
+
+def _template_locations(deps: Any) -> list[tuple[str, str]]:
+    """Return the manager's scope/location options as ``[(label, value)]``.
+
+    Always offers ``("Global", "global")``; appends one
+    ``("Equipment <id>", "equipment:<id>")`` per configured equipment so
+    the operator can browse / edit per-equipment template stores. The
+    global option is first so it stays the manager's default scope.
+    """
+    locations: list[tuple[str, str]] = [("Global", "global")]
+    for equipment_id in _equipment_ids(deps):
+        locations.append((f"Equipment {equipment_id}", f"equipment:{equipment_id}"))
+    return locations
+
+
+def _location_scan_dirs(deps: Any, loc: str) -> list[Path]:
+    """Return the template directories the manager lists for ``loc``.
+
+    ``"global"`` (or anything unrecognised) lists the flat
+    ``paths.templates_dir``. ``"equipment:<id>"`` lists that equipment's
+    type-segregated per-instance stores (``project/`` + ``run/`` under
+    ``<local_root>/<id>/.exlab-wizard/templates/``) so editing reaches the
+    per-equipment templates the resolver layers in. Missing directories are
+    tolerated -- :func:`list_templates` returns nothing for them.
+    """
+    from exlab_wizard.constants import TemplateType
+    from exlab_wizard.template.resolution import instance_template_dir
+
+    if loc.startswith("equipment:"):
+        equipment_id = loc.split(":", 1)[1]
+        config = getattr(deps, "config", None) if deps is not None else None
+        local_root = config.paths.local_root if config is not None else ""
+        if equipment_id and local_root:
+            equipment_dir = Path(local_root) / equipment_id
+            return [
+                instance_template_dir(equipment_dir, TemplateType.PROJECT.value),
+                instance_template_dir(equipment_dir, TemplateType.RUN.value),
+            ]
+        return []
+
+    templates_dir = _templates_dir(deps)
+    return [templates_dir] if templates_dir is not None else []
+
+
+def _template_names(
+    deps: Any,
+    template_type: str,
+    *,
+    equipment_id: str | None = None,
+    project_path: Path | None = None,
+) -> list[str]:
+    """List the resolved template names a wizard should offer for ``template_type``.
+
+    Resolves through :func:`exlab_wizard.template.resolution.resolve_template_chain`
+    so per-instance (per-equipment / per-project) templates layer over the
+    global ``templates_dir`` when an equipment / project context is known.
+    The wizard page handlers call this at render time before the operator
+    has picked equipment / project, so ``equipment_id`` / ``project_path``
+    are typically ``None`` -- the resolver then returns the global templates
+    (identical to the pre-resolver behaviour), degrading gracefully.
+    """
+    config = getattr(deps, "config", None) if deps is not None else None
+    if config is None:
         return []
     try:
-        from exlab_wizard.ui.pages import templates as templates_page
+        from exlab_wizard.template.resolution import resolve_template_chain
 
         return [
             summary.name
-            for summary in templates_page.list_templates(templates_dir, template_type=template_type)
+            for summary in resolve_template_chain(
+                config,
+                template_type=template_type,
+                equipment_id=equipment_id,
+                project_path=project_path,
+            )
         ]
     except Exception as exc:
         _log.warning("template scan failed: %s", exc)
         return []
 
 
-def _template_questions_map(deps: Any, template_type: str) -> dict[str, Any]:
-    """Map each ``template_type`` template name to its parsed copier questions.
+def _template_questions_map(
+    deps: Any,
+    template_type: str,
+    *,
+    equipment_id: str | None = None,
+    project_path: Path | None = None,
+) -> dict[str, Any]:
+    """Map each resolved template name to its parsed copier questions.
 
-    Resolves every template through the real ``TemplateEngine`` so the
-    wizard's dynamic Variables step is driven by the actual
-    ``copier.yml`` question definitions. A template that fails to
-    resolve is skipped with a WARN -- its wizard entry simply shows no
-    variables.
+    Thin wrapper over :func:`_resolve_template_choices` that returns only the
+    questions map (kept as a stable name for existing callers / tests).
     """
-    templates_dir = _templates_dir(deps)
-    if templates_dir is None:
-        return {}
+    return _resolve_template_choices(
+        deps,
+        template_type,
+        equipment_id=equipment_id,
+        project_path=project_path,
+    ).questions
+
+
+def _resolve_template_choices(
+    deps: Any,
+    template_type: str,
+    *,
+    equipment_id: str | None = None,
+    project_path: Path | None = None,
+    run_scope: str | None = None,
+) -> TemplateChoices:
+    """Resolve the templates a wizard should offer for one context.
+
+    Resolves the chain through
+    :func:`exlab_wizard.template.resolution.resolve_template_chain` (so
+    per-instance templates layer over the global store when an equipment /
+    project context is known), then resolves each template through the real
+    ``TemplateEngine`` to extract its ``copier.yml`` questions. Returns a
+    :class:`TemplateChoices` bundling the offered names (nearest scope
+    first), the per-template questions (driving the dynamic Variables step),
+    and the per-template **absolute resolved path** (so the wizard's submit
+    renders the exact file listed, honouring a per-instance override rather
+    than re-deriving ``templates_dir / name``). A template that fails to
+    resolve is skipped with a WARN.
+    """
+    from exlab_wizard.template.resolution import TemplateChoices
+
+    config = getattr(deps, "config", None) if deps is not None else None
+    if config is None:
+        return TemplateChoices()
     try:
         from exlab_wizard.constants import TemplateType
         from exlab_wizard.template.copier_driver import TemplateEngine
+        from exlab_wizard.template.resolution import resolve_template_chain
         from exlab_wizard.ui.pages import templates as templates_page
 
         engine = TemplateEngine()
         scope = TemplateType(template_type)
-        result: dict[str, Any] = {}
-        for summary in templates_page.list_templates(templates_dir, template_type=template_type):
+        names: list[str] = []
+        questions: dict[str, Any] = {}
+        paths: dict[str, Path] = {}
+        for summary in resolve_template_chain(
+            config,
+            template_type=template_type,
+            equipment_id=equipment_id,
+            project_path=project_path,
+            run_scope=run_scope,
+        ):
             try:
                 resolved = engine.resolve(summary.path, scope)
             except Exception as exc:
                 _log.warning("template %s failed to resolve: %s", summary.name, exc)
                 continue
-            result[summary.name] = templates_page.template_questions(resolved.raw_manifest)
-        return result
+            names.append(summary.name)
+            questions[summary.name] = templates_page.template_questions(resolved.raw_manifest)
+            paths[summary.name] = summary.path
+        return TemplateChoices(names=names, questions=questions, paths=paths)
     except Exception as exc:
         _log.warning("template question scan failed: %s", exc)
-        return {}
+        return TemplateChoices()
 
 
 def _lims_catalogue_projects(deps: Any) -> list[dict[str, Any]]:
@@ -1939,8 +2181,11 @@ async def _submit_project(deps: Any, state: Any, ui: Any) -> None:
     if controller is None:
         _show_toast(ui, "Project creation unavailable: controller not initialized", positive=False)
         return
-    templates_dir = _templates_dir(deps)
-    if templates_dir is None or not state.selected_template:
+    if not state.selected_template:
+        _show_toast(ui, "Pick a template before creating the project", positive=False)
+        return
+    template_path = _selected_template_path(deps, state)
+    if template_path is None:
         _show_toast(ui, "Pick a template before creating the project", positive=False)
         return
 
@@ -1949,7 +2194,7 @@ async def _submit_project(deps: Any, state: Any, ui: Any) -> None:
     readme = state.readme_fields
     request = ProjectCreateRequest(
         equipment_id=state.selected_equipment or "",
-        template_path=templates_dir / state.selected_template,
+        template_path=template_path,
         lims_project={
             "uid": str(uuid.uuid4()),
             "short_id": state.selected_lims_short_id or "",
@@ -1972,8 +2217,11 @@ async def _submit_run(deps: Any, state: Any, run_kind: RunKind, ui: Any) -> None
     if controller is None:
         _show_toast(ui, "Run creation unavailable: controller not initialized", positive=False)
         return
-    templates_dir = _templates_dir(deps)
-    if templates_dir is None or not state.selected_template:
+    if not state.selected_template:
+        _show_toast(ui, "Pick a template before creating the run", positive=False)
+        return
+    template_path = _selected_template_path(deps, state)
+    if template_path is None:
         _show_toast(ui, "Pick a template before creating the run", positive=False)
         return
 
@@ -1986,7 +2234,7 @@ async def _submit_run(deps: Any, state: Any, run_kind: RunKind, ui: Any) -> None
     request = RunCreateRequest(
         equipment_id=state.selected_equipment or "",
         project_name=state.selected_project_name or "",
-        template_path=templates_dir / state.selected_template,
+        template_path=template_path,
         run_kind=run_kind,
         variables=dict(state.template_variables),
         label=readme.get("label", ""),
@@ -2037,14 +2285,33 @@ async def _run_creation(
 
 
 def _render_run_wizard(deps: Any, run_kind: RunKind, ui: Any) -> Any:
+    from exlab_wizard.constants import RunScope
+    from exlab_wizard.template.resolution import project_dir
     from exlab_wizard.ui.pages import wizard_run as wizard_run_page
 
     state = wizard_run_page.RunWizardState(run_kind=run_kind)
+    # Run templates are narrowed to the run kind's scope (a "test" run only
+    # sees test/both templates; experimental sees experimental/both).
+    scope = RunScope.TEST.value if run_kind is RunKind.TEST else RunScope.EXPERIMENTAL.value
+    config = getattr(deps, "config", None) if deps is not None else None
+    initial = _resolve_template_choices(deps, "run", run_scope=scope)
+
+    def _resolve_run_templates(equipment_id: str | None, project_name: str | None) -> Any:
+        # Per-project then per-equipment run templates layer over the global
+        # store once the operator picks project + equipment (step 1, before
+        # the template step). Backend Spec §5.0 / §3.2.
+        proj_path = project_dir(config, equipment_id, project_name) if config is not None else None
+        return _resolve_template_choices(
+            deps, "run", equipment_id=equipment_id, project_path=proj_path, run_scope=scope
+        )
+
     return wizard_run_page.render_run_wizard(
         state=state,
-        templates=_template_names(deps, "run"),
+        templates=initial.names,
         equipment_ids=_equipment_ids(deps),
-        template_questions=_template_questions_map(deps, "run"),
+        template_questions=initial.questions,
+        template_paths=initial.paths,
+        on_resolve=_resolve_run_templates,
         on_submit=lambda submitted: _submit_run(deps, submitted, run_kind, ui),
         on_cancel=lambda: ui.navigate.to("/main"),
     )

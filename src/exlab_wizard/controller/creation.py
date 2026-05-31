@@ -106,6 +106,7 @@ from exlab_wizard.template.copier_driver import (
     ResolvedTemplate,
     TemplateEngine,
 )
+from exlab_wizard.template.provenance import copy_template_into_instance
 from exlab_wizard.utils.time import utc_now, utc_now_iso
 from exlab_wizard.validator.engine import CreationValidationInput, Validator
 from exlab_wizard.validator.findings import Finding
@@ -1002,6 +1003,17 @@ class CreationController:
             for entry in plugin_result.applied
         ]
 
+        # Freeze a verbatim copy of the template source into the instance's
+        # own typed provenance store (.exlab-wizard/templates/<type>/<name>/)
+        # and record its instance-relative path in creation.json. Best-effort:
+        # a provenance-copy failure must NOT fail the creation.
+        own_type = "run" if isinstance(req, RunCreateRequest) else "project"
+        try:
+            provenance_path = copy_template_into_instance(resolved, dst, own_type)
+        except Exception as exc:  # best-effort: a copy failure is never fatal
+            _log.warning("provenance copy failed for %s: %s", dst, exc)
+            provenance_path = ""
+
         # Redesign §3.1/§3.3: the orchestrator block, template/paths blocks,
         # and the CreationJson assembly are shared with the sample-data
         # seeder via ``build_creation_json`` so the two can never drift.
@@ -1010,6 +1022,7 @@ class CreationController:
             version=resolved.exlab_version,
             source_path=str(resolved.path),
             run_scope=resolved.run_scope,
+            provenance_path=provenance_path,
             extra_readme_fields=resolved.extra_readme_fields,
             plugin_order=resolved.plugin_order,
         )
@@ -1090,6 +1103,12 @@ class CreationController:
         file_names: list[str] = []
         file_contents: dict[str, str] = {}
         for path in dst.rglob("*"):
+            # Skip the ``.exlab-wizard/`` cache subtree -- it holds the frozen
+            # provenance template copy (copier.yml / .jinja / placeholder
+            # files) and other wizard metadata, none of which is run output to
+            # be scanned for residual placeholders.
+            if CACHE_DIR_NAME in path.parts:
+                continue
             if not path.is_file():
                 continue
             file_names.append(path.name)

@@ -113,6 +113,11 @@ class TemplateBlock(
     # (legal for project / equipment templates per Spec §5.2). Persisted as
     # an omitted field thanks to ``omit_defaults=True``.
     run_scope: RunScope | None = None
+    # Path (relative to the instance dir, POSIX) of the frozen verbatim copy
+    # of the template source written under ``.exlab-wizard/templates/...`` at
+    # creation time (added in schema 1.10). Empty when the provenance copy was
+    # not made; omitted on serialize thanks to ``omit_defaults=True``.
+    provenance_path: str = ""
 
 
 class PluginIsolation(

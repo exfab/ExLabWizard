@@ -429,13 +429,25 @@ async def test_parity_build_creation_json(tmp_path: Path) -> None:
             name_at_creation="Cortex Q3 Pilot",
             source=LIMSProjectSource.LIVE,
         ),
-        template=_resolved_desc_from(resolved),
+        template=dataclasses.replace(
+            _resolved_desc_from(resolved),
+            # The controller's ``_write_cache`` freezes a verbatim template
+            # copy into ``dst`` and records its instance-relative path; mirror
+            # that here so the parity comparison covers every other field.
+            provenance_path=controller_payload.template.provenance_path,
+        ),
         variables=req.variables,
         dst=dst,
         nas_root="/srv/nas",
         plugins_applied=[],
         sync_status=SyncStatus.PENDING,
         created_at_iso=FIXED_CREATED_AT_ISO,
+    )
+
+    # The controller actually performed the provenance copy, so its path is
+    # non-empty -- sanity-check that before the encoded-form comparison.
+    assert controller_payload.template.provenance_path == (
+        f".exlab-wizard/templates/project/{resolved.name}"
     )
 
     # Normalize the injected timestamp before comparing the encoded form.

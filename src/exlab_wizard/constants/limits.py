@@ -106,3 +106,9 @@ NOTIFICATION_COALESCE_SECONDS: int = 5
 # Pre-flight free-disk-space requirement, in MiB, on the run/project target
 # volume before the wizard will start a creation. Frontend Spec §4.6.
 DISK_SPACE_PREFLIGHT_MIB: int = 100
+
+# Max size (bytes) of a single file uploaded into a template via the GUI. Spec §5.3.
+TEMPLATE_UPLOAD_MAX_BYTES: int = 25 * 1024 * 1024
+
+# Max number of files a single template directory may hold (GUI upload guard).
+TEMPLATE_MAX_FILES: int = 500
