@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fnmatch
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -47,7 +48,7 @@ from exlab_wizard.sync.queue import (
     SyncJobState,
     SyncQueue,
 )
-from exlab_wizard.sync.run_delete import delete_run_files
+from exlab_wizard.sync.run_delete import collect_cleanup_candidates, delete_run_files
 from exlab_wizard.sync.transports import (
     TransportError,
     TransportErrorKind,
@@ -121,6 +122,11 @@ def _remote_subpath(base_root: str, equipment_id: str, run: Path) -> str:
     """
     parts = [base_root.strip("/"), equipment_id, run.name]
     return "/".join(p for p in parts if p)
+
+
+def _matches_any_glob(name: str, globs: list[str]) -> bool:
+    """Return True if ``name`` matches any configured glob."""
+    return any(fnmatch.fnmatch(name, pattern) for pattern in globs)
 
 
 def _build_driver(config_path: str, perf: RclonePerf) -> RcloneDriver:
@@ -199,7 +205,6 @@ class NASSyncClient:
         push_callable_factory: Callable[[EquipmentConfig], Callable[..., Any]] | None = None,
         check_callable_factory: Callable[[EquipmentConfig], Callable[..., Any]] | None = None,
         lsjson_callable_factory: Callable[[EquipmentConfig], Callable[..., Any]] | None = None,
-        remote_stat_callable: Callable[[SyncJobRow], bool] | None = None,
     ) -> None:
         self._config = config
         self._queue_db = queue_db
@@ -221,9 +226,6 @@ class NASSyncClient:
         self._push_callable_factory = push_callable_factory
         self._check_callable_factory = check_callable_factory
         self._lsjson_callable_factory = lsjson_callable_factory
-        # Default remote stat: optimistic OK so unit tests don't need
-        # to wire a real network probe.
-        self._remote_stat_callable = remote_stat_callable or (lambda _row: True)
 
     def apply_config(self, config: Config) -> None:
         """Swap the cached config + equipment map in place (no relaunch).
@@ -943,16 +945,57 @@ class NASSyncClient:
         if job is None or job.state != SyncJobState.VERIFIED:
             return
 
-        # Whole-run rollup gate: every tracked file must be verified before
-        # any local deletion. A job's VERIFIED only covers its own subset.
         sync_state = await self._sync_state_writer.read(run_path)
-        rollup = self._sync_state_writer.rollup_state(sync_state)
-        if rollup != RunSyncState.SYNCED:
+        keep_local = {rel for rel, rec in sync_state.files.items() if rec.keep_local}
+        candidates = collect_cleanup_candidates(
+            run_path,
+            keep_local=keep_local,
+            ignore_globs=self._config.sync.ignore_globs,
+            delete_ignored=self._config.nas_cleanup.delete_ignored,
+        )
+        delete_files = tuple(sorted(candidates.delete))
+        ignored_discard = {
+            rel
+            for rel in delete_files
+            if self._config.nas_cleanup.delete_ignored
+            and _matches_any_glob(Path(rel).name, self._config.sync.ignore_globs)
+        }
+        proof_required = tuple(rel for rel in delete_files if rel not in ignored_discard)
+
+        # Whole-run rollup gate: every tracked file must be verified before
+        # any local deletion. A job's VERIFIED only covers its own subset. An
+        # empty run has no tracked files and no deletion candidates, so it can
+        # proceed through cleanup using only the time/pass/revocation interlocks.
+        if sync_state.files:
+            rollup = self._sync_state_writer.rollup_state(sync_state)
+            if rollup != RunSyncState.SYNCED:
+                _log.debug(
+                    "cleanup deferred: run %s not fully SYNCED (rollup=%s)",
+                    run_path,
+                    rollup.value,
+                )
+                await self._defer_cleanup(job_id, "cleanup_rollup_not_synced")
+                return
+
+        untracked = [rel for rel in proof_required if rel not in sync_state.files]
+        if untracked:
             _log.debug(
-                "cleanup deferred: run %s not fully SYNCED (rollup=%s)",
+                "cleanup deferred: run %s has untracked local deletion candidates: %s",
                 run_path,
-                rollup.value,
+                untracked,
             )
+            await self._defer_cleanup(job_id, "cleanup_untracked_local_files")
+            return
+
+        dirty = [
+            rel
+            for rel in proof_required
+            if sync_state.files[rel].synced_signature is None
+            or tuple(sync_state.files[rel].synced_signature or ()) != self._file_signature(run_path / rel)
+        ]
+        if dirty:
+            _log.debug("cleanup deferred: run %s has dirty local files: %s", run_path, dirty)
+            await self._defer_cleanup(job_id, "cleanup_dirty_local_files")
             return
 
         creation_path = creation_json_path(run_path)
@@ -962,7 +1005,6 @@ class NASSyncClient:
                 creation = await self._cache_creation.read_creation_snapshot(creation_path)
         overrides = list(creation.validation_overrides) if creation else []
 
-        remote_ok = self._remote_stat_callable(job)
         now_utc = utc_now()
         if not cleanup_interlocks_satisfied(
             job=job,
@@ -970,55 +1012,55 @@ class NASSyncClient:
             now_utc=now_utc,
             config=self._config.nas_cleanup,
             overrides_active=overrides,
-            remote_stat_ok=remote_ok,
         ):
-            await self._queue.transition(job_id, SyncJobState.CLEANUP_ELIGIBLE)
+            await self._defer_cleanup(job_id, "cleanup_interlock_not_satisfied")
             return
 
         # Integrity gate (rclone-named-remote migration, 2026-05-28): the
         # routine sync path only reconciled size + modtime via lsjson, so
         # the expensive download-and-rehash runs exactly once here, right
         # before any irreversible local deletion. Two stages over the
-        # tracked files: (1) a cheap lsjson existence probe confirms every
-        # tracked file is present remotely; (2) ``rclone check --download``
+        # files selected for deletion: (1) a cheap lsjson existence probe
+        # confirms every proof-required file is present remotely; (2) ``rclone check --download``
         # streams each file back and hashes it locally. Any failure (a
         # transport error, a missing file, or a hash mismatch) defers the
         # run in CLEANUP_ELIGIBLE rather than deleting -- a later sweep
         # retries the gate.
         equipment = self._equipment_by_id.get(job.equipment_id)
-        tracked = tuple(sorted(sync_state.files.keys()))
-        if equipment is not None and tracked:
+        if proof_required:
+            if equipment is None:
+                await self._defer_cleanup(job_id, "cleanup_missing_equipment")
+                return
             lsjson = self._build_lsjson(equipment)
             try:
                 manifest = await lsjson(run_path)
             except TransportError:
-                await self._queue.transition(job_id, SyncJobState.CLEANUP_ELIGIBLE)
+                await self._defer_cleanup(job_id, "cleanup_remote_listing_failed")
                 return
-            if not all(manifest.has(rel) for rel in tracked):
-                await self._queue.transition(job_id, SyncJobState.CLEANUP_ELIGIBLE)
+            if not all(manifest.has(rel) for rel in proof_required):
+                await self._defer_cleanup(job_id, "cleanup_remote_missing_files")
                 return
 
             check = self._build_check(equipment)
-            files_from = self._write_files_from(tracked)
+            files_from = self._write_files_from(proof_required)
             try:
                 try:
                     check_result = await check(run_path, files_from=files_from)
                 except TransportError:
-                    await self._queue.transition(job_id, SyncJobState.CLEANUP_ELIGIBLE)
+                    await self._defer_cleanup(job_id, "cleanup_remote_listing_failed")
                     return
                 verify = VerifyResult.from_check_result(check_result)
             finally:
                 with contextlib.suppress(OSError):
                     files_from.unlink()
             if not verify.ok:
-                await self._queue.transition(job_id, SyncJobState.CLEANUP_ELIGIBLE)
+                await self._defer_cleanup(job_id, "cleanup_hash_mismatch")
                 return
 
         # Promote to CLEANUP_ELIGIBLE then perform the deletion. Files the
         # operator flagged ``keep_local`` survive the sweep.
         await self._queue.transition(job_id, SyncJobState.CLEANUP_ELIGIBLE)
-        keep_local = {rel for rel, rec in sync_state.files.items() if rec.keep_local}
-        self._delete_local(run_path, keep_local)
+        self._delete_local(run_path, keep_local, delete_only=set(delete_files))
         await self._mark_cleaned(run_path)
         # Stamp ``cleared_at`` in ``sync_state.json`` so the run rolls up to
         # CLEARED. Skipped when the whole-run ``retain_cache=False`` delete
@@ -1028,10 +1070,16 @@ class NASSyncClient:
             await self._sync_state_writer.mark_cleared(run_path)
         await self._queue.transition(job_id, SyncJobState.CLEANED)
 
+    async def _defer_cleanup(self, job_id: str, reason: str) -> None:
+        """Move a verified job to CLEANUP_ELIGIBLE with an operator-visible reason."""
+        await self._queue.transition(job_id, SyncJobState.CLEANUP_ELIGIBLE, last_error=reason)
+
     def _delete_local(
         self,
         run_path: Path,
         keep_local: set[str] | None = None,
+        *,
+        delete_only: set[str] | None = None,
     ) -> None:
         """Delete ``run_path`` data files honoring ``retain_cache`` and ``keep_local``.
 
@@ -1045,6 +1093,9 @@ class NASSyncClient:
             run_path,
             keep_local=keep_local or set(),
             retain_cache=self._config.nas_cleanup.retain_cache,
+            delete_only=delete_only,
+            ignore_globs=self._config.sync.ignore_globs,
+            delete_ignored=self._config.nas_cleanup.delete_ignored,
         )
 
     # ----------------------------------------------------------- helpers

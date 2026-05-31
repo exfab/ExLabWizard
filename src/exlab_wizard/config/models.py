@@ -319,6 +319,7 @@ class NASCleanupConfig(BaseModel):
     min_verify_passes: int = Field(default=2, ge=1)
     min_age_hours: int = Field(default=24, ge=0)
     retain_cache: bool = True
+    delete_ignored: bool = False
 
 
 # ---------------------------------------------------------------------------

@@ -103,6 +103,7 @@ def _full_config_dict() -> dict:
             "min_verify_passes": 2,
             "min_age_hours": 24,
             "retain_cache": True,
+            "delete_ignored": False,
         },
         "logging": {
             "level": "INFO",
@@ -534,6 +535,12 @@ def test_nas_cleanup_defaults() -> None:
     assert nc.min_verify_passes == 2
     assert nc.min_age_hours == 24
     assert nc.retain_cache is True
+    assert nc.delete_ignored is False
+
+
+def test_nas_cleanup_accepts_delete_ignored_true() -> None:
+    nc = NASCleanupConfig(delete_ignored=True)
+    assert nc.delete_ignored is True
 
 
 def test_nas_cleanup_min_verify_passes_at_least_one() -> None:
