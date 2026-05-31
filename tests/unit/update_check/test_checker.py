@@ -58,3 +58,35 @@ async def test_fetch_returns_none_on_500() -> None:
         result = await fetch_latest_tag(client)
 
     assert result is None
+
+
+async def test_fetch_skips_prerelease_payload() -> None:
+    """A ``prerelease: true`` payload yields ``None`` -- pre-releases never prompt.
+
+    ``releases/latest`` already excludes pre-releases, but the checker also
+    guards on the flag defensively; this pins that behaviour.
+    """
+    app = FastAPI()
+
+    @app.get(_LATEST_PATH)
+    async def latest() -> dict[str, object]:
+        return {"tag_name": "v9.9.9-rc1", "html_url": _HTML_URL, "prerelease": True}
+
+    async with _client(app) as client:
+        result = await fetch_latest_tag(client)
+
+    assert result is None
+
+
+async def test_fetch_skips_draft_payload() -> None:
+    """A ``draft: true`` payload yields ``None``."""
+    app = FastAPI()
+
+    @app.get(_LATEST_PATH)
+    async def latest() -> dict[str, object]:
+        return {"tag_name": "v9.9.9", "html_url": _HTML_URL, "draft": True}
+
+    async with _client(app) as client:
+        result = await fetch_latest_tag(client)
+
+    assert result is None

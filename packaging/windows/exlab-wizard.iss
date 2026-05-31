@@ -11,11 +11,19 @@
 ; Run-key entries -- registering autostart here would double-register.
 ;
 ; Build (from repo root):
-;   iscc /DAppVersion=<version> packaging\windows\exlab-wizard.iss
+;   iscc /DAppVersion=<version> /DOutputBaseName=ExLabWizard_v<tag> \
+;        packaging\windows\exlab-wizard.iss
 ; CI downloads MicrosoftEdgeWebview2Setup.exe next to this .iss beforehand.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
+#endif
+
+; The release-asset file name (no extension). CI passes
+; /DOutputBaseName=ExLabWizard_v<tag>; a manual build falls back to a name
+; derived from AppVersion so a bare ``iscc`` invocation still works.
+#ifndef OutputBaseName
+  #define OutputBaseName "ExLabWizard_v" + AppVersion
 #endif
 
 [Setup]
@@ -33,7 +41,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ; Emit the installer at the repo root so the CI upload/release globs find it.
 OutputDir=..\..
-OutputBaseFilename=ExLab-Wizard-{#AppVersion}-win-x64-setup
+OutputBaseFilename={#OutputBaseName}
 WizardStyle=modern
 ; Use the app icon for the installer chrome only when it is actually present.
 #if FileExists(AddBackslash(SourcePath) + "..\..\assets\icons\ExLabWizard.ico")
