@@ -60,8 +60,13 @@ def test_flow_28_search_filters_tree_and_shows_count(page, server_url) -> None:
     _goto(page, f"{server_url}/main?q=Demo")
     count = page.locator('[data-testid="main-search-count"]')
     count.wait_for(state="visible", timeout=10_000)
-    # The seeded query surfaced exactly the Demo project + its 3 runs.
-    assert count.inner_text().strip() == "4 results"
+    # The seeded query surfaced the Demo project + its run nodes. The
+    # two-icon sync-presence design (2026-05-30) added the failed/blocked
+    # runs to ``_test_app``'s hierarchy so the tree rollup states are
+    # covered, so "Demo" now matches the project plus five runs
+    # (Run_2026-05-07/06/05/04 + TestRun_2026-05-07). Keep in lockstep
+    # with that seeded hierarchy.
+    assert count.inner_text().strip() == "6 results"
 
 
 def test_flow_28_search_no_matches_state(page, server_url) -> None:
@@ -87,8 +92,11 @@ def test_flow_28_sync_legend_popover_lists_states(page, server_url) -> None:
     legend.click()
     menu = page.locator('[data-testid="files-legend-menu"]')
     menu.wait_for(state="visible", timeout=5_000)
-    # A couple of known meanings from _STATUS_TO_PROPS are listed.
-    assert "Synced and verified at NAS" in menu.inner_text()
+    # A couple of known meanings from the two-icon FileSyncView legend
+    # (sync_legend_entries) are listed.
+    text = menu.inner_text()
+    assert "Fully backed up on the NAS" in text
+    assert "Sync held by a validation finding" in text
 
 
 def test_flow_28_selected_tree_node_carries_selected_class(page, server_url) -> None:
