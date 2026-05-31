@@ -195,23 +195,34 @@ records as `MISSING` rows (tombstone, not openable) instead of skipping. Verifie
 absent records remain `ON_NAS`. `_file_state_from_record` is extended/replaced to
 distinguish these.
 
-### 5.2 Thread live queue status into browse (Group B)
+### 5.2 Propagate per-run failure from `creation.json` (Group B)
 
-To colour the NAS icon on `UPLOAD_FAILED` / `BLOCKED`, the per-file/per-folder
-scans must consult the **sync queue** (the same `deps`-provided queue
-`_run_log_from_queue` already reads), building a `path -> SyncStatus` map for the
-run and passing each file's `job_status` into `file_sync_view`. This affects:
+**As built (refinement of the original "live queue" idea).** Per-file failure is
+never persisted, and the only per-file granularity the queue offers is a per-*run*
+job state reached through an accessor (`NASSyncClient.get_by_run_path`) that does
+not exist. The robust, persisted source is the run's **`creation.json`
+`sync_status`** (`pending` / `synced` / `cleaned` / `failed` /
+`blocked_by_validation`), already maintained by the orchestrator and read
+tolerantly in browse. So failure is surfaced at the **run** level and propagated
+to that run's not-yet-verified on-disk files:
 
-- `scan_folder_sync` (per-file rows),
-- `_build_run_node` / `_run_rollup_status` (tree rollup),
-- the browse response schema: the per-file `sync_status` discriminator gains
-  `upload_failed` and `missing` (alongside the existing `blocked_by_validation`),
-  **or** the response carries a precomputed `sync_view` string. Decision for the
-  plan: prefer emitting a precomputed `sync_view` so the wire and the UI share
-  one vocabulary and the UI does no re-derivation.
+- `_run_failure_flags(run_root)` reads `creation.json` (`read_msgspec_json(..., CreationJson)`,
+  try/except → `(False, False)` on absence/corruption) and returns
+  `(run_failed, run_blocked)`.
+- `_file_state_from_record(record, *, on_disk, run_failed, run_blocked)` returns
+  `upload_failed` / `blocked` for an unverified on-disk file when the run is
+  failed / blocked (a **verified** file stays `synced` regardless), and `missing`
+  for an unverified, locally-absent record (the lost-file fix).
+- The backend emits these discriminator strings on the existing per-file
+  `sync_status` field (`upload_failed`, `blocked`, `missing` join
+  `synced`/`syncing`/`acquiring`/`on_nas`); the UI maps the string to a
+  `FileSyncView` via `file_sync_view` — no new wire field, no UI re-derivation.
 
-No change to `FileSyncRecord` / `SyncStateJson` / `SyncStatus` enum — the queue
-already holds failed/blocked; we only *read* it at browse time.
+Affects `scan_folder_sync` (per-file rows) and `_run_rollup_status` (tree rollup,
+which short-circuits to `blocked`/`upload_failed` before the
+`SyncStateWriter.rollup_state` fallback).
+
+No change to `FileSyncRecord` / `SyncStateJson` / `SyncStatus` enum — only reads.
 
 ## 6. Accessibility
 
