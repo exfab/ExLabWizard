@@ -361,9 +361,17 @@ async def test_worker_drives_to_verified_and_marks_synced(
                 SyncJobState.CLEANED,
             },
         )
+        # ``creation.json``'s ``sync_status`` is stamped by ``_mark_synced``, a
+        # separate async step that lags the queue-row transition. Poll the file
+        # itself rather than reading it the instant the row goes terminal --
+        # otherwise a loaded runner observes the pre-stamp ``pending`` value.
         creation_path = run_dir / CACHE_DIR_NAME / CREATION_JSON_NAME
-        decoded = msgspec_json.decode(creation_path.read_bytes(), type=CreationJson)
-        assert decoded.sync_status == "synced"
+
+        async def _synced() -> bool:
+            decoded = msgspec_json.decode(creation_path.read_bytes(), type=CreationJson)
+            return decoded.sync_status == "synced"
+
+        await wait_until(_synced, message="creation.json sync_status never became 'synced'")
     finally:
         await client.close()
 

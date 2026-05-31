@@ -52,16 +52,21 @@ runtime-only install drop the extra: `uv sync` / `pip install -e .`.
 
 ### Pre-built binary
 
-Every tagged release publishes a GitHub Release that carries per-OS installers —
-a Windows `.exe` installer, a macOS `.dmg`, and a Linux `.AppImage` — plus raw
-archives for each platform under [Releases](../../releases). Download the
-installer (or archive) for your platform from the
+Every published GitHub Release carries per-OS installers, named
+`ExLabWizard_v<version>` with the platform-appropriate extension — a Windows
+`.exe`, a macOS `.dmg`, and a Linux `.AppImage` — plus raw per-platform archives
+(for offline / USB installs) under [Releases](../../releases). Download the
+installer for your platform from the
 [latest release](https://github.com/exfab/ExLabWizard/releases/latest) and run it.
 
-On startup ExLab-Wizard checks GitHub for a newer release; when one is found it
-raises an OS notification and the tray menu gains a "Check for updates…" item
-that opens the releases page. This probe can be disabled with
-`update_check.enabled: false` in `config.yaml`.
+**Pre-releases** also get the full installer set, so you can test a release
+candidate before it ships.
+
+On startup ExLab-Wizard checks GitHub for a newer **stable** release
+(pre-releases are ignored, so testing an RC never nags everyone to "upgrade").
+When a newer stable release is found it raises an OS notification and the tray
+menu gains a "Check for updates…" item that opens the releases page. This probe
+can be disabled with `update_check.enabled: false` in `config.yaml`.
 
 ## Running ExLab-Wizard
 

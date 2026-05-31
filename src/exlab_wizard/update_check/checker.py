@@ -43,6 +43,13 @@ async def fetch_latest_tag(client: httpx.AsyncClient | None = None) -> tuple[str
         response = await http.get(API_LATEST_URL, headers=_GITHUB_HEADERS)
         response.raise_for_status()
         data = response.json()
+        # ``releases/latest`` returns the most recent non-prerelease, non-draft
+        # release, so a pre-release never reaches an operator as an update
+        # prompt. Re-check the flags defensively in case the endpoint or its
+        # payload shape ever changes -- a pre-release must never notify.
+        if data.get("prerelease") or data.get("draft"):
+            logger.info("update_check.skipped_prerelease", extra={"tag": data.get("tag_name")})
+            return None
         return data["tag_name"], data["html_url"]
     except httpx.HTTPError as exc:
         # Offline / DNS / rate-limited (403) / 5xx -- expected on constrained
