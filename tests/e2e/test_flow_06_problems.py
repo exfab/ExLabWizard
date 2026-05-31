@@ -13,6 +13,8 @@ The flow:
 
 from __future__ import annotations
 
+from playwright.sync_api import expect
+
 from tests.e2e.page_objects.problems_page import ProblemsPage
 
 
@@ -25,17 +27,16 @@ def test_flow_06_problems(page, server_url) -> None:
     problems.row(0).wait_for(state="visible", timeout=5_000)
 
     # Initial state is Active and the override CTA is rendered.
-    assert "Active" in problems.row_state(0).inner_text()
+    expect(problems.row_state(0)).to_contain_text("Active", timeout=5_000)
     problems.row_override(0).click()
     page.wait_for_load_state("networkidle")
     # State flips to Override active (the row state label is the source
     # of truth -- it includes the words "Override active").
-    problems.row_state(0).wait_for(state="visible", timeout=5_000)
-    assert "Override active" in problems.row_state(0).inner_text()
+    expect(problems.row_state(0)).to_contain_text("Override active", timeout=5_000)
 
     # Revoke flips the state back to Active.
     problems.row_revoke(0).wait_for(state="visible", timeout=5_000)
     problems.row_revoke(0).click()
     page.wait_for_load_state("networkidle")
     problems.row(0).wait_for(state="visible", timeout=5_000)
-    assert "Active" in problems.row_state(0).inner_text()
+    expect(problems.row_state(0)).to_contain_text("Active", timeout=5_000)

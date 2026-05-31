@@ -14,11 +14,9 @@ end-to-end, asserting:
 
 from __future__ import annotations
 
-import asyncio
 import os
 import shutil
 import stat
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -47,6 +45,7 @@ from exlab_wizard.constants import SyncHandleState as HandleState
 from exlab_wizard.sync.nas_client import NASSyncClient
 from exlab_wizard.sync.queue import SyncJobRow, SyncJobState
 from exlab_wizard.validator.engine import Validator
+from tests.unit.sync._helpers import wait_for_job_state, wait_until
 
 
 class _StubKeyring:
@@ -137,26 +136,6 @@ async def _populate_run(local_root: Path) -> Path:
     return run_dir
 
 
-async def _wait_for_state(
-    queue_get: Callable[[str], asyncio.Future[SyncJobRow | None]],
-    job_id: str,
-    targets: set[SyncJobState],
-    *,
-    timeout_s: float = 8.0,
-    poll_s: float = 0.05,
-) -> SyncJobRow:
-    """Poll ``queue.get_by_id`` until ``state`` is in ``targets`` or timeout."""
-    elapsed = 0.0
-    while elapsed < timeout_s:
-        row = await queue_get(job_id)
-        if row is not None and row.state in targets:
-            return row
-        await asyncio.sleep(poll_s)
-        elapsed += poll_s
-    msg = f"job {job_id} never reached {targets!r}"
-    raise AssertionError(msg)
-
-
 async def test_full_happy_path_via_stub_rclone(
     stub_binaries_on_path: Path,
     tmp_path: Path,
@@ -208,8 +187,8 @@ async def test_full_happy_path_via_stub_rclone(
 
         # The worker should drive through to VERIFIED + CLEANED (since
         # the test config sets min_verify_passes=1 and min_age_hours=0).
-        row = await _wait_for_state(
-            client._queue.get_by_id,
+        row = await wait_for_job_state(
+            client,
             handle.job_id,
             {SyncJobState.CLEANED, SyncJobState.CLEANUP_ELIGIBLE, SyncJobState.VERIFIED},
         )
@@ -295,7 +274,7 @@ async def test_auth_error_terminates_failed(
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
-        row = await _wait_for_state(client._queue.get_by_id, handle.job_id, {SyncJobState.FAILED})
+        row = await wait_for_job_state(client, handle.job_id, {SyncJobState.FAILED})
         assert row.state is SyncJobState.FAILED
     finally:
         await client.close()
@@ -406,8 +385,8 @@ async def test_routine_reconcile_retries_until_remote_listing_settles(
     try:
         handle = await client.enqueue(run_dir)
         assert handle.state == HandleState.QUEUED
-        row = await _wait_for_state(
-            client._queue.get_by_id,
+        row = await wait_for_job_state(
+            client,
             handle.job_id,
             {SyncJobState.VERIFIED, SyncJobState.CLEANUP_ELIGIBLE, SyncJobState.CLEANED},
         )
@@ -474,8 +453,8 @@ async def test_cleanup_hash_gate_defers_on_remote_mismatch(
     await client.init()
     try:
         handle = await client.enqueue(run_dir)
-        row = await _wait_for_state(
-            client._queue.get_by_id,
+        row = await wait_for_job_state(
+            client,
             handle.job_id,
             {SyncJobState.CLEANUP_ELIGIBLE},
         )
@@ -536,19 +515,26 @@ async def test_poller_per_file_enqueue_drives_to_synced_state(
         assert enqueued == [run_dir]
 
         # The worker drives the per-file job through to VERIFIED.
-        async def _by_run_path(_ignored: str) -> SyncJobRow | None:
-            return await client._queue.get_by_run_path(run_dir)
-
-        row = await _wait_for_state(
-            _by_run_path,
-            "",
-            {SyncJobState.VERIFIED, SyncJobState.CLEANUP_ELIGIBLE, SyncJobState.CLEANED},
-        )
-        assert row.state in {
+        targets = {
             SyncJobState.VERIFIED,
             SyncJobState.CLEANUP_ELIGIBLE,
             SyncJobState.CLEANED,
         }
+        captured: dict[str, SyncJobRow] = {}
+
+        async def _reached_target() -> bool:
+            row = await client._queue.get_by_run_path(run_dir)
+            if row is not None and row.state in targets:
+                captured["row"] = row
+                return True
+            return False
+
+        await wait_until(
+            _reached_target,
+            message=f"run {run_dir} never reached {targets!r}",
+        )
+        row = captured["row"]
+        assert row.state in targets
         assert row.files == ("data.bin",)
 
         # sync_state.json records the verified file.
@@ -623,14 +609,14 @@ async def test_poller_to_cleanup_honors_keep_local_and_stamps_cleared(
         enqueued = await poller.poll_once(now_monotonic=cfg.sync.quiescence_minutes * 60 + 1.0)
         assert enqueued == [run_dir]
 
-        async def _by_run_path(_ignored: str) -> SyncJobRow | None:
-            return await client._queue.get_by_run_path(run_dir)
-
         # The worker drives the job through verify into the cleanup states.
-        await _wait_for_state(
-            _by_run_path,
-            "",
-            {SyncJobState.CLEANED},
+        async def _reached_cleaned() -> bool:
+            row = await client._queue.get_by_run_path(run_dir)
+            return row is not None and row.state is SyncJobState.CLEANED
+
+        await wait_until(
+            _reached_cleaned,
+            message=f"run {run_dir} never reached CLEANED",
         )
 
         # The keep_local file survives; the other data file is removed.
