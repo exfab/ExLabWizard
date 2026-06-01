@@ -991,7 +991,8 @@ class NASSyncClient:
             rel
             for rel in proof_required
             if sync_state.files[rel].synced_signature is None
-            or tuple(sync_state.files[rel].synced_signature or ()) != self._file_signature(run_path / rel)
+            or tuple(sync_state.files[rel].synced_signature or ())
+            != self._file_signature(run_path / rel)
         ]
         if dirty:
             _log.debug("cleanup deferred: run %s has dirty local files: %s", run_path, dirty)

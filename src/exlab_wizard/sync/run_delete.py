@@ -80,7 +80,9 @@ def collect_cleanup_candidates(
                 retained_ignored.append(rel)
                 continue
             delete.append(rel)
-    return CleanupCandidates(delete=tuple(sorted(delete)), retained_ignored=tuple(sorted(retained_ignored)))
+    return CleanupCandidates(
+        delete=tuple(sorted(delete)), retained_ignored=tuple(sorted(retained_ignored))
+    )
 
 
 def delete_run_files(
