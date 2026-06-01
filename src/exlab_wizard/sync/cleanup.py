@@ -6,9 +6,7 @@ following hold for a job:
 1. ``verify_passes >= nas_cleanup.min_verify_passes`` (default 2).
 2. Hours since the most recent ``verified_at`` >= ``min_age_hours``
    (default 24).
-3. The remote NAS path is reachable (the caller passes the result of
-   a remote ``stat`` as ``remote_stat_ok``).
-4. No active ``validation_overrides`` revocation (tombstone) has been
+3. No active ``validation_overrides`` revocation (tombstone) has been
    written within the last ``min_age_hours`` -- a revoked override
    re-blocks sync, so we don't want to delete locally if the run is
    now blocked.
@@ -69,7 +67,6 @@ def cleanup_interlocks_satisfied(
     now_utc: datetime,
     config: NASCleanupConfig,
     overrides_active: list[dict[str, Any]],
-    remote_stat_ok: bool,
 ) -> bool:
     """Evaluate every §7.1.6 interlock; return True iff all pass.
 
@@ -105,12 +102,7 @@ def cleanup_interlocks_satisfied(
         )
         return False
 
-    # 3. remote NAS reachable.
-    if not remote_stat_ok:
-        _log.debug("cleanup blocked: remote stat failed for job %s", job.id)
-        return False
-
-    # 4. no recent revocation.
+    # 3. no recent revocation.
     if has_recent_revocation(
         overrides_active,
         now_utc=now_utc,

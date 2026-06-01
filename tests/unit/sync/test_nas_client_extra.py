@@ -54,6 +54,7 @@ def _build_config(
     min_verify_passes: int = 1,
     min_age_hours: int = 0,
     cleanup_enabled: bool = True,
+    delete_ignored: bool = False,
 ) -> Config:
     return Config(
         paths=PathsConfig(templates_dir="/tpl", plugin_dir="/plg", local_root=str(local_root)),
@@ -70,6 +71,7 @@ def _build_config(
             min_verify_passes=min_verify_passes,
             min_age_hours=min_age_hours,
             retain_cache=retain_cache,
+            delete_ignored=delete_ignored,
         ),
     )
 
@@ -94,6 +96,15 @@ async def _populate_run(local_root: Path) -> Path:
     (run_dir / "data.bin").write_bytes(b"payload-bytes")
     (run_dir / "subdir").mkdir()
     (run_dir / "subdir" / "child.txt").write_text("child")
+    cache = run_dir / CACHE_DIR_NAME
+    cache.mkdir()
+    (cache / CREATION_JSON_NAME).write_bytes(msgspec_json.encode(_make_creation(run_dir)))
+    return run_dir
+
+
+async def _populate_empty_run(local_root: Path) -> Path:
+    run_dir = local_root / "EQ1" / "PROJ-0042" / "Runs" / "Run_empty"
+    run_dir.mkdir(parents=True)
     cache = run_dir / CACHE_DIR_NAME
     cache.mkdir()
     (cache / CREATION_JSON_NAME).write_bytes(msgspec_json.encode(_make_creation(run_dir)))
@@ -232,6 +243,8 @@ async def test_cleanup_retain_cache_keeps_metadata(tmp_path: Path) -> None:
     """``retain_cache=True`` deletes data files but keeps ``.exlab-wizard/``."""
     cfg = _build_config(tmp_path, retain_cache=True, min_verify_passes=1, min_age_hours=0)
     run_dir = await _populate_run(tmp_path)
+    (run_dir / "subdir" / "child.txt").unlink()
+    (run_dir / "subdir").rmdir()
     writer = CreationWriter(lock_timeout_seconds=10.0)
 
     async def _push(
@@ -320,38 +333,6 @@ async def test_cleanup_eligible_when_min_verify_passes_unmet(tmp_path: Path) -> 
         handle = await client.enqueue(run_dir)
         await wait_for_job_state(client, handle.job_id, {SyncJobState.CLEANUP_ELIGIBLE})
         # Files retained because min_verify_passes wasn't met.
-        assert (run_dir / "data.bin").exists()
-    finally:
-        await client.close()
-
-
-async def test_cleanup_blocked_by_remote_stat(tmp_path: Path) -> None:
-    """A failing remote_stat keeps the job in CLEANUP_ELIGIBLE, not CLEANED."""
-    cfg = _build_config(tmp_path, retain_cache=True, min_verify_passes=1, min_age_hours=0)
-    run_dir = await _populate_run(tmp_path)
-    writer = CreationWriter(lock_timeout_seconds=10.0)
-
-    async def _push(
-        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
-    ) -> TransportResult:
-        return TransportResult(ok=True, returncode=0)
-
-    client = NASSyncClient(
-        config=cfg,
-        queue_db=tmp_path / "q.db",
-        validator=Validator(),
-        cache_creation=writer,
-        push_callable_factory=_factory(_push),
-        lsjson_callable_factory=local_lsjson_factory(),
-        check_callable_factory=local_check_factory(),
-        remote_stat_callable=lambda _row: False,
-        worker_poll_interval_s=0.005,
-    )
-    await client.init()
-    try:
-        handle = await client.enqueue(run_dir)
-        await wait_for_job_state(client, handle.job_id, {SyncJobState.CLEANUP_ELIGIBLE})
-        # Files retained because remote_stat failed.
         assert (run_dir / "data.bin").exists()
     finally:
         await client.close()
@@ -497,6 +478,8 @@ async def test_cleanup_marks_cleared_in_sync_state(tmp_path: Path) -> None:
 
     cfg = _build_config(tmp_path, retain_cache=True, min_verify_passes=1, min_age_hours=0)
     run_dir = await _populate_run(tmp_path)
+    (run_dir / "subdir" / "child.txt").unlink()
+    (run_dir / "subdir").rmdir()
     writer = CreationWriter(lock_timeout_seconds=10.0)
 
     async def _push(
@@ -532,6 +515,8 @@ async def test_cleanup_keeps_keep_local_file(tmp_path: Path) -> None:
 
     cfg = _build_config(tmp_path, retain_cache=True, min_verify_passes=1, min_age_hours=0)
     run_dir = await _populate_run(tmp_path)
+    (run_dir / "subdir" / "child.txt").unlink()
+    (run_dir / "subdir").rmdir()
     writer = CreationWriter(lock_timeout_seconds=10.0)
     sync_writer = SyncStateWriter()
     # Operator flags the top-level data file as keep-local before cleanup.
@@ -600,13 +585,255 @@ async def test_cleanup_deferred_when_run_only_partially_synced(tmp_path: Path) -
     await client.init()
     try:
         handle = await client.enqueue(run_dir, files=["data.bin"])
-        await wait_for_job_state(client, handle.job_id, {SyncJobState.VERIFIED})
-        # Give the worker a beat -- cleanup must NOT advance the job.
-        await asyncio.sleep(0.1)
-        row = await client._queue.get_by_id(handle.job_id)
-        assert row is not None and row.state is SyncJobState.VERIFIED
+        row = await wait_for_job_state(client, handle.job_id, {SyncJobState.CLEANUP_ELIGIBLE})
+        assert row.last_error == "cleanup_rollup_not_synced"
         # Local data is retained because the run is not fully SYNCED.
         assert (run_dir / "data.bin").exists()
+    finally:
+        await client.close()
+
+
+async def test_cleanup_defers_on_untracked_local_deletion_candidate(tmp_path: Path) -> None:
+    """A local file selected for deletion but absent from sync_state blocks cleanup."""
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+
+    cfg = _build_config(tmp_path, retain_cache=True, min_verify_passes=1, min_age_hours=0)
+    run_dir = await _populate_run(tmp_path)
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+    sync_writer = SyncStateWriter()
+
+    async def _push(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
+        return TransportResult(ok=True, returncode=0)
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        sync_state_writer=sync_writer,
+        push_callable_factory=_factory(_push),
+        lsjson_callable_factory=local_lsjson_factory(),
+        check_callable_factory=local_check_factory(),
+        worker_poll_interval_s=0.005,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir, files=["data.bin"])
+        row = await wait_for_job_state(client, handle.job_id, {SyncJobState.CLEANUP_ELIGIBLE})
+        assert row.last_error == "cleanup_untracked_local_files"
+        assert (run_dir / "data.bin").exists()
+        assert (run_dir / "subdir" / "child.txt").exists()
+    finally:
+        await client.close()
+
+
+async def test_cleanup_defers_on_dirty_tracked_deletion_candidate(tmp_path: Path) -> None:
+    """A tracked file whose current signature changed since sync blocks cleanup."""
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+
+    cfg = _build_config(tmp_path, retain_cache=True, min_verify_passes=1, min_age_hours=0)
+    run_dir = await _populate_run(tmp_path)
+    (run_dir / "subdir" / "child.txt").unlink()
+    (run_dir / "subdir").rmdir()
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+    sync_writer = SyncStateWriter()
+    original_sig = NASSyncClient._file_signature(run_dir / "data.bin")
+    assert original_sig is not None
+    await sync_writer.upsert_file(
+        run_dir,
+        "data.bin",
+        synced_signature=original_sig,
+        verified_at="2026-05-31T12:00:00Z",
+    )
+    (run_dir / "data.bin").write_bytes(b"changed-after-sync")
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        sync_state_writer=sync_writer,
+        push_callable_factory=_factory(lambda *_a, **_k: None),  # unused
+        lsjson_callable_factory=local_lsjson_factory(),
+        check_callable_factory=local_check_factory(),
+        worker_poll_interval_s=0.005,
+    )
+    await client._queue.init()
+    try:
+        row = await client._queue.insert(
+            run_path=run_dir,
+            equipment_id="EQ1",
+            nas_path="/srv/nas/run",
+            files=("data.bin",),
+        )
+        await client._queue.transition(
+            row.id,
+            SyncJobState.VERIFIED,
+            increment_verify_passes=True,
+            verified_at="2026-05-30T12:01:00Z",
+        )
+        await client._maybe_cleanup(row.id, run_dir)
+        updated = await client._queue.get_by_id(row.id)
+        assert updated is not None
+        assert updated.state is SyncJobState.CLEANUP_ELIGIBLE
+        assert updated.last_error == "cleanup_dirty_local_files"
+        assert (run_dir / "data.bin").exists()
+    finally:
+        await client._queue.close()
+
+
+async def test_cleanup_retains_ignored_files_by_default_and_cleans_run(tmp_path: Path) -> None:
+    """Ignored files are not synced and not deleted by automatic cleanup by default."""
+    cfg = _build_config(tmp_path, retain_cache=True, min_verify_passes=1, min_age_hours=0)
+    run_dir = await _populate_run(tmp_path)
+    (run_dir / "scan.tmp").write_text("temporary")
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+
+    async def _push(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
+        return TransportResult(ok=True, returncode=0)
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        push_callable_factory=_factory(_push),
+        lsjson_callable_factory=local_lsjson_factory(),
+        check_callable_factory=local_check_factory(),
+        worker_poll_interval_s=0.005,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir, files=["data.bin", "subdir/child.txt"])
+        row = await wait_for_job_state(client, handle.job_id, {SyncJobState.CLEANED})
+        assert row.last_error is None
+        assert (run_dir / "scan.tmp").exists()
+        assert not (run_dir / "data.bin").exists()
+        assert not (run_dir / "subdir" / "child.txt").exists()
+    finally:
+        await client.close()
+
+
+async def test_cleanup_deletes_ignored_files_when_delete_ignored_true(tmp_path: Path) -> None:
+    """Ignored files are local-discard candidates when explicitly configured."""
+    cfg = _build_config(
+        tmp_path,
+        retain_cache=True,
+        min_verify_passes=1,
+        min_age_hours=0,
+        delete_ignored=True,
+    )
+    run_dir = await _populate_run(tmp_path)
+    (run_dir / "scan.tmp").write_text("temporary")
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+
+    async def _push(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
+        return TransportResult(ok=True, returncode=0)
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        push_callable_factory=_factory(_push),
+        lsjson_callable_factory=local_lsjson_factory(),
+        check_callable_factory=local_check_factory(),
+        worker_poll_interval_s=0.005,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir, files=["data.bin", "subdir/child.txt"])
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.CLEANED})
+        assert not (run_dir / "scan.tmp").exists()
+        assert not (run_dir / "data.bin").exists()
+        assert not (run_dir / "subdir" / "child.txt").exists()
+    finally:
+        await client.close()
+
+
+async def test_cleanup_defers_when_equipment_missing_for_remote_check(tmp_path: Path) -> None:
+    """A missing equipment config blocks cleanup instead of skipping verification."""
+    from exlab_wizard.cache.sync_state_writer import SyncStateWriter
+
+    cfg = _build_config(tmp_path, retain_cache=True, min_verify_passes=1, min_age_hours=0)
+    run_dir = await _populate_run(tmp_path)
+    (run_dir / "subdir" / "child.txt").unlink()
+    (run_dir / "subdir").rmdir()
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+    sync_writer = SyncStateWriter()
+    sig = NASSyncClient._file_signature(run_dir / "data.bin")
+    assert sig is not None
+    await sync_writer.upsert_file(
+        run_dir,
+        "data.bin",
+        synced_signature=sig,
+        verified_at="2026-05-31T12:00:00Z",
+    )
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        sync_state_writer=sync_writer,
+        worker_poll_interval_s=0.005,
+    )
+    await client._queue.init()
+    try:
+        row = await client._queue.insert(
+            run_path=run_dir,
+            equipment_id="MISSING",
+            nas_path="/srv/nas/run",
+            files=("data.bin",),
+        )
+        await client._queue.transition(
+            row.id,
+            SyncJobState.VERIFIED,
+            increment_verify_passes=True,
+            verified_at="2026-05-30T12:01:00Z",
+        )
+        await client._maybe_cleanup(row.id, run_dir)
+        updated = await client._queue.get_by_id(row.id)
+        assert updated is not None
+        assert updated.state is SyncJobState.CLEANUP_ELIGIBLE
+        assert updated.last_error == "cleanup_missing_equipment"
+        assert (run_dir / "data.bin").exists()
+    finally:
+        await client._queue.close()
+
+
+async def test_empty_run_reaches_cleaned(tmp_path: Path) -> None:
+    """A verified run with no data files can pass cleanup."""
+    cfg = _build_config(tmp_path, retain_cache=True, min_verify_passes=1, min_age_hours=0)
+    run_dir = await _populate_empty_run(tmp_path)
+    writer = CreationWriter(lock_timeout_seconds=10.0)
+
+    async def _push(
+        _local: Path, *, bwlimit_kibps: int | None, files_from: object = None
+    ) -> TransportResult:
+        return TransportResult(ok=True, returncode=0)
+
+    client = NASSyncClient(
+        config=cfg,
+        queue_db=tmp_path / "q.db",
+        validator=Validator(),
+        cache_creation=writer,
+        push_callable_factory=_factory(_push),
+        lsjson_callable_factory=local_lsjson_factory(),
+        check_callable_factory=local_check_factory(),
+        worker_poll_interval_s=0.005,
+    )
+    await client.init()
+    try:
+        handle = await client.enqueue(run_dir)
+        await wait_for_job_state(client, handle.job_id, {SyncJobState.CLEANED})
+        assert (run_dir / CACHE_DIR_NAME).exists()
     finally:
         await client.close()
 

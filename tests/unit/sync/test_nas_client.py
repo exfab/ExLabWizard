@@ -345,8 +345,8 @@ async def test_worker_drives_to_verified_and_marks_synced(
         # whose size + modtime match local. Inject a perfect listing so
         # the reconcile succeeds without a real rclone binary.
         lsjson_callable_factory=local_lsjson_factory(),
-        # Optimistic remote_stat default + high min_age_hours/passes so
-        # cleanup interlocks won't trigger for the default config.
+        # High min_age_hours/passes means cleanup interlocks won't trigger
+        # for the default config.
         worker_poll_interval_s=0.01,
     )
     await client.init()
@@ -366,12 +366,16 @@ async def test_worker_drives_to_verified_and_marks_synced(
         # itself rather than reading it the instant the row goes terminal --
         # otherwise a loaded runner observes the pre-stamp ``pending`` value.
         creation_path = run_dir / CACHE_DIR_NAME / CREATION_JSON_NAME
+        decoded: CreationJson | None = None
 
-        async def _synced() -> bool:
+        async def _marked_synced() -> bool:
+            nonlocal decoded
             decoded = msgspec_json.decode(creation_path.read_bytes(), type=CreationJson)
             return decoded.sync_status == "synced"
 
-        await wait_until(_synced, message="creation.json sync_status never became 'synced'")
+        await wait_until(_marked_synced, message="creation.json was never marked synced")
+        assert decoded is not None
+        assert decoded.sync_status == "synced"
     finally:
         await client.close()
 

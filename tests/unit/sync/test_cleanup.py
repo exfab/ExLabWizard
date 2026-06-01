@@ -58,7 +58,6 @@ def test_all_interlocks_pass(tmp_path: Path) -> None:
         now_utc=_NOW,
         config=_config(),
         overrides_active=[],
-        remote_stat_ok=True,
     )
 
 
@@ -70,7 +69,6 @@ def test_min_verify_passes_blocks(tmp_path: Path) -> None:
         now_utc=_NOW,
         config=_config(min_verify_passes=2),
         overrides_active=[],
-        remote_stat_ok=True,
     )
 
 
@@ -83,19 +81,6 @@ def test_min_age_hours_blocks(tmp_path: Path) -> None:
         now_utc=_NOW,
         config=_config(min_age_hours=24),
         overrides_active=[],
-        remote_stat_ok=True,
-    )
-
-
-def test_remote_stat_failure_blocks(tmp_path: Path) -> None:
-    """An unreachable NAS blocks cleanup."""
-    assert not cleanup_interlocks_satisfied(
-        job=_job(),
-        run_path=tmp_path,
-        now_utc=_NOW,
-        config=_config(),
-        overrides_active=[],
-        remote_stat_ok=False,
     )
 
 
@@ -117,7 +102,6 @@ def test_recent_revocation_blocks(tmp_path: Path) -> None:
         now_utc=_NOW,
         config=_config(min_age_hours=24),
         overrides_active=overrides,
-        remote_stat_ok=True,
     )
 
 
@@ -138,7 +122,6 @@ def test_old_revocation_does_not_block(tmp_path: Path) -> None:
         now_utc=_NOW,
         config=_config(min_age_hours=24),
         overrides_active=overrides,
-        remote_stat_ok=True,
     )
 
 
@@ -150,7 +133,6 @@ def test_missing_verified_at_blocks(tmp_path: Path) -> None:
         now_utc=_NOW,
         config=_config(),
         overrides_active=[],
-        remote_stat_ok=True,
     )
 
 
