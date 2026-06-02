@@ -257,7 +257,9 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         config_text = config_path.read_text(encoding="utf-8")
         assert "MICROSCOPE1" in config_text
         assert "SPECTROMETER1" in config_text
-        assert str(data_root) in config_text
+        # config.yaml persists only the single app root; templates/plugins/data
+        # are derived from it at runtime.
+        assert str(app_root) in config_text
 
         # ---- Phase 6: verify NAS Remote section is present ---------------
         # The two nas-mode equipment registered above leave the install in

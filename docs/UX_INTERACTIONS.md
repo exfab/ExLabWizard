@@ -24,9 +24,7 @@ flow test.
 | Route | Test ID | Element | Action | Outcome |
 |---|---|---|---|---|
 | `/settings` | `settings-nav-paths` | nav row | Click the 'Paths' sidebar row | Shows the Paths section (client-side; edits are preserved). |
-| `/settings` | `settings-paths-templates` | input | Type the templates directory | Binds config.paths.templates_dir on the draft. |
-| `/settings` | `settings-paths-plugin` | input | Type the plugin directory | Binds config.paths.plugin_dir on the draft. |
-| `/settings` | `settings-paths-local-root` | input | Type the local data root | Binds config.paths.local_root on the draft. |
+| `/settings` | `settings-paths-app-root` | input | Type the data folder (app root) | Binds config.paths.app_root on the draft; templates/, plugins/ and data/ are derived and shown as read-only labels. |
 | `/settings` | `settings-nav-lims` | nav row | Click the 'LIMS' sidebar row | Shows the LIMS section. |
 | `/settings` | `settings-lims-endpoint` | input | Type the LIMS endpoint URL | Binds config.lims.endpoint on the draft. |
 | `/settings` | `settings-lims-email` | input | Type the operator email | Binds config.lims.email on the draft. |
@@ -40,7 +38,6 @@ flow test.
 | `/settings` | `settings-nav-equipment` | nav row | Click the 'Equipment List' sidebar row | Shows the equipment list and the add-equipment sub-form. |
 | `/settings` | `settings-equipment-id` | input | Type the equipment ID (^[A-Z][A-Z0-9_]*$) | Provides the EquipmentConfig.id for the new entry. |
 | `/settings` | `settings-equipment-label` | input | Type the equipment label | Provides the EquipmentConfig.label for the new entry. |
-| `/settings` | `settings-equipment-local-root` | input | Type the equipment local root | Provides the EquipmentConfig.local_root for the new entry. |
 | `/settings` | `settings-equipment-nas-root` | input | Type the equipment NAS root | Provides the EquipmentConfig.nas_root for the new entry. |
 | `/settings` | `settings-equipment-add` | button | Click 'Add equipment' | Validates and appends an EquipmentConfig to the draft; row appears. |
 
@@ -105,7 +102,6 @@ flow test.
 | `/main` | `toolbar-add-equipment` | button | Click 'Add Equipment' on the main-window toolbar | Navigates to /wizard/equipment for the 5-step Add-Equipment wizard. |
 | `/wizard/equipment` | `wizard-equipment-id` | input | Type the equipment ID (^[A-Z][A-Z0-9_]*$) | Sets the canonical equipment id used by paths + sync_mode validation. |
 | `/wizard/equipment` | `wizard-equipment-label` | input | Type the equipment label | Sets the human-readable equipment label. |
-| `/wizard/equipment` | `wizard-equipment-local-root` | input | Type the equipment's local root path | Sets where this device acquires runs on disk. |
 | `/wizard/equipment` | `wizard-equipment-sync-mode` | radio | Pick 'nas' or 'stage' sync mode | Swaps the transport sub-form between NAS-direct and stage-push. |
 | `/wizard/equipment` | `wizard-equipment-confirm` | button | Click 'Confirm' on the review step | Posts the assembled EquipmentConfig via POST /config/equipment. |
 | `/wizard/equipment` | `wizard-equipment-cancel` | button | Click 'Cancel' on any wizard step | Discards the wizard and returns to /main. |
