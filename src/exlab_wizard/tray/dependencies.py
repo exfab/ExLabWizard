@@ -30,7 +30,7 @@ from exlab_wizard.api.app import AppDependencies
 from exlab_wizard.config.loader import load_config, save_config
 from exlab_wizard.constants import KEYRING_USERNAME_LIMS
 from exlab_wizard.logging import get_logger
-from exlab_wizard.paths import os_config_path
+from exlab_wizard.paths import ensure_app_dirs, os_config_path
 from exlab_wizard.tray.autostart import AutostartManager
 
 __all__ = ["apply_live_config", "build_production_dependencies"]
@@ -57,6 +57,12 @@ def build_production_dependencies(state_dir: Path) -> AppDependencies:
     deps.state_dir = state_dir
 
     deps.config = _try("config", _load_config_safely)
+    if deps.config is not None:
+        # Materialize the app root + derived data/templates/plugins dirs on
+        # bring-up so first launch (with an existing config) never trips over
+        # a missing working tree. Best-effort: a failure is logged and the
+        # setup writability gate surfaces an unusable root.
+        _try("app_dirs", ensure_app_dirs, deps.config)
     # Wire the saver unconditionally: a fresh install has no config.yaml
     # yet, but the settings wizard must be able to *create* one. The
     # saver handles the missing-file case (no original text to preserve).

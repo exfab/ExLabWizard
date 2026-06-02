@@ -622,7 +622,6 @@ def build_test_app() -> FastAPI:
                 active_step=step or "identity",
                 equipment_id="FLOW_99",
                 label="Flow Cytometer 99",
-                local_root="/data",
                 nas_root="/srv/nas",
                 sync_mode="nas",
             )

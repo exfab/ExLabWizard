@@ -517,9 +517,10 @@ def test_main_test_flag_sets_env_and_bootstraps_config(test_mode_env: Path) -> N
     # still implement the LMS endpoint via Settings).
     cfg = load_config(cfg_path)
     sandbox = cfg_path.parent
-    assert cfg.paths.local_root == str(sandbox / "local")
-    assert cfg.paths.templates_dir == str(sandbox / "templates")
-    assert cfg.paths.plugin_dir == str(sandbox / "plugins")
+    assert cfg.paths.app_root == str(sandbox / "app")
+    assert cfg.paths.local_root == str(sandbox / "app" / "data")
+    assert cfg.paths.templates_dir == str(sandbox / "app" / "templates")
+    assert cfg.paths.plugin_dir == str(sandbox / "app" / "plugins")
     assert cfg.orchestrator.staging_root == str(sandbox / "staging")
     assert cfg.orchestrator.label == "test-workstation"
     assert cfg.lims.endpoint == ""
@@ -527,7 +528,12 @@ def test_main_test_flag_sets_env_and_bootstraps_config(test_mode_env: Path) -> N
     assert cfg.equipment == []
 
     # Preseeded directories exist so first-launch path lookups succeed.
-    for sub in ("local", "templates", "plugins", "staging"):
+    for sub in (
+        Path("app") / "data",
+        Path("app") / "templates",
+        Path("app") / "plugins",
+        Path("staging"),
+    ):
         assert (sandbox / sub).is_dir()
 
 
@@ -537,7 +543,7 @@ def test_main_test_does_not_overwrite_existing_config(test_mode_env: Path) -> No
 
     cfg_path = test_mode_env / ".config" / "exlab-wizard-test" / "config.yaml"
     cfg_path.parent.mkdir(parents=True)
-    sentinel = "paths:\n  local_root: /already/here\n"
+    sentinel = "paths:\n  app_root: /already/here\n"
     cfg_path.write_text(sentinel, encoding="utf-8")
 
     tray_main.main(["--test"])
@@ -563,8 +569,8 @@ def test_main_test_with_samples_adds_equipment(test_mode_env: Path) -> None:
         f"{TEST_MODE_PREFIX}TESTRIG",
         f"{TEST_MODE_PREFIX}ALTRIG",
     }
-    # A full sample tree was seeded on disk under the sandbox local root.
-    local_root = sandbox / "local"
+    # A full sample tree was seeded on disk under the sandbox data root.
+    local_root = sandbox / "app" / "data"
     assert (local_root / f"{TEST_MODE_PREFIX}TESTRIG" / "Demo Project").is_dir()
     assert (local_root / f"{TEST_MODE_PREFIX}ALTRIG" / "Failure Modes").is_dir()
 
@@ -577,7 +583,7 @@ def test_main_test_with_samples_repeat_boot_is_noop(test_mode_env: Path) -> None
     tray_main.main(["--test", "--add-test-samples"])
 
     sandbox = test_mode_env / ".config" / "exlab-wizard-test"
-    operator_file = sandbox / "local" / f"{TEST_MODE_PREFIX}TESTRIG" / "operator_added.txt"
+    operator_file = sandbox / "app" / "data" / f"{TEST_MODE_PREFIX}TESTRIG" / "operator_added.txt"
     operator_file.write_text("keep me", encoding="utf-8")
 
     # bootstrap_test_config short-circuits on the existing config, so the second

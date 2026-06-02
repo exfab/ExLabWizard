@@ -67,14 +67,19 @@ def _make_config(
             EquipmentConfig(
                 id="EQNAS",
                 label="Nas Equipment",
-                local_root=str(nas_equipment_root),
                 nas_root="/nas",
                 sync_mode=SyncMode.NAS,
             ),
         )
-    local_root = staging_root or nas_equipment_root or Path("/tmp")
+    # Nas-mode runs are discovered under ``<config.paths.local_root>/<id>`` where
+    # local_root is the derived ``<app_root>/data``. Set app_root to the passed
+    # ``nas_equipment_root`` so the discovered data root is
+    # ``<nas_equipment_root>/data`` -- the nas-discovery tests seed runs there.
+    # Staging-only configs don't use the data root (the staging branch walks
+    # ``orchestrator.staging_root`` directly), so any valid app_root suffices.
+    app_root = nas_equipment_root or staging_root or Path("/tmp")
     return Config(
-        paths=PathsConfig(local_root=str(local_root)),
+        paths=PathsConfig(app_root=str(app_root)),
         equipment=equipment,
         orchestrator=OrchestratorConfig(
             label="ORCH",
@@ -209,7 +214,8 @@ async def test_discovers_both_staging_and_nas_mode_runs(tmp_path: Path) -> None:
     nas_sync = _StubNasSync()
     poller = _poller(config, nas_sync)
     staging_run = _make_run(staging_root, "EQ1")
-    nas_run = _make_run(nas_root, "EQNAS")
+    # Nas-mode runs live under the derived data root ``<app_root>/data``.
+    nas_run = _make_run(nas_root / "data", "EQNAS")
 
     await poller.poll_once(now_monotonic=0.0)
     enqueued = await poller.poll_once(now_monotonic=120.0)
@@ -221,22 +227,23 @@ async def test_co_rooted_stage_mode_equipment_run_is_not_enqueued(tmp_path: Path
     """A ``stage``-mode equipment sharing one ``local_root`` with a
     ``nas``-mode equipment must NOT have its runs swept into NAS sync --
     only the ``nas``-mode equipment's own subtree is walked."""
-    shared_root = tmp_path / "lab-data"
-    shared_root.mkdir()
+    app_root = tmp_path / "lab-data"
+    # Both equipment share the single derived data root ``<app_root>/data``;
+    # the nas- and stage-mode subtrees are co-rooted there.
+    shared_data_root = app_root / "data"
+    shared_data_root.mkdir(parents=True)
     config = Config(
-        paths=PathsConfig(local_root=str(shared_root)),
+        paths=PathsConfig(app_root=str(app_root)),
         equipment=[
             EquipmentConfig(
                 id="EQNAS",
                 label="Nas Equipment",
-                local_root=str(shared_root),
                 nas_root="/nas",
                 sync_mode=SyncMode.NAS,
             ),
             EquipmentConfig(
                 id="EQSTAGE",
                 label="Stage Equipment",
-                local_root=str(shared_root),
                 nas_root="/nas",
                 sync_mode=SyncMode.STAGE,
             ),
@@ -246,8 +253,8 @@ async def test_co_rooted_stage_mode_equipment_run_is_not_enqueued(tmp_path: Path
     )
     nas_sync = _StubNasSync()
     poller = _poller(config, nas_sync)
-    nas_run = _make_run(shared_root, "EQNAS")
-    stage_run = _make_run(shared_root, "EQSTAGE")
+    nas_run = _make_run(shared_data_root, "EQNAS")
+    stage_run = _make_run(shared_data_root, "EQSTAGE")
 
     await poller.poll_once(now_monotonic=0.0)
     enqueued = await poller.poll_once(now_monotonic=120.0)

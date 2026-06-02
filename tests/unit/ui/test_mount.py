@@ -296,13 +296,11 @@ def test_missing_sections_when_config_none() -> None:
     assert mount._missing_setup_sections(_deps()) == ("paths", "lims")
 
 
-def test_missing_sections_with_paths_unset() -> None:
-    deps = _deps(
-        config=_config(local_root="", templates_dir=""),
-        keyring_password_present=True,
-    )
-    sections = mount._missing_setup_sections(deps)
-    assert "paths" in sections
+# NOTE: the old "paths section appears when paths are unset" test was removed:
+# `paths.app_root` always carries a Documents-based default, so the Settings
+# section picker no longer surfaces a "paths" section for an existing config.
+# The unwritable-app-root edge case is covered by the setup-state gate tests
+# in tests/unit/test_paths.py.
 
 
 def test_missing_sections_with_keyring_absent_reports_lims() -> None:
@@ -343,13 +341,12 @@ def _nas_config(*, offline_catalogue: bool = False, nas_remote: str = "nas01") -
         else LIMSConfig(endpoint="https://lims.example", email="op@example")
     )
     return Config(
-        paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
+        paths=PathsConfig(app_root="/srv/exlab"),
         lims=lims,
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Equipment 1",
-                local_root="/d",
                 nas_root="/n",
             )
         ],
@@ -1289,15 +1286,16 @@ def test_build_metadata_payload_owned_equipment_reads_config() -> None:
         id="EQ1",
         label="Confocal Microscope 1",
         sync_mode="nas",
-        local_root="/data/EQ1",
         nas_root="//nas/EQ1",
     )
-    config = _config(equipment=(equipment,))
+    # ``local_root`` is no longer a per-equipment field; the payload derives
+    # it as ``<config.paths.local_root>/<id>`` (== ``<app_root>/data/<id>``).
+    config = _config(local_root="/srv/exlab/data", equipment=(equipment,))
     payload = mount._build_metadata_payload("EQ1", "equipment", _deps(config=config))
     assert payload["id"] == "EQ1"
     assert payload["label"] == "Confocal Microscope 1"
     assert payload["sync_mode"] == "nas"
-    assert payload["local_root"] == "/data/EQ1"
+    assert payload["local_root"] == str(Path("/srv/exlab/data") / "EQ1")
     assert payload["nas_root"] == "//nas/EQ1"
 
 
@@ -2814,20 +2812,21 @@ def test_build_metadata_payload_unknown_kind_returns_empty() -> None:
 def test_metadata_for_owned_equipment_projects_fields() -> None:
     """A matching equipment id projects its config fields into the payload."""
     config = SimpleNamespace(
+        paths=SimpleNamespace(local_root="/srv/exlab/data"),
         equipment=[
             SimpleNamespace(
                 id="EQ1",
                 label="Confocal",
                 sync_mode="nas",
-                local_root="/d/EQ1",
                 nas_root="/n/EQ1",
             )
-        ]
+        ],
     )
     out = mount._metadata_for_owned_equipment("EQ1", config)
     assert out["id"] == "EQ1"
     assert out["label"] == "Confocal"
-    assert out["local_root"] == "/d/EQ1"
+    # ``local_root`` is derived as ``<config.paths.local_root>/<id>``.
+    assert out["local_root"] == str(Path("/srv/exlab/data") / "EQ1")
     assert out["nas_root"] == "/n/EQ1"
 
 

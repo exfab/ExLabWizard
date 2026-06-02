@@ -73,13 +73,14 @@ class _StubNasSync:
 
 
 def _make_config(staging_root: Path, *, quiescence_minutes: int = 1) -> Config:
+    # This lifecycle exercises staging discovery via ``orchestrator.staging_root``;
+    # app_root only feeds the (here unused) derived data root.
     return Config(
-        paths=PathsConfig(local_root=str(staging_root)),
+        paths=PathsConfig(app_root=str(staging_root)),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Equipment 1",
-                local_root=str(staging_root),
                 nas_root="/nas",
             ),
         ],

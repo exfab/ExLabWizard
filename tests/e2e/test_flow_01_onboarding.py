@@ -55,10 +55,8 @@ def test_flow_01_onboarding(page, server_url) -> None:
         state="visible", timeout=10_000
     )
 
-    # 4. Fill the paths section and add equipment.
-    page.locator('[data-testid="settings-paths-templates"]').fill("/tmp/templates")
-    page.locator('[data-testid="settings-paths-plugin"]').fill("/tmp/plugins")
-    page.locator('[data-testid="settings-paths-local-root"]').fill("/tmp/data")
+    # 4. Fill the paths section (single app-root input) and add equipment.
+    page.locator('[data-testid="settings-paths-app-root"]').fill("/tmp/exlab")
 
     _goto(page, f"{server_url}/settings?incomplete=paths,equipment&active=equipment")
     page.locator('[data-testid="settings-equipment-id"]').fill("TEST_EQ1")

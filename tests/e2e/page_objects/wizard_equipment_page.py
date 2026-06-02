@@ -26,11 +26,8 @@ class WizardEquipmentPage:
     def step_paths(self) -> Any:
         return self._page.locator('[data-testid="wizard-equipment-step-paths"]')
 
-    # Paths
-    @property
-    def local_root(self) -> Any:
-        return self._page.locator('[data-testid="wizard-equipment-local-root"]')
-
+    # Paths -- the equipment's data dir is derived from the single app root, so
+    # the wizard's paths step now collects only the NAS root.
     @property
     def nas_root(self) -> Any:
         return self._page.locator('[data-testid="wizard-equipment-nas-root"]')

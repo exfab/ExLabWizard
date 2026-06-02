@@ -4,7 +4,8 @@ Three-step wizard launched from the main-window toolbar:
 
 1. Identity — equipment ID (validated against ``^[A-Z][A-Z0-9_]*$``) +
    label.
-2. Paths — local_root (where this device acquires runs).
+2. Paths — NAS root (the equipment's data dir is derived from the single
+   app root, so it is not collected here).
 3. Review & confirm — assembles a validated EquipmentConfig via the
    shared ``build_equipment_config()`` and posts it through
    ``POST /config/equipment``.
@@ -61,8 +62,8 @@ class EquipmentWizardState:
     # Step 1
     equipment_id: str = ""
     label: str = ""
-    # Step 2
-    local_root: str = ""
+    # Step 2 -- the equipment's data dir is derived from the single app root
+    # (``<config.paths.local_root>/<id>``), so only the NAS root is collected.
     nas_root: str = ""
     # sync_mode is retained but no longer operator-selectable: the sync-mode
     # wizard step is hidden (orchestrator/staging hidden — see module note),
@@ -89,7 +90,7 @@ def can_advance(state: EquipmentWizardState) -> bool:
                 and state.label.strip()
             )
         case "paths":
-            return bool(state.local_root.strip() and state.nas_root.strip())
+            return bool(state.nas_root.strip())
         case "sync_mode":
             # rclone.conf migration (Phase 8): neither mode collects a
             # per-equipment transport here -- the ``nas:`` remote defines the
@@ -112,7 +113,6 @@ def assemble_equipment_config(
     return build_equipment_config(
         equipment_id=state.equipment_id,
         label=state.label,
-        local_root=state.local_root,
         nas_root=state.nas_root,
         sync_mode=state.sync_mode,
     )
@@ -265,9 +265,8 @@ def _render_paths_step(
         from nicegui import ui
     except Exception:
         return
-    ui.input(label="Local root", on_change=lambda _e: sync_next()).props(
-        'data-testid="wizard-equipment-local-root"'
-    ).bind_value(state, "local_root")
+    # The equipment's data dir is derived from the single app root
+    # (Settings -> Data folder); only the NAS root is collected here.
     ui.input(label="NAS root", on_change=lambda _e: sync_next()).props(
         'data-testid="wizard-equipment-nas-root"'
     ).bind_value(state, "nas_root")
@@ -327,7 +326,6 @@ def _render_review_step(
     with ui.column().style("font-family: var(--font-mono);"):
         ui.label(f"ID: {state.equipment_id}")
         ui.label(f"Label: {state.label}")
-        ui.label(f"Local root: {state.local_root}")
         ui.label(f"NAS root: {state.nas_root}")
     if state.sync_mode == "nas":
         ui.label(

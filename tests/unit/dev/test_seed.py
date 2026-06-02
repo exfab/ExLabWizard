@@ -38,7 +38,7 @@ def test_seed_main_creates_full_tree(monkeypatch: pytest.MonkeyPatch, tmp_path: 
 
     assert seed.main([]) == 0
 
-    local_root = sandbox / "local"
+    local_root = sandbox / "app" / "data"
     testrig = local_root / f"{TEST_MODE_PREFIX}TESTRIG"
     altrig = local_root / f"{TEST_MODE_PREFIX}ALTRIG"
     assert (testrig / "Demo Project").is_dir()
@@ -66,7 +66,7 @@ def test_seed_main_wipes_and_rebuilds(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert seed.main([]) == 0
 
     # A stray file inside a seeded equipment dir must not survive the wipe.
-    local_root = sandbox / "local"
+    local_root = sandbox / "app" / "data"
     stray = local_root / f"{TEST_MODE_PREFIX}TESTRIG" / "STRAY.txt"
     stray.write_text("x", encoding="utf-8")
     assert stray.exists()

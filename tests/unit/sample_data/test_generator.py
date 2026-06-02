@@ -55,11 +55,7 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv(TEST_MODE_ENV, "1")
     config_path = tmp_path / "config.yaml"
     starter = Config(
-        paths=PathsConfig(
-            templates_dir=str(tmp_path / "templates"),
-            plugin_dir=str(tmp_path / "plugins"),
-            local_root=str(tmp_path / "local"),
-        ),
+        paths=PathsConfig(app_root=str(tmp_path / "app")),
         orchestrator=OrchestratorConfig(label="test-workstation"),
     )
     save_config(config_path, starter)
@@ -399,16 +395,13 @@ def test_wipe_refuses_when_app_name_not_test(
 def test_wipe_refuses_when_target_escapes_sandbox(
     sandbox: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # First seed without wipe to create config; then force the local_root to
-    # point outside the sandbox so the containment check fails.
+    # First seed without wipe to create config; then force the app_root (and
+    # thus the derived data root) to point outside the sandbox so the
+    # containment check fails.
     generate_samples(sandbox, wipe=False, base_time=BASE_TIME)
     config = load_config(sandbox)
     escaped = Config(
-        paths=PathsConfig(
-            templates_dir=config.paths.templates_dir,
-            plugin_dir=config.paths.plugin_dir,
-            local_root="/tmp",
-        ),
+        paths=PathsConfig(app_root="/tmp"),
         orchestrator=config.orchestrator,
     )
     save_config(sandbox, escaped)
@@ -442,20 +435,21 @@ def test_wipe_refuses_symlinked_target_escaping_sandbox(sandbox: Path, tmp_path:
 
 
 def test_seeded_equipment_roots_are_base_paths(sandbox: Path) -> None:
-    """Seeded ``EquipmentConfig.local_root``/``nas_root`` are BASE roots.
+    """Seeded ``EquipmentConfig.nas_root`` and the data root are BASE roots.
 
     Consumers (orchestrator quiescence poller, validator) compose
-    ``Path(equipment.local_root) / equipment.id`` and ``build_creation_json``
+    ``Path(config.paths.local_root) / equipment.id`` and ``build_creation_json``
     composes ``Path(nas_root) / equipment_id`` -- so the seeded roots must be the
     base (no id), matching a real operator config, or the seeded tree is
-    invisible to run-walking.
+    invisible to run-walking. The data root is no longer per-equipment: it
+    derives once from ``config.paths.app_root`` as ``<app_root>/data``.
     """
     generate_samples(sandbox, wipe=True, base_time=BASE_TIME)
     config = load_config(sandbox)
     sandbox_dir = sandbox.parent
 
+    assert config.paths.local_root == str(sandbox_dir / "app" / "data")
     for entry in config.equipment:
-        assert entry.local_root == config.paths.local_root == str(sandbox_dir / "local")
         assert entry.nas_root == str(sandbox_dir / "nas")
 
     # creation.json ``paths.nas`` = base nas_root + prefixed id; ``paths.local``

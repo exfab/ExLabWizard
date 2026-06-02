@@ -170,10 +170,12 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
     config_path = server.config_path
     assert not config_path.exists(), "precondition: fresh install has no config.yaml"
 
-    # Operator-facing folders -- all under the test's tmp tree.
-    templates_dir = tmp_path / "templates"
-    plugin_dir = tmp_path / "plugins"
-    data_root = tmp_path / "data"
+    # The operator points the wizard at a single app root; templates/, plugins/
+    # and data/ are derived from it (so these vars equal the derived subdirs).
+    app_root = tmp_path
+    templates_dir = app_root / "templates"
+    plugin_dir = app_root / "plugins"
+    data_root = app_root / "data"
     for folder in (templates_dir, plugin_dir, data_root):
         folder.mkdir()
 
@@ -214,9 +216,7 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
 
         # ---- Phase 3: fill paths + LIMS --------------------------------
         page.get_by_test_id("settings-nav-paths").click()
-        _fill(page, "settings-paths-templates", str(templates_dir))
-        _fill(page, "settings-paths-plugin", str(plugin_dir))
-        _fill(page, "settings-paths-local-root", str(data_root))
+        _fill(page, "settings-paths-app-root", str(app_root))
 
         page.get_by_test_id("settings-nav-lims").click()
         _fill(page, "settings-lims-endpoint", lims_endpoint)
@@ -226,12 +226,12 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         # ---- Phase 4: add equipment ------------------------------------
         # rclone.conf migration (Phase 8): the Settings equipment form no
         # longer collects a per-equipment SFTP/SMB transport. A nas-mode
-        # device is created with just id/label/local_root/nas_root; the NAS
-        # connection is the single nas: remote (configured in rclone.conf).
+        # device is created with just id/label/nas_root (its data dir derives
+        # from the single app root); the NAS connection is the single nas:
+        # remote (configured in rclone.conf).
         page.get_by_test_id("settings-nav-equipment").click()
         _fill(page, "settings-equipment-id", "MICROSCOPE1")
         _fill(page, "settings-equipment-label", "Confocal Microscope 1")
-        _fill(page, "settings-equipment-local-root", str(data_root))
         _fill(page, "settings-equipment-nas-root", "/srv/nas/microscope1")
         page.get_by_test_id("settings-equipment-add").click()
         page.get_by_test_id("settings-equipment-row").first.wait_for(state="visible", timeout=8_000)
@@ -239,7 +239,6 @@ def test_full_create_lifecycle(browser, prod_server: ProdServer, tmp_path: Path)
         # 4b. a second nas-mode device -- same no-transport form.
         _fill(page, "settings-equipment-id", "SPECTROMETER1")
         _fill(page, "settings-equipment-label", "Mass Spectrometer 1")
-        _fill(page, "settings-equipment-local-root", str(data_root))
         _fill(page, "settings-equipment-nas-root", "/srv/nas/spectrometer1")
         page.get_by_test_id("settings-equipment-add").click()
         # Two equipment rows now present.

@@ -35,17 +35,15 @@ from exlab_wizard.constants import (
 
 
 def _config_with_local_root(local_root: Path) -> Config:
+    # Single-app-root refactor: ``paths.local_root`` is the derived
+    # ``<app_root>/data``. Callers pass a ``…/data`` dir, so the app root is
+    # its parent and the derived ``local_root`` resolves back to ``local_root``.
     return Config(
-        paths=PathsConfig(
-            templates_dir=str(local_root / "templates"),
-            plugin_dir=str(local_root / "plugins"),
-            local_root=str(local_root),
-        ),
+        paths=PathsConfig(app_root=str(local_root.parent)),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Equipment 1",
-                local_root=str(local_root),
                 nas_root="/srv/nas",
             )
         ],
@@ -113,7 +111,7 @@ def test_get_tree_returns_empty_when_no_equipment(tmp_path: Path) -> None:
     local_root = tmp_path / "data"
     local_root.mkdir()
     config = Config(
-        paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root=str(local_root)),
+        paths=PathsConfig(app_root=str(local_root.parent)),
         orchestrator=OrchestratorConfig(label="LAB", staging_root="/staging"),
     )
     deps = AppDependencies(config=config)

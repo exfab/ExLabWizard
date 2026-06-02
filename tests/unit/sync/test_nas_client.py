@@ -63,16 +63,13 @@ from tests.unit.sync._helpers import (
 
 def _build_config(local_root: Path, *, retain_cache: bool = True) -> Config:
     return Config(
-        paths=PathsConfig(
-            templates_dir="/tpl",
-            plugin_dir="/plg",
-            local_root=str(local_root),
-        ),
+        # nas_client receives each run dir explicitly and never composes from
+        # config.paths.local_root, so the app root here is incidental.
+        paths=PathsConfig(app_root=str(local_root)),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Eq 1",
-                local_root=str(local_root),
                 nas_root="/nas",
             )
         ],
@@ -753,12 +750,11 @@ def test_apply_config_swaps_equipment_map(tmp_path: Path) -> None:
     assert set(client._equipment_by_id) == {"EQ1"}
 
     cfg2 = Config(
-        paths=PathsConfig(local_root=str(tmp_path)),
+        paths=PathsConfig(app_root=str(tmp_path)),
         equipment=[
             EquipmentConfig(
                 id="EQ2",
                 label="Eq 2",
-                local_root=str(tmp_path),
                 nas_root="/nas",
             )
         ],
@@ -789,12 +785,11 @@ def test_target_for_stage_mode_uses_staging_remote(tmp_path: Path) -> None:
     stage_eq = EquipmentConfig(
         id="STAGE_01",
         label="Stage 1",
-        local_root=str(tmp_path),
         nas_root="/nas",
         sync_mode=SyncMode.STAGE,
     )
     config = Config(
-        paths=PathsConfig(local_root=str(tmp_path)),
+        paths=PathsConfig(app_root=str(tmp_path)),
         equipment=[stage_eq],
         nas=NasConfig(remote="nas01", base_root="/srv/nas"),
         orchestrator=OrchestratorConfig(
@@ -816,12 +811,11 @@ def test_target_for_nas_mode_uses_nas_remote(tmp_path: Path) -> None:
     nas_eq = EquipmentConfig(
         id="EQ1",
         label="Eq 1",
-        local_root=str(tmp_path),
         nas_root="/nas",
         sync_mode=SyncMode.NAS,
     )
     config = Config(
-        paths=PathsConfig(local_root=str(tmp_path)),
+        paths=PathsConfig(app_root=str(tmp_path)),
         equipment=[nas_eq],
         nas=NasConfig(remote="nas01", base_root="/srv/nas"),
         orchestrator=OrchestratorConfig(
@@ -844,12 +838,11 @@ def test_driver_for_stage_mode_uses_staging_perf(tmp_path: Path) -> None:
     stage_eq = EquipmentConfig(
         id="STAGE_01",
         label="Stage 1",
-        local_root=str(tmp_path),
         nas_root="/nas",
         sync_mode=SyncMode.STAGE,
     )
     config = Config(
-        paths=PathsConfig(local_root=str(tmp_path)),
+        paths=PathsConfig(app_root=str(tmp_path)),
         equipment=[stage_eq],
         nas=NasConfig(
             remote="nas01",
@@ -871,7 +864,6 @@ def test_driver_for_stage_mode_uses_staging_perf(tmp_path: Path) -> None:
         EquipmentConfig(
             id="EQ1",
             label="Eq 1",
-            local_root=str(tmp_path),
             nas_root="/nas",
             sync_mode=SyncMode.NAS,
         )
@@ -936,16 +928,11 @@ async def test_drive_job_bandwidth_comes_from_nas_block(
     assert expected_kibps is not None, "precondition: schedule-free cap must always apply"
 
     cfg = Config(
-        paths=PathsConfig(
-            templates_dir="/tpl",
-            plugin_dir="/plg",
-            local_root=str(tmp_path),
-        ),
+        paths=PathsConfig(app_root=str(tmp_path)),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Eq 1",
-                local_root=str(tmp_path),
                 nas_root="/nas",
                 sync_mode=SyncMode.NAS,
             )

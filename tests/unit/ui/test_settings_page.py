@@ -9,6 +9,8 @@ read -> edit -> save round-trip is exercised by the Playwright e2e.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -32,19 +34,22 @@ def test_build_draft_from_none_yields_defaults() -> None:
     # §9 defaults are present and editable.
     assert draft.logging.level == "INFO"
     assert draft.nas_cleanup.min_verify_passes == 2
-    assert draft.paths.templates_dir == ""
+    # templates_dir is now derived from the single app_root.
+    assert draft.paths.templates_dir == str(Path(draft.paths.app_root) / "templates")
 
 
 def test_build_draft_copies_existing_config() -> None:
     source = Config()
-    source.paths.templates_dir = "/srv/templates"
+    source.paths.app_root = "/srv/exlab"
     source.lims.email = "operator@example"
 
     draft = build_settings_draft(source)
 
     assert draft is not source
     assert draft.paths is not source.paths
-    assert draft.paths.templates_dir == "/srv/templates"
+    assert draft.paths.app_root == "/srv/exlab"
+    # The derived templates_dir tracks the copied app_root.
+    assert draft.paths.templates_dir == "/srv/exlab/templates"
     assert draft.lims.email == "operator@example"
 
 
@@ -52,10 +57,10 @@ def test_draft_edits_do_not_leak_into_source() -> None:
     source = Config()
     draft = build_settings_draft(source)
 
-    draft.paths.local_root = "/srv/data"
+    draft.paths.app_root = "/srv/exlab"
     draft.orchestrator.label = "BENCH-1"
 
-    assert source.paths.local_root == ""
+    assert source.paths.app_root != "/srv/exlab"
     assert source.orchestrator.label == ""
 
 
@@ -74,9 +79,7 @@ def test_finalize_coerces_widget_floats_back_to_int() -> None:
 
 def test_finalize_round_trips_edited_scalar_fields() -> None:
     draft = build_settings_draft(None)
-    draft.paths.templates_dir = "/srv/templates"
-    draft.paths.plugin_dir = "/srv/plugins"
-    draft.paths.local_root = "/srv/data"
+    draft.paths.app_root = "/srv/exlab"
     draft.lims.endpoint = "https://lims.example"
     draft.lims.email = "operator@example"
     draft.orchestrator.label = "BENCH-1"
@@ -84,7 +87,9 @@ def test_finalize_round_trips_edited_scalar_fields() -> None:
 
     finalized = finalize_settings_draft(draft)
 
-    assert finalized.paths.local_root == "/srv/data"
+    assert finalized.paths.app_root == "/srv/exlab"
+    # The data root is derived from the single app_root.
+    assert finalized.paths.local_root == "/srv/exlab/data"
     assert finalized.lims.endpoint == "https://lims.example"
     assert finalized.orchestrator.label == "BENCH-1"
 

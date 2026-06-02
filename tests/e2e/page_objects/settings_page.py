@@ -33,19 +33,13 @@ class SettingsPage:
         return self._page.get_by_test_id(f"settings-section-{section}")
 
     @property
-    def paths_templates(self) -> Locator:
-        """Paths section: templates directory input."""
-        return self._page.get_by_test_id("settings-paths-templates")
+    def paths_app_root(self) -> Locator:
+        """Paths section: the single 'Data folder' (app root) input.
 
-    @property
-    def paths_plugin(self) -> Locator:
-        """Paths section: plugin directory input."""
-        return self._page.get_by_test_id("settings-paths-plugin")
-
-    @property
-    def paths_local_root(self) -> Locator:
-        """Paths section: local data root input."""
-        return self._page.get_by_test_id("settings-paths-local-root")
+        templates/, plugins/ and data/ are derived from this one root and
+        shown as read-only labels, so there is no longer a per-dir input.
+        """
+        return self._page.get_by_test_id("settings-paths-app-root")
 
     @property
     def lims_password_primary(self) -> Locator:

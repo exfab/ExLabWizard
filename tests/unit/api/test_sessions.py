@@ -29,12 +29,11 @@ def _ready_config() -> Config:
     from exlab_wizard.config.models import NasConfig, OrchestratorConfig
 
     return Config(
-        paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
+        paths=PathsConfig(app_root="/srv/exlab"),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Equipment 1",
-                local_root="/d",
                 nas_root="/n",
             )
         ],

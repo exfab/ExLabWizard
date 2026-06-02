@@ -82,13 +82,16 @@ def stub_binaries_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pa
 
 
 def _build_config(local_root: Path) -> Config:
+    # ``local_root`` is ``tmp_path / "data"`` (where runs are seeded); app_root
+    # is its parent so the derived ``config.paths.local_root`` resolves back to
+    # it -- the poller-driven tests discover nas-mode runs under exactly this
+    # tree, and the nas_client-direct tests pass each run dir explicitly.
     return Config(
-        paths=PathsConfig(templates_dir="/tpl", plugin_dir="/plg", local_root=str(local_root)),
+        paths=PathsConfig(app_root=str(local_root.parent)),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Equipment 1",
-                local_root=str(local_root),
                 nas_root="/nas",
             )
         ],
@@ -158,7 +161,7 @@ async def test_full_happy_path_via_stub_rclone(
     successful happy-path run; we accept both so the test is robust to
     the worker scheduling jitter that decides which one we observe.
     """
-    local_root = tmp_path / "local"
+    local_root = tmp_path / "data"
     local_root.mkdir()
     nas_root = tmp_path / "nas"
     monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
@@ -226,7 +229,7 @@ async def test_pre_sync_gate_blocks_run_with_placeholder_in_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A run path with ``<run_date>`` is gated; sync_status -> blocked_by_validation."""
-    local_root = tmp_path / "local"
+    local_root = tmp_path / "data"
     local_root.mkdir()
     monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
 
@@ -265,7 +268,7 @@ async def test_auth_error_terminates_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The stub returns ``auth_error`` -> queue row terminates FAILED."""
-    local_root = tmp_path / "local"
+    local_root = tmp_path / "data"
     local_root.mkdir()
     monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "auth_error")
 
@@ -296,7 +299,7 @@ async def test_force_verify_returns_ok_after_compute(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``force_verify`` runs a manifest pass against the local subtree."""
-    local_root = tmp_path / "local"
+    local_root = tmp_path / "data"
     local_root.mkdir()
     cfg = _build_config(local_root)
     run_dir = await _populate_run(local_root)
@@ -348,7 +351,7 @@ async def test_routine_reconcile_retries_until_remote_listing_settles(
     """
     from exlab_wizard.sync.manifest import RemoteEntry, RemoteManifest
 
-    local_root = tmp_path / "local"
+    local_root = tmp_path / "data"
     local_root.mkdir()
     nas_root = tmp_path / "nas"
     monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
@@ -429,7 +432,7 @@ async def test_cleanup_hash_gate_defers_on_remote_mismatch(
     """
     from exlab_wizard.sync.transports.rclone import CheckResult
 
-    local_root = tmp_path / "local"
+    local_root = tmp_path / "data"
     local_root.mkdir()
     nas_root = tmp_path / "nas"
     monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
@@ -491,7 +494,7 @@ async def test_poller_per_file_enqueue_drives_to_synced_state(
     from exlab_wizard.cache.sync_state_writer import SyncStateWriter
     from exlab_wizard.orchestrator.quiescence_poller import QuiescenceSyncPoller
 
-    local_root = tmp_path / "local"
+    local_root = tmp_path / "data"
     local_root.mkdir()
     nas_root = tmp_path / "nas"
     monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")
@@ -575,7 +578,7 @@ async def test_poller_to_cleanup_honors_keep_local_and_stamps_cleared(
     from exlab_wizard.constants import RunSyncState
     from exlab_wizard.orchestrator.quiescence_poller import QuiescenceSyncPoller
 
-    local_root = tmp_path / "local"
+    local_root = tmp_path / "data"
     local_root.mkdir()
     nas_root = tmp_path / "nas"
     monkeypatch.setenv("STUB_RCLONE_BEHAVIOR", "success")

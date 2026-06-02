@@ -14,6 +14,15 @@ from __future__ import annotations
 # directory name in constants/filenames.py.
 APP_NAME: str = "exlab-wizard"
 
+# User-facing display name. Unlike :data:`APP_NAME` (the hidden-directory
+# identifier used for config / state / cache / log dirs), this is the
+# CamelCase brand shown to operators -- specifically the subfolder created
+# under the OS *Documents* directory that holds the single app root
+# (``<Documents>/ExLabWizard/`` with templates/, plugins/, data/). Kept
+# distinct from APP_NAME so the operator-facing working tree reads nicely
+# while the machine-local dirs stay lowercase-hyphenated.
+DISPLAY_NAME: str = "ExLabWizard"
+
 # Runtime opt-in flag: when set to a truthy value the config loader
 # prefixes every ``equipment[i].id`` with :data:`TEST_MODE_PREFIX` so
 # the resulting on-disk + NAS run directories sort under a single

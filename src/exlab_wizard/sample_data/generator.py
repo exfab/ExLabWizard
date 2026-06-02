@@ -206,13 +206,12 @@ class SampleDataGenerator:
             EquipmentConfig(
                 id=sample.id,  # raw; the loader prefixes on reload
                 label=sample.label,
-                # ``local_root`` / ``nas_root`` are the BASE roots: consumers
-                # (orchestrator quiescence poller, validator) compose
-                # ``Path(local_root) / equipment.id``, and ``build_creation_json``
-                # composes ``Path(nas_root) / equipment_id`` -- so the id is
-                # appended downstream, never baked in here (matches a real
-                # operator config and ``config.paths.local_root``).
-                local_root=str(self._sandbox / "local"),
+                # ``nas_root`` is the BASE root: ``build_creation_json`` composes
+                # ``Path(nas_root) / equipment_id`` so the id is appended
+                # downstream, never baked in here. The on-disk data root is no
+                # longer per-equipment -- it derives from the single
+                # ``config.paths.local_root`` (``<app_root>/data``) that the
+                # write path (line ~173) and the wipe both read.
                 nas_root=str(self._sandbox / "nas"),
                 sync_mode=sample.sync_mode,
             )

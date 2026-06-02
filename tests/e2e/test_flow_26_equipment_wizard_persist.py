@@ -70,8 +70,9 @@ def test_equipment_wizard_confirm_persists_to_config(browser, prod_server) -> No
         # 2. Paths. The sync-mode step is hidden (orchestrator/staging hidden —
         #    see docs/superpowers/specs/2026-05-29-hide-orchestrator-staging-design.md),
         #    so paths advances straight to review; every equipment is nas-mode.
-        wiz.local_root.wait_for(state="visible", timeout=10_000)
-        wiz.local_root.fill("/data/MICROSCOPE_01")
+        #    The data dir is derived from the single app root, so only the NAS
+        #    root is collected here.
+        wiz.nas_root.wait_for(state="visible", timeout=10_000)
         wiz.nas_root.fill("/srv/nas/MICROSCOPE_01")
         wiz.next_button.click()
 

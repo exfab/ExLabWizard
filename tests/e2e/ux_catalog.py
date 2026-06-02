@@ -75,26 +75,13 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
     UXInteraction(
         flow="Settings",
         route="/settings",
-        testid="settings-paths-templates",
+        testid="settings-paths-app-root",
         element="input",
-        action="Type the templates directory",
-        outcome="Binds config.paths.templates_dir on the draft.",
-    ),
-    UXInteraction(
-        flow="Settings",
-        route="/settings",
-        testid="settings-paths-plugin",
-        element="input",
-        action="Type the plugin directory",
-        outcome="Binds config.paths.plugin_dir on the draft.",
-    ),
-    UXInteraction(
-        flow="Settings",
-        route="/settings",
-        testid="settings-paths-local-root",
-        element="input",
-        action="Type the local data root",
-        outcome="Binds config.paths.local_root on the draft.",
+        action="Type the data folder (app root)",
+        outcome=(
+            "Binds config.paths.app_root on the draft; templates/, plugins/ and "
+            "data/ are derived and shown as read-only labels."
+        ),
     ),
     # -- Settings: LIMS -----------------------------------------------------
     UXInteraction(
@@ -149,14 +136,6 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
     UXInteraction(
         flow="Equipment",
         route="/settings",
-        testid="settings-equipment-local-root",
-        element="input",
-        action="Type the equipment local root",
-        outcome="Provides the EquipmentConfig.local_root for the new entry.",
-    ),
-    UXInteraction(
-        flow="Equipment",
-        route="/settings",
         testid="settings-equipment-nas-root",
         element="input",
         action="Type the equipment NAS root",
@@ -164,8 +143,9 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
     ),
     # rclone.conf migration (Phase 8): the per-equipment SFTP/SMB transport
     # radio + connection fields were removed from the Settings equipment form.
-    # A nas-mode device now carries only id/label/local_root/nas_root; the NAS
-    # connection is the single nas: remote configured in Settings -> NAS Remote.
+    # A nas-mode device now carries only id/label/nas_root (its data dir is
+    # derived from the single app root); the NAS connection is the single nas:
+    # remote configured in Settings -> NAS Remote.
     # -- Settings: NAS Remote (rclone.conf migration) ----------------------
     UXInteraction(
         flow="NAS Remote",
@@ -498,14 +478,6 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
         element="input",
         action="Type the equipment label",
         outcome="Sets the human-readable equipment label.",
-    ),
-    UXInteraction(
-        flow="Add equipment",
-        route="/wizard/equipment",
-        testid="wizard-equipment-local-root",
-        element="input",
-        action="Type the equipment's local root path",
-        outcome="Sets where this device acquires runs on disk.",
     ),
     UXInteraction(
         flow="Add equipment",

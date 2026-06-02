@@ -50,16 +50,15 @@ FIXTURE_TEMPLATES = Path(__file__).parent.parent.parent / "fixtures" / "template
 @pytest.fixture
 def ready_config(tmp_path: Path) -> Config:
     return Config(
-        paths=PathsConfig(
-            templates_dir=str(FIXTURE_TEMPLATES),
-            plugin_dir=str(tmp_path / "plugins"),
-            local_root=str(tmp_path / "data"),
-        ),
+        # app_root=tmp_path makes the derived data root tmp_path/"data" (where
+        # the fixture mkdirs and where runs land) and the derived plugin dir
+        # tmp_path/"plugins". Templates are supplied per-request via an explicit
+        # template_path, so the derived templates_dir is incidental here.
+        paths=PathsConfig(app_root=str(tmp_path)),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Equipment 1",
-                local_root=str(tmp_path / "data"),
                 nas_root="/srv/nas",
             )
         ],
@@ -173,19 +172,15 @@ async def test_health_warns_when_lims_unreachable(ready_config: Config) -> None:
 @pytest.mark.asyncio
 async def test_setup_status_each_incomplete_state() -> None:
     """Each non-soft INCOMPLETE_* state surfaces the right next_action."""
+    # paths.app_root always defaults (and the test seam treats it as writable),
+    # so an otherwise-empty Config now trips the next gate -- the missing
+    # orchestrator label -- rather than a paths gate.
     cases = [
         (None, "incomplete_no_config", "set_paths"),
-        (Config(), "incomplete_missing_paths", "set_paths"),
+        (Config(), "incomplete_no_orchestrator", "set_paths"),
         (
             Config(
-                paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
-            ),
-            "incomplete_no_orchestrator",
-            "set_paths",
-        ),
-        (
-            Config(
-                paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
+                paths=PathsConfig(app_root="/srv/exlab"),
                 orchestrator=OrchestratorConfig(label="LAB", staging_root="/s"),
             ),
             "incomplete_no_equipment",
@@ -225,7 +220,9 @@ async def test_create_session_blocked_when_setup_incomplete() -> None:
         assert response.status_code == 503
         envelope = response.json()
         assert envelope["error"]["code"] == "setup_incomplete"
-        assert envelope["error"]["state"] == "incomplete_missing_paths"
+        # Config() now passes the (defaulted, writable) paths gate and trips on
+        # the missing orchestrator label instead.
+        assert envelope["error"]["state"] == "incomplete_no_orchestrator"
 
 
 @pytest.mark.asyncio
@@ -325,11 +322,7 @@ async def test_put_config_validates_and_updates_state(tmp_path: Path) -> None:
     deps = AppDependencies(config=Config())
     app = create_app(dependencies=deps)
     new_config = Config(
-        paths=PathsConfig(
-            templates_dir=str(tmp_path / "tpl"),
-            plugin_dir=str(tmp_path / "plugins"),
-            local_root=str(tmp_path / "data"),
-        ),
+        paths=PathsConfig(app_root=str(tmp_path)),
         orchestrator=OrchestratorConfig(label="LAB", staging_root=str(tmp_path / "staging")),
     )
     async with await _client(app) as ac:

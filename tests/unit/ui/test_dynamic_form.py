@@ -119,7 +119,6 @@ def _equipment_kwargs(**overrides: object) -> dict[str, object]:
     base: dict[str, object] = {
         "equipment_id": "MICROSCOPE1",
         "label": "Confocal 1",
-        "local_root": "/data/microscope1",
         "nas_root": "/nas/microscope1",
         "sync_mode": "nas",
     }

@@ -50,16 +50,16 @@ class _StubValidator:
         return list(self._findings)
 
 
-def _ready_config(local_root: Path) -> Config:
+def _ready_config(app_root: Path) -> Config:
+    # The derived ``paths.local_root`` resolves to ``<app_root>/data``; the
+    # override tests seed run dirs under ``tmp_path / "data" / ...`` so passing
+    # ``tmp_path`` as the app root keeps those on-disk paths unchanged.
     return Config(
-        paths=PathsConfig(
-            templates_dir=str(local_root), plugin_dir=str(local_root), local_root=str(local_root)
-        ),
+        paths=PathsConfig(app_root=str(app_root)),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Equipment 1",
-                local_root=str(local_root),
                 nas_root="/n",
             )
         ],

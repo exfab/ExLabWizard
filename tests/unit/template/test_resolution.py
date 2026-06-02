@@ -104,27 +104,33 @@ def _write_template(
 
 
 def _build_config(tmp_path: Path) -> Config:
-    """A config whose global templates dir + local_root live under ``tmp_path``."""
+    """A config whose derived template + data roots co-locate under ``tmp_path``.
+
+    Single-app-root refactor: only ``app_root`` is stored. The global templates
+    dir (``paths.templates_dir``) derives to ``tmp_path/templates`` and the data
+    root (``paths.local_root``) to ``tmp_path/data``; per-equipment template
+    stores therefore live under ``tmp_path/data/<equipment_id>/``.
+    """
     return Config(
-        paths=PathsConfig(
-            templates_dir=str(tmp_path / "global-templates"),
-            plugin_dir=str(tmp_path / "plugins"),
-            local_root=str(tmp_path / "local"),
-        ),
+        paths=PathsConfig(app_root=str(tmp_path)),
         equipment=[
             EquipmentConfig(
                 id=EQUIPMENT_ID,
                 label="Microscope 01",
-                local_root=str(tmp_path / "local"),
                 nas_root="nas-root",
             )
         ],
     )
 
 
+def _equipment_root(tmp_path: Path) -> Path:
+    """The per-equipment root, ``<local_root>/<equipment_id>`` == ``data/<id>``."""
+    return tmp_path / "data" / EQUIPMENT_ID
+
+
 def _project_path(tmp_path: Path) -> Path:
     """The absolute project dir under ``local_root/<equipment_id>/``."""
-    return tmp_path / "local" / EQUIPMENT_ID / "ProjectA"
+    return _equipment_root(tmp_path) / "ProjectA"
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +159,7 @@ def test_search_dirs_run_orders_project_equipment_global(tmp_path: Path) -> None
     )
     assert dirs == [
         instance_template_dir(project, TemplateType.RUN.value),
-        instance_template_dir(tmp_path / "local" / EQUIPMENT_ID, TemplateType.RUN.value),
+        instance_template_dir(_equipment_root(tmp_path), TemplateType.RUN.value),
         Path(config.paths.templates_dir),
     ]
 
@@ -166,7 +172,7 @@ def test_search_dirs_project_orders_equipment_global(tmp_path: Path) -> None:
         equipment_id=EQUIPMENT_ID,
     )
     assert dirs == [
-        instance_template_dir(tmp_path / "local" / EQUIPMENT_ID, TemplateType.PROJECT.value),
+        instance_template_dir(_equipment_root(tmp_path), TemplateType.PROJECT.value),
         Path(config.paths.templates_dir),
     ]
 
@@ -182,19 +188,22 @@ def test_search_dirs_equipment_is_global_only(tmp_path: Path) -> None:
 
 
 def test_search_dirs_skips_empty_global(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    # Single-app-root refactor: ``paths.templates_dir`` is a derived read-only
+    # property that is never empty for a real config. To still exercise the
+    # "empty global dir is dropped" branch of ``search_dirs``, hand it a paths
+    # stub with an empty ``templates_dir`` and the real derived data root.
     config = _build_config(tmp_path)
-    config = config.model_copy(
-        update={"paths": config.paths.model_copy(update={"templates_dir": ""})}
-    )
+    paths_stub = SimpleNamespace(templates_dir="", local_root=config.paths.local_root)
+    config = config.model_copy(update={"paths": paths_stub})
     dirs = search_dirs(
         config,
         template_type=TemplateType.PROJECT.value,
         equipment_id=EQUIPMENT_ID,
     )
     # Only the per-equipment dir survives; the empty global dir is dropped.
-    assert dirs == [
-        instance_template_dir(tmp_path / "local" / EQUIPMENT_ID, TemplateType.PROJECT.value)
-    ]
+    assert dirs == [instance_template_dir(_equipment_root(tmp_path), TemplateType.PROJECT.value)]
 
 
 def test_search_dirs_skips_equipment_when_id_missing(tmp_path: Path) -> None:
@@ -212,7 +221,7 @@ def test_run_chain_nearest_scope_wins_on_name_collision(tmp_path: Path) -> None:
     config = _build_config(tmp_path)
     project = _project_path(tmp_path)
     global_dir = Path(config.paths.templates_dir)
-    equip_run_dir = instance_template_dir(tmp_path / "local" / EQUIPMENT_ID, TemplateType.RUN.value)
+    equip_run_dir = instance_template_dir(_equipment_root(tmp_path), TemplateType.RUN.value)
     project_run_dir = instance_template_dir(project, TemplateType.RUN.value)
 
     # Same name "shared" in all three scopes; distinguish by description.
@@ -255,7 +264,7 @@ def test_run_chain_distinct_names_ordered_project_equipment_global(tmp_path: Pat
     config = _build_config(tmp_path)
     project = _project_path(tmp_path)
     global_dir = Path(config.paths.templates_dir)
-    equip_run_dir = instance_template_dir(tmp_path / "local" / EQUIPMENT_ID, TemplateType.RUN.value)
+    equip_run_dir = instance_template_dir(_equipment_root(tmp_path), TemplateType.RUN.value)
     project_run_dir = instance_template_dir(project, TemplateType.RUN.value)
 
     _write_template(global_dir, name="g-run", template_type="run", run_scope=RunScope.BOTH.value)
@@ -277,9 +286,7 @@ def test_run_chain_distinct_names_ordered_project_equipment_global(tmp_path: Pat
 def test_project_chain_equipment_beats_global_on_collision(tmp_path: Path) -> None:
     config = _build_config(tmp_path)
     global_dir = Path(config.paths.templates_dir)
-    equip_proj_dir = instance_template_dir(
-        tmp_path / "local" / EQUIPMENT_ID, TemplateType.PROJECT.value
-    )
+    equip_proj_dir = instance_template_dir(_equipment_root(tmp_path), TemplateType.PROJECT.value)
 
     _write_template(global_dir, name="layout", template_type="project", description="global")
     _write_template(equip_proj_dir, name="layout", template_type="project", description="equipment")
@@ -303,9 +310,7 @@ def test_equipment_chain_searches_only_global(tmp_path: Path) -> None:
     config = _build_config(tmp_path)
     global_dir = Path(config.paths.templates_dir)
     # A per-equipment "equipment"-type store should be ignored (never searched).
-    equip_equip_dir = instance_template_dir(
-        tmp_path / "local" / EQUIPMENT_ID, TemplateType.EQUIPMENT.value
-    )
+    equip_equip_dir = instance_template_dir(_equipment_root(tmp_path), TemplateType.EQUIPMENT.value)
     _write_template(global_dir, name="rig", template_type="equipment")
     _write_template(equip_equip_dir, name="ignored", template_type="equipment")
 

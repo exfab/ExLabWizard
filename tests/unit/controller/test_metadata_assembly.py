@@ -70,17 +70,17 @@ FIXED_CREATED_AT_ISO = "2026-01-01T09:00:00+00:00"
 
 
 def _config(local_root: Path, *, defaults: list[READMEDefaultField] | None = None) -> Config:
+    # Single-app-root refactor: only ``app_root`` is stored; the derived
+    # ``local_root`` resolves to ``<app_root>/data``. Callers pass a ``…/data``
+    # dir, so the app root is its parent. Template resolution in these tests is
+    # driven by ``req.template_path`` (FIXTURE_TEMPLATES) directly, not by the
+    # derived ``paths.templates_dir``.
     return Config(
-        paths=PathsConfig(
-            templates_dir=str(FIXTURE_TEMPLATES),
-            plugin_dir=str(FIXTURE_PLUGINS),
-            local_root=str(local_root),
-        ),
+        paths=PathsConfig(app_root=str(local_root.parent)),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Equipment One",
-                local_root=str(local_root),
                 nas_root="/srv/nas",
             )
         ],

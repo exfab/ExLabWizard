@@ -82,15 +82,14 @@ def test_build_production_dependencies_nas_sync_is_a_client(
     force-sync route call both, so the bug surfaced only as a silent dead
     sync loop in production. This is the test that catches it.
     """
-    local_root = tmp_path / "lab-data"
-    local_root.mkdir()
+    data_root = tmp_path / "data"
+    data_root.mkdir()
     config = Config(
-        paths=PathsConfig(local_root=str(local_root)),
+        paths=PathsConfig(app_root=str(tmp_path)),
         equipment=[
             EquipmentConfig(
                 id="EQNAS",
                 label="Nas Equipment",
-                local_root=str(local_root),
                 nas_root="/nas",
                 sync_mode=SyncMode.NAS,
             ),
@@ -147,19 +146,17 @@ def test_lims_client_password_provider_reads_keyring_under_lims_username(
 def _nas_config_with_two_equipment() -> Config:
     """Build a two-equipment nas-mode config for the NAS-presence tests."""
     return Config(
-        paths=PathsConfig(local_root="/data"),
+        paths=PathsConfig(app_root="/srv/exlab"),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="One",
-                local_root="/data",
                 nas_root="/srv/nas",
                 sync_mode=SyncMode.NAS,
             ),
             EquipmentConfig(
                 id="EQ2",
                 label="Two",
-                local_root="/data",
                 nas_root="/srv/nas",
                 sync_mode=SyncMode.NAS,
             ),

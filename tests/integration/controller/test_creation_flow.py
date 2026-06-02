@@ -64,18 +64,20 @@ FIXTURE_PLUGINS = Path(__file__).parent.parent.parent / "fixtures" / "plugins"
 
 
 def _build_config(local_root: Path, *, allowlist: list[str] | None = None) -> Config:
-    """Construct a minimal Config with one equipment configured."""
+    """Construct a minimal Config with one equipment configured.
+
+    ``local_root`` is ``tmp_path / "data"``; ``app_root`` is its parent so the
+    derived ``config.paths.local_root`` (== ``<app_root>/data``) resolves back
+    to it and the on-disk run-path assertions are unchanged. Templates/plugins
+    are decorative here -- creation renders the request's explicit
+    ``template_path`` and the plugin host is injected, never read from config.
+    """
     return Config(
-        paths=PathsConfig(
-            templates_dir=str(FIXTURE_TEMPLATES),
-            plugin_dir=str(FIXTURE_PLUGINS),
-            local_root=str(local_root),
-        ),
+        paths=PathsConfig(app_root=str(local_root.parent)),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Equipment 1",
-                local_root=str(local_root),
                 nas_root="/srv/nas",
             )
         ],
