@@ -49,13 +49,16 @@ class _StubNasSync:
 
 
 def _make_config(staging_root: Path, *, enabled: bool = True) -> Config:
+    # The staging endpoints scan / sandbox against ``orchestrator.staging_root``
+    # (and the derived ``paths.local_root``); runs are seeded directly under
+    # ``staging_root`` so containment is satisfied via the staging-root
+    # candidate. ``app_root`` is not load-bearing for these tests.
     return Config(
-        paths=PathsConfig(local_root=str(staging_root)),
+        paths=PathsConfig(app_root=str(staging_root)),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Equipment 1",
-                local_root=str(staging_root),
                 nas_root="/nas",
             ),
         ],

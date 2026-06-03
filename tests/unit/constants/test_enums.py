@@ -152,7 +152,7 @@ def test_setup_state_values() -> None:
     # Backend Spec §4.9.1.
     assert issubclass(enums.SetupState, StrEnum)
     assert enums.SetupState.INCOMPLETE_NO_CONFIG.value == "incomplete_no_config"
-    assert enums.SetupState.INCOMPLETE_MISSING_PATHS.value == "incomplete_missing_paths"
+    assert enums.SetupState.INCOMPLETE_PATHS_UNWRITABLE.value == "incomplete_paths_unwritable"
     assert enums.SetupState.INCOMPLETE_NO_EQUIPMENT.value == "incomplete_no_equipment"
     assert enums.SetupState.INCOMPLETE_NO_NAS_REMOTE.value == "incomplete_no_nas_remote"
     assert enums.SetupState.INCOMPLETE_NO_LIMS.value == "incomplete_no_lims"
@@ -160,7 +160,7 @@ def test_setup_state_values() -> None:
     assert enums.SetupState.READY.value == "ready"
     assert {m.value for m in enums.SetupState} == {
         "incomplete_no_config",
-        "incomplete_missing_paths",
+        "incomplete_paths_unwritable",
         "incomplete_no_orchestrator",
         "incomplete_no_equipment",
         "incomplete_no_nas_remote",

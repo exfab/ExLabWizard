@@ -265,15 +265,17 @@ class QuiescenceSyncPoller:
         if staging_root:
             for leaf in walk_run_leaves(Path(staging_root)):
                 _add(leaf)
+        data_root = self._config.paths.local_root
         for equipment in self._config.equipment:
             if equipment.sync_mode != SyncMode.NAS:
                 continue
-            if not equipment.local_root:
-                continue
-            # Runs live at ``<local_root>/<equipment_id>/<project>/...``;
-            # walk only this equipment's own subtree so a co-rooted
-            # ``stage``-mode equipment is never discovered here.
-            equipment_dir = Path(equipment.local_root) / equipment.id
+            # Runs live at ``<data_root>/<equipment_id>/<project>/...`` where
+            # ``data_root`` is the single derived ``<app_root>/data`` -- the
+            # same base run creation composes against, so the poller never
+            # watches a different tree than runs are written to. Walk only this
+            # equipment's own subtree so a co-rooted ``stage``-mode equipment is
+            # never discovered here.
+            equipment_dir = Path(data_root) / equipment.id
             for leaf in walk_equipment_run_leaves(equipment_dir):
                 _add(leaf)
         return runs

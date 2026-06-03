@@ -38,7 +38,6 @@ def _nas_equipment(equipment_id: str) -> EquipmentConfig:
     return EquipmentConfig(
         id=equipment_id,
         label=f"Equipment {equipment_id}",
-        local_root="/data",
         nas_root="/srv/nas",
         sync_mode=SyncMode.NAS,
     )
@@ -50,7 +49,6 @@ def _stage_equipment(equipment_id: str) -> EquipmentConfig:
     return EquipmentConfig(
         id=equipment_id,
         label=f"Stage {equipment_id}",
-        local_root="/data",
         nas_root="/srv/nas",
         sync_mode=SyncMode.STAGE,
     )
@@ -58,7 +56,7 @@ def _stage_equipment(equipment_id: str) -> EquipmentConfig:
 
 def _config_with(*equipment: EquipmentConfig, remote: str = "nas01") -> Config:
     return Config(
-        paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
+        paths=PathsConfig(app_root="/srv/exlab"),
         equipment=list(equipment),
         orchestrator=OrchestratorConfig(
             label="LAB",
@@ -458,7 +456,6 @@ def test_equipment_add_appends_row() -> None:
     )
     _find(out, "settings-equipment-id").value = "EQ2"
     _find(out, "settings-equipment-label").value = "Bench 2"
-    _find(out, "settings-equipment-local-root").value = "/data2"
     _find(out, "settings-equipment-nas-root").value = "/srv/nas2"
     _click(out, "settings-equipment-add")
 
@@ -478,7 +475,6 @@ def test_equipment_add_rejects_duplicate_id() -> None:
     )
     _find(out, "settings-equipment-id").value = "EQ1"
     _find(out, "settings-equipment-label").value = "dup"
-    _find(out, "settings-equipment-local-root").value = "/data"
     _find(out, "settings-equipment-nas-root").value = "/srv/nas"
     _click(out, "settings-equipment-add")
 
@@ -496,7 +492,6 @@ def test_equipment_add_rejects_invalid_id() -> None:
     # Lowercase/hyphen id fails the ^[A-Z][A-Z0-9_]*$ pattern in build.
     _find(out, "settings-equipment-id").value = "bad-id"
     _find(out, "settings-equipment-label").value = "x"
-    _find(out, "settings-equipment-local-root").value = "/d"
     _find(out, "settings-equipment-nas-root").value = "/n"
     _click(out, "settings-equipment-add")
 

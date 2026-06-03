@@ -1,7 +1,5 @@
 paths:
-  templates_dir: "/opt/exlab-wizard/templates"
-  plugin_dir: "/opt/exlab-wizard/plugins"
-  local_root: "/data/lab"
+  app_root: "/data/lab"                         # single managed root; templates/, plugins/ and data/ are derived under it
 
 lims:
   endpoint: "https://lims.lab.example/api/v1"

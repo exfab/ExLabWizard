@@ -23,6 +23,7 @@ from exlab_wizard.constants import (
     CACHE_DIR_NAME,
     CENTRAL_LOG_FILE,
     CREATION_JSON_NAME,
+    DISPLAY_NAME,
     EQUIPMENT_ID_MAX_LENGTH,
     EQUIPMENT_ID_PATTERN,
     EQUIPMENT_JSON_NAME,
@@ -49,11 +50,14 @@ if TYPE_CHECKING:
 
 __all__ = [
     "TEST_MODE_ENV",
+    "app_root_writable",
     "cache_dir",
     "canonicalize_equipment_id",
     "compose_project_path",
     "compose_run_path",
     "creation_json_path",
+    "default_app_root",
+    "ensure_app_dirs",
     "ensure_central_log_dir",
     "ensure_dir",
     "ensure_state_dir",
@@ -64,6 +68,7 @@ __all__ = [
     "os_cache_path",
     "os_central_log_path",
     "os_config_path",
+    "os_documents_path",
     "os_state_path",
     "readme_fields_json_path",
     "run_dir_stem",
@@ -97,6 +102,18 @@ def _app_name() -> str:
     if os.environ.get(TEST_MODE_ENV) == "1":
         return f"{APP_NAME}-test"
     return APP_NAME
+
+
+def _display_name() -> str:
+    """``DISPLAY_NAME`` (suffixed ``-test`` when ``EXLAB_WIZARD_TEST_MODE=1``).
+
+    The operator-facing Documents-subfolder name, mirroring ``_app_name``'s
+    test-mode handling so a ``--test`` run sandboxes into
+    ``<Documents>/ExLabWizard-test`` rather than the real working tree.
+    """
+    if os.environ.get(TEST_MODE_ENV) == "1":
+        return f"{DISPLAY_NAME}-test"
+    return DISPLAY_NAME
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +229,100 @@ def suggested_staging_root() -> Path:
             return _env_path("XDG_DATA_HOME", _home() / ".local" / "share") / name / "staging"
 
 
+def os_documents_path() -> Path:
+    """Return the operator's OS *Documents* directory. Pure; never raises.
+
+    The single app root (:func:`default_app_root`) lives under Documents so
+    everything an operator curates -- experiment data, templates, plugins --
+    sits in a familiar, backup-friendly location (mirroring how other desktop
+    apps adopt the user's Documents folder), distinct from the hidden
+    config / state / cache dirs named by :func:`_app_name`.
+
+    Per platform:
+
+    - **macOS** -- ``~/Documents``.
+    - **Windows** -- the Known Folder for Documents via
+      ``SHGetKnownFolderPath(FOLDERID_Documents)`` so a relocated or localized
+      Documents folder is honoured; on any ``ctypes`` failure it falls back to
+      ``%USERPROFILE%\\Documents`` and finally ``~/Documents``.
+    - **Linux** -- ``$XDG_DOCUMENTS_DIR`` if set, else ``~/Documents``.
+    """
+    match _platform():
+        case Platform.MACOS:
+            return _home() / "Documents"
+        case Platform.WINDOWS:
+            return _windows_documents_path()
+        case Platform.LINUX:
+            return _env_path("XDG_DOCUMENTS_DIR", _home() / "Documents")
+
+
+def _windows_documents_path() -> Path:
+    """Resolve the Windows Documents Known Folder, with graceful fallbacks.
+
+    Tries ``SHGetKnownFolderPath(FOLDERID_Documents)`` so a user who relocated
+    their Documents folder (or runs a localized Windows) gets the real path;
+    falls back to ``%USERPROFILE%\\Documents`` then ``~/Documents`` if the
+    Win32 call is unavailable or errors.
+    """
+    fallback = _env_path("USERPROFILE", _home()) / "Documents"
+    try:
+        return _shget_known_documents()
+    except Exception:
+        # Non-Windows host (no ``ctypes.windll``) or a failed/empty Win32 call.
+        return fallback
+
+
+def _shget_known_documents() -> Path:  # pragma: no cover -- Windows-only Known Folder API
+    """Resolve ``FOLDERID_Documents`` via ``SHGetKnownFolderPath`` (Windows only).
+
+    Raises on any non-Windows host (``ctypes.windll`` is undefined there) or on a
+    failed / empty Win32 result, so :func:`_windows_documents_path` falls back.
+    Excluded from coverage: the Win32 call cannot execute on the Linux/macOS CI
+    runners.
+    """
+    import ctypes
+    from ctypes import windll, wintypes  # type: ignore[attr-defined]
+
+    # FOLDERID_Documents = {FDD39AD0-238F-46AF-ADB4-6C85480369C7}
+    class _GUID(ctypes.Structure):
+        _fields_ = (
+            ("Data1", wintypes.DWORD),
+            ("Data2", wintypes.WORD),
+            ("Data3", wintypes.WORD),
+            ("Data4", ctypes.c_byte * 8),
+        )
+
+    folderid = _GUID(
+        0xFDD39AD0,
+        0x238F,
+        0x46AF,
+        (ctypes.c_byte * 8)(0xAD, 0xB4, 0x6C, 0x85, 0x48, 0x03, 0x69, 0xC7),
+    )
+    out = ctypes.c_wchar_p()
+    # SHGetKnownFolderPath returns S_OK (0) on success; any non-zero HRESULT is a
+    # failure, so raise rather than read an unset/garbage pointer.
+    if windll.shell32.SHGetKnownFolderPath(ctypes.byref(folderid), 0, None, ctypes.byref(out)):
+        raise OSError("SHGetKnownFolderPath failed")
+    try:
+        if not out.value:
+            raise OSError("SHGetKnownFolderPath returned an empty path")
+        return Path(out.value)
+    finally:
+        windll.ole32.CoTaskMemFree(out)
+
+
+def default_app_root() -> Path:
+    """Suggested default app root under the OS *Documents* folder.
+
+    ``<Documents>/ExLabWizard`` (``ExLabWizard-test`` in test mode). This is the
+    single configurable root from which ``templates/``, ``plugins/`` and
+    ``data/`` are derived (see :class:`exlab_wizard.config.models.PathsConfig`).
+    Pure and side-effect-free; the directory tree is materialized only by
+    :func:`ensure_app_dirs`.
+    """
+    return os_documents_path() / _display_name()
+
+
 # ---------------------------------------------------------------------------
 # Mkdir helpers (side effects)
 # ---------------------------------------------------------------------------
@@ -231,6 +342,38 @@ def ensure_state_dir() -> Path:
 def ensure_central_log_dir() -> Path:
     """``ensure_dir(os_central_log_path().parent)``."""
     return ensure_dir(os_central_log_path().parent)
+
+
+def ensure_app_dirs(config: Config) -> None:
+    """``mkdir -p`` the app root and its derived working subdirectories.
+
+    Materializes ``app_root`` plus the derived ``data/``, ``templates/`` and
+    ``plugins/`` folders (see
+    :class:`exlab_wizard.config.models.PathsConfig`). Idempotent; called on
+    tray bring-up and after a Settings save so a fresh install never has to
+    pre-create its working tree by hand. The subfolder names come from the
+    config's derived properties so this stays the single creation site.
+    """
+    paths = config.paths
+    for directory in (paths.app_root, paths.data_root, paths.templates_dir, paths.plugin_dir):
+        ensure_dir(Path(directory))
+
+
+def app_root_writable(config: Config) -> bool:
+    """Return True when the app root and ``data/`` are creatable and writable.
+
+    Drives the §4.9.1 paths gate (see :func:`evaluate_setup_state`): the app
+    root is always populated (it defaults under Documents), so the gate no
+    longer asks "is it blank" but "can we actually create and write runs
+    here". Attempts :func:`ensure_app_dirs`, then probes ``os.access(W_OK)``
+    on the app root and the data root. Returns False on any ``OSError`` (bad
+    drive, permission denied) rather than raising.
+    """
+    try:
+        ensure_app_dirs(config)
+    except OSError:
+        return False
+    return os.access(config.paths.app_root, os.W_OK) and os.access(config.paths.data_root, os.W_OK)
 
 
 # ---------------------------------------------------------------------------
@@ -434,16 +577,6 @@ def _lims_slot_satisfied(
     return bool(lims.endpoint and lims.email and keyring_password_present)
 
 
-def _paths_complete(config: Config) -> bool:
-    """Return True when every required ``paths.*`` field is non-empty.
-
-    The unit-level check is purely string emptiness -- filesystem
-    accessibility is checked elsewhere in the §4.9.1 evaluation chain.
-    """
-    paths = config.paths
-    return bool(paths.templates_dir and paths.plugin_dir and paths.local_root)
-
-
 def _nas_in_use(config: Config) -> bool:
     """True when at least one nas-mode equipment exists (NAS sync is active)."""
     from exlab_wizard.constants import SyncMode
@@ -469,14 +602,15 @@ def evaluate_setup_state(
     lims_reachable: bool = True,
     keyring_password_present: bool = True,
     nas_remote_available: Callable[[str], bool] | None = None,
+    paths_writable: bool = True,
 ) -> SetupState:
     """Evaluate the §4.9.1 setup state.
 
     Order of gates (first-failing wins):
 
     1. ``config is None`` -> ``INCOMPLETE_NO_CONFIG``
-    2. ``paths.templates_dir`` / ``plugin_dir`` / ``local_root`` any empty ->
-       ``INCOMPLETE_MISSING_PATHS``
+    2. ``paths.app_root`` cannot be created / written ->
+       ``INCOMPLETE_PATHS_UNWRITABLE``
     3. equipment list empty -> ``INCOMPLETE_NO_EQUIPMENT``
     4. NAS sync is in use but the ``nas:`` remote is unset or absent from
        rclone.conf -> ``INCOMPLETE_NO_NAS_REMOTE`` (rclone.conf migration)
@@ -492,11 +626,16 @@ def evaluate_setup_state(
     keyring backend. ``nas_remote_available`` answers "is this rclone
     remote present in rclone.conf?"; it defaults to "always True" so
     callers and tests that don't care about the NAS gate behave as before.
+    ``paths_writable`` answers "can the app root be created and written?"
+    (computed by the caller via :func:`app_root_writable`); it defaults True
+    so callers/tests that don't care about the paths gate behave as before.
+    The app root always defaults under the OS Documents folder, so the gate
+    checks writability rather than emptiness.
     """
     if config is None:
         return SetupState.INCOMPLETE_NO_CONFIG
-    if not _paths_complete(config):
-        return SetupState.INCOMPLETE_MISSING_PATHS
+    if not paths_writable:
+        return SetupState.INCOMPLETE_PATHS_UNWRITABLE
     if not _orchestrator_identity_complete(config):
         return SetupState.INCOMPLETE_NO_ORCHESTRATOR
     if not config.equipment:
@@ -543,8 +682,8 @@ def setup_state_missing(
             return [{"field": "config.yaml", "reason": "missing"}]
         case SetupState.INCOMPLETE_NO_EQUIPMENT:
             return [{"field": "equipment", "reason": "empty"}]
-        case SetupState.INCOMPLETE_MISSING_PATHS:
-            return _missing_paths_fields(config)
+        case SetupState.INCOMPLETE_PATHS_UNWRITABLE:
+            return _missing_paths_fields()
         case SetupState.INCOMPLETE_NO_ORCHESTRATOR:
             return _missing_orchestrator_fields(config)
         case SetupState.INCOMPLETE_NO_NAS_REMOTE:
@@ -578,17 +717,14 @@ def _missing_orchestrator_fields(config: Config | None) -> list[dict[str, str]]:
     return out
 
 
-def _missing_paths_fields(config: Config | None) -> list[dict[str, str]]:
-    field_specs = (
-        ("paths.templates_dir", lambda c: c.paths.templates_dir),
-        ("paths.plugin_dir", lambda c: c.paths.plugin_dir),
-        ("paths.local_root", lambda c: c.paths.local_root),
-    )
-    if config is None:
-        return [{"field": name, "reason": "unset"} for name, _ in field_specs]
-    return [
-        {"field": name, "reason": "unset"} for name, accessor in field_specs if not accessor(config)
-    ]
+def _missing_paths_fields() -> list[dict[str, str]]:
+    """Single ``paths.app_root`` row for ``INCOMPLETE_PATHS_UNWRITABLE``.
+
+    The app root always defaults under Documents, so the failure is never
+    "unset" -- it is that the resolved location cannot be created or written
+    (missing drive, permission denied).
+    """
+    return [{"field": "paths.app_root", "reason": "unwritable"}]
 
 
 def _missing_lims_fields(config: Config | None) -> list[dict[str, str]]:
@@ -617,7 +753,7 @@ def setup_state_next_action(state: SetupState) -> SetupNextAction | None:
     (no further action required).
     """
     match state:
-        case SetupState.INCOMPLETE_NO_CONFIG | SetupState.INCOMPLETE_MISSING_PATHS:
+        case SetupState.INCOMPLETE_NO_CONFIG | SetupState.INCOMPLETE_PATHS_UNWRITABLE:
             return SetupNextAction.SET_PATHS
         case SetupState.INCOMPLETE_NO_ORCHESTRATOR:
             # Redesign §3.1: label + staging_root fold into an early

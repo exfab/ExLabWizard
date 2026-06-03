@@ -57,12 +57,11 @@ def _build_config(
     delete_ignored: bool = False,
 ) -> Config:
     return Config(
-        paths=PathsConfig(templates_dir="/tpl", plugin_dir="/plg", local_root=str(local_root)),
+        paths=PathsConfig(app_root=str(local_root)),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Eq 1",
-                local_root=str(local_root),
                 nas_root="/nas",
             )
         ],

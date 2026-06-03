@@ -40,6 +40,7 @@ from exlab_wizard.config.models import (
 from exlab_wizard.constants import SetupState
 from exlab_wizard.logging import get_logger
 from exlab_wizard.paths import (
+    app_root_writable,
     evaluate_setup_state,
     setup_state_missing,
     setup_state_next_action,
@@ -160,11 +161,13 @@ def compute_setup_state(deps: Any) -> SetupState:
     ``nas_remote_available`` predicate that answers whether a named
     rclone remote is present in rclone.conf.
     """
+    config = deps.config
     return evaluate_setup_state(
-        deps.config,
+        config,
         lims_reachable=getattr(deps, "lims_reachable", True),
         keyring_password_present=lims_password_present(deps),
         nas_remote_available=lambda remote: nas_remote_available(deps, remote),
+        paths_writable=app_root_writable(config) if config is not None else True,
     )
 
 

@@ -22,12 +22,11 @@ from exlab_wizard.controller.state_machine import SessionState
 
 def _ready_config() -> Config:
     return Config(
-        paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
+        paths=PathsConfig(app_root="/srv/exlab"),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Equipment 1",
-                local_root="/d",
                 nas_root="/n",
             )
         ],

@@ -53,21 +53,22 @@ def _equipment(eq_id: str = "EQ1") -> EquipmentConfig:
     return EquipmentConfig(
         id=eq_id,
         label=f"Equipment {eq_id}",
-        local_root="/tmp/data",
         nas_root="/nas",
     )
 
 
 def _config(
     *,
-    plugin_dir: str = "/plugins",
+    app_root: str = "/srv/exlab",
     endpoint: str = "https://lims.example",
     email: str = "op@example",
     log_level: str = "INFO",
     equipment: tuple[EquipmentConfig, ...] | None = None,
 ) -> Config:
+    # plugin_dir / templates_dir / data_root are all derived from app_root, so
+    # a plugin-dir change is driven by pointing app_root at a different root.
     return Config(
-        paths=PathsConfig(templates_dir="/tpl", plugin_dir=plugin_dir, local_root="/tmp/data"),
+        paths=PathsConfig(app_root=app_root),
         lims=LIMSConfig(endpoint=endpoint, email=email),
         logging=LoggingConfig(level=log_level),
         equipment=list(equipment) if equipment is not None else [_equipment()],
@@ -193,18 +194,20 @@ def test_rebuilds_plugin_host_only_on_dir_change(monkeypatch: pytest.MonkeyPatch
     built: list[Any] = []
     monkeypatch.setattr(deps_mod, "_build_plugin_host", lambda cfg: built.append(cfg) or "HOST")
     deps = _running_deps()
-    deps.config = _config(plugin_dir="/old")
+    deps.config = _config(app_root="/srv/old")
 
-    # plugin_dir changes -> rebuild + re-inject into the controller.
-    new = _config(plugin_dir="/new")
+    # plugin_dir (derived from app_root) changes -> rebuild + re-inject into
+    # the controller.
+    new = _config(app_root="/srv/new")
     apply_live_config(deps, new)
     assert built == [new]
     assert deps.plugin_host == "HOST"
     assert deps.controller.plugin_hosts == ["HOST"]
 
-    # Unchanged plugin_dir -> no rebuild, controller keeps its host.
+    # Unchanged app_root -> derived plugin_dir unchanged -> no rebuild,
+    # controller keeps its host.
     built.clear()
-    apply_live_config(deps, _config(plugin_dir="/new"))
+    apply_live_config(deps, _config(app_root="/srv/new"))
     assert built == []
     assert deps.controller.plugin_hosts[-1] is None
 

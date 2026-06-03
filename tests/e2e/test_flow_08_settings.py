@@ -47,9 +47,7 @@ def test_flow_08_settings(page, server_url) -> None:
     # Fill paths and save.
     page.goto(f"{server_url}/settings?active=paths")
     page.wait_for_load_state("networkidle")
-    settings.paths_templates.fill("/tmp/templates")
-    settings.paths_plugin.fill("/tmp/plugins")
-    settings.paths_local_root.fill("/tmp/data")
+    settings.paths_app_root.fill("/tmp/exlab")
     settings.save.click()
     page.wait_for_load_state("networkidle")
     settings.saved_marker.wait_for(state="visible", timeout=5_000)

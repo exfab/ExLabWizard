@@ -26,9 +26,12 @@ from exlab_wizard.config.models import (
 from exlab_wizard.constants import RunKind, SetupNextAction, SetupState
 from exlab_wizard.errors import ConfigError
 from exlab_wizard.paths import (
+    app_root_writable,
     canonicalize_equipment_id,
     compose_project_path,
     compose_run_path,
+    default_app_root,
+    ensure_app_dirs,
     ensure_central_log_dir,
     ensure_dir,
     ensure_state_dir,
@@ -36,6 +39,7 @@ from exlab_wizard.paths import (
     os_cache_path,
     os_central_log_path,
     os_config_path,
+    os_documents_path,
     os_state_path,
     project_name_violations,
     setup_state_missing,
@@ -55,7 +59,6 @@ def _make_equipment(equipment_id: str = "CONFOCAL_01") -> EquipmentConfig:
         {
             "id": equipment_id,
             "label": "Confocal Microscope",
-            "local_root": "/data/lab",
             "nas_root": "//nas01/lab",
         }
     )
@@ -81,11 +84,7 @@ def _ready_config() -> Config:
     from exlab_wizard.config.models import NasConfig, OrchestratorConfig
 
     return Config(
-        paths=PathsConfig(
-            templates_dir="/srv/templates",
-            plugin_dir="/srv/plugins",
-            local_root="/data/lab",
-        ),
+        paths=PathsConfig(app_root="/srv/exlab"),
         lims=LIMSConfig(endpoint="https://lims.example/api/v1", email="op@lab.example"),
         equipment=[_make_equipment()],
         orchestrator=OrchestratorConfig(
@@ -111,8 +110,10 @@ def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "XDG_STATE_HOME",
         "XDG_CACHE_HOME",
         "XDG_DATA_HOME",
+        "XDG_DOCUMENTS_DIR",
         "APPDATA",
         "LOCALAPPDATA",
+        "USERPROFILE",
     ):
         monkeypatch.delenv(var, raising=False)
     return home
@@ -292,6 +293,105 @@ def test_suggested_staging_root_windows(monkeypatch: pytest.MonkeyPatch, fake_ho
     monkeypatch.setenv("LOCALAPPDATA", str(local))
     expected = local / "exlab-wizard" / "staging"
     assert suggested_staging_root() == expected
+
+
+# ---------------------------------------------------------------------------
+# os_documents_path / default_app_root  (the Documents-based app root)
+# ---------------------------------------------------------------------------
+
+
+def test_os_documents_path_macos(monkeypatch: pytest.MonkeyPatch, fake_home: Path) -> None:
+    monkeypatch.setattr("sys.platform", "darwin")
+    assert os_documents_path() == fake_home / "Documents"
+
+
+def test_os_documents_path_linux_with_xdg(monkeypatch: pytest.MonkeyPatch, fake_home: Path) -> None:
+    monkeypatch.setattr("sys.platform", "linux")
+    xdg = fake_home / "xdg-docs"
+    monkeypatch.setenv("XDG_DOCUMENTS_DIR", str(xdg))
+    assert os_documents_path() == xdg
+
+
+def test_os_documents_path_linux_without_xdg(
+    monkeypatch: pytest.MonkeyPatch, fake_home: Path
+) -> None:
+    monkeypatch.setattr("sys.platform", "linux")
+    assert os_documents_path() == fake_home / "Documents"
+
+
+def test_os_documents_path_windows_userprofile_fallback(
+    monkeypatch: pytest.MonkeyPatch, fake_home: Path
+) -> None:
+    """On a non-Windows test runner the ctypes Known-Folder call is
+    unavailable, so the resolver falls back to ``%USERPROFILE%\\Documents``.
+    (The SHGetKnownFolderPath success path is exercised only on real Windows.)
+    """
+    monkeypatch.setattr("sys.platform", "win32")
+    profile = fake_home / "winprofile"
+    monkeypatch.setenv("USERPROFILE", str(profile))
+    assert os_documents_path() == profile / "Documents"
+
+
+def test_os_documents_path_windows_home_fallback(
+    monkeypatch: pytest.MonkeyPatch, fake_home: Path
+) -> None:
+    """With neither the Known Folder nor USERPROFILE available, fall back to
+    ``~/Documents``."""
+    monkeypatch.setattr("sys.platform", "win32")
+    assert os_documents_path() == fake_home / "Documents"
+
+
+def test_default_app_root_macos(monkeypatch: pytest.MonkeyPatch, fake_home: Path) -> None:
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.delenv("EXLAB_WIZARD_TEST_MODE", raising=False)
+    assert default_app_root() == fake_home / "Documents" / "ExLabWizard"
+
+
+def test_default_app_root_test_mode_suffix(
+    monkeypatch: pytest.MonkeyPatch, fake_home: Path
+) -> None:
+    """Test mode sandboxes the Documents subfolder so tests never write into
+    the operator's real ``ExLabWizard`` tree."""
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setenv("EXLAB_WIZARD_TEST_MODE", "1")
+    assert default_app_root() == fake_home / "Documents" / "ExLabWizard-test"
+
+
+# ---------------------------------------------------------------------------
+# ensure_app_dirs / app_root_writable
+# ---------------------------------------------------------------------------
+
+
+def _app_root_config(app_root: Path) -> Config:
+    """Minimal Config carrying just the app root (for app-dir helpers)."""
+    return Config(paths=PathsConfig(app_root=str(app_root)))
+
+
+def test_ensure_app_dirs_creates_derived_tree(tmp_path: Path) -> None:
+    app_root = tmp_path / "ExLabWizard"
+    ensure_app_dirs(_app_root_config(app_root))
+    assert app_root.is_dir()
+    assert (app_root / "data").is_dir()
+    assert (app_root / "templates").is_dir()
+    assert (app_root / "plugins").is_dir()
+
+
+def test_ensure_app_dirs_idempotent(tmp_path: Path) -> None:
+    config = _app_root_config(tmp_path / "ExLabWizard")
+    ensure_app_dirs(config)
+    ensure_app_dirs(config)  # second call is a no-op, must not raise
+    assert (tmp_path / "ExLabWizard" / "data").is_dir()
+
+
+def test_app_root_writable_true_for_writable_tree(tmp_path: Path) -> None:
+    assert app_root_writable(_app_root_config(tmp_path / "ExLabWizard")) is True
+
+
+def test_app_root_writable_false_when_uncreatable(tmp_path: Path) -> None:
+    """A path whose parent is a file (so mkdir fails) is reported unwritable."""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    assert app_root_writable(_app_root_config(blocker / "ExLabWizard")) is False
 
 
 # ---------------------------------------------------------------------------
@@ -714,36 +814,33 @@ def test_evaluate_setup_state_no_config() -> None:
     assert evaluate_setup_state(None) is SetupState.INCOMPLETE_NO_CONFIG
 
 
-def test_evaluate_setup_state_missing_paths() -> None:
+def test_evaluate_setup_state_paths_unwritable() -> None:
+    """An unwritable app root trips the paths gate (right after no-config)."""
     config = Config(
-        paths=PathsConfig(templates_dir="", plugin_dir="", local_root=""),
+        paths=PathsConfig(app_root="/srv/exlab"),
         equipment=[_make_equipment()],
         orchestrator=_make_orchestrator(),
     )
-    assert evaluate_setup_state(config) is SetupState.INCOMPLETE_MISSING_PATHS
+    assert (
+        evaluate_setup_state(config, paths_writable=False) is SetupState.INCOMPLETE_PATHS_UNWRITABLE
+    )
 
 
-def test_evaluate_setup_state_missing_paths_partial() -> None:
-    """Only one path is empty -- still INCOMPLETE_MISSING_PATHS."""
+def test_evaluate_setup_state_paths_writable_defaults_true() -> None:
+    """``paths_writable`` defaults True, so the gate is skipped unless asked."""
     config = Config(
-        paths=PathsConfig(
-            templates_dir="/srv/templates",
-            plugin_dir="/srv/plugins",
-            local_root="",
-        ),
+        paths=PathsConfig(app_root="/srv/exlab"),
         equipment=[_make_equipment()],
         orchestrator=_make_orchestrator(),
     )
-    assert evaluate_setup_state(config) is SetupState.INCOMPLETE_MISSING_PATHS
+    # Default leaves the paths gate satisfied; the chain moves past it (the
+    # next unsatisfied gate here is the LIMS slot, not the paths gate).
+    assert evaluate_setup_state(config) is not SetupState.INCOMPLETE_PATHS_UNWRITABLE
 
 
 def test_evaluate_setup_state_no_equipment() -> None:
     config = Config(
-        paths=PathsConfig(
-            templates_dir="/srv/templates",
-            plugin_dir="/srv/plugins",
-            local_root="/data/lab",
-        ),
+        paths=PathsConfig(app_root="/srv/exlab"),
         equipment=[],
         orchestrator=_make_orchestrator(),
     )
@@ -753,11 +850,7 @@ def test_evaluate_setup_state_no_equipment() -> None:
 def test_evaluate_setup_state_no_orchestrator() -> None:
     """Only ``label`` gates orchestrator identity; a blank label trips it."""
     config = Config(
-        paths=PathsConfig(
-            templates_dir="/srv/templates",
-            plugin_dir="/srv/plugins",
-            local_root="/data/lab",
-        ),
+        paths=PathsConfig(app_root="/srv/exlab"),
         equipment=[_make_equipment()],
     )
     assert evaluate_setup_state(config) is SetupState.INCOMPLETE_NO_ORCHESTRATOR
@@ -768,11 +861,7 @@ def test_evaluate_setup_state_no_orchestrator_when_only_staging_set() -> None:
     from exlab_wizard.config.models import OrchestratorConfig
 
     config = Config(
-        paths=PathsConfig(
-            templates_dir="/srv/templates",
-            plugin_dir="/srv/plugins",
-            local_root="/data/lab",
-        ),
+        paths=PathsConfig(app_root="/srv/exlab"),
         equipment=[_make_equipment()],
         orchestrator=OrchestratorConfig(label="", staging_root="/srv/staging"),
     )
@@ -784,11 +873,7 @@ def test_evaluate_setup_state_blank_staging_root_is_allowed() -> None:
     from exlab_wizard.config.models import NasConfig, OrchestratorConfig
 
     config = Config(
-        paths=PathsConfig(
-            templates_dir="/srv/templates",
-            plugin_dir="/srv/plugins",
-            local_root="/data/lab",
-        ),
+        paths=PathsConfig(app_root="/srv/exlab"),
         lims=LIMSConfig(endpoint="https://lims.example/api/v1", email="op@lab.example"),
         equipment=[_make_equipment()],
         orchestrator=OrchestratorConfig(label="Lab Acquisition Station 01", staging_root=""),
@@ -802,11 +887,7 @@ def test_setup_state_missing_for_no_orchestrator_lists_only_label() -> None:
     from exlab_wizard.config.models import OrchestratorConfig
 
     config = Config(
-        paths=PathsConfig(
-            templates_dir="/srv/templates",
-            plugin_dir="/srv/plugins",
-            local_root="/data/lab",
-        ),
+        paths=PathsConfig(app_root="/srv/exlab"),
         equipment=[_make_equipment()],
         orchestrator=OrchestratorConfig(label="", staging_root=""),
     )
@@ -818,11 +899,7 @@ def test_evaluate_setup_state_no_lims() -> None:
     from exlab_wizard.config.models import NasConfig
 
     config = Config(
-        paths=PathsConfig(
-            templates_dir="/srv/templates",
-            plugin_dir="/srv/plugins",
-            local_root="/data/lab",
-        ),
+        paths=PathsConfig(app_root="/srv/exlab"),
         lims=LIMSConfig(endpoint="", email="", offline_catalogue_path=""),
         equipment=[_make_equipment()],
         orchestrator=_make_orchestrator(),
@@ -836,11 +913,7 @@ def test_evaluate_setup_state_lims_via_offline_catalogue() -> None:
     from exlab_wizard.config.models import NasConfig
 
     config = Config(
-        paths=PathsConfig(
-            templates_dir="/srv/templates",
-            plugin_dir="/srv/plugins",
-            local_root="/data/lab",
-        ),
+        paths=PathsConfig(app_root="/srv/exlab"),
         lims=LIMSConfig(
             endpoint="",
             email="",
@@ -885,13 +958,12 @@ def _nas_remote_config(remote: str = "") -> Config:
     from exlab_wizard.config.models import NasConfig
 
     return Config(
-        paths={"templates_dir": "/t", "plugin_dir": "/p", "local_root": "/l"},
+        paths={"app_root": "/srv/exlab"},
         orchestrator={"label": "ws-1"},
         equipment=[
             EquipmentConfig(
                 id="EQ_01",
                 label="Eq",
-                local_root="/l",
                 nas_root="//n/x",
             )
         ],
@@ -967,11 +1039,7 @@ def test_evaluate_setup_state_endpoint_only_missing_email() -> None:
     from exlab_wizard.config.models import NasConfig
 
     config = Config(
-        paths=PathsConfig(
-            templates_dir="/srv/templates",
-            plugin_dir="/srv/plugins",
-            local_root="/data/lab",
-        ),
+        paths=PathsConfig(app_root="/srv/exlab"),
         lims=LIMSConfig(endpoint="https://lims.example/api/v1", email=""),
         equipment=[_make_equipment()],
         orchestrator=_make_orchestrator(),
@@ -989,7 +1057,7 @@ def test_evaluate_setup_state_endpoint_only_missing_email() -> None:
     ("state", "expected"),
     [
         (SetupState.INCOMPLETE_NO_CONFIG, "set_paths"),
-        (SetupState.INCOMPLETE_MISSING_PATHS, "set_paths"),
+        (SetupState.INCOMPLETE_PATHS_UNWRITABLE, "set_paths"),
         (SetupState.INCOMPLETE_NO_EQUIPMENT, "add_equipment"),
         (SetupState.INCOMPLETE_NO_LIMS, "configure_lims"),
         (SetupState.INCOMPLETE_LIMS_UNREACHABLE, "test_lims"),
@@ -1022,15 +1090,11 @@ def test_setup_state_missing_when_lims_unreachable_returns_empty() -> None:
     assert setup_state_missing(SetupState.INCOMPLETE_LIMS_UNREACHABLE, _ready_config()) == []
 
 
-def test_setup_state_missing_for_paths_lists_each_unset() -> None:
-    config = Config(
-        paths=PathsConfig(templates_dir="", plugin_dir="/srv/plugins", local_root=""),
-    )
-    result = setup_state_missing(SetupState.INCOMPLETE_MISSING_PATHS, config)
-    fields = {entry["field"] for entry in result}
-    assert "paths.templates_dir" in fields
-    assert "paths.local_root" in fields
-    assert "paths.plugin_dir" not in fields
+def test_setup_state_missing_for_paths_reports_app_root_unwritable() -> None:
+    """The paths gate now reports a single unwritable ``paths.app_root`` row."""
+    config = Config(paths=PathsConfig(app_root="/srv/exlab"))
+    result = setup_state_missing(SetupState.INCOMPLETE_PATHS_UNWRITABLE, config)
+    assert result == [{"field": "paths.app_root", "reason": "unwritable"}]
 
 
 def test_setup_state_missing_for_no_equipment() -> None:
@@ -1040,11 +1104,7 @@ def test_setup_state_missing_for_no_equipment() -> None:
 
 def test_setup_state_missing_for_no_lims_lists_endpoint_email() -> None:
     config = Config(
-        paths=PathsConfig(
-            templates_dir="/srv/templates",
-            plugin_dir="/srv/plugins",
-            local_root="/data/lab",
-        ),
+        paths=PathsConfig(app_root="/srv/exlab"),
         lims=LIMSConfig(endpoint="", email=""),
         equipment=[_make_equipment()],
         orchestrator=_make_orchestrator(),
@@ -1055,15 +1115,10 @@ def test_setup_state_missing_for_no_lims_lists_endpoint_email() -> None:
     assert "lims.email" in fields
 
 
-def test_setup_state_missing_for_missing_paths_with_none_config() -> None:
-    """When config is None but state is INCOMPLETE_MISSING_PATHS, every paths
-    field is reported as unset. This is a defensive branch for callers that
-    pass the state without the config object."""
-    result = setup_state_missing(SetupState.INCOMPLETE_MISSING_PATHS, None)
-    fields = {entry["field"] for entry in result}
-    assert fields == {"paths.templates_dir", "paths.plugin_dir", "paths.local_root"}
-    for entry in result:
-        assert entry["reason"] == "unset"
+def test_setup_state_missing_for_unwritable_paths_with_none_config() -> None:
+    """The paths-unwritable row is config-independent (single app_root row)."""
+    result = setup_state_missing(SetupState.INCOMPLETE_PATHS_UNWRITABLE, None)
+    assert result == [{"field": "paths.app_root", "reason": "unwritable"}]
 
 
 def test_setup_state_missing_for_no_lims_with_none_config() -> None:
@@ -1078,11 +1133,7 @@ def test_setup_state_missing_for_no_lims_flags_keyring_when_endpoint_email_set()
     """endpoint+email both filled in but no offline catalogue -> the
     keyring-password slot is flagged as missing_in_keyring."""
     config = Config(
-        paths=PathsConfig(
-            templates_dir="/srv/templates",
-            plugin_dir="/srv/plugins",
-            local_root="/data/lab",
-        ),
+        paths=PathsConfig(app_root="/srv/exlab"),
         lims=LIMSConfig(
             endpoint="https://lims.example/api/v1",
             email="op@lab.example",

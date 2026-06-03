@@ -433,9 +433,15 @@ class Validator:
         coupled to the entire config schema. Used by the FastAPI
         lifespan when wiring the audit task.
         """
+        # Equipment data lives at ``<data_root>/<equipment_id>`` where
+        # data_root is the single derived ``config.paths.local_root``
+        # (``<app_root>/data``) -- the same base run creation and the
+        # quiescence poller use, so audit roots can never diverge from where
+        # runs are actually written.
+        data_root = config.paths.local_root
         equipment_roots: dict[str, Path] = {}
         for entry in getattr(config, "equipment", []) or []:
-            equipment_roots[entry.id] = Path(entry.local_root) / entry.id
+            equipment_roots[entry.id] = Path(data_root) / entry.id
         staging_root: Path | None = None
         orch = getattr(config, "orchestrator", None)
         if orch is not None and getattr(orch, "enabled", False):

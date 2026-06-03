@@ -113,12 +113,9 @@ def test_fresh_install_setup_writes_config_and_applies_live(
     config_path = resolve_config_path(home_dir)
     assert not config_path.exists(), "precondition: fresh install has no config.yaml"
 
-    # Folders the operator will point the wizard at -- all under tmp.
-    templates_dir = tmp_path / "templates"
-    plugin_dir = tmp_path / "plugins"
-    local_root = tmp_path / "data"
-    for folder in (templates_dir, plugin_dir, local_root):
-        folder.mkdir()
+    # The operator points the wizard at a single app root; the app derives and
+    # auto-creates templates/, plugins/ and data/ under it on save.
+    app_root = tmp_path / "exlab"
 
     context = browser.new_context()
     page = context.new_page()
@@ -137,9 +134,7 @@ def test_fresh_install_setup_writes_config_and_applies_live(
 
         # 3. Fill the Paths section (the dialog opens here -- it is the
         #    first incomplete section on a fresh install).
-        page.get_by_test_id("settings-paths-templates").fill(str(templates_dir))
-        page.get_by_test_id("settings-paths-plugin").fill(str(plugin_dir))
-        page.get_by_test_id("settings-paths-local-root").fill(str(local_root))
+        page.get_by_test_id("settings-paths-app-root").fill(str(app_root))
 
         # 4. Fill the LIMS section.
         page.get_by_test_id("settings-nav-lims").click()
@@ -160,7 +155,7 @@ def test_fresh_install_setup_writes_config_and_applies_live(
         #    the operator entered.
         assert config_path.exists(), "Save must persist config.yaml under the tmp HOME"
         text = config_path.read_text(encoding="utf-8")
-        assert str(local_root) in text
+        assert str(app_root) in text
         assert "https://lims.example.test" in text
         assert "operator@example.test" in text
 

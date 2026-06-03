@@ -58,17 +58,15 @@ RUN_TEMPLATE = FIXTURE_TEMPLATES / "run_basic_experimental"
 
 
 def _build_config(local_root: Path) -> Config:
+    # ``local_root`` is ``tmp_path / "data"``; app_root is its parent so the
+    # derived ``config.paths.local_root`` resolves back to it. Templates/plugins
+    # are decorative (provenance copies the request's explicit template_path).
     return Config(
-        paths=PathsConfig(
-            templates_dir=str(FIXTURE_TEMPLATES),
-            plugin_dir=str(FIXTURE_PLUGINS),
-            local_root=str(local_root),
-        ),
+        paths=PathsConfig(app_root=str(local_root.parent)),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Equipment 1",
-                local_root=str(local_root),
                 nas_root="/srv/nas",
             )
         ],

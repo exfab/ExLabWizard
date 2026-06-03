@@ -10,7 +10,7 @@ section citations.
 from __future__ import annotations
 
 # ---- App-level identifiers ----
-from exlab_wizard.constants.app import APP_NAME, TEST_MODE_ENV, TEST_MODE_PREFIX
+from exlab_wizard.constants.app import APP_NAME, DISPLAY_NAME, TEST_MODE_ENV, TEST_MODE_PREFIX
 
 # ---- Enums (Backend §4.7, §4.9.1, §5.2, §6.2.4, §7, §8.1, §11.3, §13.3) ----
 from exlab_wizard.constants.enums import (
@@ -163,6 +163,7 @@ __all__ = [
     # Schema versions
     "CREATION_JSON_VERSION",
     "DISK_SPACE_PREFLIGHT_MIB",
+    "DISPLAY_NAME",
     # Patterns (raw + compiled + filename rules)
     "EQUIPMENT_ID_MAX_LENGTH",
     "EQUIPMENT_ID_PATTERN",

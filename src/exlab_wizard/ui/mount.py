@@ -715,10 +715,31 @@ def _persist_config(deps: Any, updated: Any, ui: Any) -> bool:
         _log.exception("save_config failed")
         _show_toast(ui, f"Save failed: {exc}", positive=False)
         return False
+    _ensure_app_dirs(updated)
     _ensure_staging_root(updated, ui)
     if deps is not None:
         _apply_live_config(deps, updated)
     return True
+
+
+def _ensure_app_dirs(updated: Any) -> None:
+    """Create the app root and its derived subdirs after a save.
+
+    Materializes ``app_root`` plus ``data/``, ``templates/`` and ``plugins/``
+    so a fresh install's working tree exists the moment paths are saved. A
+    creation failure is non-fatal (the config is already persisted; the setup
+    writability gate surfaces an unusable root), and a non-``Config`` value is
+    a defensive no-op.
+    """
+    paths = getattr(updated, "paths", None)
+    if paths is None or not getattr(paths, "app_root", ""):
+        return
+    from exlab_wizard.paths import ensure_app_dirs
+
+    try:
+        ensure_app_dirs(updated)
+    except OSError:
+        _log.exception("failed to create app dirs")
 
 
 def _ensure_staging_root(updated: Any, ui: Any) -> None:
@@ -1067,11 +1088,15 @@ def _metadata_for_owned_equipment(node_id: str, config: Any) -> dict[str, Any]:
     for entry in getattr(config, "equipment", []):
         if entry.id != node_id:
             continue
+        # Equipment data dir is derived from the single app root
+        # (``<data_root>/<equipment_id>``); equipment no longer stores its own
+        # local_root.
+        local_root = str(Path(config.paths.local_root) / entry.id)
         return {
             "id": entry.id,
             "label": entry.label or entry.id,
             "sync_mode": str(getattr(entry, "sync_mode", "")) or "nas",
-            "local_root": entry.local_root or "",
+            "local_root": local_root,
             "nas_root": entry.nas_root or "",
         }
     return {}
@@ -1829,8 +1854,11 @@ def _missing_setup_sections(deps: Any) -> tuple[str, ...]:
         # placeholder section before they could reach the main GUI.
         return ("paths", "lims")
     missing: list[str] = []
-    if not config.paths.local_root or not config.paths.templates_dir:
-        missing.append("paths")
+    # The single ``paths.app_root`` always carries a sensible Documents-based
+    # default, so there is no "unset paths" section to auto-select for a
+    # config that exists. The rare unwritable-app-root case is surfaced by the
+    # setup banner (``compute_setup_state`` -> ``INCOMPLETE_PATHS_UNWRITABLE``),
+    # not by this Settings section picker.
     # rclone.conf NAS-sync migration: surface the NAS-remote section when
     # nas-mode equipment exist but the configured ``nas.remote`` is absent
     # from rclone.conf, so the setup-incomplete banner auto-selects it.

@@ -52,7 +52,6 @@ def _equipment_dict(
     return {
         "id": equipment_id,
         "label": "Confocal Microscope 1",
-        "local_root": "/data/lab",
         "nas_root": "//nas01/lab",
     }
 
@@ -61,9 +60,7 @@ def _full_config_dict() -> dict:
     """Full Config dict mirroring the §9 example. Used by round-trip tests."""
     return {
         "paths": {
-            "templates_dir": "/opt/templates",
-            "plugin_dir": "/opt/plugins",
-            "local_root": "/data/lab",
+            "app_root": "/srv/exlab",
         },
         "lims": {
             "endpoint": "https://lims.lab.example/api/v1",
@@ -86,14 +83,12 @@ def _full_config_dict() -> dict:
             {
                 "id": "CONFOCAL_01",
                 "label": "Confocal Microscope 1",
-                "local_root": "/data/lab",
                 "nas_root": "//nas01/lab",
                 "sync_mode": "nas",
             },
             {
                 "id": "FLOW_01",
                 "label": "Flow Cytometer 1",
-                "local_root": "/data/lab",
                 "nas_root": "/mnt/nas/lab",
                 "sync_mode": "nas",
             },
@@ -179,16 +174,41 @@ def _full_config_dict() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_paths_config_defaults_are_empty_strings() -> None:
+def test_paths_config_default_app_root_under_documents() -> None:
+    # The single stored field defaults under the OS Documents folder, so a
+    # fresh install needs no manual path entry.
+    from pathlib import Path
+
     paths = PathsConfig()
-    assert paths.templates_dir == ""
-    assert paths.plugin_dir == ""
-    assert paths.local_root == ""
+    assert paths.app_root  # non-empty default
+    assert Path(paths.app_root).name in ("ExLabWizard", "ExLabWizard-test")
+
+
+def test_paths_config_derived_subdirs_resolve_under_app_root() -> None:
+    # ``data_root`` / ``local_root`` / ``templates_dir`` / ``plugin_dir`` are
+    # read-only properties derived from ``app_root`` (not stored, not dumped).
+    from pathlib import Path
+
+    paths = PathsConfig(app_root="/srv/exlab")
+    assert paths.data_root == str(Path("/srv/exlab") / "data")
+    assert paths.local_root == paths.data_root
+    assert paths.templates_dir == str(Path("/srv/exlab") / "templates")
+    assert paths.plugin_dir == str(Path("/srv/exlab") / "plugins")
+    # Only ``app_root`` is serialized.
+    assert paths.model_dump() == {"app_root": "/srv/exlab"}
 
 
 def test_paths_config_rejects_unknown_keys() -> None:
     with pytest.raises(ValidationError):
         PathsConfig(unknown_key="x")  # type: ignore[call-arg]
+
+
+def test_paths_config_rejects_removed_derived_keys() -> None:
+    # ``templates_dir`` / ``plugin_dir`` / ``local_root`` are derived
+    # properties now, not stored fields; passing them is an unknown key.
+    for stale_key in ("templates_dir", "plugin_dir", "local_root"):
+        with pytest.raises(ValidationError):
+            PathsConfig(**{stale_key: "/x"})  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -409,11 +429,14 @@ def test_equipment_label_must_be_non_empty() -> None:
         EquipmentConfig.model_validate(bad)
 
 
-def test_equipment_local_root_must_be_non_empty() -> None:
+def test_equipment_rejects_removed_local_root_key() -> None:
+    # ``local_root`` was removed from EquipmentConfig (data root is now a
+    # single app-level setting); ``extra='forbid'`` rejects the stale key.
     bad = _equipment_dict()
-    bad["local_root"] = ""
-    with pytest.raises(ValidationError):
+    bad["local_root"] = "/data/lab"
+    with pytest.raises(ValidationError) as info:
         EquipmentConfig.model_validate(bad)
+    assert "local_root" in str(info.value)
 
 
 def test_equipment_nas_root_must_be_non_empty() -> None:
@@ -456,7 +479,6 @@ def test_nas_mode_equipment_needs_no_transport_block() -> None:
     eq = EquipmentConfig(
         id="EQ_01",
         label="Eq",
-        local_root="/l",
         nas_root="//n/x",
         sync_mode="nas",
     )
@@ -787,7 +809,6 @@ def test_stage_mode_equipment_validates_without_staging_block() -> None:
     eq = EquipmentConfig(
         id="STAGE_01",
         label="Stage 1",
-        local_root="/data",
         nas_root="//nas/x",
         sync_mode="stage",
     )

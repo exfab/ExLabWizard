@@ -22,7 +22,6 @@ def build_equipment_config(
     *,
     equipment_id: str,
     label: str,
-    local_root: str,
     nas_root: str,
     sync_mode: str = "nas",
 ) -> EquipmentConfig:
@@ -34,11 +33,13 @@ def build_equipment_config(
     ``nas:`` remote; the staging hop is defined once by
     ``orchestrator.staging_remote`` / ``staging_base_root``. The push target
     is selected by ``sync_mode`` at sync time.
+
+    Equipment no longer stores its own ``local_root``: its data directory is
+    derived from the single app root (``<config.paths.local_root>/<id>``).
     """
     return EquipmentConfig(
         id=equipment_id.strip(),
         label=label.strip(),
-        local_root=local_root.strip(),
         nas_root=nas_root.strip(),
         sync_mode=SyncMode(sync_mode),
     )

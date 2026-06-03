@@ -46,11 +46,10 @@ def test_flow_16_add_equipment_identity_step(page, server_url) -> None:
 
 
 def test_flow_16_add_equipment_paths_step(page, server_url) -> None:
-    """Paths step renders local + NAS root inputs."""
+    """Paths step renders the NAS root input (the data dir is derived)."""
     wiz = WizardEquipmentPage(page)
     _goto(page, f"{server_url}/wizard/equipment?step=paths")
-    wiz.local_root.wait_for(state="visible", timeout=10_000)
-    wiz.nas_root.wait_for(state="visible")
+    wiz.nas_root.wait_for(state="visible", timeout=10_000)
 
 
 @pytest.mark.skip(

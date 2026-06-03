@@ -511,15 +511,30 @@ def _render_section_body(
         )
 
         if section == "paths":
-            ui.input(label="Templates directory", value=draft.paths.templates_dir).props(
-                'data-testid="settings-paths-templates"'
-            ).bind_value(draft.paths, "templates_dir")
-            ui.input(label="Plugin directory", value=draft.paths.plugin_dir).props(
-                'data-testid="settings-paths-plugin"'
-            ).bind_value(draft.paths, "plugin_dir")
-            ui.input(label="Local data root", value=draft.paths.local_root).props(
-                'data-testid="settings-paths-local-root"'
-            ).bind_value(draft.paths, "local_root")
+            # A single configurable app root (defaults under the OS Documents
+            # folder). templates/, plugins/ and the experiment data/ root are
+            # derived from it -- shown read-only below so the layout is clear.
+            ui.input(label="Data folder", value=draft.paths.app_root).props(
+                'data-testid="settings-paths-app-root"'
+            ).bind_value(draft.paths, "app_root")
+            ui.label("Derived locations (created automatically):").style(
+                "color: var(--color-muted); font-size: var(--text-sm);"
+            )
+            for caption, attr in (
+                ("Templates", "templates_dir"),
+                ("Plugins", "plugin_dir"),
+                ("Data", "data_root"),
+            ):
+
+                def _derived_label(value: str, *, prefix: str = caption) -> str:
+                    """Render a derived-dir label as ``Caption: <path>`` (prefix
+                    is bound per-iteration via the default arg)."""
+                    return f"{prefix}: {value}"
+
+                ui.label().props(f'data-testid="settings-paths-derived-{attr}"').style(
+                    "color: var(--color-muted); font-family: var(--font-mono); "
+                    "font-size: var(--text-xs);"
+                ).bind_text_from(draft.paths, attr, backward=_derived_label)
         elif section == "lims":
             ui.input(label="Endpoint URL", value=draft.lims.endpoint).props(
                 'data-testid="settings-lims-endpoint"'
@@ -733,7 +748,6 @@ def _render_equipment_section(draft: Config) -> None:
         'data-testid="settings-equipment-id"'
     )
     eq_label = ui.input(label="Label").props('data-testid="settings-equipment-label"')
-    eq_local = ui.input(label="Local root").props('data-testid="settings-equipment-local-root"')
     eq_nas = ui.input(label="NAS root").props('data-testid="settings-equipment-nas-root"')
 
     def _add(_evt: Any = None) -> None:
@@ -741,7 +755,6 @@ def _render_equipment_section(draft: Config) -> None:
             entry = build_equipment_config(
                 equipment_id=eq_id.value or "",
                 label=eq_label.value or "",
-                local_root=eq_local.value or "",
                 nas_root=eq_nas.value or "",
                 sync_mode="nas",
             )
@@ -753,7 +766,7 @@ def _render_equipment_section(draft: Config) -> None:
             return
         draft.equipment.append(entry)
         _render_rows()
-        for widget in (eq_id, eq_label, eq_local, eq_nas):
+        for widget in (eq_id, eq_label, eq_nas):
             widget.value = ""
         notifications.notify_success(f"Equipment {entry.id!r} added")
 

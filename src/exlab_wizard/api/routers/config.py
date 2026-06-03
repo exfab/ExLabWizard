@@ -29,6 +29,7 @@ from exlab_wizard.constants import SetupState
 from exlab_wizard.errors import ConfigError
 from exlab_wizard.logging import get_logger
 from exlab_wizard.paths import (
+    app_root_writable,
     evaluate_setup_state,
     setup_state_missing,
     setup_state_next_action,
@@ -105,6 +106,7 @@ def build_config_router() -> APIRouter:
             lims_reachable=getattr(deps, "lims_reachable", True),
             keyring_password_present=lims_password_present(deps),
             nas_remote_available=remote_lookup,
+            paths_writable=app_root_writable(deps.config) if deps.config is not None else True,
         )
         return ConfigUpdateResponse(
             state=state.value,
@@ -143,6 +145,7 @@ def build_config_router() -> APIRouter:
             lims_reachable=getattr(deps, "lims_reachable", True),
             keyring_password_present=lims_password_present(deps),
             nas_remote_available=remote_lookup,
+            paths_writable=app_root_writable(deps.config) if deps.config is not None else True,
         )
         return EquipmentAppendResponse(
             appended_id=body.id,

@@ -34,7 +34,11 @@ from typing import Any
 
 import pytest
 
-from exlab_wizard.config.models import ValidatorConfig
+# Prime the api package before importing the validator engine so the
+# pre-existing orchestrator <-> api <-> validator import cycle resolves cleanly
+# when this module is collected in isolation (same guard as test_resolution.py).
+import exlab_wizard.api.app  # noqa: F401  -- import order matters
+from exlab_wizard.config.models import PathsConfig, ValidatorConfig
 from exlab_wizard.validator.engine import Validator
 from exlab_wizard.validator.findings import Finding
 
@@ -1123,10 +1127,16 @@ def test_validator_from_config_builds_engine() -> None:
     """``Validator.from_config`` projects fields out of a Config-shaped object."""
     from types import SimpleNamespace
 
+    # Single-app-root refactor: ``from_config`` derives each equipment's audit
+    # root as ``config.paths.local_root / id`` (== ``<app_root>/data/<id>``),
+    # not from a per-equipment ``local_root``. The stub therefore carries a
+    # ``paths`` with ``app_root`` and drops the (now-ignored) per-equipment
+    # ``local_root``.
     cfg = SimpleNamespace(
+        paths=PathsConfig(app_root="/srv/exlab"),
         equipment=[
-            SimpleNamespace(id="CONFOCAL_01", local_root="/data/lab"),
-            SimpleNamespace(id="OTHER_EQ", local_root="/data/lab"),
+            SimpleNamespace(id="CONFOCAL_01"),
+            SimpleNamespace(id="OTHER_EQ"),
         ],
         orchestrator=SimpleNamespace(enabled=True, staging_root="/data/staging"),
         validator=ValidatorConfig(),
@@ -1142,6 +1152,7 @@ def test_validator_from_config_orchestrator_disabled() -> None:
     from types import SimpleNamespace
 
     cfg = SimpleNamespace(
+        paths=PathsConfig(app_root="/srv/exlab"),
         equipment=[],
         orchestrator=SimpleNamespace(enabled=False, staging_root="/data/staging"),
         validator=None,
@@ -1156,6 +1167,7 @@ def test_validator_from_config_no_orchestrator_attr() -> None:
     from types import SimpleNamespace
 
     cfg = SimpleNamespace(
+        paths=PathsConfig(app_root="/srv/exlab"),
         equipment=None,  # tests the ``or []`` fallback
     )
     v = Validator.from_config(cfg)

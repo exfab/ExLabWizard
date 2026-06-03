@@ -144,10 +144,15 @@ class SetupState(StrEnum):
     missing ``orchestrator.label`` -- the required workstation identity.
     ``orchestrator.staging_root`` is opt-in and does not gate setup (a blank
     value just means this device is not a staging PC).
+
+    ``INCOMPLETE_PATHS_UNWRITABLE`` trips when the single ``paths.app_root``
+    (which always defaults under the OS Documents folder, so it is never blank)
+    cannot be created or written -- e.g. a relocated app root on a missing
+    drive or a permission-denied directory.
     """
 
     INCOMPLETE_NO_CONFIG = "incomplete_no_config"
-    INCOMPLETE_MISSING_PATHS = "incomplete_missing_paths"
+    INCOMPLETE_PATHS_UNWRITABLE = "incomplete_paths_unwritable"
     INCOMPLETE_NO_ORCHESTRATOR = "incomplete_no_orchestrator"
     INCOMPLETE_NO_EQUIPMENT = "incomplete_no_equipment"
     INCOMPLETE_NO_NAS_REMOTE = "incomplete_no_nas_remote"

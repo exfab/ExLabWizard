@@ -22,12 +22,11 @@ def _empty_config() -> Config:
 
 def _ready_config() -> Config:
     return Config(
-        paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
+        paths=PathsConfig(app_root="/srv/exlab"),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Equipment 1",
-                local_root="/d",
                 nas_root="/n",
             )
         ],
@@ -43,7 +42,7 @@ def test_get_config_returns_loaded_config() -> None:
     client = TestClient(app)
     response = client.get("/api/v1/config")
     assert response.status_code == 200
-    assert response.json()["paths"]["local_root"] == "/d"
+    assert response.json()["paths"]["app_root"] == "/srv/exlab"
     assert len(response.json()["equipment"]) == 1
 
 
@@ -54,7 +53,12 @@ def test_get_config_returns_default_when_none() -> None:
     response = client.get("/api/v1/config")
     assert response.status_code == 200
     body = response.json()
-    assert body["paths"]["local_root"] == ""
+    # The single app root defaults under the OS Documents folder, so a
+    # default config no longer has an empty paths block; only ``app_root``
+    # is serialized (templates/plugins/data are derived properties).
+    from exlab_wizard.paths import default_app_root
+
+    assert body["paths"] == {"app_root": str(default_app_root())}
 
 
 def test_put_config_persists_and_reevaluates_state() -> None:
@@ -113,7 +117,6 @@ def test_append_equipment_persists_and_re_evaluates_state() -> None:
         {
             "id": "FLOW_99",
             "label": "Flow Cytometer 99",
-            "local_root": "/data",
             "nas_root": "/srv/nas",
         }
     )
@@ -133,7 +136,6 @@ def test_append_equipment_rejects_duplicate_id() -> None:
         {
             "id": "EQ1",
             "label": "Equipment 1 duplicate",
-            "local_root": "/data",
             "nas_root": "/srv/nas",
         }
     )

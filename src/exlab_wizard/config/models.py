@@ -20,6 +20,7 @@ Style:
 from __future__ import annotations
 
 from datetime import time
+from pathlib import Path
 from typing import Any
 
 from pydantic import (
@@ -39,6 +40,7 @@ from exlab_wizard.constants import (
     SyncMode,
 )
 from exlab_wizard.errors import ConfigError
+from exlab_wizard.paths import default_app_root
 
 __all__ = [
     "BandwidthConfig",
@@ -93,13 +95,45 @@ def _parse_hhmm(value: str, field_name: str) -> time:
 
 
 class PathsConfig(BaseModel):
-    """``paths:`` block. Templates / plugins / equipment-first local root."""
+    """``paths:`` block. A single app root with derived working subdirectories.
+
+    Only ``app_root`` is stored (and serialized); ``templates/``, ``plugins/``
+    and the experiment ``data/`` root are *derived* read-only properties so the
+    operator configures exactly one location. ``app_root`` defaults under the OS
+    *Documents* folder (``<Documents>/ExLabWizard`` via
+    :func:`exlab_wizard.paths.default_app_root`) so a fresh install needs no
+    manual path entry.
+
+    The derived names ``templates_dir`` / ``plugin_dir`` / ``local_root`` are
+    kept so existing read-only consumers (run creation, browse, template
+    resolution) keep reading ``config.paths.local_root`` unchanged -- it now
+    resolves to ``<app_root>/data``. ``local_root`` is an alias of
+    ``data_root``; new code should prefer ``data_root``.
+    """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    templates_dir: str = ""
-    plugin_dir: str = ""
-    local_root: str = ""
+    app_root: str = Field(default_factory=lambda: str(default_app_root()))
+
+    @property
+    def data_root(self) -> str:
+        """The experiment data root, ``<app_root>/data``."""
+        return str(Path(self.app_root) / "data")
+
+    @property
+    def local_root(self) -> str:
+        """Alias of :attr:`data_root` (kept for existing consumers)."""
+        return self.data_root
+
+    @property
+    def templates_dir(self) -> str:
+        """The global Copier template library, ``<app_root>/templates``."""
+        return str(Path(self.app_root) / "templates")
+
+    @property
+    def plugin_dir(self) -> str:
+        """The lab plugin directory, ``<app_root>/plugins``."""
+        return str(Path(self.app_root) / "plugins")
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +318,6 @@ class EquipmentConfig(BaseModel):
 
     id: str
     label: str = Field(min_length=1)
-    local_root: str = Field(min_length=1)
     nas_root: str = Field(min_length=1)
     sync_mode: SyncMode = SyncMode.NAS
 

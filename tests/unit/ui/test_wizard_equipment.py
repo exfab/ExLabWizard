@@ -32,7 +32,6 @@ def test_assembled_equipment_defaults_to_nas_sync_mode() -> None:
     s = EquipmentWizardState()  # operator never picks a mode
     s.equipment_id = "FLOW_99"
     s.label = "Flow Cytometer 99"
-    s.local_root = "/data/lab"
     s.nas_root = "//nas01/lab"
     eq = assemble_equipment_config(s)
     assert eq.sync_mode == SyncMode.NAS
@@ -42,7 +41,6 @@ def _state_filled_for(step: str) -> EquipmentWizardState:
     s = EquipmentWizardState(active_step=step)
     s.equipment_id = "FLOW_99"
     s.label = "Flow Cytometer 99"
-    s.local_root = "/data/lab"
     s.nas_root = "//nas01/lab"
     s.sync_mode = "nas"
     return s

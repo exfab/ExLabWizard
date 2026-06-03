@@ -29,16 +29,11 @@ def _ready_config() -> Config:
     from exlab_wizard.config.models import OrchestratorConfig
 
     return Config(
-        paths=PathsConfig(
-            templates_dir="/tpl",
-            plugin_dir="/plugin",
-            local_root="/data",
-        ),
+        paths=PathsConfig(app_root="/srv/exlab"),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Equipment 1",
-                local_root="/data",
                 nas_root="/srv/nas",
             )
         ],
@@ -53,12 +48,11 @@ def _ready_config_without_lims() -> Config:
     from exlab_wizard.config.models import OrchestratorConfig
 
     return Config(
-        paths=PathsConfig(templates_dir="/tpl", plugin_dir="/plugin", local_root="/data"),
+        paths=PathsConfig(app_root="/srv/exlab"),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Equipment 1",
-                local_root="/data",
                 nas_root="/srv/nas",
             )
         ],
@@ -82,7 +76,7 @@ def test_is_creation_blocked_treats_lims_unreachable_as_soft() -> None:
     assert is_creation_blocked(SetupState.INCOMPLETE_LIMS_UNREACHABLE) is False
     assert is_creation_blocked(SetupState.READY) is False
     assert is_creation_blocked(SetupState.INCOMPLETE_NO_CONFIG) is True
-    assert is_creation_blocked(SetupState.INCOMPLETE_MISSING_PATHS) is True
+    assert is_creation_blocked(SetupState.INCOMPLETE_PATHS_UNWRITABLE) is True
     assert is_creation_blocked(SetupState.INCOMPLETE_NO_EQUIPMENT) is True
     assert is_creation_blocked(SetupState.INCOMPLETE_NO_NAS_REMOTE) is True
     assert is_creation_blocked(SetupState.INCOMPLETE_NO_LIMS) is True
@@ -115,7 +109,9 @@ def test_get_setup_status_reports_configure_rclone_remote() -> None:
     assert "nas.remote" in field_names
 
 
-def test_setup_state_gate_returns_503_in_incomplete_states() -> None:
+def test_setup_state_gate_returns_503_in_incomplete_states(
+    monkeypatch: Any,
+) -> None:
     """Each non-soft INCOMPLETE_* state returns a 503 with the right code."""
     from collections.abc import Callable
 
@@ -128,34 +124,45 @@ def test_setup_state_gate_returns_503_in_incomplete_states() -> None:
     always: Callable[[str], bool] = lambda _n: True  # noqa: E731
     never: Callable[[str], bool] = lambda _n: False  # noqa: E731
 
-    # (config, nas_remote_available, expected_state)
+    # (config, nas_remote_available, paths_writable, expected_state)
+    # ``paths_writable`` opts the paths-gate case out of conftest's
+    # autouse "app root is writable" stub so that gate can be the first
+    # failure; every other case keeps the stub (the placeholder
+    # ``/srv/exlab`` root need not be writable on the test host).
     test_cases = [
-        (None, always, "incomplete_no_config"),
-        (Config(), always, "incomplete_missing_paths"),
+        (None, always, True, "incomplete_no_config"),
+        (Config(), always, False, "incomplete_paths_unwritable"),
         (
-            Config(paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d")),
+            Config(paths=PathsConfig(app_root="/srv/exlab")),
             always,
+            True,
             "incomplete_no_orchestrator",
         ),
         (
             Config(
-                paths=PathsConfig(templates_dir="/t", plugin_dir="/p", local_root="/d"),
+                paths=PathsConfig(app_root="/srv/exlab"),
                 orchestrator=OrchestratorConfig(label="LAB", staging_root="/s"),
             ),
             always,
+            True,
             "incomplete_no_equipment",
         ),
         # NAS gate: nas-mode equipment present but the remote is unavailable.
-        (nas_ready, never, "incomplete_no_nas_remote"),
+        (nas_ready, never, True, "incomplete_no_nas_remote"),
         # LIMS gate: satisfy the NAS gate so the LIMS gate is the first failure.
         # ``_ready_config`` carries a configured LIMS, so drop it for this case.
         (
             _ready_config_without_lims(),
             always,
+            True,
             "incomplete_no_lims",
         ),
     ]
-    for config, remote_available, expected_state in test_cases:
+    for config, remote_available, paths_writable, expected_state in test_cases:
+        monkeypatch.setattr(
+            "exlab_wizard.api.setup.app_root_writable",
+            lambda _c, _w=paths_writable: _w,
+        )
         deps = AppDependencies(config=config, nas_remote_available=remote_available)
         app = FastAPI()
         app.state.dependencies = deps
@@ -222,17 +229,21 @@ def test_get_setup_status_ready() -> None:
     assert body["next_action"] is None
 
 
-def test_get_setup_status_incomplete_paths() -> None:
+def test_get_setup_status_incomplete_paths(monkeypatch: Any) -> None:
+    # Opt out of conftest's "app root is writable" stub so the paths gate
+    # is the first failure (the refactor's gate probes writability, not
+    # path emptiness).
+    monkeypatch.setattr("exlab_wizard.api.setup.app_root_writable", lambda _c: False)
     deps = AppDependencies(config=Config())
     app = create_app(dependencies=deps)
     client = TestClient(app)
     response = client.get("/api/v1/setup/status")
     body = response.json()
-    assert body["state"] == "incomplete_missing_paths"
+    assert body["state"] == "incomplete_paths_unwritable"
     assert body["ready"] is False
     assert body["next_action"] == "set_paths"
-    field_names = {entry["field"] for entry in body["missing"]}
-    assert "paths.templates_dir" in field_names
+    missing = body["missing"]
+    assert {"field": "paths.app_root", "reason": "unwritable"} in missing
 
 
 def test_post_test_lims_invokes_probe() -> None:

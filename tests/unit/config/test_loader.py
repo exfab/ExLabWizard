@@ -47,10 +47,12 @@ def test_load_config_complete_yaml() -> None:
     cfg = load_config(FIXTURES_DIR / "complete.yaml")
     assert isinstance(cfg, Config)
 
-    # Paths block.
+    # Paths block. Single-app-root refactor: only ``app_root`` is stored;
+    # templates/plugins/data are derived read-only properties under it.
+    assert cfg.paths.app_root == "/opt/exlab-wizard"
     assert cfg.paths.templates_dir == "/opt/exlab-wizard/templates"
     assert cfg.paths.plugin_dir == "/opt/exlab-wizard/plugins"
-    assert cfg.paths.local_root == "/data/lab"
+    assert cfg.paths.local_root == "/opt/exlab-wizard/data"
 
     # LIMS block.
     assert cfg.lims.endpoint == "https://lims.lab.example/api/v1"
@@ -112,7 +114,7 @@ def test_load_config_validation_error_raises_config_error(tmp_path: Path) -> Non
     # the original error chained as __cause__.
     bad = tmp_path / "validation.yaml"
     bad.write_text(
-        "equipment:\n  - id: lowercase\n    label: x\n    local_root: /tmp\n    nas_root: /mnt\n",
+        "equipment:\n  - id: lowercase\n    label: x\n    nas_root: /mnt\n",
         encoding="utf-8",
     )
     with pytest.raises(ConfigError) as info:
@@ -123,10 +125,17 @@ def test_load_config_validation_error_raises_config_error(tmp_path: Path) -> Non
 
 def test_load_config_from_text_empty_returns_empty_config() -> None:
     # Empty YAML text loads to None which we coerce to {}; every Config field
-    # has a default factory, so the result is an all-defaults Config.
+    # has a default factory, so the result is an all-defaults Config. After the
+    # single-app-root refactor ``paths.app_root`` defaults to the OS Documents
+    # location, and ``local_root`` is the derived ``<app_root>/data``.
+    from pathlib import Path
+
+    from exlab_wizard.paths import default_app_root
+
     cfg = load_config_from_text("")
     assert isinstance(cfg, Config)
-    assert cfg.paths.local_root == ""
+    assert cfg.paths.app_root == str(default_app_root())
+    assert cfg.paths.local_root == str(Path(default_app_root()) / "data")
     assert cfg.equipment == []
 
 
@@ -175,7 +184,7 @@ def test_save_config_preserves_comments_round_trip(tmp_path: Path) -> None:
     saved = target.read_text(encoding="utf-8")
     # At least one operator-readable comment from complete.yaml must survive
     # the round-trip; this is the whole point of using ruamel.yaml.
-    assert "# directory containing Copier template subdirectories" in saved
+    assert "# single managed root" in saved
 
 
 def test_save_config_preserves_key_order(tmp_path: Path) -> None:
@@ -228,9 +237,7 @@ def test_dump_config_round_trip() -> None:
     # equivalence under model_dump.
     seed = {
         "paths": {
-            "templates_dir": "/t",
-            "plugin_dir": "/p",
-            "local_root": "/l",
+            "app_root": "/srv/exlab",
         },
         "lims": {
             "endpoint": "https://lims.example/api",
@@ -240,7 +247,6 @@ def test_dump_config_round_trip() -> None:
             {
                 "id": "CONFOCAL_01",
                 "label": "Confocal",
-                "local_root": "/l",
                 "nas_root": "/n",
             },
         ],
@@ -270,11 +276,9 @@ _TWO_EQUIPMENT_YAML = (
     "equipment:\n"
     "  - id: EQ1\n"
     "    label: First\n"
-    "    local_root: /data/eq1\n"
     "    nas_root: /mnt/eq1\n"
     "  - id: EQ2\n"
     "    label: Second\n"
-    "    local_root: /data/eq2\n"
     "    nas_root: /mnt/eq2\n"
 )
 
@@ -296,7 +300,7 @@ def test_test_mode_enabled_prefixes_every_equipment_id(monkeypatch: pytest.Monke
     ]
     # Non-id fields are untouched.
     assert cfg.equipment[0].label == "First"
-    assert cfg.equipment[1].local_root == "/data/eq2"
+    assert cfg.equipment[1].nas_root == "/mnt/eq2"
 
 
 def test_test_mode_is_idempotent_on_already_prefixed_ids(
@@ -308,11 +312,9 @@ def test_test_mode_is_idempotent_on_already_prefixed_ids(
         "equipment:\n"
         "  - id: TEST_EQ1\n"
         "    label: Already prefixed\n"
-        "    local_root: /data/eq1\n"
         "    nas_root: /mnt/eq1\n"
         "  - id: EQ2\n"
         "    label: Plain\n"
-        "    local_root: /data/eq2\n"
         "    nas_root: /mnt/eq2\n"
     )
     cfg = load_config_from_text(seeded)
@@ -391,7 +393,7 @@ def test_loader_round_trips_nas_block(tmp_path):
 
     text = (
         "paths:\n"
-        "  templates_dir: /t\n  plugin_dir: /p\n  local_root: /l\n"
+        "  app_root: /srv/exlab\n"
         "orchestrator:\n  label: ws-1\n"
         "nas:\n"
         "  remote: nas01\n"
@@ -422,7 +424,7 @@ def test_load_config_uses_ruamel_round_trip(tmp_path: Path) -> None:
     save_config(target, cfg, original_text=original_text)
     saved = target.read_text(encoding="utf-8")
 
-    # The original keeps templates_dir as `"/opt/exlab-wizard/templates"`
-    # (double-quoted). PyYAML's default dumper would emit it unquoted; ruamel
-    # in round-trip mode keeps the quotes.
-    assert '"/opt/exlab-wizard/templates"' in saved
+    # The original keeps app_root as `"/opt/exlab-wizard"` (double-quoted).
+    # PyYAML's default dumper would emit it unquoted; ruamel in round-trip
+    # mode keeps the quotes.
+    assert '"/opt/exlab-wizard"' in saved

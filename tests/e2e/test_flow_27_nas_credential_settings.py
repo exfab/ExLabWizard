@@ -66,17 +66,14 @@ def _seed_config(home: Path, *, env: dict[str, str], local_root: Path, catalogue
     )
 
     cfg = Config(
-        paths=PathsConfig(
-            templates_dir=str(local_root),
-            plugin_dir=str(local_root),
-            local_root=str(local_root),
-        ),
+        # ``local_root`` is ``tmp_path / "data"``; app_root is its parent so the
+        # derived data root resolves back to it.
+        paths=PathsConfig(app_root=str(local_root.parent)),
         lims=LIMSConfig(offline_catalogue_path=str(catalogue)),
         equipment=[
             EquipmentConfig(
                 id="EQ1",
                 label="Equipment 1",
-                local_root=str(local_root),
                 nas_root="/srv/nas",
             )
         ],
