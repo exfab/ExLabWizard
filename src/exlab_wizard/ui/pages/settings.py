@@ -6,7 +6,7 @@ setup-incomplete mode auto-selects the first incomplete one.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -38,10 +38,10 @@ SETTINGS_SECTIONS: tuple[str, ...] = (
 # rclone.conf NAS-sync migration. The NAS-remote section is *not* part
 # of the canonical onboarding-order constant (``SETTINGS_SECTIONS`` stays
 # at the original eight); it is inserted dynamically after ``equipment``
-# by :func:`settings_sections_for` only when nas-mode equipment exists.
-# It shows the single ``nas:`` remote (read-only) plus a Test-connection
-# control -- the operator configures the remote with ``rclone config``,
-# not by typing a password here.
+# by :func:`settings_sections_for`. It lets the operator pick the single
+# ``nas:`` remote (a dropdown of remotes detected via ``rclone listremotes``),
+# set its base root and optional ``--config`` path, and Test-connection the
+# typed values -- no NAS password is ever typed here.
 NAS_REMOTE_SECTION = "nas_remote"
 
 SECTION_TITLES: dict[str, str] = {
@@ -58,31 +58,15 @@ SECTION_TITLES: dict[str, str] = {
 }
 
 
-def _nas_mode_equipment(config: Config | None) -> list[Any]:
-    """Return the nas-mode equipment for ``config``.
-
-    Drives the NAS-remote section's visibility: the section appears
-    whenever this device has at least one device syncing directly to the
-    NAS, so the operator can confirm the configured ``nas:`` remote is
-    reachable.
-    """
-    if config is None:
-        return []
-    from exlab_wizard.constants import SyncMode
-
-    return [eq for eq in config.equipment if eq.sync_mode == SyncMode.NAS]
-
-
 def settings_sections_for(config: Config | None) -> tuple[str, ...]:
     """Return the visible section ids for ``config``.
 
-    The NAS-remote section is inserted right after ``equipment`` only
-    when at least one nas-mode equipment exists; otherwise the canonical
-    :data:`SETTINGS_SECTIONS` order is returned unchanged (so a stage-only
-    / no-equipment install never sees an empty NAS-remote pane).
+    The NAS-remote section is always inserted right after ``equipment`` so
+    the operator can configure and test the single ``nas:`` remote even
+    before (or independent of) adding nas-mode equipment. ``config`` is
+    accepted for signature symmetry with the other section helpers but no
+    longer gates visibility.
     """
-    if not _nas_mode_equipment(config):
-        return SETTINGS_SECTIONS
     out: list[str] = []
     for section in SETTINGS_SECTIONS:
         out.append(section)
@@ -196,7 +180,9 @@ def render_settings_page(
     on_clear_lims_password: Callable[[], None] | None = None,
     lims_password_present: bool = False,
     nas_remote_available: Callable[[str], bool] | None = None,
-    on_test_connection: Callable[[], Any] | None = None,
+    on_test_connection: Callable[[str, str], Any] | None = None,
+    nas_remotes: Sequence[str] = (),
+    list_remotes: Callable[[str], Awaitable[Sequence[str]]] | None = None,
     autostart_registered: bool = False,
     on_set_autostart: Callable[[bool], bool | None] | None = None,
     on_quit: Callable[[], None] | None = None,
@@ -221,14 +207,17 @@ def render_settings_page(
     than to the draft. ``lims_password_present`` seeds the credential
     row's resting state from whether the keyring already holds one.
 
-    The NAS-remote section (rclone.conf migration) is read-only: the
-    operator no longer types a NAS password. ``nas_remote_available(name)``
-    answers whether the configured ``nas.remote`` is present in the
-    operator's ``rclone.conf`` (driving a found / not-found badge), and
-    ``on_test_connection()`` runs the rclone remote probe, returning a
-    :class:`TestConnectionResult` (or an awaitable of one) for the inline
-    panel. Both are optional so unit tests can render the section without
-    a wired rclone driver.
+    The NAS-remote section (rclone.conf migration) is editable: the
+    operator picks the remote, base root, and optional ``--config`` path.
+    ``nas_remotes`` seeds the remote dropdown (the boot-time
+    ``rclone listremotes`` snapshot) and ``list_remotes(config_path)``
+    re-lists on demand from the typed config path.
+    ``nas_remote_available(name)`` answers whether ``nas.remote`` is present
+    in the operator's ``rclone.conf`` (found / not-found badge), and
+    ``on_test_connection(remote, config_path)`` runs the rclone probe
+    against the *typed* values, returning a :class:`TestConnectionResult`
+    (or an awaitable of one) for the inline panel. All are optional so unit
+    tests can render the section without a wired rclone driver.
     """
 
     s = state or SettingsState()
@@ -342,6 +331,8 @@ def render_settings_page(
                             lims_password_present=lims_password_present,
                             nas_remote_available=nas_remote_available,
                             on_test_connection=on_test_connection,
+                            nas_remotes=nas_remotes,
+                            list_remotes=list_remotes,
                             autostart_registered=autostart_registered,
                             on_set_autostart=on_set_autostart,
                             on_quit=on_quit,
@@ -474,7 +465,9 @@ def _render_section_body(
     on_clear_lims_password: Callable[[], None] | None = None,
     lims_password_present: bool = False,
     nas_remote_available: Callable[[str], bool] | None = None,
-    on_test_connection: Callable[[], Any] | None = None,
+    on_test_connection: Callable[[str, str], Any] | None = None,
+    nas_remotes: Sequence[str] = (),
+    list_remotes: Callable[[str], Awaitable[Sequence[str]]] | None = None,
     autostart_registered: bool = False,
     on_set_autostart: Callable[[bool], bool | None] | None = None,
     on_quit: Callable[[], None] | None = None,
@@ -564,6 +557,8 @@ def _render_section_body(
                 nas=draft.nas,
                 nas_remote_available=nas_remote_available or (lambda _name: False),
                 on_test_connection=on_test_connection,
+                nas_remotes=nas_remotes,
+                list_remotes=list_remotes,
             )
         elif section == "nas_cleanup":
             ui.checkbox("Cleanup enabled", value=draft.nas_cleanup.enabled).bind_value(
@@ -773,22 +768,41 @@ def _render_equipment_section(draft: Config) -> None:
     ui.button("Add equipment", on_click=_add).props('data-testid="settings-equipment-add"')
 
 
+def _remote_options(detected: Sequence[str], current: str) -> list[str]:
+    """Dropdown options for the NAS-remote select.
+
+    ``rclone listremotes`` entries carry a trailing ``":"``; the config
+    stores the bare name (the probe re-adds it as ``f"{remote}:"``), so
+    strip it here. The currently-configured ``current`` is unioned in even
+    when absent from ``detected`` -- a saved remote whose ``rclone.conf``
+    is presently unreadable must stay selectable.
+    """
+    names = {name[:-1] if name.endswith(":") else name for name in detected if name}
+    if current:
+        names.add(current)
+    return sorted(names)
+
+
 def _render_nas_remote_section(
     container: Any,
     *,
     nas: Any,
     nas_remote_available: Callable[[str], bool],
-    on_test_connection: Callable[[], Any] | None,
+    on_test_connection: Callable[[str, str], Any] | None,
+    nas_remotes: Sequence[str] = (),
+    list_remotes: Callable[[str], Awaitable[Sequence[str]]] | None = None,
 ) -> None:
-    """Render the read-only NAS-remote status + a Test-connection panel.
+    """Render the editable NAS-remote fields + a Test-connection panel.
 
-    rclone.conf NAS-sync migration. The operator no longer types a NAS
+    rclone.conf NAS-sync migration. The operator never types a NAS
     password; the app references a single ``nas:`` remote defined in their
     ``rclone.conf`` (created out-of-band with ``rclone config``). This
-    section shows that remote + its base root read-only, a found /
-    not-found badge derived from ``nas_remote_available(nas.remote)``, and
-    a single "Test connection" button wired to ``on_test_connection`` (the
-    rclone remote probe) that renders its result inline.
+    section lets them choose that remote from a dropdown of remotes
+    detected via ``rclone listremotes`` (``nas_remotes`` seeds it;
+    ``list_remotes`` re-lists on demand using the typed config path), set
+    its base root and optional ``--config`` path, and run the rclone probe
+    against the *typed* values via ``on_test_connection(remote, config_path)``.
+    All three fields two-way-bind the draft ``nas`` block.
     """
     import inspect
 
@@ -796,28 +810,61 @@ def _render_nas_remote_section(
 
     remote = getattr(nas, "remote", "") or ""
     base_root = getattr(nas, "base_root", "") or ""
-    available = bool(remote) and nas_remote_available(remote)
+    config_path = getattr(nas, "rclone_config_path", "") or ""
 
     with container:
         ui.label(
-            "NAS sync references a single rclone remote configured in your "
-            "rclone.conf (run `rclone config` to create it). No password is "
-            "stored here."
+            "NAS sync targets a single rclone remote from your rclone.conf "
+            "(run `rclone config` to create one). Pick the remote, set its base "
+            "root, and optionally pin a config file. No password is stored here."
         ).style("font-size: var(--text-sm); color: var(--color-muted);")
 
         with ui.row().classes("items-center w-full").style("gap: 0.5rem;"):
             ui.label("Remote").style("color: var(--color-body); min-width: 6rem;")
-            ui.label(remote or "(not configured)").props(
-                'data-testid="settings-nas-remote-name"'
-            ).style("font-family: var(--font-mono);")
+            # ``ui.select`` only accepts a value that is ``None`` or one of its
+            # options, but ``nas.remote`` is a ``str`` ("" when unset). Display
+            # the empty state as ``None`` and convert at the binding boundary:
+            # element ``None`` <-> model "" (a ``None`` reaching the field would
+            # fail validation on Save).
+            remote_select = (
+                ui.select(
+                    _remote_options(nas_remotes, remote),
+                    value=remote or None,
+                )
+                .props('data-testid="settings-nas-remote-name"')
+                .style("min-width: 16rem; font-family: var(--font-mono);")
+                .bind_value(nas, "remote", forward=lambda v: v or "", backward=lambda v: v or None)
+            )
+
+            async def _refresh() -> None:
+                """Re-list remotes from the *typed* config path and rebuild options."""
+                if list_remotes is None:
+                    return
+                current = getattr(nas, "remote", "") or ""
+                detected = await list_remotes(getattr(nas, "rclone_config_path", "") or "")
+                remote_select.set_options(_remote_options(detected, current), value=current or None)
+
+            ui.button(icon="refresh", on_click=_refresh).props(
+                'flat dense data-testid="settings-nas-remote-refresh"'
+            )
 
         with ui.row().classes("items-center w-full").style("gap: 0.5rem;"):
             ui.label("Base root").style("color: var(--color-body); min-width: 6rem;")
-            ui.label(base_root or "(not configured)").props(
+            ui.input(value=base_root).props(
                 'data-testid="settings-nas-remote-base-root"'
-            ).style("font-family: var(--font-mono);")
+            ).style("min-width: 16rem; font-family: var(--font-mono);").bind_value(
+                nas, "base_root"
+            )
 
-        if available:
+        with ui.row().classes("items-center w-full").style("gap: 0.5rem;"):
+            ui.label("Config path").style("color: var(--color-body); min-width: 6rem;")
+            ui.input(value=config_path, placeholder="(rclone default discovery)").props(
+                'data-testid="settings-nas-remote-config-path"'
+            ).style("min-width: 16rem; font-family: var(--font-mono);").bind_value(
+                nas, "rclone_config_path"
+            )
+
+        if remote and nas_remote_available(remote):
             badge_text = "Found in rclone.conf"
             badge_color = "var(--color-success)"
         else:
@@ -833,7 +880,10 @@ def _render_nas_remote_section(
             panel.clear()
             if on_test_connection is None:
                 return
-            result = on_test_connection()
+            result = on_test_connection(
+                getattr(nas, "remote", "") or "",
+                getattr(nas, "rclone_config_path", "") or "",
+            )
             if inspect.isawaitable(result):
                 result = await result
             with panel:

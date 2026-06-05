@@ -153,15 +153,17 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
         testid="settings-nav-nas_remote",
         element="nav row",
         action="Click the 'NAS Remote' sidebar row",
-        outcome="Shows the configured rclone remote name, base root, and found/not-found badge.",
+        outcome="Opens the NAS Remote section (always present): pick the remote, set base root "
+        "and optional config path, and test the connection.",
     ),
     UXInteraction(
         flow="NAS Remote",
         route="/settings",
         testid="settings-nas-remote-name",
-        element="label",
-        action="View the configured rclone remote name",
-        outcome="Displays the remote name from config.nas.remote (or '(not configured)').",
+        element="select",
+        action="Pick the rclone remote from the dropdown",
+        outcome="Binds config.nas.remote; options are the remotes detected via `rclone "
+        "listremotes` plus the currently-configured value.",
     ),
     UXInteraction(
         flow="NAS Remote",
@@ -169,7 +171,8 @@ UX_INTERACTIONS: tuple[UXInteraction, ...] = (
         testid="settings-nas-test-connection",
         element="button",
         action="Click 'Test connection'",
-        outcome="Runs the rclone remote probe and renders the result inline.",
+        outcome="Probes the typed (unsaved) remote + config path via `rclone about` and "
+        "renders the result inline.",
     ),
     UXInteraction(
         flow="Equipment",

@@ -1,10 +1,12 @@
 """Tests for the Settings NAS-remote section (rclone.conf migration).
 
-The section is read-only: it shows the single configured ``nas:`` remote
-plus its base root, a found / not-found badge derived from
-``nas_remote_available``, and a single Test-connection control. There is
-no password input. The section is shown only when nas-mode equipment
-exist and is hidden entirely for a stage-only / no-equipment install.
+The section is editable: the operator picks the single ``nas:`` remote
+from a dropdown of remotes detected via ``rclone listremotes`` (with a
+Refresh affordance), sets its base root and optional ``--config`` path,
+and Test-connection probes the *typed* values. A found / not-found badge
+is derived from ``nas_remote_available``; there is no password input. The
+section is always shown (after the equipment section) so the remote can be
+configured before nas-mode equipment exists.
 """
 
 from __future__ import annotations
@@ -97,6 +99,14 @@ def _text_of(element: object, testid: str) -> str:
     return ""
 
 
+def _value_of(element: object, testid: str) -> Any:
+    """Return the ``.value`` of the widget carrying ``testid`` (input/select)."""
+    for child in element.descendants():  # type: ignore[attr-defined]
+        if child._props.get("data-testid") == testid:
+            return getattr(child, "value", None)
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Handler-invocation helpers
 #
@@ -161,12 +171,12 @@ def _draft_of(save_button: object) -> Config:
 # ---------------------------------------------------------------------------
 
 
-def test_sections_omit_nas_remote_without_nas_equipment() -> None:
-    config = _config_with(_stage_equipment("STG1"))
-    assert "nas_remote" not in settings.settings_sections_for(config)
-    # No equipment at all -> also omitted.
-    assert "nas_remote" not in settings.settings_sections_for(_config_with())
-    assert "nas_remote" not in settings.settings_sections_for(None)
+def test_sections_always_include_nas_remote() -> None:
+    # Always shown now -- even for a stage-only / no-equipment / no-config
+    # install -- so the operator can configure the remote up front.
+    assert "nas_remote" in settings.settings_sections_for(_config_with(_stage_equipment("STG1")))
+    assert "nas_remote" in settings.settings_sections_for(_config_with())
+    assert "nas_remote" in settings.settings_sections_for(None)
 
 
 def test_sections_insert_nas_remote_after_equipment() -> None:
@@ -183,20 +193,59 @@ def test_sections_insert_nas_remote_after_equipment() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_section_renders_configured_remote_and_base_root() -> None:
+def test_section_renders_editable_remote_base_root_and_config_path() -> None:
+    config = _config_with(_nas_equipment("EQ1"), remote="nas01")
+    config.nas.rclone_config_path = "/etc/rclone.conf"
+    out = settings.render_settings_page(
+        config=config,
+        state=settings.SettingsState(active_section="nas_remote"),
+        on_save=lambda s: None,
+        nas_remote_available=lambda _name: True,
+        on_test_connection=lambda _remote, _config_path: None,
+    )
+    ids = _section_testids(out, "nas_remote")
+    assert "settings-nas-remote-name" in ids
+    assert "settings-nas-remote-base-root" in ids
+    assert "settings-nas-remote-config-path" in ids
+    # Editable widgets carry the configured values (not read-only labels).
+    assert _value_of(out, "settings-nas-remote-name") == "nas01"
+    assert _value_of(out, "settings-nas-remote-base-root") == "/srv/nas"
+    assert _value_of(out, "settings-nas-remote-config-path") == "/etc/rclone.conf"
+
+
+def test_remote_dropdown_lists_detected_remotes_plus_current() -> None:
     config = _config_with(_nas_equipment("EQ1"), remote="nas01")
     out = settings.render_settings_page(
         config=config,
         state=settings.SettingsState(active_section="nas_remote"),
         on_save=lambda s: None,
         nas_remote_available=lambda _name: True,
-        on_test_connection=lambda: None,
+        on_test_connection=lambda _remote, _config_path: None,
+        # listremotes entries carry a trailing ":" -- the dropdown strips it.
+        nas_remotes=("nas02:", "backup:"),
     )
-    ids = _section_testids(out, "nas_remote")
-    assert "settings-nas-remote-name" in ids
-    assert "settings-nas-remote-base-root" in ids
-    assert "nas01" in _text_of(out, "settings-nas-remote-name")
-    assert "/srv/nas" in _text_of(out, "settings-nas-remote-base-root")
+    select = _find(out, "settings-nas-remote-name")
+    assert type(select).__name__ == "Select"
+    options = list(select.options)
+    # Detected remotes (stripped) and the currently-configured one are all present.
+    assert set(options) == {"nas01", "nas02", "backup"}
+
+
+def test_remote_dropdown_keeps_undetected_current_remote_selectable() -> None:
+    # rclone.conf currently unreadable (no detected remotes) -> the saved
+    # remote must still appear as the selected option.
+    config = _config_with(_nas_equipment("EQ1"), remote="ghost")
+    out = settings.render_settings_page(
+        config=config,
+        state=settings.SettingsState(active_section="nas_remote"),
+        on_save=lambda s: None,
+        nas_remote_available=lambda _name: False,
+        on_test_connection=lambda _remote, _config_path: None,
+        nas_remotes=(),
+    )
+    select = _find(out, "settings-nas-remote-name")
+    assert "ghost" in list(select.options)
+    assert select.value == "ghost"
 
 
 def test_section_has_no_password_input() -> None:
@@ -206,7 +255,7 @@ def test_section_has_no_password_input() -> None:
         state=settings.SettingsState(active_section="nas_remote"),
         on_save=lambda s: None,
         nas_remote_available=lambda _name: True,
-        on_test_connection=lambda: None,
+        on_test_connection=lambda _remote, _config_path: None,
     )
     # Scoped to the NAS-remote section body (the page also renders the
     # LIMS section, which legitimately has a password field).
@@ -222,7 +271,7 @@ def test_section_has_test_connection_control() -> None:
         state=settings.SettingsState(active_section="nas_remote"),
         on_save=lambda s: None,
         nas_remote_available=lambda _name: True,
-        on_test_connection=lambda: None,
+        on_test_connection=lambda _remote, _config_path: None,
     )
     assert "settings-nas-test-connection" in _section_testids(out, "nas_remote")
 
@@ -234,7 +283,7 @@ def test_status_badge_found_when_remote_available() -> None:
         state=settings.SettingsState(active_section="nas_remote"),
         on_save=lambda s: None,
         nas_remote_available=lambda name: name == "nas01",
-        on_test_connection=lambda: None,
+        on_test_connection=lambda _remote, _config_path: None,
     )
     status = _text_of(out, "settings-nas-remote-status")
     assert "Found" in status
@@ -247,7 +296,7 @@ def test_status_badge_not_found_when_remote_absent() -> None:
         state=settings.SettingsState(active_section="nas_remote"),
         on_save=lambda s: None,
         nas_remote_available=lambda _name: False,
-        on_test_connection=lambda: None,
+        on_test_connection=lambda _remote, _config_path: None,
     )
     status = _text_of(out, "settings-nas-remote-status")
     assert "Not found" in status
@@ -265,14 +314,16 @@ def test_nav_entry_present_when_nas_equipment_exists() -> None:
     assert "settings-nav-nas_remote" in _testids(out)
 
 
-def test_nav_entry_absent_for_stage_only_config() -> None:
+def test_nav_entry_present_for_stage_only_config() -> None:
+    # The NAS-remote nav row is always present now (even with no nas-mode
+    # equipment), so the remote can be configured before equipment is added.
     config = _config_with(_stage_equipment("STG1"))
     out = settings.render_settings_page(
         config=config,
         state=settings.SettingsState(active_section="paths"),
         on_save=lambda s: None,
     )
-    assert "settings-nav-nas_remote" not in _testids(out)
+    assert "settings-nav-nas_remote" in _testids(out)
 
 
 # ---------------------------------------------------------------------------
@@ -282,29 +333,88 @@ def test_nav_entry_absent_for_stage_only_config() -> None:
 
 def test_test_connection_handler_invokes_callback_and_renders_panel() -> None:
     config = _config_with(_nas_equipment("EQ1"), remote="nas01")
-    calls: list[int] = []
+    calls: list[tuple[str, str]] = []
     result = ConnResult(
         success=True,
         headline="Connected",
         detail="reached nas01 in 42ms",
-        raw="rclone lsd nas01:/srv/nas -> ok",
+        raw="rclone about nas01: -> ok",
     )
     out = settings.render_settings_page(
         config=config,
         state=settings.SettingsState(active_section="nas_remote"),
         on_save=lambda s: None,
         nas_remote_available=lambda _name: True,
-        on_test_connection=lambda: (calls.append(1), result)[1],
+        on_test_connection=lambda remote, config_path: (calls.append((remote, config_path)), result)[
+            1
+        ],
     )
     handler = _click_handler(_find(out, "settings-nas-test-connection"))
     asyncio.new_event_loop().run_until_complete(handler())
 
-    assert calls == [1]
+    # Probed with the configured (typed) values.
+    assert calls == [("nas01", "")]
     # The panel rendered the success headline from the result inline.
     assert any(
         getattr(child, "text", "") == "Connected"
         for child in out.descendants()  # type: ignore[attr-defined]
     )
+
+
+def test_test_connection_probes_typed_unsaved_values() -> None:
+    # The probe must use the *live draft* values (what the operator typed),
+    # not the originally-loaded config -- so a selection can be tested before
+    # saving. Mutating the draft directly stands in for editing the widgets.
+    config = _config_with(_nas_equipment("EQ1"), remote="nas01")
+    calls: list[tuple[str, str]] = []
+    out = settings.render_settings_page(
+        config=config,
+        state=settings.SettingsState(active_section="nas_remote"),
+        on_save=lambda s: None,
+        nas_remote_available=lambda _name: True,
+        on_test_connection=lambda remote, config_path: (
+            calls.append((remote, config_path)),
+            None,
+        )[1],
+    )
+    draft = _draft_of(_find(out, "settings-save"))
+    draft.nas.remote = "typed99"
+    draft.nas.rclone_config_path = "/custom/rclone.conf"
+
+    handler = _click_handler(_find(out, "settings-nas-test-connection"))
+    asyncio.new_event_loop().run_until_complete(handler())
+
+    assert calls == [("typed99", "/custom/rclone.conf")]
+
+
+def test_refresh_relists_remotes_from_typed_config_path() -> None:
+    config = _config_with(_nas_equipment("EQ1"), remote="nas01")
+    seen_paths: list[str] = []
+
+    async def _list_remotes(config_path: str) -> tuple[str, ...]:
+        seen_paths.append(config_path)
+        return ("nas01:", "fresh:")
+
+    out = settings.render_settings_page(
+        config=config,
+        state=settings.SettingsState(active_section="nas_remote"),
+        on_save=lambda s: None,
+        nas_remote_available=lambda _name: True,
+        on_test_connection=lambda _remote, _config_path: None,
+        nas_remotes=("nas01:",),
+        list_remotes=_list_remotes,
+    )
+    select = _find(out, "settings-nas-remote-name")
+    assert "fresh" not in list(select.options)
+
+    # The refresh re-lists using the typed config path and rebuilds options.
+    draft = _draft_of(_find(out, "settings-save"))
+    draft.nas.rclone_config_path = "/typed.conf"
+    handler = _click_handler(_find(out, "settings-nas-remote-refresh"))
+    asyncio.new_event_loop().run_until_complete(handler())
+
+    assert seen_paths == ["/typed.conf"]
+    assert set(select.options) == {"nas01", "fresh"}
 
 
 def test_test_connection_handler_awaits_coroutine_result() -> None:
@@ -316,7 +426,7 @@ def test_test_connection_handler_awaits_coroutine_result() -> None:
         raw="exit code 1",
     )
 
-    async def probe() -> ConnResult:
+    async def probe(_remote: str, _config_path: str) -> ConnResult:
         return result
 
     out = settings.render_settings_page(
