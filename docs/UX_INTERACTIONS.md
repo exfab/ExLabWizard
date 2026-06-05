@@ -45,9 +45,9 @@ flow test.
 
 | Route | Test ID | Element | Action | Outcome |
 |---|---|---|---|---|
-| `/settings` | `settings-nav-nas_remote` | nav row | Click the 'NAS Remote' sidebar row | Shows the configured rclone remote name, base root, and found/not-found badge. |
-| `/settings` | `settings-nas-remote-name` | label | View the configured rclone remote name | Displays the remote name from config.nas.remote (or '(not configured)'). |
-| `/settings` | `settings-nas-test-connection` | button | Click 'Test connection' | Runs the rclone remote probe and renders the result inline. |
+| `/settings` | `settings-nav-nas_remote` | nav row | Click the 'NAS Remote' sidebar row | Opens the NAS Remote section (always present): pick the remote, set base root and optional config path, and test the connection. |
+| `/settings` | `settings-nas-remote-name` | select | Pick the rclone remote from the dropdown | Binds config.nas.remote; options are the remotes detected via `rclone listremotes` plus the currently-configured value. |
+| `/settings` | `settings-nas-test-connection` | button | Click 'Test connection' | Probes the typed (unsaved) remote + config path via `rclone about` and renders the result inline. |
 
 ## New template
 

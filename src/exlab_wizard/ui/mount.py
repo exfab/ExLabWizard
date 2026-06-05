@@ -540,8 +540,8 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
 
                 threading.Thread(target=_do, name="exlab-quit", daemon=True).start()
 
-        async def _on_test_connection() -> Any:
-            return await _nas_test_connection(deps)
+        async def _on_test_connection(remote: str, config_path: str) -> Any:
+            return await _nas_test_connection(remote, config_path)
 
         # ``on_select_section`` is left unset: the settings dialog swaps
         # sections client-side, so a navigation hook would only reload
@@ -556,6 +556,8 @@ def _register_pages(app: FastAPI, ui: Any) -> None:
             lims_password_present=lims_password_present(deps),
             nas_remote_available=lambda remote: nas_remote_available(deps, remote),
             on_test_connection=_on_test_connection,
+            nas_remotes=getattr(deps, "nas_remotes", ()) if deps is not None else (),
+            list_remotes=_list_nas_remotes,
             autostart_registered=bool(getattr(deps, "autostart_is_registered", False)),
             on_set_autostart=_on_set_autostart,
             on_quit=on_quit,
@@ -633,59 +635,71 @@ def _lims_credential_handlers(
     return _on_save, _on_clear
 
 
-async def _nas_test_connection(deps: Any) -> Any:
-    """Run the rclone NAS-remote probe and adapt it for the inline panel.
+async def _list_nas_remotes(config_path: str) -> tuple[str, ...]:
+    """Return the rclone remotes (each incl. trailing ``":"``) for ``config_path``.
+
+    Backs the Settings "NAS Remote" dropdown's Refresh affordance: re-runs
+    ``rclone listremotes`` against the *typed* ``--config`` path so a just-edited
+    config path is reflected without a tray relaunch. Any failure (no binary,
+    unreadable config) degrades to ``()`` so the dropdown simply shows nothing
+    new rather than raising.
+    """
+    from exlab_wizard.sync.transports.rclone import RcloneDriver
+
+    try:
+        return await RcloneDriver(config_path=config_path or None).listremotes()
+    except Exception:
+        return ()
+
+
+async def _nas_test_connection(remote: str, config_path: str) -> Any:
+    """Probe the *typed* rclone NAS remote and adapt it for the inline panel.
 
     rclone.conf NAS-sync migration. The Settings "NAS Remote" section's
-    Test-connection button probes the single configured ``nas:`` remote
-    (no per-equipment password). It reuses ``deps.equipment_probe`` -- the
-    same probe the ``POST /setup/test-equipment`` endpoint uses, which now
-    targets ``nas.remote`` and ignores the per-equipment fields -- passing
-    the first nas-mode equipment (or any equipment) as the probe argument.
-    The probe's ``{ok, reason, latency_ms}`` dict is mapped to a
+    Test-connection button validates the values currently in the form --
+    ``remote`` (the rclone remote name) and the optional ``config_path``
+    (``rclone --config <path>``) -- *before* the operator saves, so a fresh
+    selection can be tested immediately. It runs ``rclone about <remote>:``
+    through the driver and maps the :class:`AboutResult` to a
     :class:`TestConnectionResult`.
+
+    This is intentionally independent of ``deps.equipment_probe`` (which the
+    ``POST /setup/test-equipment`` endpoint still uses against the *saved*
+    config): the UI probe must reflect unsaved edits.
     """
     import json
+    import time
 
-    from exlab_wizard.constants import SyncMode
+    from exlab_wizard.sync.transports.rclone import RcloneDriver
     from exlab_wizard.ui.components.test_connection_panel import TestConnectionResult
 
-    config = getattr(deps, "config", None) if deps is not None else None
-    probe = getattr(deps, "equipment_probe", None) if deps is not None else None
-    if probe is None or config is None:
+    if not remote:
         return TestConnectionResult(
             success=False,
             headline="Connection failed",
-            detail="equipment probe is not available",
+            detail="no NAS remote configured",
             raw="",
         )
-    equipment = next(
-        (e for e in config.equipment if e.sync_mode == SyncMode.NAS),
-        next(iter(config.equipment), None),
-    )
+    driver = RcloneDriver(config_path=config_path or None)
+    started = time.monotonic()
     try:
-        result = probe(equipment)
-        if asyncio.iscoroutine(result) or asyncio.isfuture(result):
-            result = await result
+        about = await driver.about(f"{remote}:")
     except Exception as exc:
         return TestConnectionResult(
             success=False, headline="Connection failed", detail=str(exc), raw=str(exc)
         )
-    payload = result if isinstance(result, dict) else {"ok": bool(result)}
-    ok = bool(payload.get("ok"))
-    reason = payload.get("reason")
-    latency_ms = payload.get("latency_ms")
-    if ok:
-        detail = f"reachable ({latency_ms} ms)" if latency_ms is not None else "reachable"
-        headline = "Connected"
-    else:
-        detail = str(reason) if reason else "connection failed"
-        headline = "Connection failed"
+    latency_ms = int((time.monotonic() - started) * 1000)
+    payload = {"ok": about.ok, "reason": about.reason, "latency_ms": latency_ms, **about.info}
+    raw = json.dumps(payload, indent=2, sort_keys=True)
+    if about.ok:
+        return TestConnectionResult(
+            success=True, headline="Connected", detail=f"reachable ({latency_ms} ms)", raw=raw
+        )
     return TestConnectionResult(
-        success=ok,
-        headline=headline,
-        detail=detail,
-        raw=json.dumps(payload, indent=2, sort_keys=True),
+        success=False,
+        headline="Connection failed",
+        detail=str(about.reason) if about.reason else "connection failed",
+        raw=raw,
     )
 
 

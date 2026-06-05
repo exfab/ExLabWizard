@@ -2144,66 +2144,78 @@ class _DialogUI:
 
 
 # ---------------------------------------------------------------------------
-# _nas_test_connection
+# _nas_test_connection (probes the *typed* remote/config-path directly via
+# RcloneDriver -- independent of deps.equipment_probe / the setup endpoint)
 # ---------------------------------------------------------------------------
 
 
-async def test_nas_test_connection_unavailable_when_probe_missing() -> None:
-    """No probe wired -> a failure result rather than a crash."""
-    result = await mount._nas_test_connection(_deps(config=_nas_config()))
+class _StubAbout:
+    """Stand-in for sync.transports.rclone.AboutResult."""
+
+    def __init__(self, *, ok: bool, reason: str | None = None, info: dict[str, int] | None = None):
+        self.ok = ok
+        self.reason = reason
+        self.info = info or {}
+
+
+def _stub_rclone_driver(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    about: _StubAbout | None = None,
+    raises: Exception | None = None,
+    capture: dict[str, Any] | None = None,
+) -> None:
+    """Patch RcloneDriver so ``_nas_test_connection`` probes a fake remote."""
+
+    class _Driver:
+        def __init__(self, *, config_path: str | None = None, **_kw: Any) -> None:
+            if capture is not None:
+                capture["config_path"] = config_path
+
+        async def about(self, remote: str) -> Any:
+            if capture is not None:
+                capture["remote"] = remote
+            if raises is not None:
+                raise raises
+            return about
+
+    monkeypatch.setattr("exlab_wizard.sync.transports.rclone.RcloneDriver", _Driver)
+
+
+async def test_nas_test_connection_empty_remote_short_circuits() -> None:
+    """An empty remote never spawns rclone -- it reports the gate reason."""
+    result = await mount._nas_test_connection("", "")
     assert result.success is False
-    assert "not available" in result.detail
+    assert "no NAS remote configured" in result.detail
 
 
-async def test_nas_test_connection_unavailable_when_config_missing() -> None:
-    result = await mount._nas_test_connection(_deps(config=None, equipment_probe=lambda _e: {}))
-    assert result.success is False
-
-
-async def test_nas_test_connection_success_maps_latency() -> None:
-    """A reachable probe maps ok/latency into a Connected result."""
-    probed: list[Any] = []
-
-    def _probe(equipment: Any) -> dict[str, Any]:
-        probed.append(equipment)
-        return {"ok": True, "latency_ms": 42}
-
-    deps = _deps(config=_nas_config(), equipment_probe=_probe)
-    result = await mount._nas_test_connection(deps)
+async def test_nas_test_connection_success_maps_latency(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A reachable remote maps ok/latency into a Connected result."""
+    capture: dict[str, Any] = {}
+    _stub_rclone_driver(
+        monkeypatch, about=_StubAbout(ok=True, info={"free": 10}), capture=capture
+    )
+    result = await mount._nas_test_connection("nas01", "/c.conf")
     assert result.success is True
     assert result.headline == "Connected"
-    assert "42 ms" in result.detail
-    # The nas-mode equipment was chosen as the probe argument.
-    assert probed[0].id == "EQ1"
+    assert "ms" in result.detail
+    # Probed the *typed* remote (trailing ':') and config path -- not deps.config.
+    assert capture["remote"] == "nas01:"
+    assert capture["config_path"] == "/c.conf"
 
 
-async def test_nas_test_connection_failure_maps_reason() -> None:
-    deps = _deps(
-        config=_nas_config(),
-        equipment_probe=lambda _e: {"ok": False, "reason": "auth denied"},
-    )
-    result = await mount._nas_test_connection(deps)
+async def test_nas_test_connection_failure_maps_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_rclone_driver(monkeypatch, about=_StubAbout(ok=False, reason="auth: denied"))
+    result = await mount._nas_test_connection("nas01", "")
     assert result.success is False
-    assert result.detail == "auth denied"
+    assert result.detail == "auth: denied"
 
 
-async def test_nas_test_connection_awaits_coroutine_probe() -> None:
-    """An async probe is awaited before its dict is mapped."""
-
-    async def _probe(_equipment: Any) -> dict[str, Any]:
-        return {"ok": True}
-
-    result = await mount._nas_test_connection(_deps(config=_nas_config(), equipment_probe=_probe))
-    assert result.success is True
-    assert result.detail == "reachable"
-
-
-async def test_nas_test_connection_swallows_probe_exception() -> None:
-    def _probe(_equipment: Any) -> dict[str, Any]:
-        msg = "boom"
-        raise RuntimeError(msg)
-
-    result = await mount._nas_test_connection(_deps(config=_nas_config(), equipment_probe=_probe))
+async def test_nas_test_connection_swallows_driver_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_rclone_driver(monkeypatch, raises=RuntimeError("boom"))
+    result = await mount._nas_test_connection("nas01", "")
     assert result.success is False
     assert result.detail == "boom"
 
