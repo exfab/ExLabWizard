@@ -38,6 +38,7 @@ from exlab_wizard.constants import (
     FieldType,
     StagingCleanupMode,
     SyncMode,
+    SyncTransport,
 )
 from exlab_wizard.errors import ConfigError
 from exlab_wizard.paths import default_app_root
@@ -291,6 +292,33 @@ class NasConfig(BaseModel):
     mtime_tolerance_s: int = Field(default=2, ge=0)
     perf: RclonePerf = Field(default_factory=RclonePerf)
     bandwidth: BandwidthConfig = Field(default_factory=BandwidthConfig)
+    # rsync-over-ssh NAS transport (2026-06-10 design). ``rsync_ssh`` drives
+    # ``rsync -e ssh`` with ``remote`` as a ``user@host`` target prefix;
+    # ``rclone_config_path`` and ``perf`` are rclone-only and ignored in
+    # rsync mode. Stage-mode equipment always uses rclone regardless.
+    transport: SyncTransport = SyncTransport.RCLONE
+    ssh_port: int = Field(default=22, ge=1, le=65535)
+    ssh_identity_file: str = ""
+
+    @field_serializer("transport")
+    def _serialize_transport(self, value: SyncTransport) -> str:
+        return value.value
+
+    @model_validator(mode="after")
+    def _validate_rsync_ssh(self) -> NasConfig:
+        if self.transport != SyncTransport.RSYNC_SSH:
+            return self
+        if not self.remote:
+            msg = "nas.transport 'rsync_ssh' requires nas.remote ('user@host')"
+            raise ValueError(msg)
+        user, sep, host = self.remote.partition("@")
+        if not (sep and user and host):
+            msg = (
+                f"nas.remote {self.remote!r} must be 'user@host' when "
+                "nas.transport is 'rsync_ssh'"
+            )
+            raise ValueError(msg)
+        return self
 
 
 # ---------------------------------------------------------------------------

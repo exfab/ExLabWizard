@@ -37,6 +37,7 @@ from exlab_wizard.config.models import (
     ValidatorConfig,
     config_with_equipment_appended,
 )
+from exlab_wizard.constants import SyncTransport
 from exlab_wizard.errors import ConfigError
 
 # ---------------------------------------------------------------------------
@@ -164,6 +165,9 @@ def _full_config_dict() -> dict:
                     },
                 ],
             },
+            "transport": "rclone",
+            "ssh_port": 22,
+            "ssh_identity_file": "",
         },
         "update_check": {"enabled": True},
     }
@@ -999,3 +1003,39 @@ def test_config_has_default_nas_block():
     cfg = Config()
     assert cfg.nas.remote == ""
     assert cfg.nas.base_root == ""
+
+
+class TestNasTransport:
+    def test_transport_defaults_to_rclone(self) -> None:
+        nas = NasConfig()
+        assert nas.transport == SyncTransport.RCLONE
+        assert nas.ssh_port == 22
+        assert nas.ssh_identity_file == ""
+
+    def test_rsync_ssh_accepts_user_at_host(self) -> None:
+        nas = NasConfig(
+            transport="rsync_ssh",
+            remote="svc-sync@nas01.lab.example",
+            base_root="/volume1/lab",
+            ssh_identity_file="~/.ssh/id_exlab",
+        )
+        assert nas.transport == SyncTransport.RSYNC_SSH
+        assert nas.remote == "svc-sync@nas01.lab.example"
+
+    def test_rsync_ssh_rejects_empty_remote(self) -> None:
+        with pytest.raises(ValidationError, match="requires nas.remote"):
+            NasConfig(transport="rsync_ssh", remote="")
+
+    @pytest.mark.parametrize("bad", ["nas01", "@nas01", "svc-sync@"])
+    def test_rsync_ssh_rejects_non_user_at_host(self, bad: str) -> None:
+        with pytest.raises(ValidationError, match="user@host"):
+            NasConfig(transport="rsync_ssh", remote=bad)
+
+    def test_rclone_mode_remote_shape_unrestricted(self) -> None:
+        assert NasConfig(remote="nas01").remote == "nas01"
+
+    def test_transport_serializes_as_string(self) -> None:
+        dumped = NasConfig(
+            transport="rsync_ssh", remote="u@h"
+        ).model_dump()
+        assert dumped["transport"] == "rsync_ssh"
