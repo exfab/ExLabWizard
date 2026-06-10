@@ -135,6 +135,14 @@ _RSYNC_LIST_RE = re.compile(
 # rsync escapes unusual bytes in listings as ``\#ooo`` (3 octal digits).
 _RSYNC_ESCAPE_RE = re.compile(r"\\#([0-7]{3})")
 
+# Loose shape of a listing entry whose size field did NOT parse as plain
+# digits (e.g. a human-readable "4.0K" from an rsync invoked with ``-h``).
+# Such lines must never be dropped silently: a file missing from the
+# manifest is re-queued forever with no operator-visible cause.
+_RSYNC_LIST_LOOSE_RE = re.compile(
+    r"^\S+\s+\S+\s+\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2}\s"
+)
+
 
 def _unescape_rsync_path(path: str) -> str:
     """Decode rsync's ``\\#ooo`` octal escapes back into the real bytes."""
@@ -162,12 +170,20 @@ def parse_rsync_listing(raw: str) -> RemoteManifest:
     parsed as local time and stored as an RFC3339 UTC string so
     :meth:`RemoteManifest.matches` works identically for both transports.
     Unparseable lines are skipped (a listing we can't parse must not
-    crash the sync worker).
+    crash the sync worker), but a line that *looks* like an entry whose
+    size failed to parse — the signature of human-readable ``-h`` output
+    — is counted and surfaced as a warning, because the resulting
+    missing manifest entries would otherwise re-queue files forever with
+    no operator-visible cause.
     """
     out: dict[str, RemoteEntry] = {}
+    unparseable_entries = 0
     for raw_line in raw.splitlines():
-        match = _RSYNC_LIST_RE.match(raw_line.rstrip())
+        line = raw_line.rstrip()
+        match = _RSYNC_LIST_RE.match(line)
         if match is None:
+            if _RSYNC_LIST_LOOSE_RE.match(line):
+                unparseable_entries += 1
             continue
         if not match.group("perms").startswith("-"):
             continue
@@ -186,4 +202,11 @@ def parse_rsync_listing(raw: str) -> RemoteManifest:
             continue
         mod_time = local_dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
         out[path] = RemoteEntry(size=size, mod_time=mod_time, is_dir=False)
+    if unparseable_entries:
+        _log.warning(
+            "rsync listing: %d entry-shaped line(s) had an unparseable size "
+            "field (human-readable rsync output? the client must not run "
+            "with -h); affected files will not reconcile",
+            unparseable_entries,
+        )
     return RemoteManifest(entries=out)

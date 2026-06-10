@@ -40,9 +40,13 @@ _log = get_logger(__name__)
 
 
 # ssh-level failures that are configuration problems, not transient
-# network errors. Matched case-insensitively against stderr.
+# network errors. Matched case-insensitively against stderr. The
+# permission-denied marker is deliberately anchored on ssh's
+# parenthesized auth-method list ("Permission denied (publickey...") so
+# a remote per-file filesystem error -- rsync's "Permission denied (13)"
+# -- stays on the retryable rc-23 path instead of terminating the job.
 _AUTH_FAILURE_MARKERS: tuple[str, ...] = (
-    "permission denied",
+    "permission denied (publickey",
     "host key verification failed",
     "too many authentication failures",
     "no supported authentication",
@@ -74,6 +78,12 @@ def _synthesize_check(requested: tuple[str, ...], stdout: str) -> CheckResult:
     positionally from the front, never by total length. Only
     regular-file lines (``f`` at index 1) participate; ``.``-type lines
     (no transfer needed) and unmatched lines fall through to ``equal``.
+
+    Accepted contract difference vs rclone's ``CheckResult``: ``errors``
+    is always ``()`` here. rsync itemize has no per-file error line (no
+    ``!``-prefix equivalent) — failures surface on stderr with a
+    non-zero exit, which :meth:`RsyncSshDriver.check` raises as a
+    classified :class:`TransportError` before this synthesis runs.
     """
     differ: list[str] = []
     missing: list[str] = []

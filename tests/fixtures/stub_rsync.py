@@ -106,7 +106,9 @@ def main() -> int:
         return 0
 
     # ---- dry-run check ----------------------------------------------------
-    if "-n" in argv or any("n" in a for a in argv if a.startswith("-") and "=" not in a):
+    # Exact-match the driver's dry-run spellings; a substring scan for "n"
+    # would misroute any future flag merely containing the letter.
+    if "-n" in argv or "--dry-run" in argv or "-rni" in argv:
         rels = _files_from_paths(argv)
         if behavior == "check_differ":
             for rel in rels:

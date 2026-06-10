@@ -69,6 +69,13 @@ class TestClassifyFailure:
     def test_other_nonzero_is_unknown(self) -> None:
         assert _classify_failure("rsync: syntax error", 1) == TransportErrorKind.UNKNOWN
 
+    def test_remote_file_permission_error_is_not_auth(self) -> None:
+        # A per-file filesystem error on the NAS ("Permission denied (13)")
+        # must stay on the retryable rc-23 path — only ssh's parenthesized
+        # auth-method form ("Permission denied (publickey...") is terminal.
+        stderr = 'rsync: send_files failed to open "/v1/lab/x.csv": Permission denied (13)'
+        assert _classify_failure(stderr, 23) == TransportErrorKind.NETWORK
+
 
 class TestPush:
     async def test_success_argv_shape(self, fake_run, tmp_path: Path) -> None:

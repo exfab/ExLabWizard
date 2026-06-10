@@ -49,6 +49,15 @@ class TestParseRsyncListing:
     def test_garbage_lines_ignored(self) -> None:
         assert parse_rsync_listing("sending incremental file list\n\n").entries == {}
 
+    def test_human_readable_size_warns_instead_of_silent_drop(self, caplog) -> None:
+        # "-h"-formatted sizes ("4.0K") must not vanish silently: the file
+        # would otherwise re-queue forever with no operator-visible cause.
+        raw = f"-rw-r--r--          4.0K {_stamp(1_750_000_000)} data.csv\n"
+        with caplog.at_level("WARNING"):
+            manifest = parse_rsync_listing(raw)
+        assert manifest.entries == {}
+        assert any("unparseable size" in rec.message for rec in caplog.records)
+
     def test_empty_input(self) -> None:
         assert parse_rsync_listing("").entries == {}
 
