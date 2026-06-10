@@ -1,18 +1,18 @@
-"""SHA-256 verifier wrapper around ``rclone check --download``.
+"""Transport check-op wrapper for NAS integrity verification.
 
-Rclone-only NAS sync migration (2026-05-26). The verifier is now a thin
-adapter over :meth:`exlab_wizard.sync.transports.rclone.RcloneDriver.check`
-that translates a :class:`CheckResult` into the :class:`VerifyResult`
-shape the queue worker already consumes. The actual integrity guarantee
-comes from ``rclone check --download --combined`` -- rclone streams the
-remote files back to the wizard, hashes them locally, and writes a
-``=/*/+/-/!`` line per file to a tempfile that the driver parses.
+rsync-over-ssh NAS transport (2026-06-10). The verifier wraps the
+transport's ``check`` op (rclone ``check --download`` or the rsync
+``--checksum`` dry-run) and translates a :class:`CheckResult` into the
+:class:`VerifyResult` shape the queue worker already consumes. The actual
+integrity guarantee comes from the transport driver's content-equality
+check — rclone streams remote files back and hashes locally; rsync runs a
+``--checksum`` dry-run over the rsync protocol channel.
 
 The Slot A SHA-256 capture (the durable
 ``sync_state.json:files[*].verified_sha256`` field) is owned by
 :func:`exlab_wizard.sync.nas_client._compute_local_shas` -- the verifier
 itself never sees a local SHA. This keeps the verifier a leaf abstraction
-that depends only on the rclone driver, and keeps the SHA-capture logic
+that depends only on the transport driver, and keeps the SHA-capture logic
 local to the one code path that has access to the freshly-read local
 bytes.
 
@@ -31,7 +31,8 @@ from exlab_wizard.logging import get_logger
 from exlab_wizard.sync.transports import TransportError, TransportErrorKind
 
 if TYPE_CHECKING:
-    from exlab_wizard.sync.transports.rclone import CheckResult, RcloneDriver
+    from exlab_wizard.sync.transports import NasTransportDriver
+    from exlab_wizard.sync.transports.rclone import CheckResult
 
 __all__ = ["Verifier", "VerifyResult"]
 
@@ -91,19 +92,15 @@ class VerifyResult:
 
 
 class Verifier:
-    """Verifier: ``rclone check`` wrapper, no Python SHA pipeline.
+    """Constructed with a :class:`NasTransportDriver`; wraps the transport's check op.
 
-    Constructed with an :class:`RcloneDriver`; production callers pass
-    the same driver instance the push path uses so subprocess settings
-    (binary path, etc.) stay consistent. Tests can pass a stub driver
-    whose ``check`` returns a canned :class:`CheckResult`.
+    Production callers pass the same driver instance the push path uses
+    so subprocess settings (binary path, etc.) stay consistent. Tests can
+    pass a stub driver whose ``check`` returns a canned
+    :class:`CheckResult`.
     """
 
-    def __init__(self, driver: RcloneDriver | None = None) -> None:
-        if driver is None:
-            from exlab_wizard.sync.transports.rclone import RcloneDriver as _Driver
-
-            driver = _Driver()
+    def __init__(self, driver: NasTransportDriver) -> None:
         self._driver = driver
 
     async def verify(
