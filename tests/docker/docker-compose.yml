@@ -4,6 +4,13 @@
 #   - SFTP:  host=localhost port=${SFTP_HOST_PORT} user=${NAS_USER} password=${NAS_PASSWORD}
 #   - SMB:   host=localhost port=${SMB_HOST_PORT}  user=${NAS_USER} share=${SMB_SHARE}
 #
+# rsync-over-ssh leg (2026-06-10): the nas-sftp container also hosts the
+# rsync-over-ssh user (rsyncuser) on the same port. A bind-mounted keys/
+# dir holds the generated ed25519 keypair so the integration test can
+# locate the private key. The container's TZ is set to America/New_York
+# to make it differ from the typical client TZ — this exercises the
+# timezone characterization in test_push_list_reconcile_roundtrip.
+#
 # ExLab-Wizard uses operator-managed rclone named remotes (rclone.conf).
 # Configure the remotes in tests/docker/rclone.conf, point nas.remote and
 # nas.rclone_config_path in config.yaml at them, and run normally.
@@ -19,14 +26,29 @@ services:
         NAS_USER: ${NAS_USER}
         NAS_UID: ${NAS_UID}
         NAS_GID: ${NAS_GID}
+        RSYNC_USER: ${RSYNC_USER:-rsyncuser}
+        RSYNC_UID: ${RSYNC_UID:-1001}
+        RSYNC_GID: ${RSYNC_GID:-1001}
     image: exlab/nas-emulator-sftp:local
     container_name: exlab-nas-sftp
     env_file: .env
+    environment:
+      # Pin TZ to America/New_York so the rsync listing timestamps are
+      # formatted in a timezone that differs from the test client's local
+      # TZ. This is the key condition for the timezone characterization
+      # test: if --list-only emits server-side timestamps, mtime reconcile
+      # fails; if it emits client-side timestamps, it passes.
+      TZ: America/New_York
     ports:
       - "${SFTP_HOST_PORT:-2222}:22"
     volumes:
       # Bind-mount so the host can inspect what the sync wrote.
-      - ./nas-data:/home/${NAS_USER}/data
+      - ./nas-data:/home/${NAS_USER:-testuser}/data
+      # rsync-over-ssh data root (rsyncuser's home data dir).
+      - ./nas-data:/home/${RSYNC_USER:-rsyncuser}/data
+      # Keys dir: the entrypoint generates the keypair here on first boot.
+      # The integration test reads the private key from ./keys/id_exlab.
+      - ./keys:/keys
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "sh", "-c", "ss -ltn | grep -q ':22 '"]

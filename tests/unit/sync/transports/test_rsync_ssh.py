@@ -101,6 +101,19 @@ class TestPush:
         await RsyncSshDriver().push(tmp_path, TARGET)
         assert not any(arg.startswith("--bwlimit") for arg in run.cmds[0])
 
+    async def test_ssh_extra_opts_rendered_in_e_arg(
+        self, fake_run, tmp_path: Path
+    ) -> None:
+        """Extra ssh opts (test seam) are appended as -o pairs in the -e arg."""
+        run = fake_run(rc=0)
+        driver = RsyncSshDriver(
+            ssh_extra_opts=("UserKnownHostsFile=/tmp/kh", "StrictHostKeyChecking=accept-new")
+        )
+        await driver.push(tmp_path, TARGET)
+        ssh_arg = run.cmds[0][run.cmds[0].index("-e") + 1]
+        assert "-o UserKnownHostsFile=/tmp/kh" in ssh_arg
+        assert "-o StrictHostKeyChecking=accept-new" in ssh_arg
+
     async def test_auth_failure_classified(self, fake_run, tmp_path: Path) -> None:
         fake_run(rc=255, stderr="Permission denied (publickey).")
         result = await RsyncSshDriver().push(tmp_path, TARGET)
@@ -197,7 +210,7 @@ class TestLsjsonManifest:
         )
         assert set(manifest.entries) == {"data file.csv"}
         cmd = run.cmds[0]
-        assert "--list-only" in cmd and "-r" in cmd and "--no-h" in cmd
+        assert "--list-only" in cmd and "-r" in cmd
         assert cmd[-1] == f"{TARGET}/"
 
     async def test_failure_raises_classified(self, fake_run) -> None:

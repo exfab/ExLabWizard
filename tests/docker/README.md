@@ -6,11 +6,18 @@ OpenSSH server for SFTP and a Samba server for SMB.
 
 ## Purpose & Scope
 
-**In scope:** password-authenticated SFTP and SMB endpoints, a
-bind-mounted data volume for inspection, teardown/reset between runs.
+**In scope:** password-authenticated SFTP and SMB endpoints, key-authenticated
+rsync-over-ssh endpoint, a bind-mounted data volume for inspection,
+teardown/reset between runs.
 
 **Out of scope:** Google Cloud bucket sync, NAS quota / snapshot
-behaviour, real host-key trust (the emulator disables host-key checking).
+behaviour.
+
+> **rsync-over-ssh:** The `nas-sftp` container also hosts a second user
+> (`rsyncuser`) with key-only auth and no SFTP subsystem, mirroring the
+> Synology posture. The container's `TZ` is set to `America/New_York` so
+> it differs from typical client timezones — this exercises the timezone
+> characterization in the integration test suite (see §rsync-over-ssh below).
 
 > **How the app connects:** ExLab-Wizard uses operator-managed rclone named
 > remotes. You configure the remote in `rclone.conf` once with `rclone config`
@@ -23,8 +30,8 @@ behaviour, real host-key trust (the emulator disables host-key checking).
 
 | Requirement      | Detail                                                       |
 |------------------|--------------------------------------------------------------|
-| Protocols        | SFTP (`${SFTP_HOST_PORT:-2222}`) + SMB (`${SMB_HOST_PORT:-1445}`) |
-| Auth             | Password only (no keys); SMB user-level security             |
+| Protocols        | SFTP (`${SFTP_HOST_PORT:-2222}`) + SMB (`${SMB_HOST_PORT:-1445}`) + rsync-over-ssh (same port as SFTP) |
+| Auth             | SFTP/SMB: password only; rsync-over-ssh: key-only (no password, no SFTP subsystem) |
 | Platform         | macOS, Linux, Windows (Docker Desktop or Engine)             |
 | Internet access  | Not required after `docker compose build` succeeds           |
 | Tooling          | Docker + Docker Compose v2 (optionally the `rclone` CLI)     |
@@ -33,15 +40,17 @@ behaviour, real host-key trust (the emulator disables host-key checking).
 
 ```
 tests/docker/
-├── Dockerfile              # debian-slim + openssh-server (password auth)
+├── Dockerfile              # debian-slim + openssh-server + rsync (SFTP + rsync-over-ssh)
 ├── Dockerfile.smb          # debian-slim + samba (password auth)
-├── entrypoint.sh           # sets the SFTP user password, generates host keys
+├── entrypoint.sh           # sets SFTP user password; generates ed25519 keypair for rsync user
 ├── entrypoint.smb.sh       # registers the Samba user + password
-├── docker-compose.yml      # nas-sftp + nas-smb services
+├── docker-compose.yml      # nas-sftp (TZ=America/New_York) + nas-smb services
 ├── .env.example            # credential / port template (committed)
 ├── .env                    # actual values incl. NAS_PASSWORD (gitignored)
 ├── nas-data/               # bind-mounted NAS state (gitignored except .gitkeep)
 │   └── .gitkeep
+├── keys/                   # generated keypair for rsync-over-ssh user (gitignored except .gitkeep)
+│   └── .gitkeep            # id_exlab + id_exlab.pub appear here after first `docker compose up`
 ├── rclone.conf             # test rclone.conf pointing at the compose containers
 ├── rclone.conf.example     # annotated example for ad-hoc shell use
 └── README.md
@@ -132,6 +141,39 @@ docker compose logs -f nas-smb               # tail smbd logs
 docker compose down                          # stop, preserve data
 docker compose down -v && rm -rf nas-data/*  # full reset to empty NAS
 ```
+
+## rsync-over-ssh (key-auth, no SFTP)
+
+The `nas-sftp` container runs a second user (`rsyncuser`, UID 1001) that mirrors
+the Synology rsync-over-ssh posture: key-only auth, no SFTP subsystem, plain
+`rsync --server` over ssh. This is the backend for the integration characterization
+suite (`tests/integration/test_rsync_ssh_characterization.py`).
+
+**Users and keys:**
+
+| Field | Value |
+|-------|-------|
+| User | `rsyncuser` (configured via `RSYNC_USER` in `.env`) |
+| UID/GID | 1001 / 1001 (configured via `RSYNC_UID` / `RSYNC_GID`) |
+| Auth | ed25519 keypair; private key at `tests/docker/keys/id_exlab` (generated on first boot) |
+| Port | Same as SFTP: `${SFTP_HOST_PORT:-2222}` |
+| SFTP | Disabled for this user (Match User block without ForceCommand `internal-sftp`) |
+| Data root | `/home/rsyncuser/data` (bind-mounted to `tests/docker/nas-data/`) |
+
+**Keypair generation:** the entrypoint generates `tests/docker/keys/id_exlab` and
+`tests/docker/keys/id_exlab.pub` on first boot (skips if already present). The
+`keys/` directory is bind-mounted into the container at `/keys/`. The integration
+test reads the private key directly from `tests/docker/keys/id_exlab`.
+
+**Timezone:** the container's `TZ` is set to `America/New_York` in
+`docker-compose.yml`. This causes `--list-only` rsync timestamps to be formatted
+in the client's local timezone, NOT the server's — confirmed by
+`test_push_list_reconcile_roundtrip`. If a future rsync version changes this
+behaviour, the test will fail by a whole-hour mtime offset, triggering the
+`nas.remote_tz` contingency in the spec.
+
+**Resetting the keypair:** delete `tests/docker/keys/id_exlab*` and restart the
+container (`docker compose up -d`). The entrypoint regenerates the keypair.
 
 ## Pytest Fixture (optional)
 

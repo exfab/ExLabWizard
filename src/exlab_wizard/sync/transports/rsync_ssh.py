@@ -102,7 +102,16 @@ def _synthesize_check(requested: tuple[str, ...], stdout: str) -> CheckResult:
 
 
 class RsyncSshDriver:
-    """rsync-over-ssh transport driver (implements ``NasTransportDriver``)."""
+    """rsync-over-ssh transport driver (implements ``NasTransportDriver``).
+
+    ``ssh_extra_opts`` is a **test seam only** — each entry is passed to
+    ssh as ``-o <entry>``.  Production config does not expose it and it
+    must never be set in production code paths.  The integration-test
+    fixture uses it to point ssh at a throwaway ``known_hosts`` file
+    (``UserKnownHostsFile=<tmp>``) and accept the container's first-seen
+    host key (``StrictHostKeyChecking=accept-new``) without mutating the
+    developer's real ``~/.ssh/known_hosts``.
+    """
 
     def __init__(
         self,
@@ -110,10 +119,12 @@ class RsyncSshDriver:
         binary: str = "rsync",
         ssh_port: int = 22,
         ssh_identity_file: str = "",
+        ssh_extra_opts: tuple[str, ...] = (),
     ) -> None:
         self._binary = binary
         self._ssh_port = ssh_port
         self._ssh_identity_file = ssh_identity_file
+        self._ssh_extra_opts = ssh_extra_opts
 
     def _ssh_command(self) -> str:
         """Render the ``-e`` remote-shell string.
@@ -122,10 +133,15 @@ class RsyncSshDriver:
         passphrase prompt must fail fast (classified AUTH) rather than
         hang the sync worker. No ``StrictHostKeyChecking`` relaxation —
         host keys are pre-provisioned via ``ssh-keyscan``.
+
+        ``_ssh_extra_opts`` entries are appended as ``-o <opt>`` pairs
+        (test seam; production never sets this).
         """
         parts = ["ssh", "-p", str(self._ssh_port), "-o", "BatchMode=yes"]
         if self._ssh_identity_file:
             parts.extend(["-i", str(Path(self._ssh_identity_file).expanduser())])
+        for opt in self._ssh_extra_opts:
+            parts.extend(["-o", opt])
         return shlex.join(parts)
 
     async def push(
@@ -236,7 +252,6 @@ class RsyncSshDriver:
             self._binary,
             "--list-only",
             "-r",
-            "--no-h",
             "-e",
             self._ssh_command(),
             "--",
@@ -267,7 +282,6 @@ class RsyncSshDriver:
         cmd: list[str] = [
             self._binary,
             "--list-only",
-            "--no-h",
             "-e",
             self._ssh_command(),
             "--",
