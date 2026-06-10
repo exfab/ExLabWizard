@@ -697,13 +697,21 @@ def setup_state_missing(
 
 
 def _missing_nas_fields(config: Config | None) -> list[dict[str, str]]:
-    """Missing-``nas.remote`` row for ``INCOMPLETE_NO_NAS_REMOTE``.
+    """Missing-field row(s) for ``INCOMPLETE_NO_NAS_REMOTE``.
 
-    Distinguishes an unset ``nas.remote`` from one that is named but not
-    found in rclone.conf so the UI can tailor its guidance.
+    Distinguishes an unset ``nas.remote`` (shared by both transports)
+    from the per-transport "configured but unavailable" reasons: the
+    named remote absent from rclone.conf, or (rsync_ssh) the pinned
+    ssh identity file not found on disk.
     """
     if config is None or not config.nas.remote:
         return [{"field": "nas.remote", "reason": "unset"}]
+    from exlab_wizard.constants import SyncTransport
+
+    if config.nas.transport == SyncTransport.RSYNC_SSH:
+        return [
+            {"field": "nas.ssh_identity_file", "reason": "identity_file_missing"}
+        ]
     return [{"field": "nas.remote", "reason": "not_found_in_rclone_conf"}]
 
 

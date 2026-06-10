@@ -1167,3 +1167,19 @@ def test_setup_state_missing_unrecognized_state_returns_empty() -> None:
 
     result = setup_state_missing(_BogusState(), None)  # type: ignore[arg-type]
     assert result == []
+
+
+def test_missing_nas_fields_rsync_mode_names_identity_file() -> None:
+    from exlab_wizard.config.models import Config, EquipmentConfig, NasConfig, PathsConfig
+    from exlab_wizard.constants import SetupState
+    from exlab_wizard.paths import setup_state_missing
+
+    config = Config(
+        paths=PathsConfig(app_root="/tmp/x"),
+        nas=NasConfig(transport="rsync_ssh", remote="svc-sync@nas01"),
+        equipment=[EquipmentConfig(id="EQ1", label="Eq 1", nas_root="/nas")],
+    )
+    rows = setup_state_missing(SetupState.INCOMPLETE_NO_NAS_REMOTE, config)
+    assert rows == [
+        {"field": "nas.ssh_identity_file", "reason": "identity_file_missing"}
+    ]
