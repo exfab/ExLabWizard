@@ -149,7 +149,9 @@ class RsyncSshDriver:
             cmd.append(f"--bwlimit={bwlimit_kibps}")
         if files_from is not None:
             cmd.append(f"--files-from={files_from}")
-        cmd.extend([f"{local}/", remote])
+        # ``--`` ends option parsing: a remote/path that begins with ``-``
+        # (malformed config) must never be read as an rsync flag.
+        cmd.extend(["--", f"{local}/", remote])
         _log.debug("rsync cmd: %s", shlex.join(cmd))
 
         try:
@@ -192,6 +194,7 @@ class RsyncSshDriver:
             "-e",
             self._ssh_command(),
             f"--files-from={files_from}",
+            "--",
             f"{local}/",
             remote,
         ]
@@ -236,6 +239,7 @@ class RsyncSshDriver:
             "--no-h",
             "-e",
             self._ssh_command(),
+            "--",
             f"{remote}/",
         ]
         _log.debug("rsync list cmd: %s", shlex.join(cmd))
@@ -266,6 +270,7 @@ class RsyncSshDriver:
             "--no-h",
             "-e",
             self._ssh_command(),
+            "--",
             f"{remote}/",
         ]
         _log.debug("rsync about cmd: %s", shlex.join(cmd))

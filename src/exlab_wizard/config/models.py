@@ -312,7 +312,10 @@ class NasConfig(BaseModel):
             msg = "nas.transport 'rsync_ssh' requires nas.remote ('user@host')"
             raise ValueError(msg)
         user, sep, host = self.remote.partition("@")
-        if not (sep and user and host):
+        # A leading ``-`` in either segment could smuggle an argv flag into
+        # the rsync/ssh command lines, so it is rejected alongside the
+        # basic shape check.
+        if not (sep and user and host) or user.startswith("-") or host.startswith("-"):
             msg = (
                 f"nas.remote {self.remote!r} must be 'user@host' when "
                 "nas.transport is 'rsync_ssh'"

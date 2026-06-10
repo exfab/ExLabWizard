@@ -80,6 +80,8 @@ class TestPush:
         assert cmd[0] == "rsync"
         assert "-rt" in cmd
         assert "--bwlimit=512" in cmd
+        # ``--`` ends option parsing so positionals can never smuggle flags.
+        assert cmd[-3] == "--"
         assert cmd[-2] == f"{tmp_path}/"
         assert cmd[-1] == TARGET
         ssh_arg = cmd[cmd.index("-e") + 1]

@@ -1026,7 +1026,9 @@ class TestNasTransport:
         with pytest.raises(ValidationError, match=r"requires nas\.remote"):
             NasConfig(transport="rsync_ssh", remote="")
 
-    @pytest.mark.parametrize("bad", ["nas01", "@nas01", "svc-sync@"])
+    @pytest.mark.parametrize(
+        "bad", ["nas01", "@nas01", "svc-sync@", "-user@nas01", "svc-sync@-nas01"]
+    )
     def test_rsync_ssh_rejects_non_user_at_host(self, bad: str) -> None:
         with pytest.raises(ValidationError, match="user@host"):
             NasConfig(transport="rsync_ssh", remote=bad)
