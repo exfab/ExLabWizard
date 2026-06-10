@@ -182,22 +182,19 @@ class _StubAbout:
 def test_make_equipment_probe_targets_nas_remote_not_keyring(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The probe must call ``rclone about <nas.remote>:`` and ignore the keyring."""
+    """The probe must call ``driver.about`` on the NAS target and ignore the keyring."""
     import asyncio
 
-    from exlab_wizard.sync.transports import rclone as rclone_module
+    from exlab_wizard.sync import transports as transports_module
 
     calls: list[str] = []
 
     class _StubDriver:
-        def __init__(self, *, config_path: str | None = None) -> None:
-            self.config_path = config_path
-
         async def about(self, remote: str, **_kwargs: object) -> _StubAbout:
             calls.append(remote)
             return _StubAbout(ok=True)
 
-    monkeypatch.setattr(rclone_module, "RcloneDriver", _StubDriver)
+    monkeypatch.setattr(transports_module, "build_nas_driver", lambda *a, **k: _StubDriver())
 
     deps = build_production_dependencies(tmp_path)
     # No keyring password is set; the new probe must not consult it.
@@ -228,19 +225,16 @@ def test_make_equipment_probe_short_circuits_without_remote(tmp_path: Path) -> N
 def test_make_equipment_probe_surfaces_about_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A failing ``rclone about`` surfaces as ``ok=False`` with the reason."""
+    """A failing ``driver.about`` surfaces as ``ok=False`` with the reason."""
     import asyncio
 
-    from exlab_wizard.sync.transports import rclone as rclone_module
+    from exlab_wizard.sync import transports as transports_module
 
     class _StubDriver:
-        def __init__(self, *, config_path: str | None = None) -> None:
-            self.config_path = config_path
-
         async def about(self, remote: str, **_kwargs: object) -> _StubAbout:
             return _StubAbout(ok=False, reason="auth_error: 401 Unauthorized")
 
-    monkeypatch.setattr(rclone_module, "RcloneDriver", _StubDriver)
+    monkeypatch.setattr(transports_module, "build_nas_driver", lambda *a, **k: _StubDriver())
 
     deps = build_production_dependencies(tmp_path)
     deps.config = _nas_config_with_remote("nas01")
@@ -276,3 +270,67 @@ def test_nas_remote_available_reflects_listremotes(
     available = lambda remote: f"{remote}:" in remotes  # noqa: E731
     assert available("nas01") is True
     assert available("missing") is False
+
+
+class TestRsyncSshGate:
+    def _nas(self, **kw):
+        from exlab_wizard.config.models import NasConfig
+
+        return NasConfig(
+            transport="rsync_ssh", remote="svc-sync@nas01", base_root="/v1/lab", **kw
+        )
+
+    def test_hydrate_never_spawns_rclone_in_rsync_mode(self, monkeypatch) -> None:
+        from types import SimpleNamespace
+
+        from exlab_wizard.tray.dependencies import _hydrate_nas_remotes
+
+        def boom(*a, **k):
+            raise AssertionError("rclone must not be constructed in rsync mode")
+
+        monkeypatch.setattr(
+            "exlab_wizard.sync.transports.rclone.RcloneDriver", boom
+        )
+        config = SimpleNamespace(nas=self._nas())
+        assert _hydrate_nas_remotes(config) == ()
+
+    def test_predicate_true_when_identity_unset(self) -> None:
+        from types import SimpleNamespace
+
+        from exlab_wizard.tray.dependencies import _nas_available_predicate
+
+        config = SimpleNamespace(nas=self._nas())
+        predicate = _nas_available_predicate(config, ())
+        assert predicate("svc-sync@nas01") is True
+
+    def test_predicate_false_when_identity_missing(self, tmp_path) -> None:
+        from types import SimpleNamespace
+
+        from exlab_wizard.tray.dependencies import _nas_available_predicate
+
+        config = SimpleNamespace(
+            nas=self._nas(ssh_identity_file=str(tmp_path / "nope_key"))
+        )
+        predicate = _nas_available_predicate(config, ())
+        assert predicate("svc-sync@nas01") is False
+
+    def test_predicate_true_when_identity_exists(self, tmp_path) -> None:
+        from types import SimpleNamespace
+
+        from exlab_wizard.tray.dependencies import _nas_available_predicate
+
+        key = tmp_path / "id_exlab"
+        key.write_text("KEY", encoding="utf-8")
+        config = SimpleNamespace(nas=self._nas(ssh_identity_file=str(key)))
+        assert _nas_available_predicate(config, ())("svc-sync@nas01") is True
+
+    def test_rclone_predicate_unchanged(self) -> None:
+        from types import SimpleNamespace
+
+        from exlab_wizard.config.models import NasConfig
+        from exlab_wizard.tray.dependencies import _nas_available_predicate
+
+        config = SimpleNamespace(nas=NasConfig(remote="nas01"))
+        predicate = _nas_available_predicate(config, ("nas01:",))
+        assert predicate("nas01") is True
+        assert predicate("other") is False

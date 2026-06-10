@@ -146,7 +146,7 @@ def build_production_dependencies(state_dir: Path) -> AppDependencies:
     # operator's remotes once at boot via ``rclone listremotes`` and
     # expose a sync predicate the API's setup evaluator reads.
     deps.nas_remotes = _try("nas_remotes", _hydrate_nas_remotes, deps.config) or ()
-    deps.nas_remote_available = lambda remote: f"{remote}:" in deps.nas_remotes
+    deps.nas_remote_available = _nas_available_predicate(deps.config, deps.nas_remotes)
     deps.equipment_probe = _make_equipment_probe(deps)
 
     deps.session_store_snapshot = _make_session_store_snapshot(deps)
@@ -631,6 +631,13 @@ def _hydrate_nas_remotes(config: Any) -> tuple[str, ...]:
     nas = getattr(config, "nas", None)
     if nas is None:
         return ()
+    from exlab_wizard.constants import SyncTransport
+
+    if getattr(nas, "transport", SyncTransport.RCLONE) == SyncTransport.RSYNC_SSH:
+        # rsync-over-ssh transport (2026-06-10): rclone.conf is irrelevant
+        # and the rclone binary is likely absent on a cluster node — never
+        # spawn it; the gate uses the static ssh predicate instead.
+        return ()
     from exlab_wizard.sync.transports.rclone import RcloneDriver
 
     driver = RcloneDriver(config_path=getattr(nas, "rclone_config_path", "") or None)
@@ -640,20 +647,54 @@ def _hydrate_nas_remotes(config: Any) -> tuple[str, ...]:
         return ()
 
 
+def _nas_available_predicate(config: Any, remotes: tuple[str, ...]) -> Any:
+    """Build the setup-gate ``nas_remote_available`` callable by transport.
+
+    rclone mode keeps the historical "name present in the listremotes
+    snapshot" check. rsync_ssh mode is a static, offline predicate:
+    remote non-empty, and when ``ssh_identity_file`` is set the file
+    must exist. Network reachability stays behind Test-connection.
+    """
+    from exlab_wizard.constants import SyncTransport
+
+    nas = getattr(config, "nas", None)
+    if nas is not None and getattr(nas, "transport", None) == SyncTransport.RSYNC_SSH:
+
+        def _rsync_available(remote: str) -> bool:
+            if not remote:
+                return False
+            identity = str(getattr(nas, "ssh_identity_file", "") or "")
+            return not identity or Path(identity).expanduser().exists()
+
+        return _rsync_available
+    return lambda remote: f"{remote}:" in remotes
+
+
+def _probe_target(nas: Any) -> str:
+    """Compose the Test-connection probe target by transport.
+
+    rclone probes the bare remote root (``<remote>:``); rsync probes the
+    base root (``user@host:/<base_root>``) so a missing/locked path
+    surfaces as the configuration error it is.
+    """
+    from exlab_wizard.constants import SyncTransport
+
+    if getattr(nas, "transport", None) == SyncTransport.RSYNC_SSH:
+        base = str(getattr(nas, "base_root", "") or "").strip("/")
+        return f"{nas.remote}:/{base}" if base else f"{nas.remote}:/"
+    return f"{nas.remote}:"
+
+
 def _make_equipment_probe(deps: AppDependencies) -> Any:
     """Build the ``deps.equipment_probe`` callable.
 
-    rclone.conf NAS-sync migration. The "Test connection" probe now
-    targets the configured ``nas:`` remote rather than a per-equipment
-    keyring password: it runs ``rclone about <nas.remote>:`` through the
-    driver (using the operator's rclone.conf, optionally pinned by
-    ``nas.rclone_config_path``) and returns the canonical
-    ``{"ok", "reason", "latency_ms"}`` dict the endpoint surfaces.
-
-    A missing ``nas.remote`` short-circuits with
-    ``ok=False, reason="no NAS remote configured"`` -- the probe never
-    spawns rclone in that case so the operator sees the gate reason
-    rather than an opaque rclone error.
+    The "Test connection" probe targets the configured NAS remote and
+    returns the canonical ``{"ok", "reason", "latency_ms"}`` dict the
+    endpoint surfaces. In rclone mode it calls ``rclone about
+    <nas.remote>:``; in rsync_ssh mode it calls ``rsync --list-only``
+    against the base root. A missing ``nas.remote`` short-circuits with
+    ``ok=False, reason="no NAS remote configured"`` — the probe never
+    spawns the transport binary in that case.
     """
 
     async def _probe(equipment: Any) -> dict[str, Any]:
@@ -661,14 +702,15 @@ def _make_equipment_probe(deps: AppDependencies) -> Any:
         if nas is None or not nas.remote:
             return {"ok": False, "reason": "no NAS remote configured"}
         # Local import keeps ``tray.dependencies`` cheap to load (the
-        # rclone driver pulls in subprocess + asyncio plumbing the tray
-        # otherwise wouldn't need until first sync).
-        from exlab_wizard.sync.transports.rclone import RcloneDriver
+        # transport drivers pull in subprocess + asyncio plumbing the
+        # tray otherwise wouldn't need until first sync).
+        from exlab_wizard.sync.transports import build_nas_driver
 
-        driver = RcloneDriver(config_path=getattr(nas, "rclone_config_path", "") or None)
+        driver = build_nas_driver(nas, nas.perf)
+        target = _probe_target(nas)
         started = time.monotonic()
         try:
-            about = await driver.about(f"{nas.remote}:")
+            about = await driver.about(target)
         except Exception as exc:
             return {"ok": False, "reason": str(exc)}
         latency_ms = int((time.monotonic() - started) * 1000)
