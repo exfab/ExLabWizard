@@ -461,3 +461,28 @@ def test_rclone_driver_satisfies_protocol() -> None:
 
     driver: NasTransportDriver = RcloneDriver()
     assert driver is not None
+
+
+class TestBuildNasDriver:
+    def test_rclone_default(self) -> None:
+        from exlab_wizard.config.models import NasConfig, RclonePerf
+        from exlab_wizard.sync.transports import build_nas_driver
+        from exlab_wizard.sync.transports.rclone import RcloneDriver
+
+        driver = build_nas_driver(NasConfig(remote="nas01"), RclonePerf())
+        assert isinstance(driver, RcloneDriver)
+
+    def test_rsync_ssh_selected(self) -> None:
+        from exlab_wizard.config.models import NasConfig, RclonePerf
+        from exlab_wizard.sync.transports import build_nas_driver
+        from exlab_wizard.sync.transports.rsync_ssh import RsyncSshDriver
+
+        nas = NasConfig(
+            transport="rsync_ssh",
+            remote="svc-sync@nas01",
+            ssh_port=2222,
+            ssh_identity_file="~/.ssh/id_exlab",
+        )
+        driver = build_nas_driver(nas, RclonePerf())
+        assert isinstance(driver, RsyncSshDriver)
+        assert driver._ssh_port == 2222

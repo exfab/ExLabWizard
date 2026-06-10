@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from exlab_wizard.config.models import NasConfig, RclonePerf
     from exlab_wizard.sync.manifest import RemoteManifest
     from exlab_wizard.sync.transports.rclone import AboutResult, CheckResult
 
@@ -23,6 +24,7 @@ __all__ = [
     "TransportError",
     "TransportErrorKind",
     "TransportResult",
+    "build_nas_driver",
 ]
 
 
@@ -123,3 +125,34 @@ class TransportError(Exception):
     ) -> None:
         super().__init__(message)
         self.error_kind = error_kind
+
+
+def build_nas_driver(nas: NasConfig, perf: RclonePerf) -> NasTransportDriver:
+    """Construct the NAS transport driver selected by ``nas.transport``.
+
+    The single factory every construction site routes through
+    (``nas_client``, the tray probe/gate hydration, test helpers).
+    Imports are local so importing this package stays cheap and free of
+    cycles (the driver modules import this package's DTOs).
+
+    NOTE: this selects for **nas-mode** equipment only. Stage-mode
+    equipment always uses a directly-constructed ``RcloneDriver`` (its
+    targets are rclone named remotes) — see
+    ``NASSyncClient._driver_for_equipment``.
+    """
+    from exlab_wizard.constants import SyncTransport
+
+    if nas.transport == SyncTransport.RSYNC_SSH:
+        from exlab_wizard.sync.transports.rsync_ssh import RsyncSshDriver
+
+        return RsyncSshDriver(
+            ssh_port=nas.ssh_port,
+            ssh_identity_file=nas.ssh_identity_file,
+        )
+    from exlab_wizard.sync.transports.rclone import RcloneDriver
+
+    return RcloneDriver(
+        config_path=nas.rclone_config_path or None,
+        transfers=perf.transfers,
+        checkers=perf.checkers,
+    )
