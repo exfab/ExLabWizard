@@ -10,8 +10,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from exlab_wizard.sync.manifest import RemoteManifest
+    from exlab_wizard.sync.transports.rclone import AboutResult, CheckResult
 
 __all__ = [
+    "NasTransportDriver",
     "TransportError",
     "TransportErrorKind",
     "TransportResult",
@@ -55,6 +63,36 @@ class TransportResult:
     stderr: str = ""
     stdout: str = ""
     returncode: int = 0
+
+
+class NasTransportDriver(Protocol):
+    """The four network ops the NAS sync subsystem consumes.
+
+    rsync-over-ssh NAS transport (2026-06-10). Implemented by
+    :class:`~exlab_wizard.sync.transports.rclone.RcloneDriver` and
+    :class:`~exlab_wizard.sync.transports.rsync_ssh.RsyncSshDriver`.
+    ``listremotes`` is deliberately NOT part of this protocol — it is
+    rclone.conf introspection, used only by the rclone-mode setup gate.
+    """
+
+    async def push(
+        self,
+        local: Path,
+        remote: str,
+        *,
+        bwlimit_kibps: int | None = None,
+        files_from: Path | None = None,
+    ) -> TransportResult: ...
+
+    async def check(
+        self, local: Path, remote: str, *, files_from: Path
+    ) -> CheckResult: ...
+
+    async def lsjson_manifest(
+        self, remote: str, *, strip_prefix: str = ""
+    ) -> RemoteManifest: ...
+
+    async def about(self, remote: str) -> AboutResult: ...
 
 
 class TransportError(Exception):

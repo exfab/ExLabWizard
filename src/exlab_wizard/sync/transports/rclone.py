@@ -23,8 +23,12 @@ from __future__ import annotations
 import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from exlab_wizard.logging import get_logger
+
+if TYPE_CHECKING:
+    from exlab_wizard.sync.manifest import RemoteManifest
 from exlab_wizard.sync.transports import (
     TransportError,
     TransportErrorKind,
@@ -347,6 +351,19 @@ class RcloneDriver:
             msg = f"rclone lsjson failed rc={rc} kind={kind.value}: {stderr.strip()}"
             raise TransportError(msg, error_kind=kind)
         return stdout
+
+    async def lsjson_manifest(self, remote: str, *, strip_prefix: str = "") -> RemoteManifest:
+        """Run :meth:`lsjson` and parse it into a :class:`RemoteManifest`.
+
+        The raw-JSON wire shape is rclone-specific, so parsing lives
+        behind the driver boundary (the shared
+        :class:`~exlab_wizard.sync.transports.NasTransportDriver`
+        protocol returns manifests, never raw text).
+        """
+        from exlab_wizard.sync.manifest import parse_lsjson
+
+        raw = await self.lsjson(remote)
+        return parse_lsjson(raw, strip_prefix=strip_prefix)
 
     async def listremotes(self) -> tuple[str, ...]:
         """Return the remote names defined in rclone.conf (each incl. trailing ``:``)

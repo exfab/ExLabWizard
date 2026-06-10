@@ -435,3 +435,29 @@ async def test_lsjson_missing_binary_raises(monkeypatch) -> None:
     monkeypatch.setattr("exlab_wizard.sync.transports.rclone.run_subprocess", fake_run)
     with pytest.raises(TransportError):
         await RcloneDriver().lsjson("nas01:/x")
+
+
+async def test_rclone_lsjson_manifest_parses_and_strips(monkeypatch) -> None:
+    from exlab_wizard.sync.transports.rclone import RcloneDriver
+
+    raw = (
+        '[{"Path": "base/EQ1/Run_1/a.csv", "Size": 10,'
+        ' "ModTime": "2026-06-10T00:00:00Z", "IsDir": false}]'
+    )
+
+    async def fake_lsjson(self, remote, *, recursive=True):
+        return raw
+
+    monkeypatch.setattr(RcloneDriver, "lsjson", fake_lsjson)
+    manifest = await RcloneDriver().lsjson_manifest(
+        "nas01:/base/EQ1/Run_1", strip_prefix="base/EQ1/Run_1"
+    )
+    assert manifest.has("a.csv")
+
+
+def test_rclone_driver_satisfies_protocol() -> None:
+    from exlab_wizard.sync.transports import NasTransportDriver
+    from exlab_wizard.sync.transports.rclone import RcloneDriver
+
+    driver: NasTransportDriver = RcloneDriver()
+    assert driver is not None
