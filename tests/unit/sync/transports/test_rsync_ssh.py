@@ -176,3 +176,61 @@ class TestCheck:
         with pytest.raises(TransportError) as excinfo:
             await RsyncSshDriver().check(tmp_path, TARGET, files_from=listing)
         assert excinfo.value.error_kind == TransportErrorKind.AUTH
+
+
+class TestLsjsonManifest:
+    async def test_listing_parsed_and_prefix_ignored(self, fake_run, tmp_path: Path) -> None:
+        from datetime import datetime
+
+        stamp = datetime.fromtimestamp(1_750_000_000).strftime("%Y/%m/%d %H:%M:%S")
+        run = fake_run(
+            rc=0,
+            stdout=(
+                f"drwxr-xr-x          4096 {stamp} .\n"
+                f"-rw-r--r--          2048 {stamp} data file.csv\n"
+            ),
+        )
+        manifest = await RsyncSshDriver().lsjson_manifest(
+            TARGET, strip_prefix="volume1/lab/EQ1/Run_1"
+        )
+        assert set(manifest.entries) == {"data file.csv"}
+        cmd = run.cmds[0]
+        assert "--list-only" in cmd and "-r" in cmd and "--no-h" in cmd
+        assert cmd[-1] == f"{TARGET}/"
+
+    async def test_failure_raises_classified(self, fake_run) -> None:
+        fake_run(rc=255, stderr="ssh: connect to host nas01: Connection refused")
+        with pytest.raises(TransportError) as excinfo:
+            await RsyncSshDriver().lsjson_manifest(TARGET)
+        assert excinfo.value.error_kind == TransportErrorKind.NETWORK
+
+
+class TestAbout:
+    async def test_reachable_returns_ok_empty_info(self, fake_run) -> None:
+        run = fake_run(rc=0, stdout="drwxr-xr-x 4096 2026/06/10 00:00:00 .\n")
+        result = await RsyncSshDriver().about("svc-sync@nas01:/volume1/lab")
+        assert result.ok and result.info == {}
+        assert "-r" not in run.cmds[0]  # non-recursive probe
+
+    async def test_missing_base_root_is_config_reason(self, fake_run) -> None:
+        fake_run(rc=23, stdout="", stderr='rsync: change_dir "/volume1/lab" failed')
+        result = await RsyncSshDriver().about("svc-sync@nas01:/volume1/lab")
+        assert not result.ok
+        assert result.reason is not None
+        assert "base_root" in result.reason
+
+    async def test_auth_failure_reason(self, fake_run) -> None:
+        fake_run(rc=255, stderr="Permission denied (publickey).")
+        result = await RsyncSshDriver().about("svc-sync@nas01:/volume1/lab")
+        assert not result.ok
+        assert result.reason is not None and result.reason.startswith("auth")
+
+    async def test_missing_binary_reason(self, monkeypatch) -> None:
+        async def boom(cmd):
+            raise FileNotFoundError(cmd[0])
+
+        monkeypatch.setattr(
+            "exlab_wizard.sync.transports.rsync_ssh.run_subprocess", boom
+        )
+        result = await RsyncSshDriver().about("svc-sync@nas01:/volume1/lab")
+        assert not result.ok and result.reason == "rsync binary not found"
