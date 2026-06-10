@@ -797,13 +797,22 @@ def _render_nas_remote_section(
     remote = getattr(nas, "remote", "") or ""
     base_root = getattr(nas, "base_root", "") or ""
     available = bool(remote) and nas_remote_available(remote)
+    transport = str(getattr(nas, "transport", "") or "rclone")
+    rsync_mode = transport == "rsync_ssh"
 
     with container:
-        ui.label(
-            "NAS sync references a single rclone remote configured in your "
+        description = (
+            "NAS sync uses rsync over ssh: `remote` is the user@host target, "
+            "authenticated by your ssh key (no password is stored here). "
+            "See the setup docs for key + known_hosts provisioning."
+            if rsync_mode
+            else "NAS sync references a single rclone remote configured in your "
             "rclone.conf (run `rclone config` to create it). No password is "
             "stored here."
-        ).style("font-size: var(--text-sm); color: var(--color-muted);")
+        )
+        ui.label(description).style(
+            "font-size: var(--text-sm); color: var(--color-muted);"
+        )
 
         with ui.row().classes("items-center w-full").style("gap: 0.5rem;"):
             ui.label("Remote").style("color: var(--color-body); min-width: 6rem;")
@@ -817,12 +826,23 @@ def _render_nas_remote_section(
                 'data-testid="settings-nas-remote-base-root"'
             ).style("font-family: var(--font-mono);")
 
-        if available:
-            badge_text = "Found in rclone.conf"
-            badge_color = "var(--color-success)"
+        with ui.row().classes("items-center w-full").style("gap: 0.5rem;"):
+            ui.label("Transport").style("color: var(--color-body); min-width: 6rem;")
+            ui.label("rsync over ssh" if rsync_mode else "rclone").props(
+                'data-testid="settings-nas-transport"'
+            ).style("font-family: var(--font-mono);")
+
+        if rsync_mode:
+            badge_text = (
+                "ssh access configured"
+                if available
+                else "Identity file missing — see setup docs"
+            )
         else:
-            badge_text = "Not found — run `rclone config`"
-            badge_color = "var(--color-warning)"
+            badge_text = (
+                "Found in rclone.conf" if available else "Not found — run `rclone config`"
+            )
+        badge_color = "var(--color-success)" if available else "var(--color-warning)"
         ui.label(badge_text).props('data-testid="settings-nas-remote-status"').style(
             f"color: {badge_color}; font-size: var(--text-sm); font-weight: 600;"
         )

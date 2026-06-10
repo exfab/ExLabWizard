@@ -99,10 +99,11 @@ def test_main_setup_incomplete_banner_uses_warning() -> None:
 
 
 def test_main_setup_banner_subline_tailored_for_rclone_remote() -> None:
-    """The rclone-remote next-action points the operator at the setup docs."""
+    """The configure-NAS-connection next-action points the operator at the setup docs."""
 
     props = main.setup_incomplete_banner_props("configure_rclone_remote")
-    assert "rclone remote" in props["subline"]
+    assert "NAS connection" in props["subline"]
+    assert "setup docs" in props["subline"]
     # The generic next-action falls back to the original subline.
     generic = main.setup_incomplete_banner_props()["subline"]
     assert props["subline"] != generic

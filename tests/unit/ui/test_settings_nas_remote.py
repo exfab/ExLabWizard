@@ -68,6 +68,24 @@ def _config_with(*equipment: EquipmentConfig, remote: str = "nas01") -> Config:
     )
 
 
+def _config_rsync_with(*equipment: EquipmentConfig) -> Config:
+    return Config(
+        paths=PathsConfig(app_root="/srv/exlab"),
+        equipment=list(equipment),
+        orchestrator=OrchestratorConfig(
+            label="LAB",
+            staging_root="/staging",
+            staging_remote="stagepc",
+            staging_base_root="/staging-area",
+        ),
+        nas=NasConfig(
+            transport="rsync_ssh",
+            remote="svc-sync@nas01",
+            base_root="/volume1/lab",
+        ),
+    )
+
+
 def _testids(element: object) -> set[str]:
     return {
         tid
@@ -705,3 +723,64 @@ def test_render_returns_payload_dict_when_nicegui_unavailable(
     assert isinstance(out, dict)
     assert out["active"] == "nas_remote"
     assert "nas_remote" in out["sections"]
+
+
+# ---------------------------------------------------------------------------
+# Transport-aware NAS-remote section (rsync_ssh vs rclone)
+# ---------------------------------------------------------------------------
+
+
+def test_rsync_mode_shows_transport_row_and_ssh_badge() -> None:
+    """rsync mode: transport row shows 'rsync over ssh', badge 'ssh access configured'."""
+    config = _config_rsync_with(_nas_equipment("EQ1"))
+    out = settings.render_settings_page(
+        config=config,
+        state=settings.SettingsState(active_section="nas_remote"),
+        on_save=lambda s: None,
+        nas_remote_available=lambda _name: True,
+        on_test_connection=lambda: None,
+    )
+    transport_text = _text_of(out, "settings-nas-transport")
+    assert transport_text == "rsync over ssh"
+    status_text = _text_of(out, "settings-nas-remote-status")
+    assert status_text == "ssh access configured"
+
+
+def test_rsync_mode_identity_missing_badge() -> None:
+    """rsync mode with unavailable: badge shows 'Identity file missing — see setup docs'."""
+    config = _config_rsync_with(_nas_equipment("EQ1"))
+    out = settings.render_settings_page(
+        config=config,
+        state=settings.SettingsState(active_section="nas_remote"),
+        on_save=lambda s: None,
+        nas_remote_available=lambda _name: False,
+        on_test_connection=lambda: None,
+    )
+    status_text = _text_of(out, "settings-nas-remote-status")
+    assert status_text == "Identity file missing — see setup docs"
+
+
+def test_rclone_mode_badges_unchanged() -> None:
+    """rclone mode: badges remain 'Found in rclone.conf' / 'Not found — run `rclone config`'."""
+    config = _config_with(_nas_equipment("EQ1"), remote="nas01")
+
+    out_found = settings.render_settings_page(
+        config=config,
+        state=settings.SettingsState(active_section="nas_remote"),
+        on_save=lambda s: None,
+        nas_remote_available=lambda _name: True,
+        on_test_connection=lambda: None,
+    )
+    assert _text_of(out_found, "settings-nas-remote-status") == "Found in rclone.conf"
+
+    out_missing = settings.render_settings_page(
+        config=config,
+        state=settings.SettingsState(active_section="nas_remote"),
+        on_save=lambda s: None,
+        nas_remote_available=lambda _name: False,
+        on_test_connection=lambda: None,
+    )
+    assert (
+        _text_of(out_missing, "settings-nas-remote-status")
+        == "Not found — run `rclone config`"
+    )

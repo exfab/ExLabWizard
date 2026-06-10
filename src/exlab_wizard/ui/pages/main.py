@@ -169,7 +169,7 @@ def setup_incomplete_banner_props(next_action: str | None = None) -> dict[str, s
     """
 
     sublines = {
-        "configure_rclone_remote": ("Configure the rclone remote (see setup docs) to begin."),
+        "configure_rclone_remote": ("Configure the NAS connection (see setup docs) to begin."),
         "configure_lims": "Open Settings → LIMS to finish configuring LIMS.",
         "test_lims": "Open Settings → LIMS to finish configuring LIMS.",
         "set_paths": "Open Settings and complete the highlighted sections to begin.",
