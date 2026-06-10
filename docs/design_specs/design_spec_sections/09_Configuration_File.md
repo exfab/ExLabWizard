@@ -75,13 +75,22 @@ equipment:
     sync_mode: "nas"
 
 # Top-level NAS sync configuration. A single named rclone remote covers all
-# nas-mode equipment. Credentials live entirely in rclone.conf.
+# nas-mode equipment. Credentials live entirely in rclone.conf (rclone mode)
+# or in the operator's ~/.ssh/ (rsync_ssh mode).
 nas:
-  remote: "lab-nas"                     # remote name from rclone.conf (set up with rclone config)
+  remote: "lab-nas"                     # rclone mode: remote name from rclone.conf (set up with rclone config)
+                                        # rsync_ssh mode: "user@host" target prefix
   base_root: "lab"                      # path on the remote under which equipment folders live
                                         # run target: lab-nas:/lab/<EQUIPMENT_ID>/<run-leaf>
-  rclone_config_path: ""                # optional: pin --config <path> (blank = rclone default discovery)
-  mtime_tolerance_s: 2                  # reconcile tolerance (s); absorbs SFTP/SMB modtime rounding
+  rclone_config_path: ""                # rclone mode only: optional pin --config <path> (blank = default discovery)
+  mtime_tolerance_s: 2                  # reconcile tolerance (s); absorbs SFTP/SMB/rsync modtime rounding
+  # rsync-over-ssh transport (2026-06-10). Cluster nodes where IT blocks
+  # rclone/SMB/SFTP can use rsync --server over ssh instead. Lab PCs keep
+  # the default rclone transport. See docs/setup/rsync-ssh-setup.md.
+  transport: "rclone"                   # "rclone" (default) | "rsync_ssh"
+  ssh_port: 22                          # rsync_ssh mode: ssh port on the NAS (default 22)
+  ssh_identity_file: ""                 # rsync_ssh mode: path to the ed25519 private key
+                                        # (blank = ssh default key discovery; BatchMode=yes always set)
   perf:
     transfers: 4                        # rclone --transfers; also the RAM dial on constrained machines
     checkers: 8                         # rclone --checkers

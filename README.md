@@ -124,7 +124,10 @@ container weekly and on every merge to `main`.
 ## NAS sync setup
 
 ExLab-Wizard syncs runs to your NAS via [rclone](https://rclone.org/) named
-remotes. The app never stores NAS passwords — you configure the remote once
+remotes (default) or via `rsync` over ssh for cluster nodes where IT blocks
+SMB/SFTP. The app never stores NAS passwords or ssh key passphrases.
+
+**rclone transport (default — lab acquisition PCs):** configure the remote once
 with `rclone config` and wire the remote name into `config.yaml`:
 
 ```yaml
@@ -135,6 +138,10 @@ nas:
 
 Step-by-step instructions (SFTP and SMB walkthroughs, performance tuning,
 tray-service caveats): **[`docs/setup/rclone-remote-setup.md`](docs/setup/rclone-remote-setup.md)**.
+
+**rsync-over-ssh transport (cluster nodes where IT blocks rclone):** set
+`nas.transport: rsync_ssh` and `nas.remote: user@host`. Keypair provisioning
+and `known_hosts` pre-loading walkthrough: **[`docs/setup/rsync-ssh-setup.md`](docs/setup/rsync-ssh-setup.md)**.
 
 Settings → **NAS Remote** → **Test connection** verifies the remote is
 reachable before you start syncing.

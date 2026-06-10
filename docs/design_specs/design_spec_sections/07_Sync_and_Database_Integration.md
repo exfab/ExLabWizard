@@ -60,9 +60,30 @@ QUEUED → RUNNING → AWAITING_VERIFY → VERIFIED → CLEANUP_ELIGIBLE → CLE
 
 Job rows persist across restarts. On startup, NASSync requeues any `RUNNING` or `AWAITING_VERIFY` jobs (treating them as `QUEUED` and `VERIFIED → AWAITING_VERIFY` respectively, since transport may have completed but verification didn't run).
 
-### 7.1.3 Transport driver (`RcloneDriver`)
+### 7.1.3 Transport drivers
 
-The sole transport for v1 is `RcloneDriver` (`exlab_wizard.sync.transports.rclone`),
+The transport used by each instance is selected by `nas.transport` in
+`config.yaml` (default: `rclone`). The factory `build_nas_driver(nas, perf)`
+in `exlab_wizard.sync.transports` returns the appropriate driver.
+
+| Transport | Selected by | Binary | Auth | Verify authority |
+|-----------|------------|--------|------|-----------------|
+| `rclone` (default) | `nas.transport: rclone` (or absent) | `rclone` | Named remote in `rclone.conf` | `rclone check --download` — pulls file bytes to the client and hashes locally |
+| `rsync_ssh` | `nas.transport: rsync_ssh` | `rsync` | ssh key (`BatchMode=yes`) | `rsync -rni --checksum` dry-run — computes checksums inside the rsync protocol on the remote side |
+
+**Verify authority differs by transport.** `RcloneDriver.check` downloads the
+remote bytes to the client to hash them locally, meaning the hash computation
+runs on the client and the network carries the full file payload. `RsyncSshDriver.check`
+invokes a dry-run with `--checksum` inside the rsync protocol, delegating the
+hash computation to the remote rsync process; only the itemize-change output
+(a handful of flag bytes per file) crosses the wire. Both signal
+"content differs" correctly, but in rsync mode the trust is placed on the
+remote-side rsync binary rather than a local hash. This is an accepted
+trust-posture change (2026-06-10 spec-review).
+
+#### `RcloneDriver`
+
+`RcloneDriver` (`exlab_wizard.sync.transports.rclone`) is the default transport,
 a thin wrapper around the `rclone` binary. The driver exposes four operations:
 
 | Method | Command | Purpose |

@@ -1,9 +1,13 @@
 # Setting up your rclone remote(s)
 
-ExLab-Wizard uses [rclone](https://rclone.org/) as its NAS transport. Rather than
-storing NAS credentials inside the app, you configure a named remote once with
-`rclone config` and then tell the app which remote name to use. The app never
-sees a password — all connection details live in `rclone.conf`.
+ExLab-Wizard uses [rclone](https://rclone.org/) as its **default** NAS transport.
+Rather than storing NAS credentials inside the app, you configure a named remote
+once with `rclone config` and then tell the app which remote name to use. The app
+never sees a password — all connection details live in `rclone.conf`.
+
+> **Cluster nodes where SMB/SFTP is blocked by IT:** use the `rsync_ssh`
+> transport instead. See [`rsync-ssh-setup.md`](rsync-ssh-setup.md) for the
+> key provisioning and `config.yaml` walkthrough.
 
 ---
 

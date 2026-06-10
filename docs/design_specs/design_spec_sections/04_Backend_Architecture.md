@@ -130,6 +130,10 @@ exlab_wizard/
     generator.py           # merge field layers, render YAML+Markdown, write README.md + readme_fields.json
   sync/
     nas_client.py          # NASSync interface (see §7.1)
+    transports/
+      __init__.py          # NasTransportDriver Protocol (push/check/lsjson_manifest/about) + build_nas_driver factory
+      rclone.py            # RcloneDriver — default transport; thin rclone subprocess wrapper
+      rsync_ssh.py         # RsyncSshDriver — rsync-over-ssh transport for cluster nodes (2026-06-10)
   lims/
     client.py              # LIMSClient (read-only in v1; see §7.2). Uses httpx for REST + cookie session.
     schemas.py             # LIMSProject, LIMSUser as msgspec.Struct types
@@ -177,6 +181,8 @@ tests/
 ```
 
 The `ui/` package depends on `controller/` and the API schema modules but never the reverse: no backend module imports from `ui/`. This is the testability boundary — backend can be exercised without a browser.
+
+**NAS transport abstraction (2026-06-10).** `sync/transports/__init__.py` defines `NasTransportDriver`, a structural Protocol with four async methods (`push`, `check`, `lsjson_manifest`, `about`) consumed by `NASSyncClient` and the tray probe. `RcloneDriver` and `RsyncSshDriver` both implement the protocol. Every construction site routes through the `build_nas_driver(nas: NasConfig, perf: RclonePerf) -> NasTransportDriver` factory; the factory branches on `nas.transport`. Stage-mode equipment always gets a `RcloneDriver` regardless of `nas.transport` because its targets are rclone named-remote strings, not `user@host` ssh targets (see §7.1 and `CLAUDE.md`).
 
 ### 4.3.1 The `constants/` package
 
