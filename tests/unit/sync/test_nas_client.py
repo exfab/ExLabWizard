@@ -978,3 +978,50 @@ async def test_drive_job_bandwidth_comes_from_nas_block(
         f"bandwidth cap {recorded[0]!r} KiB/s does not match "
         f"nas.bandwidth-derived cap {expected_kibps!r} KiB/s"
     )
+
+
+# ---------------------------------------------------------------------------
+# Transport driver selection (rsync-over-ssh NAS transport, 2026-06-10)
+# ---------------------------------------------------------------------------
+
+
+class TestDriverSelection:
+    # _client_for_target_test (defined ~line 774 of this module) already
+    # builds a NASSyncClient from a bare Config — reuse it.
+
+    def test_nas_mode_rsync_transport_selected(self, tmp_path: Path) -> None:
+        from exlab_wizard.sync.transports.rsync_ssh import RsyncSshDriver
+
+        config = Config(
+            paths=PathsConfig(app_root=str(tmp_path)),
+            nas=NasConfig(
+                transport="rsync_ssh", remote="svc-sync@nas01", base_root="/volume1/lab"
+            ),
+            equipment=[EquipmentConfig(id="EQ1", label="Eq 1", nas_root="/nas")],
+        )
+        client = _client_for_target_test(config, tmp_path)
+        driver = client._driver_for_equipment(config.equipment[0])
+        assert isinstance(driver, RsyncSshDriver)
+
+    def test_stage_mode_always_rclone_even_with_rsync_transport(
+        self, tmp_path: Path
+    ) -> None:
+        from exlab_wizard.sync.transports.rclone import RcloneDriver
+
+        config = Config(
+            paths=PathsConfig(app_root=str(tmp_path)),
+            nas=NasConfig(
+                transport="rsync_ssh", remote="svc-sync@nas01", base_root="/volume1/lab"
+            ),
+            orchestrator=OrchestratorConfig(
+                label="WS1", staging_remote="stagepc", staging_base_root="/staging"
+            ),
+            equipment=[
+                EquipmentConfig(
+                    id="EQ1", label="Eq 1", nas_root="/nas", sync_mode=SyncMode.STAGE
+                )
+            ],
+        )
+        client = _client_for_target_test(config, tmp_path)
+        driver = client._driver_for_equipment(config.equipment[0])
+        assert isinstance(driver, RcloneDriver)

@@ -41,7 +41,7 @@ from exlab_wizard.paths import cache_dir, creation_json_path
 from exlab_wizard.sync.bandwidth import effective_bandwidth_limit_kibps
 from exlab_wizard.sync.cleanup import cleanup_interlocks_satisfied
 from exlab_wizard.sync.file_stability import wait_until_stable
-from exlab_wizard.sync.manifest import RemoteManifest, parse_lsjson
+from exlab_wizard.sync.manifest import RemoteManifest
 from exlab_wizard.sync.pre_sync_gate import is_eligible
 from exlab_wizard.sync.queue import (
     SyncJobRow,
@@ -50,9 +50,11 @@ from exlab_wizard.sync.queue import (
 )
 from exlab_wizard.sync.run_delete import collect_cleanup_candidates, delete_run_files
 from exlab_wizard.sync.transports import (
+    NasTransportDriver,
     TransportError,
     TransportErrorKind,
     TransportResult,
+    build_nas_driver,
 )
 from exlab_wizard.sync.transports.rclone import RcloneDriver
 from exlab_wizard.sync.verifier import VerifyResult
@@ -128,26 +130,6 @@ def _matches_any_glob(name: str, globs: list[str]) -> bool:
     """Return True if ``name`` matches any configured glob."""
     return any(fnmatch.fnmatch(name, pattern) for pattern in globs)
 
-
-def _build_driver(config_path: str, perf: RclonePerf) -> RcloneDriver:
-    """Construct a :class:`RcloneDriver` for a named remote.
-
-    The named remote lives in the operator's ``rclone.conf`` (set up with
-    ``rclone config``); the driver only needs the optional ``--config``
-    path override plus the parallelism dials. No keyring / env threading —
-    credentials are entirely the named remote's concern.
-
-    Both the NAS leg and the orchestrator stage hop share the same
-    ``rclone.conf`` (their remotes live side by side), so the config path
-    is always ``nas.rclone_config_path``; only the perf dial differs by
-    ``sync_mode`` (the ``nas:`` block's ``perf`` vs
-    ``orchestrator.staging_perf``).
-    """
-    return RcloneDriver(
-        config_path=config_path or None,
-        transfers=perf.transfers,
-        checkers=perf.checkers,
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -726,17 +708,26 @@ class NASSyncClient:
         subpath = _remote_subpath(resolution.base_root, equipment.id, run)
         return f"{resolution.remote}:/{subpath}"
 
-    def _driver_for_equipment(self, equipment: EquipmentConfig) -> RcloneDriver:
-        """Build the :class:`RcloneDriver` for ``equipment``.
+    def _driver_for_equipment(self, equipment: EquipmentConfig) -> NasTransportDriver:
+        """Build the transport driver for ``equipment``.
 
-        The perf dials come from :meth:`_resolve_remote` (``staging_perf`` for
-        stage-mode, the ``nas:`` block's ``perf`` otherwise). Every equipment
-        shares ``nas.rclone_config_path`` as the ``--config`` override -- the
-        staging and NAS remotes live in the same ``rclone.conf``.
+        ``nas.transport`` selects the driver **only for nas-mode
+        equipment**. Stage-mode targets are rclone named-remote strings
+        (``<staging_remote>:<path>``), so stage-mode always gets a
+        directly-constructed :class:`RcloneDriver` regardless of
+        ``nas.transport`` — handing an rsync driver a staging target
+        would attempt ssh to a host named after the staging remote
+        (spec-review blocker, 2026-06-10). The hidden staging backend
+        must keep working (see CLAUDE.md).
         """
-        return _build_driver(
-            self._config.nas.rclone_config_path, self._resolve_remote(equipment).perf
-        )
+        resolution = self._resolve_remote(equipment)
+        if equipment.sync_mode == SyncMode.STAGE:
+            return RcloneDriver(
+                config_path=self._config.nas.rclone_config_path or None,
+                transfers=resolution.perf.transfers,
+                checkers=resolution.perf.checkers,
+            )
+        return build_nas_driver(self._config.nas, resolution.perf)
 
     def _build_push(self, equipment: EquipmentConfig) -> Callable[..., Any]:
         """Resolve the push callable for ``equipment``.
@@ -802,9 +793,8 @@ class NASSyncClient:
 
         async def _lsjson(run: Path) -> RemoteManifest:
             target = self._target_for_equipment(equipment, run)
-            raw = await driver.lsjson(target)
             prefix = _remote_subpath(base_root, equipment.id, run)
-            return parse_lsjson(raw, strip_prefix=prefix)
+            return await driver.lsjson_manifest(target, strip_prefix=prefix)
 
         return _lsjson
 
