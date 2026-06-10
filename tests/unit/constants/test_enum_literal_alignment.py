@@ -58,6 +58,7 @@ from exlab_wizard.constants import enums
         (enums.SyncHandleState, frozenset({"queued", "blocked"})),
         (enums.PluginSourceRoot, frozenset({"bundled", "lab"})),
         (enums.TreeProjectStatus, frozenset({"active", "archived", "deleted"})),
+        (enums.SyncTransport, frozenset({"rclone", "rsync_ssh"})),
     ],
 )
 def test_enum_values_match_expected_literal_set(

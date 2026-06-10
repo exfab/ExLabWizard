@@ -175,6 +175,20 @@ class SyncMode(StrEnum):
     STAGE = "stage"
 
 
+class SyncTransport(StrEnum):
+    """Which binary the NAS sync subsystem shells out to.
+
+    rsync-over-ssh NAS transport design (2026-06-10). Selected per
+    instance by ``nas.transport``: ``rclone`` (default) drives the named
+    remote in the operator's rclone.conf; ``rsync_ssh`` drives
+    ``rsync -e ssh`` against ``nas.remote`` as a ``user@host`` target.
+    Stage-mode equipment always uses rclone regardless of this value.
+    """
+
+    RCLONE = "rclone"
+    RSYNC_SSH = "rsync_ssh"
+
+
 class StagingCleanupMode(StrEnum):
     """How NAS staging directories are eventually purged. Backend Spec §13.7."""
 
