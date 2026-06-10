@@ -117,3 +117,62 @@ class TestPush:
         with pytest.raises(TransportError) as excinfo:
             await RsyncSshDriver().push(tmp_path, TARGET)
         assert excinfo.value.error_kind is None
+
+
+def _files_from(tmp_path: Path, names: list[str]) -> Path:
+    listing = tmp_path / "files-from.txt"
+    listing.write_text("".join(f"{n}\n" for n in names), encoding="utf-8")
+    return listing
+
+
+class TestCheck:
+    async def test_all_equal_when_nothing_itemized(self, fake_run, tmp_path: Path) -> None:
+        run = fake_run(rc=0, stdout="")
+        listing = _files_from(tmp_path, ["a.csv", "sub/b.csv"])
+        result = await RsyncSshDriver().check(tmp_path, TARGET, files_from=listing)
+        assert set(result.equal) == {"a.csv", "sub/b.csv"}
+        assert result.differ == () and result.missing_on_dst == ()
+        cmd = run.cmds[0]
+        assert "--checksum" in cmd
+        assert "-rni" in cmd  # dry-run + itemize
+
+    async def test_checksum_differ_flag(self, fake_run, tmp_path: Path) -> None:
+        fake_run(rc=0, stdout=">fcst...... a.csv\n")
+        listing = _files_from(tmp_path, ["a.csv", "b.csv"])
+        result = await RsyncSshDriver().check(tmp_path, TARGET, files_from=listing)
+        assert result.differ == ("a.csv",)
+        assert result.equal == ("b.csv",)
+
+    async def test_all_plus_means_missing_on_dst(self, fake_run, tmp_path: Path) -> None:
+        fake_run(rc=0, stdout=">f+++++++++ new file.csv\n")
+        listing = _files_from(tmp_path, ["new file.csv"])
+        result = await RsyncSshDriver().check(tmp_path, TARGET, files_from=listing)
+        assert result.missing_on_dst == ("new file.csv",)
+        assert result.equal == ()
+
+    async def test_short_openrsync_flags_handled(self, fake_run, tmp_path: Path) -> None:
+        # openrsync (macOS dev machines) emits 7-char itemize tails.
+        fake_run(rc=0, stdout=">f+++++++ x.csv\n")
+        listing = _files_from(tmp_path, ["x.csv"])
+        result = await RsyncSshDriver().check(tmp_path, TARGET, files_from=listing)
+        assert result.missing_on_dst == ("x.csv",)
+
+    async def test_attr_only_lines_count_as_equal(self, fake_run, tmp_path: Path) -> None:
+        # '.' update-type = no transfer needed; content equal under --checksum.
+        fake_run(rc=0, stdout=".f..t...... a.csv\n")
+        listing = _files_from(tmp_path, ["a.csv"])
+        result = await RsyncSshDriver().check(tmp_path, TARGET, files_from=listing)
+        assert result.equal == ("a.csv",)
+
+    async def test_directory_lines_ignored(self, fake_run, tmp_path: Path) -> None:
+        fake_run(rc=0, stdout="cd+++++++++ sub/\n>fcst...... sub/b.csv\n")
+        listing = _files_from(tmp_path, ["sub/b.csv"])
+        result = await RsyncSshDriver().check(tmp_path, TARGET, files_from=listing)
+        assert result.differ == ("sub/b.csv",)
+
+    async def test_nonzero_rc_raises_classified(self, fake_run, tmp_path: Path) -> None:
+        fake_run(rc=255, stderr="Permission denied (publickey).")
+        listing = _files_from(tmp_path, ["a.csv"])
+        with pytest.raises(TransportError) as excinfo:
+            await RsyncSshDriver().check(tmp_path, TARGET, files_from=listing)
+        assert excinfo.value.error_kind == TransportErrorKind.AUTH
