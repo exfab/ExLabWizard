@@ -236,3 +236,44 @@ class TestAbout:
         )
         result = await RsyncSshDriver().about("svc-sync@nas01:/volume1/lab")
         assert not result.ok and result.reason == "rsync binary not found"
+
+
+import stat  # noqa: E402
+import sys  # noqa: E402
+
+
+@pytest.fixture
+def stub_rsync(tmp_path: Path, monkeypatch) -> Path:
+    """Executable wrapper around tests/fixtures/stub_rsync.py."""
+    fixture = Path(__file__).parents[3] / "fixtures" / "stub_rsync.py"
+    wrapper = tmp_path / "rsync"
+    wrapper.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{fixture}" "$@"\n')
+    wrapper.chmod(wrapper.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("STUB_RSYNC_DEST_ROOT", str(tmp_path / "nas"))
+    return wrapper
+
+
+class TestAgainstStub:
+    async def test_push_then_list_roundtrip(self, stub_rsync: Path, tmp_path: Path) -> None:
+        local = tmp_path / "run"
+        (local / "data").mkdir(parents=True)
+        (local / "data" / "file with spaces.csv").write_text("x" * 10)
+        driver = RsyncSshDriver(binary=str(stub_rsync))
+
+        result = await driver.push(local, "u@h:/v1/lab/EQ1/run")
+        assert result.ok
+
+        manifest = await driver.lsjson_manifest("u@h:/v1/lab/EQ1/run")
+        assert manifest.has("data/file with spaces.csv")
+        local_stat = (local / "data" / "file with spaces.csv").stat()
+        assert manifest.matches(
+            "data/file with spaces.csv",
+            local_stat.st_size,
+            local_stat.st_mtime,
+            tolerance_s=2,
+        )
+
+    async def test_about_missing_base_root(self, stub_rsync: Path) -> None:
+        driver = RsyncSshDriver(binary=str(stub_rsync))
+        result = await driver.about("u@h:/does/not/exist")
+        assert not result.ok and "base_root" in (result.reason or "")
