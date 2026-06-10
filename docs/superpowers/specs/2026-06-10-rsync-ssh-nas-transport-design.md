@@ -1,8 +1,28 @@
 # rsync-over-ssh NAS transport
 
 - **Date:** 2026-06-10
-- **Status:** Design — decisions resolved + spec-review findings applied
-  (2026-06-10), pending implementation plan
+- **Status:** Implemented (plan:
+  [`../plans/2026-06-10-rsync-ssh-nas-transport.md`](../plans/2026-06-10-rsync-ssh-nas-transport.md),
+  branch `feature/rsync-ssh-transport`). Implementation amendments:
+  - The docker characterization suite **empirically confirmed
+    client-side timezone formatting** of `--list-only` output (container
+    pinned to `America/New_York`, round-trip reconciled) — the parser's
+    local-tz assumption holds; no `remote_tz` contingency needed.
+  - `--no-h` was dropped from the listing/probe argvs: macOS openrsync
+    (the dev/docker client) rejects it, GNU rsync's *default* output is
+    comma-grouped digits which the parser handles, and `-h` units have
+    no implicit enablement path. The silent-failure tail risk is covered
+    instead by a parser warning on entry-shaped lines with unparseable
+    sizes.
+  - Accepted contract difference: the rsync `CheckResult.errors` is
+    always `()` (itemize has no per-file error line; failures surface as
+    stderr + non-zero rc, raised as classified `TransportError`).
+  - `RsyncSshDriver` gained a keyword-only `ssh_extra_opts` **test
+    seam** (integration fixtures point ssh at a throwaway known_hosts);
+    production config does not expose it.
+  - The ssh auth-failure marker is anchored on `permission denied
+    (publickey` so a remote per-file `Permission denied (13)` stays
+    retryable.
 - **Builds on:**
   [`2026-05-28-rclone-conf-nas-sync-design.md`](2026-05-28-rclone-conf-nas-sync-design.md)
   (rclone stays the default transport; this spec adds a second transport, it

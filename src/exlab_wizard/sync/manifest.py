@@ -139,9 +139,7 @@ _RSYNC_ESCAPE_RE = re.compile(r"\\#([0-7]{3})")
 # digits (e.g. a human-readable "4.0K" from an rsync invoked with ``-h``).
 # Such lines must never be dropped silently: a file missing from the
 # manifest is re-queued forever with no operator-visible cause.
-_RSYNC_LIST_LOOSE_RE = re.compile(
-    r"^\S+\s+\S+\s+\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2}\s"
-)
+_RSYNC_LIST_LOOSE_RE = re.compile(r"^\S+\s+\S+\s+\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2}\s")
 
 
 def _unescape_rsync_path(path: str) -> str:

@@ -106,9 +106,7 @@ def _synthesize_check(requested: tuple[str, ...], stdout: str) -> CheckResult:
         # any other combination (e.g. ``.f..t......``) is an attr-only
         # change: content equal under --checksum -> credited via `equal`.
     equal = tuple(rel for rel in requested if rel not in flagged)
-    return CheckResult(
-        equal=equal, differ=tuple(differ), missing_on_dst=tuple(missing)
-    )
+    return CheckResult(equal=equal, differ=tuple(differ), missing_on_dst=tuple(missing))
 
 
 class RsyncSshDriver:
@@ -194,9 +192,7 @@ class RsyncSshDriver:
             ok=False, error_kind=kind, stderr=stderr, stdout=stdout, returncode=rc
         )
 
-    async def check(
-        self, local: Path, remote: str, *, files_from: Path
-    ) -> CheckResult:
+    async def check(self, local: Path, remote: str, *, files_from: Path) -> CheckResult:
         """Content verify via ``rsync -rni --checksum`` dry-run (resolved OQ-1).
 
         The remote rsync hashes whole files inside the rsync protocol
@@ -245,9 +241,7 @@ class RsyncSshDriver:
             requested = ()
         return _synthesize_check(requested, stdout)
 
-    async def lsjson_manifest(
-        self, remote: str, *, strip_prefix: str = ""
-    ) -> RemoteManifest:
+    async def lsjson_manifest(self, remote: str, *, strip_prefix: str = "") -> RemoteManifest:
         """List the remote subtree via ``--list-only -r`` (resolved OQ-2).
 
         ``strip_prefix`` is accepted for protocol parity but ignored —
@@ -305,8 +299,6 @@ class RsyncSshDriver:
         if rc == 0:
             return AboutResult(ok=True, info={})
         if rc == 23 and not stdout.strip():
-            return AboutResult(
-                ok=False, reason="base_root not found or inaccessible on the NAS"
-            )
+            return AboutResult(ok=False, reason="base_root not found or inaccessible on the NAS")
         kind = _classify_failure(stderr, rc)
         return AboutResult(ok=False, reason=f"{kind.value}: {stderr.strip()}")

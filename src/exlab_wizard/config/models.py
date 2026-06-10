@@ -317,8 +317,7 @@ class NasConfig(BaseModel):
         # basic shape check.
         if not (sep and user and host) or user.startswith("-") or host.startswith("-"):
             msg = (
-                f"nas.remote {self.remote!r} must be 'user@host' when "
-                "nas.transport is 'rsync_ssh'"
+                f"nas.remote {self.remote!r} must be 'user@host' when nas.transport is 'rsync_ssh'"
             )
             raise ValueError(msg)
         return self

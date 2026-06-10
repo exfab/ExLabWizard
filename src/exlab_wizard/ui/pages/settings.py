@@ -810,9 +810,7 @@ def _render_nas_remote_section(
             "rclone.conf (run `rclone config` to create it). No password is "
             "stored here."
         )
-        ui.label(description).style(
-            "font-size: var(--text-sm); color: var(--color-muted);"
-        )
+        ui.label(description).style("font-size: var(--text-sm); color: var(--color-muted);")
 
         with ui.row().classes("items-center w-full").style("gap: 0.5rem;"):
             ui.label("Remote").style("color: var(--color-body); min-width: 6rem;")
@@ -834,14 +832,10 @@ def _render_nas_remote_section(
 
         if rsync_mode:
             badge_text = (
-                "ssh access configured"
-                if available
-                else "Identity file missing — see setup docs"
+                "ssh access configured" if available else "Identity file missing — see setup docs"
             )
         else:
-            badge_text = (
-                "Found in rclone.conf" if available else "Not found — run `rclone config`"
-            )
+            badge_text = "Found in rclone.conf" if available else "Not found — run `rclone config`"
         badge_color = "var(--color-success)" if available else "var(--color-warning)"
         ui.label(badge_text).props('data-testid="settings-nas-remote-status"').style(
             f"color: {badge_color}; font-size: var(--text-sm); font-weight: 600;"

@@ -131,7 +131,6 @@ def _matches_any_glob(name: str, globs: list[str]) -> bool:
     return any(fnmatch.fnmatch(name, pattern) for pattern in globs)
 
 
-
 @dataclass(frozen=True, slots=True)
 class _RemoteResolution:
     """The ``(remote, base_root, perf)`` an equipment's ops resolve to.

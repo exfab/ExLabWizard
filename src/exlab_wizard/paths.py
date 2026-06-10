@@ -709,9 +709,7 @@ def _missing_nas_fields(config: Config | None) -> list[dict[str, str]]:
     from exlab_wizard.constants import SyncTransport
 
     if config.nas.transport == SyncTransport.RSYNC_SSH:
-        return [
-            {"field": "nas.ssh_identity_file", "reason": "identity_file_missing"}
-        ]
+        return [{"field": "nas.ssh_identity_file", "reason": "identity_file_missing"}]
     return [{"field": "nas.remote", "reason": "not_found_in_rclone_conf"}]
 
 
