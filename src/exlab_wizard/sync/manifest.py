@@ -10,11 +10,11 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from exlab_wizard.logging import get_logger
 
-__all__ = ["RemoteEntry", "RemoteManifest", "parse_lsjson"]
+__all__ = ["RemoteEntry", "RemoteManifest", "parse_lsjson", "parse_rsync_listing"]
 
 _log = get_logger(__name__)
 
@@ -119,4 +119,71 @@ def parse_lsjson(raw: str, *, strip_prefix: str = "") -> RemoteManifest:
             mod_time=str(row.get("ModTime", "")),
             is_dir=False,
         )
+    return RemoteManifest(entries=out)
+
+
+# ``rsync --list-only`` line: perms, size (possibly digit-grouped), the
+# fixed-format timestamp, then EVERYTHING after the single separating
+# space is the path — filenames containing spaces appear literally
+# (spec-review blocker, 2026-06-10), so the line must be anchored on the
+# timestamp, never whitespace-split.
+_RSYNC_LIST_RE = re.compile(
+    r"^(?P<perms>\S+)\s+(?P<size>[\d,.]+)\s+"
+    r"(?P<date>\d{4}/\d{2}/\d{2})\s+(?P<time>\d{2}:\d{2}:\d{2})\s(?P<path>.+)$"
+)
+
+# rsync escapes unusual bytes in listings as ``\#ooo`` (3 octal digits).
+_RSYNC_ESCAPE_RE = re.compile(r"\\#([0-7]{3})")
+
+
+def _unescape_rsync_path(path: str) -> str:
+    """Decode rsync's ``\\#ooo`` octal escapes back into the real bytes."""
+    if "\\#" not in path:
+        return path
+    out = bytearray()
+    idx = 0
+    for match in _RSYNC_ESCAPE_RE.finditer(path):
+        out += path[idx : match.start()].encode("utf-8")
+        out.append(int(match.group(1), 8))
+        idx = match.end()
+    out += path[idx:].encode("utf-8")
+    return out.decode("utf-8", errors="replace")
+
+
+def parse_rsync_listing(raw: str) -> RemoteManifest:
+    """Parse ``rsync --list-only -r`` output into a :class:`RemoteManifest`.
+
+    rsync-over-ssh NAS transport (2026-06-10). Paths are already relative
+    to the listed target, so there is no ``strip_prefix``. Only regular
+    files (``-`` perm prefix) are kept — directories (including the ``.``
+    top entry) and symlinks are dropped, matching :func:`parse_lsjson`.
+    The listing timestamp has 1 s resolution and is formatted in the
+    local timezone of the process that renders the file list; it is
+    parsed as local time and stored as an RFC3339 UTC string so
+    :meth:`RemoteManifest.matches` works identically for both transports.
+    Unparseable lines are skipped (a listing we can't parse must not
+    crash the sync worker).
+    """
+    out: dict[str, RemoteEntry] = {}
+    for raw_line in raw.splitlines():
+        match = _RSYNC_LIST_RE.match(raw_line.rstrip())
+        if match is None:
+            continue
+        if not match.group("perms").startswith("-"):
+            continue
+        path = _unescape_rsync_path(match.group("path"))
+        if not path or path == ".":
+            continue
+        try:
+            size = int(re.sub(r"[,.]", "", match.group("size")))
+        except ValueError:
+            continue
+        try:
+            local_dt = datetime.strptime(  # naive-as-local is the point
+                f"{match.group('date')} {match.group('time')}", "%Y/%m/%d %H:%M:%S"
+            )
+        except ValueError:
+            continue
+        mod_time = local_dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
+        out[path] = RemoteEntry(size=size, mod_time=mod_time, is_dir=False)
     return RemoteManifest(entries=out)
