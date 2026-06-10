@@ -1023,7 +1023,7 @@ class TestNasTransport:
         assert nas.remote == "svc-sync@nas01.lab.example"
 
     def test_rsync_ssh_rejects_empty_remote(self) -> None:
-        with pytest.raises(ValidationError, match="requires nas.remote"):
+        with pytest.raises(ValidationError, match=r"requires nas\.remote"):
             NasConfig(transport="rsync_ssh", remote="")
 
     @pytest.mark.parametrize("bad", ["nas01", "@nas01", "svc-sync@"])
